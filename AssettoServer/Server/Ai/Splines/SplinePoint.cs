@@ -11,6 +11,8 @@ public struct SplinePoint
     public float Radius;
     public float Camber;
     public float Length;
+    public float SideLeft;
+    public float SideRight;
 
     public int JunctionStartId;
     public int JunctionEndId;

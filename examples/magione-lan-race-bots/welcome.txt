@@ -1,0 +1,1 @@
+Experimental LAN race with server-authoritative bots. Human slots close when the race grid freezes.

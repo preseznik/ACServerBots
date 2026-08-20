@@ -184,7 +184,7 @@ public static class Program
                                 .GetServices<Func<ConnectionDelegate, ConnectionDelegate>>()
                                 .ForEach(m => lo.Use(m))))
                         .UseStartup(_ => new Startup(config))
-                        .UseUrls($"http://0.0.0.0:{config.Server.HttpPort}");
+                        .UseUrls($"http://{config.Extra.NetworkBindAddress}:{config.Server.HttpPort}");
                 })
                 .Build();
 

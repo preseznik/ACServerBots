@@ -9,6 +9,8 @@ using AssettoServer.Network.Http;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Shared.Model;
 using AssettoServer.Shared.Network.Packets.Outgoing;
 using AssettoServer.Utils;
 using Microsoft.Extensions.Hosting;
@@ -24,6 +26,9 @@ public class AiBehavior : BackgroundService
     private readonly EntryCarManager _entryCarManager;
     private readonly AiSpline _spline;
     private readonly HttpInfoCache _httpInfoCache;
+    private readonly RaceSplineLayout? _raceLayout;
+    private readonly HashSet<byte> _frozenBotSessionIds = [];
+    private bool _raceRosterFrozen;
 
     private readonly JunctionEvaluator _junctionEvaluator;
 
@@ -48,6 +53,16 @@ public class AiBehavior : BackgroundService
         _spline = spline;
         _httpInfoCache = httpInfoCache;
         _junctionEvaluator = new JunctionEvaluator(spline, false);
+
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+        {
+            _raceLayout = RaceSplineLayout.Create(spline.Points, _configuration.Extra.AiParams.Race.StartSplinePointId);
+            var requiredGridLength = _configuration.EntryList.Cars.Count * _configuration.Extra.AiParams.Race.GridSpacingMeters;
+            if (requiredGridLength >= _raceLayout.LengthMeters)
+            {
+                throw new ConfigurationException($"Race grid requires {requiredGridLength:F0} m but the closed AI spline is only {_raceLayout.LengthMeters:F0} m");
+            }
+        }
 
         if (_configuration.Extra.AiParams.Debug)
         {
@@ -166,6 +181,12 @@ public class AiBehavior : BackgroundService
     private void Update()
     {
         using var context = _updateDurationTimer.NewTimer();
+
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+        {
+            _aiStateCountMetric.Set(_entryCarManager.EntryCars.Count(car => car.AiControlled));
+            return;
+        }
 
         _playerCars.Clear();
         _initializedAiStates.Clear();
@@ -340,15 +361,34 @@ public class AiBehavior : BackgroundService
 
     private void OnClientDisconnected(ACTcpClient sender, EventArgs args)
     {
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            && _raceRosterFrozen
+            && _sessionManager.CurrentSession.Configuration.Type == SessionType.Race)
+        {
+            _sessionManager.MarkParticipantDnf(sender.EntryCar, sender.Name ?? $"Driver {sender.SessionId}");
+            sender.EntryCar.SetAiControl(false);
+            return;
+        }
+
         if (sender.EntryCar.AiMode != AiMode.None)
         {
             sender.EntryCar.SetAiControl(true);
             AdjustOverbooking();
+            if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+            {
+                PrepareRaceRoster(freezeRoster: false);
+            }
         }
     }
 
     private void OnSessionChanged(SessionManager sender, SessionChangedEventArgs args)
     {
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+        {
+            PrepareRaceRoster(args.NextSession.Configuration.Type == SessionType.Race);
+            return;
+        }
+
         for (var i = 0; i < _initializedAiStates.Count; i++)
         {
             _initializedAiStates[i].Despawn();
@@ -441,6 +481,15 @@ public class AiBehavior : BackgroundService
 
     private void AdjustOverbooking()
     {
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+        {
+            foreach (var car in _entryCarManager.EntryCars.Where(car => car.AiControlled))
+            {
+                car.SetAiOverbooking(1);
+            }
+            return;
+        }
+
         int playerCount = _entryCarManager.EntryCars.Count(car => car.Client != null && car.Client.IsConnected);
         var aiSlots = _entryCarManager.EntryCars.Where(car => car.Client == null && car.AiControlled).ToList(); // client null check is necessary here so that slots where someone is connecting don't count
 
@@ -471,6 +520,48 @@ public class AiBehavior : BackgroundService
             { "auto", _entryCarManager.EntryCars.Where(c => c.AiMode == AiMode.Auto).Select(c => c.SessionId).ToList() },
             { "fixed", _entryCarManager.EntryCars.Where(c => c.AiMode == AiMode.Fixed).Select(c => c.SessionId).ToList() }
         });
+    }
+
+    private void PrepareRaceRoster(bool freezeRoster)
+    {
+        if (_raceLayout == null)
+            throw new InvalidOperationException("Race spline was not initialized");
+
+        _raceRosterFrozen = freezeRoster;
+        if (freezeRoster)
+        {
+            _frozenBotSessionIds.Clear();
+            _frozenBotSessionIds.UnionWith(RaceParticipantPolicy.FreezeBotRoster(
+                _entryCarManager.EntryCars.Select(car => (car.SessionId, car.AiMode, car.Client != null))));
+        }
+
+        var bots = _entryCarManager.EntryCars
+            .Where(car => freezeRoster
+                ? _frozenBotSessionIds.Contains(car.SessionId)
+                : RaceParticipantPolicy.ShouldControlSlot(car.AiMode, car.Client != null))
+            .OrderBy(car => car.SessionId)
+            .ToList();
+
+        foreach (var car in _entryCarManager.EntryCars.Except(bots))
+        {
+            if (car.Client == null)
+                car.SetAiControl(false);
+            car.DespawnAiStates();
+        }
+
+        int humanGridSlots = _entryCarManager.EntryCars.Count(car => car.AiMode == AiMode.None || car.Client != null);
+        for (int i = 0; i < bots.Count; i++)
+        {
+            var car = bots[i];
+            car.SetAiControl(true);
+            var distanceBehindStart = (humanGridSlots + i) * _configuration.Extra.AiParams.Race.GridSpacingMeters;
+            var pointId = RaceSplineLayout.GetPointBehind(_spline.Points,
+                _configuration.Extra.AiParams.Race.StartSplinePointId, distanceBehindStart);
+            car.PrepareSingleAiState(pointId, _raceLayout);
+        }
+
+        Log.Information("Race bot roster {State}: {BotCount} bots, {HumanSlots} human grid slots",
+            freezeRoster ? "frozen" : "open", bots.Count, humanGridSlots);
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)

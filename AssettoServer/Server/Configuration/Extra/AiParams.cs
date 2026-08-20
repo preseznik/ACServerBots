@@ -6,9 +6,35 @@ using YamlDotNet.Serialization;
 namespace AssettoServer.Server.Configuration.Extra;
 
 #pragma warning disable CS0657
+
+public enum AiBehaviorMode
+{
+    Traffic,
+    Race
+}
+
+[UsedImplicitly(ImplicitUseKindFlags.Assign, ImplicitUseTargetFlags.WithMembers)]
+public class RaceAiParams
+{
+    [YamlMember(Description = "Overall race pace from 0 (slowest) to 1 (fastest)")]
+    public float Difficulty { get; init; } = 0.75f;
+    [YamlMember(Description = "Following and overtaking commitment from 0 (cautious) to 1 (aggressive)")]
+    public float Aggression { get; init; } = 0.5f;
+    [YamlMember(Description = "Closed fast_lane.ai point used as the start/finish line")]
+    public int StartSplinePointId { get; init; }
+    [YamlMember(Description = "Longitudinal spacing between race grid slots")]
+    public float GridSpacingMeters { get; init; } = 9;
+    [YamlMember(Description = "Fixed simulation update rate")]
+    public int UpdateHz { get; init; } = 60;
+}
+
 [UsedImplicitly(ImplicitUseKindFlags.Assign, ImplicitUseTargetFlags.WithMembers)]
 public partial class AiParams : ObservableObject
 {
+    [YamlMember(Description = "Traffic preserves the existing dynamic road traffic behavior. Race creates one persistent participant per AI slot.")]
+    public AiBehaviorMode Behavior { get; init; } = AiBehaviorMode.Traffic;
+    [YamlMember(Description = "Race-only bot and grid settings")]
+    public RaceAiParams Race { get; init; } = new();
     [YamlMember(Description = "Automatically assign traffic cars based on the car folder name")]
     public bool AutoAssignTrafficCars { get; init; } = true;
     [YamlMember(Description = "Radius around a player in which AI cars won't despawn")]

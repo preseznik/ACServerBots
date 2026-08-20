@@ -25,7 +25,8 @@ public class AiModule : Module
             builder.RegisterType<AiUpdater>().AsSelf().SingleInstance().AutoActivate();
             builder.RegisterType<AiSlotFilter>().As<IOpenSlotFilter>();
             
-            if (_configuration.Extra.AiParams.HourlyTrafficDensity != null)
+            if (_configuration.Extra.AiParams.Behavior == AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Traffic
+                && _configuration.Extra.AiParams.HourlyTrafficDensity != null)
             {
                 builder.RegisterType<DynamicTrafficDensity>().As<IHostedService>().SingleInstance();
             }

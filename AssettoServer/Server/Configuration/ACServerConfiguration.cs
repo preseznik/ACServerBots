@@ -277,7 +277,7 @@ public partial class ACServerConfiguration
             Server.MaxClients = EntryList.Cars.Count;
         }
         
-        if (Extra is { EnableAi: true, AiParams.AutoAssignTrafficCars: true })
+        if (Extra is { EnableAi: true, AiParams.Behavior: AiBehaviorMode.Traffic, AiParams.AutoAssignTrafficCars: true })
         {
             foreach (var entry in EntryList.Cars)
             {
@@ -288,12 +288,12 @@ public partial class ACServerConfiguration
             }
         }
 
-        if (Extra.AiParams.AiPerPlayerTargetCount == 0)
+        if (Extra.AiParams.Behavior == AiBehaviorMode.Traffic && Extra.AiParams.AiPerPlayerTargetCount == 0)
         {
             Extra.AiParams.AiPerPlayerTargetCount = EntryList.Cars.Count(c => c.AiMode != AiMode.None);
         }
 
-        if (Extra.AiParams.MaxAiTargetCount == 0)
+        if (Extra.AiParams.Behavior == AiBehaviorMode.Traffic && Extra.AiParams.MaxAiTargetCount == 0)
         {
             Extra.AiParams.MaxAiTargetCount = EntryList.Cars.Count(c => c.AiMode != AiMode.Fixed) * Extra.AiParams.AiPerPlayerTargetCount;
         }

@@ -1,0 +1,19 @@
+# Stage-CmRaceBotServer.ps1 replaces this loopback placeholder with the host LAN address.
+NetworkBindAddress: 127.0.0.1
+UseSteamAuth: false
+EnableUPnP: false
+IgnoreConfigurationErrors:
+  MissingTrackParams: true
+EnableAi: true
+AiParams:
+  Behavior: Race
+  AutoAssignTrafficCars: false
+  HideAiCars: false
+  NamePrefix: Bot
+  MaxSpeedKph: 160
+  Race:
+    Difficulty: 0.75
+    Aggression: 0.50
+    StartSplinePointId: 0
+    GridSpacingMeters: 9
+    UpdateHz: 60

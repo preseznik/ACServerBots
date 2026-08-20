@@ -7,6 +7,7 @@ using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Server.Weather;
 using AssettoServer.Shared.Model;
+using AssettoServer.Shared.Network.Packets.Incoming;
 using AssettoServer.Shared.Network.Packets.Outgoing;
 using AssettoServer.Shared.Utils;
 using AssettoServer.Utils;
@@ -66,6 +67,13 @@ public class AiState : IDisposable
     private float _endIndicatorDistance;
     private float _minObstacleDistance;
     private double _randomTwilight;
+    private RaceSplineLayout? _raceLayout;
+    private RaceLapTracker? _raceLapTracker;
+    private long _raceLapStartedAt;
+    private bool _holdingForRaceStart;
+    private float _lateralOffsetMeters;
+    private float _targetLateralOffsetMeters;
+    private long _overtakeUntil;
 
     private readonly ACServerConfiguration _configuration;
     private readonly SessionManager _sessionManager;
@@ -136,6 +144,10 @@ public class AiState : IDisposable
             fastLaneOffset = _configuration.Extra.AiParams.RightLaneOffsetMs;
         }
         InitialMaxSpeed = _configuration.Extra.AiParams.MaxSpeedMs + fastLaneOffset - (variation / 2) + (float)Random.Shared.NextDouble() * variation;
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+        {
+            InitialMaxSpeed *= RaceBotMath.PaceFactor(_configuration.Extra.AiParams.Race.Difficulty);
+        }
         CurrentSpeed = InitialMaxSpeed;
         TargetSpeed = InitialMaxSpeed;
         MaxSpeed = InitialMaxSpeed;
@@ -187,9 +199,22 @@ public class AiState : IDisposable
         _endIndicatorDistance = 0;
         _lastTick = _sessionManager.ServerTimeMilliseconds;
         _minObstacleDistance = Random.Shared.Next(8, 13);
+        _raceLapTracker = _raceLayout == null
+            ? null
+            : new RaceLapTracker(_configuration.Extra.AiParams.Race.StartSplinePointId, _raceLayout.LengthMeters);
+        _raceLapStartedAt = _sessionManager.ServerTimeMilliseconds;
+        _holdingForRaceStart = false;
+        _lateralOffsetMeters = 0;
+        _targetLateralOffsetMeters = 0;
+        _overtakeUntil = 0;
         SpawnCounter++;
         Initialized = true;
         Update();
+    }
+
+    public void ConfigureRace(RaceSplineLayout layout)
+    {
+        _raceLayout = layout;
     }
 
     private void CalculateTangents()
@@ -234,9 +259,35 @@ public class AiState : IDisposable
                 return false;
             }
 
+            var previousPointId = CurrentSplinePointId;
+            var segmentLength = _currentVecLength;
             CurrentSplinePointId = nextPointId;
             _currentVecLength = (points[nextNextPointId].Position - points[CurrentSplinePointId].Position).Length();
             recalculateTangents = true;
+
+            if (_raceLapTracker != null)
+            {
+                var crossedStart = nextPointId == _configuration.Extra.AiParams.Race.StartSplinePointId;
+                if (_raceLapTracker.ObservePointTransition(previousPointId, nextPointId, segmentLength, movingForward: true))
+                {
+                    var now = _sessionManager.ServerTimeMilliseconds;
+                    var lapTime = (uint)Math.Max(1, now - _raceLapStartedAt);
+                    _raceLapStartedAt = now;
+                    _sessionManager.OnLapCompleted(EntryCar, EntryCar.AiName ?? $"Bot {EntryCar.SessionId}", new LapCompletedIncoming
+                    {
+                        Timestamp = (uint)now,
+                        LapTime = lapTime,
+                        Splits = [],
+                        Cuts = 0,
+                        NumLap = (byte)_raceLapTracker.CompletedLaps
+                    });
+                }
+                else if (crossedStart)
+                {
+                    // The first crossing is the grid launch, not a completed lap.
+                    _raceLapStartedAt = _sessionManager.ServerTimeMilliseconds;
+                }
+            }
 
             if (_junctionPassed)
             {
@@ -383,7 +434,10 @@ public class AiState : IDisposable
                 }
             }
 
-            float maxCorneringSpeedSquared = PhysicsUtils.CalculateMaxCorneringSpeedSquared(point.Radius, EntryCar.AiCorneringSpeedFactor);
+            float maxCorneringSpeedSquared = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                ? RaceBotMath.CorneringSpeedSquared(point.Radius, EntryCar.AiCorneringSpeedFactor,
+                    _configuration.Extra.AiParams.Race.Difficulty)
+                : PhysicsUtils.CalculateMaxCorneringSpeedSquared(point.Radius, EntryCar.AiCorneringSpeedFactor);
             if (maxCorneringSpeedSquared < currentSpeedSquared)
             {
                 float maxCorneringSpeed = MathF.Sqrt(maxCorneringSpeedSquared);
@@ -505,9 +559,13 @@ public class AiState : IDisposable
         var splineLookahead = SplineLookahead();
         var playerObstacle = FindClosestPlayerObstacle();
 
+        bool committedOvertake = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                                 && _sessionManager.ServerTimeMilliseconds < _overtakeUntil
+                                 && _targetLateralOffsetMeters != 0;
+
         ClosestAiObstacleDistance = splineLookahead.ClosestAiState != null ? splineLookahead.ClosestAiStateDistance : -1;
 
-        if (playerObstacle.distance < _minObstacleDistance || splineLookahead.ClosestAiStateDistance < _minObstacleDistance)
+        if (playerObstacle.distance < _minObstacleDistance || (!committedOvertake && splineLookahead.ClosestAiStateDistance < _minObstacleDistance))
         {
             targetSpeed = 0;
             hasObstacle = true;
@@ -528,15 +586,45 @@ public class AiState : IDisposable
                 hasObstacle = true;
             }
         }
-        else if (splineLookahead.ClosestAiState != null)
+        else if (splineLookahead.ClosestAiState != null && !committedOvertake)
         {
             float closestTargetSpeed = Math.Min(splineLookahead.ClosestAiState.CurrentSpeed, splineLookahead.ClosestAiState.TargetSpeed);
+            float followingGap = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                ? RaceBotMath.FollowingGapMeters(CurrentSpeed, _configuration.Extra.AiParams.Race.Aggression)
+                : PhysicsUtils.CalculateBrakingDistance(CurrentSpeed - closestTargetSpeed, EntryCar.AiDeceleration) * 2 + 20;
             if ((closestTargetSpeed < CurrentSpeed || splineLookahead.ClosestAiState.CurrentSpeed == 0)
-                && splineLookahead.ClosestAiStateDistance < PhysicsUtils.CalculateBrakingDistance(CurrentSpeed - closestTargetSpeed, EntryCar.AiDeceleration) * 2 + 20)
+                && splineLookahead.ClosestAiStateDistance < followingGap)
             {
-                targetSpeed = Math.Max(WalkingSpeed, closestTargetSpeed);
-                hasObstacle = true;
+                if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+                {
+                    ref readonly var point = ref _spline.Points[CurrentSplinePointId];
+                    _targetLateralOffsetMeters = RaceBotMath.ChooseOvertakeOffset(
+                        point.SideLeft, point.SideRight, _configuration.Extra.AiParams.Race.Aggression, EntryCar.SessionId);
+                    if (_targetLateralOffsetMeters != 0)
+                    {
+                        _overtakeUntil = _sessionManager.ServerTimeMilliseconds + 2500 + (long)(_configuration.Extra.AiParams.Race.Aggression * 2500);
+                    }
+                    else
+                    {
+                        targetSpeed = RaceBotMath.FollowingTargetSpeed(CurrentSpeed, closestTargetSpeed,
+                            splineLookahead.ClosestAiStateDistance, _configuration.Extra.AiParams.Race.Aggression);
+                        hasObstacle = true;
+                    }
+                }
+                else
+                {
+                    targetSpeed = Math.Max(WalkingSpeed, closestTargetSpeed);
+                    hasObstacle = true;
+                }
             }
+        }
+
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            && _overtakeUntil != 0
+            && _sessionManager.ServerTimeMilliseconds >= _overtakeUntil)
+        {
+            _targetLateralOffsetMeters = 0;
+            _overtakeUntil = 0;
         }
 
         targetSpeed = Math.Min(splineLookahead.MaxSpeed, targetSpeed);
@@ -574,7 +662,12 @@ public class AiState : IDisposable
     {
         if (!ShouldIgnorePlayerObstacles())
         {
-            _stoppedForCollisionUntil = _sessionManager.ServerTimeMilliseconds + Random.Shared.Next(EntryCar.AiMinCollisionStopTimeMilliseconds, EntryCar.AiMaxCollisionStopTimeMilliseconds);
+            var duration = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                ? RaceBotMath.CollisionRecoveryMilliseconds(EntryCar.AiMinCollisionStopTimeMilliseconds,
+                    EntryCar.AiMaxCollisionStopTimeMilliseconds, _configuration.Extra.AiParams.Race.Aggression,
+                    EntryCar.SessionId + (int)_sessionManager.ServerTimeMilliseconds)
+                : Random.Shared.Next(EntryCar.AiMinCollisionStopTimeMilliseconds, EntryCar.AiMaxCollisionStopTimeMilliseconds);
+            _stoppedForCollisionUntil = _sessionManager.ServerTimeMilliseconds + duration;
         }
     }
 
@@ -614,7 +707,7 @@ public class AiState : IDisposable
         SetTargetSpeed(speed, EntryCar.AiDeceleration, EntryCar.AiAcceleration);
     }
 
-    public void Update()
+    public void Update(float? fixedDeltaSeconds = null)
     {
         if (!Initialized)
             return;
@@ -622,8 +715,27 @@ public class AiState : IDisposable
         var ops = _spline.Operations;
 
         long currentTime = _sessionManager.ServerTimeMilliseconds;
-        long dt = currentTime - _lastTick;
+        long dt = fixedDeltaSeconds.HasValue
+            ? (long)Math.Round(fixedDeltaSeconds.Value * 1000)
+            : currentTime - _lastTick;
         _lastTick = currentTime;
+
+        bool raceCountdown = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                             && RaceBotMath.ShouldHoldForCountdown(_sessionManager.CurrentSession.Configuration.Type,
+                                 currentTime, _sessionManager.CurrentSession.StartTimeMilliseconds);
+        if (raceCountdown)
+        {
+            _holdingForRaceStart = true;
+            CurrentSpeed = 0;
+            TargetSpeed = 0;
+            Acceleration = 0;
+            dt = 0;
+        }
+        else if (_holdingForRaceStart)
+        {
+            _holdingForRaceStart = false;
+            SetTargetSpeed(InitialMaxSpeed);
+        }
 
         if (Acceleration != 0)
         {
@@ -660,8 +772,14 @@ public class AiState : IDisposable
         float tyreAngularSpeed = GetTyreAngularSpeed(CurrentSpeed, EntryCar.TyreDiameterMeters);
         byte encodedTyreAngularSpeed =  (byte) (Math.Clamp(MathF.Round(MathF.Log10(tyreAngularSpeed + 1.0f) * 20.0f) * Math.Sign(tyreAngularSpeed), -100.0f, 154.0f) + 100.0f);
 
+        float lateralStep = Math.Max(0, dt / 1000f) * 1.5f;
+        _lateralOffsetMeters = Math.Abs(_targetLateralOffsetMeters - _lateralOffsetMeters) <= lateralStep
+            ? _targetLateralOffsetMeters
+            : _lateralOffsetMeters + Math.Sign(_targetLateralOffsetMeters - _lateralOffsetMeters) * lateralStep;
+        var lateral = Vector3.Cross(Vector3.UnitY, Vector3.Normalize(smoothPos.Tangent));
+
         Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
-        Status.Position = smoothPos.Position with { Y = smoothPos.Position.Y + EntryCar.AiSplineHeightOffsetMeters };
+        Status.Position = (smoothPos.Position + lateral * _lateralOffsetMeters) with { Y = smoothPos.Position.Y + EntryCar.AiSplineHeightOffsetMeters };
         Status.Rotation = rotation;
         Status.Velocity = smoothPos.Tangent * CurrentSpeed;
         Status.SteerAngle = 127;

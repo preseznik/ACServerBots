@@ -13,6 +13,7 @@ public class EntryCarResult
     public uint LastLap { get; set; } = 999999999;
     public bool HasCompletedLastLap { get; set; } = false;
     public uint RacePos { get; set; } = 0;
+    public bool IsDnf { get; set; }
 
     public EntryCarResult(IClient? client)
     {
@@ -22,5 +23,13 @@ public class EntryCarResult
         Name = client.Name ?? "";
         Team = client.Team ?? "";
         NationCode = client.NationCode ?? "";
+    }
+
+    public EntryCarResult(ulong guid, string name, string team = "", string nationCode = "")
+    {
+        Guid = guid;
+        Name = name;
+        Team = team;
+        NationCode = nationCode;
     }
 }

@@ -13,6 +13,13 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 .When(x => x.EnableACProSupport)
                 .WithMessage("Can't use SteamAuth with ACPro support enabled");
             extra.RuleFor(x => x.ValidateDlcOwnership).NotNull();
+            extra.RuleFor(x => x.NetworkBindAddress)
+                .Must(PrivateNetworkAddress.IsValid)
+                .WithMessage("NetworkBindAddress must be an IPv4 address");
+            extra.RuleFor(x => x.NetworkBindAddress)
+                .Must(PrivateNetworkAddress.IsPrivateIpv4)
+                .When(x => x.AiParams.Behavior == AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race)
+                .WithMessage("Race bot V1 is LAN-only; NetworkBindAddress must be a private IPv4 address");
             extra.RuleFor(x => x.ServerDescription).NotNull();
             extra.RuleFor(x => x.RainTrackGripReductionPercent).InclusiveBetween(0, 0.5);
             extra.RuleFor(x => x.IgnoreConfigurationErrors).NotNull();
@@ -32,6 +39,20 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 aiParams.RuleFor(ai => ai.DefaultAcceleration).GreaterThan(0);
                 aiParams.RuleFor(ai => ai.DefaultDeceleration).GreaterThan(0);
                 aiParams.RuleFor(ai => ai.NamePrefix).NotNull();
+                aiParams.RuleFor(ai => ai.Race).NotNull();
+                aiParams.RuleFor(ai => ai.Race.Difficulty).InclusiveBetween(0, 1);
+                aiParams.RuleFor(ai => ai.Race.Aggression).InclusiveBetween(0, 1);
+                aiParams.RuleFor(ai => ai.Race.StartSplinePointId).GreaterThanOrEqualTo(0);
+                aiParams.RuleFor(ai => ai.Race.GridSpacingMeters).GreaterThan(0);
+                aiParams.RuleFor(ai => ai.Race.UpdateHz).InclusiveBetween(10, 120);
+                aiParams.RuleFor(ai => ai.HideAiCars)
+                    .Equal(false)
+                    .When(ai => ai.Behavior == AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race)
+                    .WithMessage("Race bots must remain visible to clients; set HideAiCars to false");
+                aiParams.RuleFor(ai => ai.HourlyTrafficDensity)
+                    .Null()
+                    .When(ai => ai.Behavior == AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race)
+                    .WithMessage("HourlyTrafficDensity is a traffic-only setting and cannot be combined with race bots");
                 aiParams.RuleFor(ai => ai.IgnoreObstaclesAfterSeconds).GreaterThanOrEqualTo(0);
                 aiParams.RuleFor(ai => ai.HourlyTrafficDensity)
                     .Must(htd => htd?.Count == 24)

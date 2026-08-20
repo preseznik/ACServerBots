@@ -147,11 +147,11 @@ public partial class EntryCar
         }
     }
 
-    public void AiUpdate()
+    public void AiUpdate(float? fixedDeltaSeconds = null)
     {
         foreach (var aiState in AiStatesSpan)
         {
-            aiState?.Update();
+            aiState?.Update(fixedDeltaSeconds);
         }
     }
 
@@ -356,6 +356,24 @@ public partial class EntryCar
         }
 
         TargetAiStateCount = count;
+    }
+
+    public AiState PrepareSingleAiState(int pointId, RaceSplineLayout raceLayout)
+    {
+        AiReset();
+        TargetAiStateCount = 1;
+        var state = _aiStates[0] ?? throw new InvalidOperationException("Failed to create AI state");
+        state.ConfigureRace(raceLayout);
+        state.Teleport(pointId);
+        return state;
+    }
+
+    public void DespawnAiStates()
+    {
+        foreach (var state in AiStatesSpan)
+        {
+            state?.Despawn();
+        }
     }
 
     private void AiReset()

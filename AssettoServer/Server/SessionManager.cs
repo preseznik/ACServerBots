@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Kunos;
+using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Server.Weather;
 using AssettoServer.Shared.Model;
 using AssettoServer.Shared.Network.Packets.Incoming;
@@ -120,15 +121,26 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         }
     }
 
-    public bool OnLapCompleted(ACTcpClient client, LapCompletedIncoming lap)
+    public LapCompletedOutgoing? OnLapCompleted(EntryCar entryCar, string participantName, LapCompletedIncoming lap, uint latencyMilliseconds = 0)
+    {
+        _configuration.Server.DynamicTrack.TotalLapCount++;
+        if (!RecordLap(entryCar, participantName, lap, latencyMilliseconds))
+            return null;
+
+        var packet = CreateLapCompletedPacket(entryCar.SessionId, lap.LapTime, lap.Cuts);
+        _entryCarManager.BroadcastPacket(packet);
+        return packet;
+    }
+
+    private bool RecordLap(EntryCar entryCar, string participantName, LapCompletedIncoming lap, uint latencyMilliseconds)
     {
         int timestamp = (int)ServerTimeMilliseconds;
 
-        var entryCarResult = CurrentSession.Results?[client.SessionId] ?? throw new InvalidOperationException("Current session does not have results set");
+        var entryCarResult = CurrentSession.Results?[entryCar.SessionId] ?? throw new InvalidOperationException("Current session does not have results set");
 
         if (entryCarResult.HasCompletedLastLap)
         {
-            Log.Debug("Lap rejected by {ClientName}, already finished", client.Name);
+            Log.Debug("Lap rejected by {ParticipantName}, already finished", participantName);
             return false;
         }
 
@@ -136,17 +148,17 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             && entryCarResult.NumLaps >= CurrentSession.Configuration.Laps
             && !CurrentSession.Configuration.IsTimedRace)
         {
-            Log.Debug("Lap rejected by {ClientName}, race over", client.Name);
+            Log.Debug("Lap rejected by {ParticipantName}, race over", participantName);
             return false;
         }
 
-        Log.Information("Lap completed by {ClientName}, {NumCuts} cuts, laptime {LapTime}", client.Name, lap.Cuts, TimeSpan.FromMilliseconds(lap.LapTime).ToString(@"mm\:ss\.ffff"));
+        Log.Information("Lap completed by {ParticipantName}, {NumCuts} cuts, laptime {LapTime}", participantName, lap.Cuts, TimeSpan.FromMilliseconds(lap.LapTime).ToString(@"mm\:ss\.ffff"));
 
         if (CurrentSession.Configuration.Type == SessionType.Race || lap.Cuts == 0)
         {
             entryCarResult.LastLap = lap.LapTime;
             entryCarResult.NumLaps++;
-            entryCarResult.TotalTime = (uint)(CurrentSession.SessionTimeMilliseconds - client.EntryCar.Ping / 2);
+            entryCarResult.TotalTime = (uint)Math.Max(0, CurrentSession.SessionTimeMilliseconds - latencyMilliseconds / 2);
 
             if (lap.LapTime < entryCarResult.BestLap)
             {
@@ -161,9 +173,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
             if (CurrentSession.Configuration.Type == SessionType.Race)
             {
-                foreach (var res in CurrentSession.Results
-                             .OrderByDescending(car => car.Value.NumLaps)
-                             .ThenBy(car => car.Value.TotalTime)
+                foreach (var res in RaceParticipantPolicy.OrderClassification(CurrentSession.Results)
                              .Select((x, i) => new { Car = x, Index = i }) )
                 {
                     res.Car.Value.RacePos = (uint)res.Index;
@@ -253,6 +263,60 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         return false;
     }
 
+    public LapCompletedOutgoing CreateLapCompletedPacket(byte sessionId, uint lapTime, int cuts)
+    {
+        if (CurrentSession.Results == null)
+            throw new InvalidOperationException("Current session does not have results set");
+
+        var laps = BuildClassificationLaps(CurrentSession.Results, CurrentSession.Configuration.Type);
+
+        return new LapCompletedOutgoing
+        {
+            SessionId = sessionId,
+            LapTime = lapTime,
+            Cuts = (byte)cuts,
+            Laps = laps,
+            TrackGrip = _weatherManager.Value.CurrentWeather.TrackGrip
+        };
+    }
+
+    internal static LapCompletedOutgoing.CompletedLap[] BuildClassificationLaps(
+        IReadOnlyDictionary<byte, EntryCarResult> results, SessionType sessionType)
+    {
+        return results
+            .OrderBy(result => string.IsNullOrEmpty(result.Value.Name))
+            .ThenBy(result => result.Value.Name)
+            .Select(result => new LapCompletedOutgoing.CompletedLap
+            {
+                SessionId = result.Key,
+                LapTime = sessionType == SessionType.Race ? result.Value.TotalTime : result.Value.BestLap,
+                NumLaps = (ushort)result.Value.NumLaps,
+                HasCompletedLastLap = (byte)(result.Value.HasCompletedLastLap ? 1 : 0),
+                RacePos = (byte)result.Value.RacePos,
+            })
+            .OrderBy(result => result.RacePos)
+            .ToArray();
+    }
+
+    public void MarkParticipantDnf(EntryCar entryCar, string participantName)
+    {
+        var results = CurrentSession.Results;
+        if (results == null || !results.TryGetValue(entryCar.SessionId, out var result))
+            return;
+
+        if (string.IsNullOrEmpty(result.Name))
+            result.Name = participantName;
+        result.IsDnf = true;
+        result.HasCompletedLastLap = true;
+
+        int position = 0;
+        foreach (var classified in RaceParticipantPolicy.OrderClassification(results))
+            classified.Value.RacePos = (uint)position++;
+
+        _entryCarManager.BroadcastPacket(CreateLapCompletedPacket(entryCar.SessionId, result.LastLap, 0));
+        Log.Information("{ParticipantName} classified DNF after {CompletedLaps} laps", participantName, result.NumLaps);
+    }
+
     private bool IsSessionOver()
     {
         if (CurrentSession.Configuration.Infinite)
@@ -271,7 +335,9 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             return false;
         }
 
-        var connectedCount = _entryCarManager.ConnectedCars.Count;
+        var connectedCount = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            ? _entryCarManager.EntryCars.Count(car => car.AiControlled || car.Client is { HasSentFirstUpdate: true })
+            : _entryCarManager.ConnectedCars.Count;
         
         switch (CurrentSession.Configuration.IsOpen)
         {
@@ -294,7 +360,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
     private void CalcOverTime()
     {
-        if (_entryCarManager.EntryCars.All(c => c.Client == null))
+        if (_entryCarManager.EntryCars.All(c => c.Client == null && !c.AiControlled))
         {
             CurrentSession.OverTimeMilliseconds = 0;
             return;
@@ -308,8 +374,12 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
             if (CurrentSession.OverTimeMilliseconds == overTimeMilliseconds)
             {
-                if (_entryCarManager.EntryCars.Where(c => c.Client is { HasSentFirstUpdate: true })
-                    .Any(car => CurrentSession.Results?[car.SessionId] is { HasCompletedLastLap: false }))
+                var participants = _entryCarManager.EntryCars
+                    .Where(car => CurrentSession.Results?.ContainsKey(car.SessionId) == true)
+                    .Select(car => (
+                        Active: car.AiControlled || car.Client is { HasSentFirstUpdate: true },
+                        Result: CurrentSession.Results![car.SessionId]));
+                if (RaceParticipantPolicy.HasUnfinishedActiveParticipant(participants))
                 {
                     return;
                 }
@@ -356,7 +426,12 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
         foreach (var entryCar in _entryCarManager.EntryCars)
         {
-            CurrentSession.Results?.Add(entryCar.SessionId, new EntryCarResult(entryCar.Client));
+            var result = entryCar.Client != null
+                ? new EntryCarResult(entryCar.Client)
+                : entryCar.AiControlled
+                    ? new EntryCarResult((1UL << 63) | entryCar.SessionId, entryCar.AiName ?? $"Bot {entryCar.SessionId}")
+                    : new EntryCarResult(null);
+            CurrentSession.Results.Add(entryCar.SessionId, result);
         }
 
         var sessionLength = CurrentSession.Configuration switch

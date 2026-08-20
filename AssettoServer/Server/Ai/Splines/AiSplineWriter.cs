@@ -16,7 +16,7 @@ public class AiSplineWriter
 
         file.Write(new AiSplineHeader
         {
-            Version = 1,
+            Version = AiSpline.SupportedVersion,
             NumPoints = map.Points.Length,
             NumJunctions = map.Junctions.Count,
             NumKdTreePoints = treePoints.Length

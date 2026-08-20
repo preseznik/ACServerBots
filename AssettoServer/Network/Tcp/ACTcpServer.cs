@@ -23,7 +23,7 @@ public class ACTcpServer : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         Log.Information("Starting TCP server on port {TcpPort}", _configuration.Server.TcpPort);
-        using var listener = new TcpListener(IPAddress.Any, _configuration.Server.TcpPort);
+        using var listener = new TcpListener(IPAddress.Parse(_configuration.Extra.NetworkBindAddress), _configuration.Server.TcpPort);
         listener.Start();
 
         while (!stoppingToken.IsCancellationRequested)

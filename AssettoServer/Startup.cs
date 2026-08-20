@@ -29,6 +29,7 @@ using AssettoServer.Server.Whitelist;
 using Autofac;
 using JetBrains.Annotations;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
@@ -158,6 +159,9 @@ public class Startup
     // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddDataProtection()
+            .PersistKeysToFileSystem(new DirectoryInfo(Path.Join(AppContext.BaseDirectory, "data-protection-keys")))
+            .SetApplicationName("AssettoServer");
         services.Configure<HostOptions>(options =>
         {
             options.ShutdownTimeout = TimeSpan.FromSeconds(5);

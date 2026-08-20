@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Ai.Splines;
+using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Server.Blacklist;
 using AssettoServer.Server.GeoParams;
 using AssettoServer.Server.Whitelist;
@@ -238,7 +239,9 @@ public class ACServer : BackgroundService, IHostedLifecycleService
                     }
                 }
 
-                if (_entryCarManager.ConnectedCars.Count > 0)
+                if (_entryCarManager.ConnectedCars.Count > 0
+                    || (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                        && _entryCarManager.EntryCars.Any(car => car.AiControlled)))
                 {
                     long tickDelta;
                     do
@@ -292,7 +295,7 @@ public class ACServer : BackgroundService, IHostedLifecycleService
 
     public Task StartedAsync(CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrEmpty(_geoParamsManager.GeoParams.Ip))
+        if (_configuration.Server.RegisterToLobby && !string.IsNullOrEmpty(_geoParamsManager.GeoParams.Ip))
         {
             Log.Information("Invite link: {ServerInviteLink}", $"https://acstuff.club/s/q:race/online/join?ip={_geoParamsManager.GeoParams.Ip}&httpPort={_configuration.Server.HttpPort}");
         }

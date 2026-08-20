@@ -18,6 +18,8 @@ public class ACExtraConfiguration
     public uint? MinimumCSPVersion { get; init; } = CSPVersion.V0_2_0;
     [YamlMember(Description = "Enable Steam ticket validation. Requires CSP 0.1.75+ and a recent version of Content Manager")]
     public bool UseSteamAuth { get; init; } = false;
+    [YamlMember(Description = "IPv4 address used by HTTP, TCP and UDP listeners. Use 0.0.0.0 for all interfaces.")]
+    public string NetworkBindAddress { get; init; } = "0.0.0.0";
     [YamlMember(Description = "Enable generation of Guid from name instead of SteamID. Required for ACPro", DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
     public bool EnableACProSupport { get; init; } = false;
     [YamlMember(Description = "Steam Web API key for Steam authentication. You only need this on platforms that don't support Steam natively (e.g. ARM64)", DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]

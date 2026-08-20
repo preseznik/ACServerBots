@@ -54,7 +54,7 @@ public class ACUdpServer : BackgroundService
 
         _socket.DisableUdpIcmpExceptions();       
         _socket.ReceiveTimeout = 1000;
-        _socket.Bind(new IPEndPoint(IPAddress.Any, _port));
+        _socket.Bind(new IPEndPoint(IPAddress.Parse(_configuration.Extra.NetworkBindAddress), _port));
         await Task.Factory.StartNew(() => ReceiveLoop(stoppingToken), TaskCreationOptions.LongRunning);
     }
 

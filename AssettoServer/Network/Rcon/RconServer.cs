@@ -23,7 +23,7 @@ public class RconServer : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         Log.Information("Starting RCON server on port {TcpPort}", _configuration.Extra.RconPort);
-        using var listener = new TcpListener(IPAddress.Any, _configuration.Extra.RconPort);
+        using var listener = new TcpListener(IPAddress.Parse(_configuration.Extra.NetworkBindAddress), _configuration.Extra.RconPort);
         listener.Start();
 
         while (!stoppingToken.IsCancellationRequested)
