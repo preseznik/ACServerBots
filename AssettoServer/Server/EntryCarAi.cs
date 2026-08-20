@@ -49,6 +49,7 @@ public partial class EntryCar
     public int? MaxAiSafetyDistanceMetersSquared { get; set; }
     public List<LaneSpawnBehavior>? AiAllowedLanes { get; set; }
     public float TyreDiameterMeters { get; set; }
+    public RaceBotVehicleProfile? RaceVehicleProfile { get; private set; }
     
     // Theoretically, this list should never include null values. Since we access it as a Span later, we might catch a null anyway
     // when it is updated concurrently
@@ -81,6 +82,27 @@ public partial class EntryCar
         AiMaxSpawnProtectionTimeMilliseconds = _configuration.Extra.AiParams.MaxSpawnProtectionTimeMilliseconds;
         AiMinCollisionStopTimeMilliseconds = _configuration.Extra.AiParams.MinCollisionStopTimeMilliseconds;
         AiMaxCollisionStopTimeMilliseconds = _configuration.Extra.AiParams.MaxCollisionStopTimeMilliseconds;
+
+        RaceVehicleProfile = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            ? _configuration.Extra.AiParams.Race.VehicleProfiles.Find(profile =>
+                string.Equals(profile.Model, Model, StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (RaceVehicleProfile != null)
+        {
+            AiIdleEngineRpm = RaceVehicleProfile.EngineIdleRpm;
+            AiMaxEngineRpm = RaceVehicleProfile.EngineMaxRpm;
+            AiAcceleration = 100 / 3.6f / RaceVehicleProfile.ZeroToHundredSeconds;
+            AiDeceleration = RaceVehicleProfile.MaxBrakeDeceleration;
+            AiCorneringSpeedFactor *= RaceVehicleProfile.LateralGripG;
+            TyreDiameterMeters = RaceVehicleProfile.TyreDiameterMeters;
+            Logger.Debug("Using {Source} race vehicle profile: {MassKg} kg, {PowerKw} kW, {TopSpeedKph} km/h",
+                RaceVehicleProfile.Source, RaceVehicleProfile.MassKg, RaceVehicleProfile.PowerKw,
+                RaceVehicleProfile.TopSpeedKph);
+        }
+        else if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+        {
+            Logger.Warning("No race vehicle profile found; using legacy global AI parameters");
+        }
 
         foreach (var carOverrides in _configuration.Extra.AiParams.CarSpecificOverrides)
         {

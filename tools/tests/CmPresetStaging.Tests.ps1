@@ -30,13 +30,22 @@ try {
     $publishedRoot = Join-Path $testRoot 'published'
     $outputRoot = Join-Path $testRoot 'staged'
     $carRoot = Join-Path $gameRoot 'content\cars\test_car'
+    $secondCarRoot = Join-Path $gameRoot 'content\cars\second_car'
     $trackRoot = Join-Path $gameRoot 'content\tracks\test_track'
     @($cmPreset, $publishedRoot, (Join-Path $carRoot 'skins\skin_0'), (Join-Path $carRoot 'skins\skin_1'),
-        (Join-Path $carRoot 'skins\skin_2'), (Join-Path $trackRoot 'test_layout\ai'), (Join-Path $trackRoot 'ui\test_layout')) |
+        (Join-Path $secondCarRoot 'skins\skin_1'), (Join-Path $carRoot 'skins\skin_2'),
+        (Join-Path $carRoot 'ui'), (Join-Path $secondCarRoot 'ui'),
+        (Join-Path $trackRoot 'test_layout\ai'), (Join-Path $trackRoot 'ui\test_layout')) |
         ForEach-Object { New-Item -ItemType Directory -Path $_ -Force | Out-Null }
 
     Set-Content -LiteralPath (Join-Path $publishedRoot 'AssettoServer.exe') -Value 'test executable'
     Set-Content -LiteralPath (Join-Path $carRoot 'data.acd') -Value 'test checksum source'
+    Set-Content -LiteralPath (Join-Path $secondCarRoot 'data.acd') -Value 'second checksum source'
+    Set-Content -LiteralPath (Join-Path $carRoot 'ui\ui_car.json') -Value '{"specs":{"bhp":"100 bhp","weight":"1,000 kg","topspeed":"180 km/h","acceleration":"10 s"},"powerCurve":[[1000,20],[6500,100]]}'
+    Set-Content -LiteralPath (Join-Path $secondCarRoot 'ui\ui_car.json') -Value @'
+{"description":"metadata with a literal
+newline","specs":{"bhp":"300 bhp","weight":"1400 kg","topspeed":"260 km/h","acceleration":"5.5 s"},"powerCurve":[[1000,30],[8000,300]]}
+'@
     Set-Content -LiteralPath (Join-Path $trackRoot 'test_layout\ai\fast_lane.ai') -Value 'test closed spline'
     Set-Content -LiteralPath (Join-Path $trackRoot 'ui\test_layout\ui_track.json') -Value '{"pitboxes": 8}'
     Set-Content -LiteralPath (Join-Path $cmPreset 'server_cfg.ini') -Value @'
@@ -76,7 +85,7 @@ MODEL=test_car
 SKIN=skin_0
 
 [CAR_1]
-MODEL=test_car
+MODEL=second_car
 SKIN=skin_1
 
 [CAR_2]
@@ -96,9 +105,19 @@ SKIN=skin_2
     Assert-True ((Read-IniValue $stagedCfg RACE WAIT_TIME) -eq '31') 'CM race wait time should be preserved'
     Assert-True ((Read-IniValue $stagedCfg RACE IS_OPEN) -eq '1') 'race should be open for mid-race takeover'
     Assert-True ((Read-IniValue $stagedCfg SERVER REGISTER_TO_LOBBY) -eq '0') 'LAN staging should disable lobby registration'
+    Assert-True ((Read-IniValue $stagedCfg SERVER CARS) -eq 'second_car;test_car') 'advertised cars should include every selected model'
     Assert-True ((Read-IniValue $stagedEntries CAR_0 AI) -eq 'none') 'first entry should be human-only'
     Assert-True ((Read-IniValue $stagedEntries CAR_1 AI) -eq 'none') 'second entry should be human-only'
     Assert-True ((Read-IniValue $stagedEntries CAR_2 AI) -eq 'auto') 'entries beyond the human allocation should become replaceable bots'
+    $stagedExtra = Get-Content -Raw -LiteralPath (Join-Path $outputRoot 'presets\test-dynamic\extra_cfg.yml')
+    Assert-True ($stagedExtra.Contains('Model: test_car')) 'mixed grids should include the first car profile'
+    Assert-True ($stagedExtra.Contains('Model: second_car')) 'mixed grids should include the second car profile'
+    Assert-True ($stagedExtra.Contains('TopSpeedKph: 180')) 'the first profile should preserve its top speed'
+    Assert-True ($stagedExtra.Contains('TopSpeedKph: 260')) 'the second profile should preserve its top speed'
+    Assert-True ($stagedExtra.Contains('MassKg: 1000')) 'thousands separators should not be parsed as decimal mass'
+    Assert-True ($stagedExtra.Contains('PowerKw: 74.57')) 'horsepower should retain decimal precision when converted to kW'
+    Assert-True ($stagedExtra.Contains('ZeroToHundredSeconds: 5.5')) 'acceleration metadata should retain decimal precision'
+    Assert-True ($stagedExtra.Contains('EngineMaxRpm: 8000')) 'RPM should be recovered from permissive CM metadata'
 
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $outputRoot 'race-bot-manifest.json') | ConvertFrom-Json
     Assert-True ($manifest.sourceMode -eq 'currentCmPreset') 'manifest should identify automatic CM discovery'
@@ -106,6 +125,8 @@ SKIN=skin_2
     Assert-True ($manifest.advertisedSlots -eq 3) 'zero BotSlots should use all remaining CM entries'
     Assert-True ($manifest.humanSlots -eq 2) 'automatic staging should reserve two human slots'
     Assert-True ($manifest.botSlots -eq 1) 'the remaining CM entry should become a bot'
+    Assert-True ($manifest.models.Count -eq 2) 'mixed car models should be retained'
+    Assert-True ($manifest.vehicleProfiles.Count -eq 2) 'the manifest should include one vehicle profile per model'
     Assert-True ($manifest.preservedCmEventSettings -eq $true) 'manifest should record preserved CM settings'
 
     Copy-Item -LiteralPath $cmPreset -Destination (Join-Path $presetsRoot 'SERVER_01') -Recurse

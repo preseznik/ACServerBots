@@ -136,14 +136,21 @@ public class AiState : IDisposable
 
     private void SetRandomSpeed()
     {
-        float variation = _configuration.Extra.AiParams.MaxSpeedMs * _configuration.Extra.AiParams.MaxSpeedVariationPercent;
+        float configuredMaxSpeed = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                                   && EntryCar.RaceVehicleProfile != null
+            ? EntryCar.RaceVehicleProfile.TopSpeedMs
+            : _configuration.Extra.AiParams.MaxSpeedMs;
+        float variation = configuredMaxSpeed * _configuration.Extra.AiParams.MaxSpeedVariationPercent;
 
         float fastLaneOffset = 0;
-        if (_spline.Points[CurrentSplinePointId].LeftId >= 0)
+        if (_configuration.Extra.AiParams.Behavior != AiBehaviorMode.Race
+            && _spline.Points[CurrentSplinePointId].LeftId >= 0)
         {
             fastLaneOffset = _configuration.Extra.AiParams.RightLaneOffsetMs;
         }
-        InitialMaxSpeed = _configuration.Extra.AiParams.MaxSpeedMs + fastLaneOffset - (variation / 2) + (float)Random.Shared.NextDouble() * variation;
+        InitialMaxSpeed = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            ? configuredMaxSpeed - variation + (float)Random.Shared.NextDouble() * variation
+            : configuredMaxSpeed + fastLaneOffset - (variation / 2) + (float)Random.Shared.NextDouble() * variation;
         if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
         {
             InitialMaxSpeed *= RaceBotMath.PaceFactor(_configuration.Extra.AiParams.Race.Difficulty);
@@ -737,7 +744,15 @@ public class AiState : IDisposable
             SetTargetSpeed(InitialMaxSpeed);
         }
 
-        if (Acceleration != 0)
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            && EntryCar.RaceVehicleProfile != null)
+        {
+            var step = RaceBotVehicleDynamics.Step(CurrentSpeed, TargetSpeed, dt / 1000f,
+                EntryCar.RaceVehicleProfile);
+            CurrentSpeed = step.SpeedMetersPerSecond;
+            Acceleration = step.AccelerationMetersPerSecondSquared;
+        }
+        else if (Acceleration != 0)
         {
             CurrentSpeed += Acceleration * (dt / 1000.0f);
                 
@@ -788,14 +803,24 @@ public class AiState : IDisposable
         Status.TyreAngularSpeed[1] = encodedTyreAngularSpeed;
         Status.TyreAngularSpeed[2] = encodedTyreAngularSpeed;
         Status.TyreAngularSpeed[3] = encodedTyreAngularSpeed;
-        Status.EngineRpm = (ushort)MathUtils.Lerp(EntryCar.AiIdleEngineRpm, EntryCar.AiMaxEngineRpm, CurrentSpeed / _configuration.Extra.AiParams.MaxSpeedMs);
+        if (EntryCar.RaceVehicleProfile != null)
+        {
+            var telemetry = RaceBotVehicleDynamics.GetTelemetry(CurrentSpeed, EntryCar.RaceVehicleProfile);
+            Status.EngineRpm = telemetry.EngineRpm;
+            Status.Gear = telemetry.ProtocolGear;
+        }
+        else
+        {
+            Status.EngineRpm = (ushort)MathUtils.Lerp(EntryCar.AiIdleEngineRpm, EntryCar.AiMaxEngineRpm,
+                CurrentSpeed / _configuration.Extra.AiParams.MaxSpeedMs);
+            Status.Gear = 2;
+        }
         Status.StatusFlag = GetLights(_configuration.Extra.AiParams.EnableDaytimeLights, _weatherManager.CurrentSunPosition, _randomTwilight)
                             | (_sessionManager.ServerTimeMilliseconds < _stoppedForCollisionUntil || CurrentSpeed < 20 / 3.6f ? CarStatusFlags.HazardsOn : 0)
                             | (CurrentSpeed == 0 || Acceleration < 0 ? CarStatusFlags.BrakeLightsOn : 0)
                             | (_stoppedForObstacle && _sessionManager.ServerTimeMilliseconds > _obstacleHonkStart && _sessionManager.ServerTimeMilliseconds < _obstacleHonkEnd ? CarStatusFlags.Horn : 0)
                             | GetWiperSpeed(_weatherManager.CurrentWeather.RainIntensity)
                             | _indicator;
-        Status.Gear = 2;
     }
         
     private static float GetTyreAngularSpeed(float speed, float wheelDiameter)

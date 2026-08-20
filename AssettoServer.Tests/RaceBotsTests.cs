@@ -2,6 +2,7 @@ using AssettoServer.Server;
 using AssettoServer.Server.Ai;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Shared.Model;
 
 namespace AssettoServer.Tests;
@@ -173,6 +174,64 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void VehicleProfilesProduceDifferentAccelerationAndBoundedTopSpeeds()
+    {
+        var cityCar = Profile("city", 715, 33.6f, 135, 19.5f, 6300);
+        var sportsCar = Profile("sports", 1200, 177.5f, 248, 7.4f, 7250);
+
+        float citySpeed = SimulateAcceleration(cityCar, 10);
+        float sportsSpeed = SimulateAcceleration(sportsCar, 10);
+        float cityLongRunSpeed = SimulateAcceleration(cityCar, 120);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sportsSpeed, Is.GreaterThan(citySpeed + 8), "per-model profiles must change bot pace");
+            Assert.That(cityLongRunSpeed, Is.LessThanOrEqualTo(cityCar.TopSpeedMs + 0.01f));
+            Assert.That(cityLongRunSpeed, Is.GreaterThan(cityCar.TopSpeedMs * 0.9f));
+        });
+    }
+
+    [Test]
+    public void VehicleDynamicsBrakesWithoutOvershootAndReportsChangingGears()
+    {
+        var profile = Profile("test", 1200, 150, 240, 7, 7000);
+        var step = RaceBotVehicleDynamics.Step(30, 10, 5, profile);
+        var lowSpeed = RaceBotVehicleDynamics.GetTelemetry(5, profile);
+        var highSpeed = RaceBotVehicleDynamics.GetTelemetry(60, profile);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(step.SpeedMetersPerSecond, Is.EqualTo(10));
+            Assert.That(step.AccelerationMetersPerSecondSquared, Is.Zero);
+            Assert.That(highSpeed.ProtocolGear, Is.GreaterThan(lowSpeed.ProtocolGear));
+            Assert.That(lowSpeed.EngineRpm, Is.InRange((ushort)profile.EngineIdleRpm, (ushort)profile.EngineMaxRpm));
+            Assert.That(highSpeed.EngineRpm, Is.InRange((ushort)profile.EngineIdleRpm, (ushort)profile.EngineMaxRpm));
+        });
+    }
+
+    [Test]
+    public void VehicleDynamicsUsesPowerToWeightAboveLaunchSpeeds()
+    {
+        var lowPower = Profile("low-power", 1400, 80, 250, 7, 7000);
+        var highPower = Profile("high-power", 1000, 300, 250, 7, 7000);
+
+        var lowPowerStep = RaceBotVehicleDynamics.Step(40, lowPower.TopSpeedMs, 1, lowPower);
+        var highPowerStep = RaceBotVehicleDynamics.Step(40, highPower.TopSpeedMs, 1, highPower);
+
+        Assert.That(highPowerStep.SpeedMetersPerSecond,
+            Is.GreaterThan(lowPowerStep.SpeedMetersPerSecond + 1));
+    }
+
+    [Test]
+    public void VehicleDynamicsTracksReportedZeroToHundredTime()
+    {
+        var profile = Profile("reported-acceleration", 715, 33.6f, 135, 19.5f, 6300);
+        float measuredSeconds = SimulateTimeToSpeed(profile, 100 / 3.6f);
+
+        Assert.That(measuredSeconds, Is.EqualTo(profile.ZeroToHundredSeconds).Within(0.1f));
+    }
+
+    [Test]
     public void ClassificationPacketIncludesBotLapAndPositionsForEveryClient()
     {
         var results = new Dictionary<byte, EntryCarResult>
@@ -196,6 +255,45 @@ public class RaceBotsTests
 
     private static EntryCarResult Result(string name, uint laps, uint total, bool dnf = false)
         => new(1, name) { NumLaps = laps, TotalTime = total, IsDnf = dnf };
+
+    private static RaceBotVehicleProfile Profile(string model, float massKg, float powerKw, float topSpeedKph,
+        float zeroToHundredSeconds, int engineMaxRpm)
+        => new()
+        {
+            Model = model,
+            Source = "test",
+            MassKg = massKg,
+            PowerKw = powerKw,
+            TopSpeedKph = topSpeedKph,
+            ZeroToHundredSeconds = zeroToHundredSeconds,
+            EngineMaxRpm = engineMaxRpm
+        };
+
+    private static float SimulateAcceleration(RaceBotVehicleProfile profile, float seconds)
+    {
+        float speed = 0;
+        const float deltaSeconds = 1f / 60;
+        for (int i = 0; i < seconds / deltaSeconds; i++)
+        {
+            speed = RaceBotVehicleDynamics.Step(speed, profile.TopSpeedMs, deltaSeconds, profile)
+                .SpeedMetersPerSecond;
+        }
+        return speed;
+    }
+
+    private static float SimulateTimeToSpeed(RaceBotVehicleProfile profile, float targetSpeed)
+    {
+        float speed = 0;
+        float elapsed = 0;
+        const float deltaSeconds = 1f / 60;
+        while (speed < targetSpeed && elapsed < 120)
+        {
+            speed = RaceBotVehicleDynamics.Step(speed, profile.TopSpeedMs, deltaSeconds, profile)
+                .SpeedMetersPerSecond;
+            elapsed += deltaSeconds;
+        }
+        return elapsed;
+    }
 
     private static SplinePoint[] CreateClosedSpline(int count, float segmentLength)
     {

@@ -93,6 +93,120 @@ function Add-IniCarClone([string] $Path, [string] $SourceSection, [string] $Dest
     Set-IniValue $Path $DestinationSection 'AI' 'none'
 }
 
+function Get-FirstNumber([object] $Value, [double] $Fallback) {
+    if ($null -eq $Value) { return $Fallback }
+    $match = [regex]::Match(([string]$Value), '[-+]?\d+(?:[\.,]\d+)?')
+    if (-not $match.Success) { return $Fallback }
+    $numberText = $match.Value
+    if ($numberText -match '^[-+]?\d{1,3},\d{3}$') {
+        $numberText = $numberText.Replace(',', '')
+    } else {
+        $numberText = $numberText.Replace(',', '.')
+    }
+    $parsed = 0.0
+    if (-not [double]::TryParse($numberText, [Globalization.NumberStyles]::Float,
+        [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) { return $Fallback }
+    return $parsed
+}
+
+function Get-JsonPropertyText([string] $Json, [string] $Property) {
+    $pattern = '"' + [regex]::Escape($Property) + '"\s*:\s*(?:"([^"]*)"|([^,\r\n\}]+))'
+    $match = [regex]::Match($Json, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $match.Success) { return $null }
+    return $(if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value.Trim() })
+}
+
+function Get-RaceBotVehicleProfile([string] $Model, [string] $CarRoot) {
+    $source = 'fallback'
+    $massKg = 1200.0
+    $powerKw = 110.0
+    $topSpeedKph = 200.0
+    $zeroToHundredSeconds = 8.0
+    $engineMaxRpm = 7000
+    $uiCarPath = Join-Path $CarRoot 'ui\ui_car.json'
+
+    if (Test-Path -LiteralPath $uiCarPath -PathType Leaf) {
+        $rawMetadata = Get-Content -Raw -LiteralPath $uiCarPath
+        try {
+            $metadata = $rawMetadata | ConvertFrom-Json
+            $source = 'ui_car.json'
+            if ($null -ne $metadata.specs) {
+                $weightText = [string]$metadata.specs.weight
+                $massKg = Get-FirstNumber $weightText $massKg
+                if ($weightText -match '(?i)\blb') { $massKg *= 0.45359237 }
+
+                $powerText = [string]$metadata.specs.bhp
+                $powerValue = Get-FirstNumber $powerText ($powerKw / 0.745699872)
+                $powerKw = if ($powerText -match '(?i)\bkw\b') { $powerValue } else { $powerValue * 0.745699872 }
+
+                $topSpeedText = [string]$metadata.specs.topspeed
+                $topSpeedKph = Get-FirstNumber $topSpeedText $topSpeedKph
+                if ($topSpeedText -match '(?i)\bmph\b') { $topSpeedKph *= 1.609344 }
+
+                $zeroToHundredSeconds = Get-FirstNumber $metadata.specs.acceleration 0
+            }
+
+            $curveRpms = @(
+                @($metadata.powerCurve) + @($metadata.torqueCurve) |
+                    Where-Object { $null -ne $_ -and $_.Count -ge 2 } |
+                    ForEach-Object { Get-FirstNumber $_[0] 0 } |
+                    Where-Object { $_ -ge 2000 -and $_ -le 25000 }
+            )
+            if ($curveRpms.Count -gt 0) { $engineMaxRpm = [int](($curveRpms | Measure-Object -Maximum).Maximum) }
+        } catch {
+            # Some original and mod cars contain literal newlines in descriptions. CM accepts them,
+            # but strict JSON parsers do not, so recover the simple specs without rewriting the car.
+            $source = 'ui_car.json'
+            $weightText = Get-JsonPropertyText $rawMetadata 'weight'
+            $massKg = Get-FirstNumber $weightText $massKg
+            if ($weightText -match '(?i)\blb') { $massKg *= 0.45359237 }
+            $powerText = Get-JsonPropertyText $rawMetadata 'bhp'
+            $powerValue = Get-FirstNumber $powerText ($powerKw / 0.745699872)
+            $powerKw = if ($powerText -match '(?i)\bkw\b') { $powerValue } else { $powerValue * 0.745699872 }
+            $topSpeedText = Get-JsonPropertyText $rawMetadata 'topspeed'
+            $topSpeedKph = Get-FirstNumber $topSpeedText $topSpeedKph
+            if ($topSpeedText -match '(?i)\bmph\b') { $topSpeedKph *= 1.609344 }
+            $zeroToHundredSeconds = Get-FirstNumber (Get-JsonPropertyText $rawMetadata 'acceleration') 0
+            $curveRpms = @(
+                [regex]::Matches($rawMetadata, '\[\s*"?(\d{3,5}(?:\.\d+)?)"?\s*,\s*"?[-+]?\d') |
+                    ForEach-Object { Get-FirstNumber $_.Groups[1].Value 0 } |
+                    Where-Object { $_ -ge 2000 -and $_ -le 25000 }
+            )
+            if ($curveRpms.Count -gt 0) { $engineMaxRpm = [int](($curveRpms | Measure-Object -Maximum).Maximum) }
+        }
+    } else {
+        Write-Warning "Car UI metadata is missing; using a bounded fallback profile for $Model"
+    }
+
+    $massKg = [Math]::Min(5000.0, [Math]::Max(300.0, $massKg))
+    $powerKw = [Math]::Min(2000.0, [Math]::Max(5.0, $powerKw))
+    $topSpeedKph = [Math]::Min(600.0, [Math]::Max(40.0, $topSpeedKph))
+    if ($zeroToHundredSeconds -le 0) {
+        $zeroToHundredSeconds = 8 * ($massKg / 1200) * [Math]::Sqrt(110 / $powerKw)
+    }
+    $zeroToHundredSeconds = [Math]::Min(60.0, [Math]::Max(1.5, $zeroToHundredSeconds))
+    $engineMaxRpm = [Math]::Min(25000, [Math]::Max(2000, $engineMaxRpm))
+
+    return [pscustomobject][ordered]@{
+        Model = $Model
+        Source = $source
+        MassKg = $massKg
+        PowerKw = $powerKw
+        TopSpeedKph = $topSpeedKph
+        ZeroToHundredSeconds = $zeroToHundredSeconds
+        MaxBrakeDeceleration = 8.5
+        LateralGripG = 1.0
+        TyreDiameterMeters = 0.65
+        EngineIdleRpm = 900
+        EngineMaxRpm = $engineMaxRpm
+        GearCount = 6
+    }
+}
+
+function Format-Invariant([double] $Value) {
+    return $Value.ToString('0.###', [Globalization.CultureInfo]::InvariantCulture)
+}
+
 function Test-PrivateIpv4([string] $Address) {
     $parsed = $null
     if (-not [Net.IPAddress]::TryParse($Address, [ref]$parsed)) { return $false }
@@ -279,8 +393,11 @@ try {
         [void]$models.Add($model)
     }
     $hasBots = $effectiveBotSlots -gt 0
-    if ($hasBots -and $models.Count -ne 1) {
-        throw "Race bot V1 requires one homogeneous car model across all selected slots. Found: $((@($models) | Sort-Object) -join ', ')"
+    $vehicleProfiles = @()
+    if ($hasBots) {
+        $vehicleProfiles = @($models | Sort-Object | ForEach-Object {
+            Get-RaceBotVehicleProfile $_ (Join-Path $AssettoCorsaRoot "content\cars\$_")
+        })
     }
 
     $trackRoot = Join-Path $AssettoCorsaRoot "content\tracks\$track"
@@ -324,6 +441,7 @@ try {
     $stagedServerCfg = Join-Path $presetRoot 'server_cfg.ini'
     Set-IniValue $stagedServerCfg 'SERVER' 'REGISTER_TO_LOBBY' '0'
     Set-IniValue $stagedServerCfg 'SERVER' 'MAX_CLIENTS' $slotCount
+    Set-IniValue $stagedServerCfg 'SERVER' 'CARS' ((@($models | Sort-Object)) -join ';')
     Set-IniValue $stagedServerCfg 'SERVER' 'CLIENT_SEND_INTERVAL_HZ' $UpdateHz
     Set-IniValue $stagedServerCfg 'RACE' 'IS_OPEN' '1'
     if (-not $PreserveCmEventSettings) {
@@ -368,6 +486,23 @@ try {
         "    UpdateHz: $UpdateHz",
         "    AllowMidRaceBotTakeover: $hasBotsText"
     )
+    if ($hasBots) {
+        $extraCfg += '    VehicleProfiles:'
+        foreach ($profile in $vehicleProfiles) {
+            $extraCfg += "      - Model: $($profile.Model)"
+            $extraCfg += "        Source: $($profile.Source)"
+            $extraCfg += "        MassKg: $(Format-Invariant $profile.MassKg)"
+            $extraCfg += "        PowerKw: $(Format-Invariant $profile.PowerKw)"
+            $extraCfg += "        TopSpeedKph: $(Format-Invariant $profile.TopSpeedKph)"
+            $extraCfg += "        ZeroToHundredSeconds: $(Format-Invariant $profile.ZeroToHundredSeconds)"
+            $extraCfg += "        MaxBrakeDeceleration: $(Format-Invariant $profile.MaxBrakeDeceleration)"
+            $extraCfg += "        LateralGripG: $(Format-Invariant $profile.LateralGripG)"
+            $extraCfg += "        TyreDiameterMeters: $(Format-Invariant $profile.TyreDiameterMeters)"
+            $extraCfg += "        EngineIdleRpm: $($profile.EngineIdleRpm)"
+            $extraCfg += "        EngineMaxRpm: $($profile.EngineMaxRpm)"
+            $extraCfg += "        GearCount: $($profile.GearCount)"
+        }
+    }
     [IO.File]::WriteAllLines((Join-Path $presetRoot 'extra_cfg.yml'), $extraCfg)
     [IO.File]::WriteAllText((Join-Path $presetRoot 'welcome.txt'), 'LAN race bots experimental server')
     $cfgRoot = Join-Path $resolvedOutput 'cfg'
@@ -397,6 +532,7 @@ try {
         trackConfig = $trackConfig
         model = @($models)[0]
         models = @($models | Sort-Object)
+        vehicleProfiles = @($vehicleProfiles)
         sourceCarSlots = $sourceCarSlotCount
         autoExpandedSlots = $slotCount - $sourceCarSlotCount
         slotMode = $SlotMode

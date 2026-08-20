@@ -46,6 +46,26 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 aiParams.RuleFor(ai => ai.Race.StartSplinePointId).GreaterThanOrEqualTo(0);
                 aiParams.RuleFor(ai => ai.Race.GridSpacingMeters).GreaterThan(0);
                 aiParams.RuleFor(ai => ai.Race.UpdateHz).InclusiveBetween(10, 120);
+                aiParams.RuleFor(ai => ai.Race.VehicleProfiles).NotNull();
+                aiParams.RuleFor(ai => ai.Race.VehicleProfiles)
+                    .Must(profiles => profiles.Select(profile => profile.Model).Distinct(System.StringComparer.OrdinalIgnoreCase).Count() == profiles.Count)
+                    .WithMessage("Race vehicle profile models must be unique");
+                aiParams.RuleForEach(ai => ai.Race.VehicleProfiles).ChildRules(profile =>
+                {
+                    profile.RuleFor(p => p.Model).NotEmpty();
+                    profile.RuleFor(p => p.Source).NotEmpty();
+                    profile.RuleFor(p => p.MassKg).InclusiveBetween(300, 5000);
+                    profile.RuleFor(p => p.PowerKw).InclusiveBetween(5, 2000);
+                    profile.RuleFor(p => p.TopSpeedKph).InclusiveBetween(40, 600);
+                    profile.RuleFor(p => p.ZeroToHundredSeconds).InclusiveBetween(1.5f, 60);
+                    profile.RuleFor(p => p.MaxBrakeDeceleration).InclusiveBetween(2, 20);
+                    profile.RuleFor(p => p.LateralGripG).InclusiveBetween(0.4f, 3);
+                    profile.RuleFor(p => p.TyreDiameterMeters).InclusiveBetween(0.3f, 1.5f);
+                    profile.RuleFor(p => p.EngineIdleRpm).InclusiveBetween(300, 3000);
+                    profile.RuleFor(p => p.EngineMaxRpm).InclusiveBetween(2000, 25000)
+                        .GreaterThan(p => p.EngineIdleRpm);
+                    profile.RuleFor(p => p.GearCount).InclusiveBetween(1, 10);
+                });
                 aiParams.RuleFor(ai => ai.HideAiCars)
                     .Equal(false)
                     .When(ai => ai.Behavior == AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race)
