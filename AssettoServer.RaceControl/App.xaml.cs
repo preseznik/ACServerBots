@@ -1,16 +1,37 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
+using AssettoServer.RaceControl.Core.Infrastructure;
+using AssettoServer.RaceControl.Core.Storage;
+using AssettoServer.RaceControl.Theming;
 
 namespace AssettoServer.RaceControl;
 
 public partial class App : Application
 {
+    private readonly RaceControlPaths _paths = new();
+    private ApplicationSettingsStore? _settingsStore;
+
+    public ApplicationSettings Settings { get; private set; } = new();
+    public string DataRoot => _paths.DataRoot;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         DispatcherUnhandledException += OnDispatcherUnhandledException;
+        _settingsStore = new ApplicationSettingsStore(_paths);
+        Settings = _settingsStore.Load();
+        ThemeManager.Apply(Settings);
         base.OnStartup(e);
     }
+
+    public void ApplySettings(ApplicationSettings settings)
+    {
+        Settings = settings.Copy();
+        ThemeManager.Apply(Settings);
+        _settingsStore?.Save(Settings);
+    }
+
+    public void SaveSettings() => _settingsStore?.Save(Settings);
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {

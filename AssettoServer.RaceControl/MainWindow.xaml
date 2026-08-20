@@ -8,28 +8,64 @@
         Title="AssettoServer Race Control"
         Width="1480" Height="900" MinWidth="1120" MinHeight="720"
         WindowStartupLocation="CenterScreen"
-        Loaded="Window_Loaded" Closing="Window_Closing">
+        Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown"
+        SourceInitialized="Window_SourceInitialized">
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="30" />
             <RowDefinition Height="78" />
             <RowDefinition Height="*" />
             <RowDefinition Height="34" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="#15181E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+        <Menu Grid.Row="0" VerticalAlignment="Stretch" BorderThickness="0,0,0,1">
+            <MenuItem Header="_File">
+                <MenuItem Header="_New race" InputGestureText="Ctrl+N" Click="NewRace_Click" />
+                <MenuItem Header="_Save preset" InputGestureText="Ctrl+S" Command="{Binding SavePresetCommand}" />
+                <Separator />
+                <MenuItem Header="_Import latest Content Manager preset" Command="{Binding ImportCmPresetCommand}" />
+                <MenuItem Header="_Export new Content Manager preset" Command="{Binding ExportCmPresetCommand}" />
+                <Separator />
+                <MenuItem Header="E_xit" Click="Exit_Click" />
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="Theme">
+                    <MenuItem x:Name="ThemeSystemMenuItem" Header="_System" IsCheckable="True" Click="ThemeMenu_Click" Tag="System" />
+                    <MenuItem x:Name="ThemeLightMenuItem" Header="_Light" IsCheckable="True" Click="ThemeMenu_Click" Tag="Light" />
+                    <MenuItem x:Name="ThemeDarkMenuItem" Header="_Dark" IsCheckable="True" Click="ThemeMenu_Click" Tag="Dark" />
+                </MenuItem>
+                <Separator />
+                <MenuItem Header="_Settings…" Click="Settings_Click" InputGestureText="Ctrl+," />
+            </MenuItem>
+            <MenuItem Header="_Server">
+                <MenuItem Header="_Validate" Command="{Binding ValidateCommand}" />
+                <MenuItem Header="S_tage only" Command="{Binding StageCommand}" />
+                <MenuItem Header="_Start new instance" Command="{Binding LaunchCommand}" />
+                <Separator />
+                <MenuItem Header="_Stop" Command="{Binding StopCommand}" />
+                <MenuItem Header="_Restart" Command="{Binding RestartCommand}" />
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="Open _documentation" Click="Documentation_Click" />
+                <MenuItem Header="_About Race Control" Click="About_Click" />
+            </MenuItem>
+        </Menu>
+
+        <Border Grid.Row="1" Background="{DynamicResource ChromeBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1">
             <Grid Margin="20,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Border Width="42" Height="42" CornerRadius="5" Background="{StaticResource AccentBrush}" Margin="0,0,13,0">
+                <Border Width="42" Height="42" CornerRadius="5" Background="{DynamicResource AccentBrush}" Margin="0,0,13,0">
                     <TextBlock Text="RC" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
                 </Border>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock Text="ASSETTOSERVER RACE CONTROL" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding EventTitle}" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0" />
+                    <TextBlock Text="{Binding EventTitle}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,3,0,0" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,20,0">
                     <ComboBox Width="225" ItemsSource="{Binding SavedPresets}" SelectedItem="{Binding SelectedSavedPreset}"
@@ -41,10 +77,32 @@
                     <Button Content="Stop" Command="{Binding StopCommand}" Margin="0,0,8,0" />
                     <Button Content="STAGE &amp; START" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Padding="20,8" />
                 </StackPanel>
+                <Button Grid.Column="4" Content="&#xE713;" Style="{StaticResource IconButton}" Click="Settings_Click"
+                        ToolTip="Settings" Margin="10,0,0,0" VerticalAlignment="Center" />
             </Grid>
         </Border>
 
-        <TabControl Grid.Row="1" SelectedIndex="{Binding SelectedPageIndex}" TabStripPlacement="Left" Background="Transparent" BorderThickness="0">
+        <TabControl Grid.Row="2" SelectedIndex="{Binding SelectedPageIndex}" TabStripPlacement="Left"
+                    Background="{DynamicResource WindowBrush}" BorderThickness="0">
+            <TabControl.Template>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid Background="{DynamicResource WindowBrush}" ClipToBounds="True">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="194" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{DynamicResource ChromeBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
+                            </ScrollViewer>
+                        </Border>
+                        <Border Grid.Column="1" Background="{DynamicResource WindowBrush}">
+                            <ContentPresenter ContentSource="SelectedContent" />
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </TabControl.Template>
             <TabControl.Resources>
                 <Style TargetType="TabItem">
                     <Setter Property="Width" Value="194" />
@@ -52,20 +110,35 @@
                     <Setter Property="HorizontalContentAlignment" Value="Left" />
                     <Setter Property="VerticalContentAlignment" Value="Center" />
                     <Setter Property="Padding" Value="22,0" />
-                    <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
-                    <Setter Property="Background" Value="#15181E" />
-                    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+                    <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+                    <Setter Property="Background" Value="{DynamicResource ChromeBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
                     <Setter Property="FontWeight" Value="SemiBold" />
-                    <Style.Triggers>
-                        <Trigger Property="IsSelected" Value="True">
-                            <Setter Property="Foreground" Value="White" />
-                            <Setter Property="Background" Value="#242831" />
-                            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-                        </Trigger>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="#20242B" />
-                        </Trigger>
-                    </Style.Triggers>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="TabItem">
+                                <Border x:Name="NavigationItem" Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="0">
+                                    <ContentPresenter ContentSource="Header" Margin="{TemplateBinding Padding}"
+                                                      HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="NavigationItem" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                    </Trigger>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                                        <Setter TargetName="NavigationItem" Property="Background" Value="{DynamicResource SelectedBrush}" />
+                                        <Setter TargetName="NavigationItem" Property="BorderThickness" Value="3,0,0,0" />
+                                    </Trigger>
+                                    <Trigger Property="IsEnabled" Value="False">
+                                        <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
                 </Style>
             </TabControl.Resources>
 
@@ -114,7 +187,7 @@
                                     <TextBlock Text="Track and layout" Style="{StaticResource FieldLabel}" />
                                     <ComboBox ItemsSource="{Binding Tracks}" SelectedItem="{Binding SelectedTrack}" DisplayMemberPath="DisplayName"
                                               IsTextSearchEnabled="True" Margin="0,0,0,10" />
-                                    <TextBlock Text="{Binding SelectedTrackDetails}" Foreground="{StaticResource MutedTextBrush}" />
+                                    <TextBlock Text="{Binding SelectedTrackDetails}" Foreground="{DynamicResource MutedTextBrush}" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -122,7 +195,7 @@
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="Track preview" Style="{StaticResource SectionTitle}" />
-                                    <Border Height="245" Background="#0E1014" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                    <Border Height="245" Background="{DynamicResource PreviewBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                                         <Image Source="{Binding SelectedTrack.PreviewPath}" Stretch="UniformToFill" />
                                     </Border>
                                     <Image Source="{Binding SelectedTrack.OutlinePath}" Height="120" Stretch="Uniform" Margin="0,14,0,0" />
@@ -161,7 +234,7 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock Text="Race grid" FontSize="22" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding EffectiveGridSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" />
+                            <TextBlock Text="{Binding EffectiveGridSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
                             <Button Content="All replaceable" Command="{Binding MakeAllReplaceableCommand}" />
@@ -206,7 +279,7 @@
                     <Grid Grid.Row="2" Margin="0,12,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <TextBlock Text="Auto = bot until claimed • Fixed = bot only • None = human only"
-                                   Foreground="{StaticResource MutedTextBrush}" />
+                                   Foreground="{DynamicResource MutedTextBrush}" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="↑" Command="{Binding MoveSlotUpCommand}" Width="42" />
                             <Button Content="↓" Command="{Binding MoveSlotDownCommand}" Width="42" Margin="6,0,0,0" />
@@ -286,7 +359,7 @@
                                     <TextBlock Text="Bot participation" Style="{StaticResource SectionTitle}" />
                                     <CheckBox Content="Enable server-authoritative race bots" IsChecked="{Binding Preset.Bots.Enabled}" FontWeight="SemiBold" />
                                     <TextBlock Text="When disabled, every staged grid entry becomes human-only. The saved slot modes are retained."
-                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,12" />
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,12" />
                                     <CheckBox Content="Humans can replace Auto bots during a race" IsChecked="{Binding Preset.Bots.AllowMidRaceTakeover}" />
                                     <CheckBox Content="Restart session when the first human connects" IsChecked="{Binding Preset.Bots.RestartWhenFirstHumanConnects}" />
                                     <TextBlock Text="Bot name prefix" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
@@ -312,7 +385,7 @@
                                     <TextBlock Text="Fidelity" Style="{StaticResource FieldLabel}" />
                                     <ComboBox ItemsSource="{Binding PhysicsFidelities}" SelectedItem="{Binding Preset.Bots.PhysicsFidelity}" Margin="0,0,0,12" />
                                     <TextBlock Text="Efficient reduces solver work; Balanced is the default; High adds the strongest solver and swept collision detection. Geometry remains exact at every level."
-                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,14" />
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,14" />
                                     <TextBlock Text="Simulation update Hz" Style="{StaticResource FieldLabel}" />
                                     <TextBox Text="{Binding Preset.Bots.UpdateHz}" Margin="0,0,0,12" />
                                     <TextBlock Text="Contact friction" Style="{StaticResource FieldLabel}" />
@@ -325,7 +398,7 @@
                                 <StackPanel>
                                     <TextBlock Text="Model support" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Each grid entry can use an arbitrary installed model. Race Control derives a bounded vehicle profile from ui_car.json and prepares the model’s real collider.kn5. Cars without packed data or a collider are reported before launch."
-                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -342,7 +415,7 @@
                                 <TextBlock Text="Private LAN" Style="{StaticResource SectionTitle}" />
                                 <CheckBox Content="LAN-only safety policy" IsChecked="{Binding Preset.Network.LanOnly}" IsEnabled="False" />
                                 <TextBlock Text="Lobby registration, Steam authentication, UPnP, and automatic port forwarding are always disabled in this release."
-                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,14" />
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,14" />
                                 <TextBlock Text="Bind address" Style="{StaticResource FieldLabel}" />
                                 <ComboBox ItemsSource="{Binding NetworkAddresses}" SelectedItem="{Binding Preset.Network.BindAddress}"
                                           IsEditable="True" Margin="0,0,0,12" />
@@ -365,7 +438,7 @@
                                     <PasswordBox controls:PasswordBinding.Attach="True"
                                                  controls:PasswordBinding.Password="{Binding Preset.Network.AdminPassword, Mode=TwoWay}" />
                                     <TextBlock Text="Passwords are stored locally with the preset, like Content Manager server presets. Do not reuse an important password."
-                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource Card}">
@@ -401,10 +474,10 @@
                                                 <TextBlock Text="{Binding Symbol}" FontWeight="Bold">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
-                                                            <Setter Property="Foreground" Value="#69B7FF" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource InfoBrush}" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Severity}" Value="Error"><Setter Property="Foreground" Value="#FF625F" /></DataTrigger>
-                                                                <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="#F5C451" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Error"><Setter Property="Foreground" Value="{DynamicResource ErrorBrush}" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="{DynamicResource WarningBrush}" /></DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
                                                     </TextBlock.Style>
@@ -424,15 +497,15 @@
                                     <StackPanel>
                                         <TextBlock Text="Server instance" Style="{StaticResource SectionTitle}" />
                                         <TextBlock Text="{Binding ServerStateText}" FontSize="17" FontWeight="Bold" />
-                                        <TextBlock Text="{Binding LastInstanceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                                        <TextBlock Text="{Binding LastInstanceSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,5,0,0" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                                         <Button Content="Stage only" Command="{Binding StageCommand}" />
                                         <Button Content="Start new" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0" />
                                     </StackPanel>
                                 </Grid>
-                                <ProgressBar Grid.Row="1" Value="{Binding ProgressValue, Mode=OneWay}" Height="5" Foreground="{StaticResource AccentBrush}" Background="#303641" Margin="0,18,0,7" />
-                                <TextBlock Grid.Row="2" Text="{Binding ProgressText}" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                                <ProgressBar Grid.Row="1" Value="{Binding ProgressValue, Mode=OneWay}" Height="5" Margin="0,18,0,7" />
+                                <TextBlock Grid.Row="2" Text="{Binding ProgressText}" Foreground="{DynamicResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
                                 <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,14,0,0">
                                     <Button Content="Stop" Command="{Binding StopCommand}" />
                                     <Button Content="Restart" Command="{Binding RestartCommand}" Margin="7,0,0,0" />
@@ -452,6 +525,7 @@
                                 <Button Grid.Column="1" Content="Clear" Command="{Binding ClearLogCommand}" Margin="0,-5,0,10" />
                             </Grid>
                             <TextBox x:Name="LogTextBox" Grid.Row="1" Text="{Binding LogText, Mode=OneWay}" TextChanged="LogTextBox_TextChanged"
+                                     Style="{StaticResource ConsoleTextBox}"
                                      FontFamily="Cascadia Mono, Consolas" FontSize="12" IsReadOnly="True" AcceptsReturn="True"
                                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" TextWrapping="NoWrap" />
                         </Grid>
@@ -460,12 +534,12 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="2" Background="#15181E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+        <Border Grid.Row="3" Background="{DynamicResource ChromeBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
             <Grid Margin="16,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Margin="0,0,9,0" />
-                <TextBlock Grid.Column="1" Text="{Binding StatusText}" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Column="2" Text="LAN ONLY  •  NO LOBBY  •  NO GAME FILE CHANGES" Foreground="#69717E" FontSize="11" />
+                <Ellipse Width="8" Height="8" Fill="{DynamicResource AccentBrush}" Margin="0,0,9,0" />
+                <TextBlock Grid.Column="1" Text="{Binding StatusText}" Foreground="{DynamicResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="2" Text="LAN ONLY  •  NO LOBBY  •  NO GAME FILE CHANGES" Foreground="{DynamicResource DisabledTextBrush}" FontSize="11" />
             </Grid>
         </Border>
     </Grid>

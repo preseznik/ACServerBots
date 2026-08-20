@@ -1,8 +1,12 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Microsoft.Win32;
+using AssettoServer.RaceControl.Core.Storage;
+using AssettoServer.RaceControl.Theming;
 using AssettoServer.RaceControl.ViewModels;
 
 namespace AssettoServer.RaceControl;
@@ -27,8 +31,11 @@ public partial class MainWindow : Window
         }
 
         _initialized = true;
-        await _viewModel.InitializeAsync();
+        UpdateThemeMenuChecks();
+        await _viewModel.InitializeAsync(RaceControlApp.Settings);
     }
+
+    private void Window_SourceInitialized(object? sender, EventArgs e) => ThemeManager.ApplyWindowChrome(this);
 
     private async void BrowseAcRoot_Click(object sender, RoutedEventArgs e)
     {
@@ -62,6 +69,7 @@ public partial class MainWindow : Window
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
+        PersistWindowSettings();
         if (_allowClose || !_viewModel.IsServerRunning)
         {
             _viewModel.Dispose();
@@ -69,15 +77,18 @@ public partial class MainWindow : Window
         }
 
         e.Cancel = true;
-        var answer = MessageBox.Show(
-            this,
-            "The LAN server is still running. Stop it and close Race Control?",
-            "AssettoServer Race Control",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (answer != MessageBoxResult.Yes)
+        if (RaceControlApp.Settings.ConfirmBeforeStoppingServerOnExit)
         {
-            return;
+            var answer = MessageBox.Show(
+                this,
+                "The LAN server is still running. Stop it and close Race Control?",
+                "AssettoServer Race Control",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes)
+            {
+                return;
+            }
         }
 
         await _viewModel.RequestStopAsync();
@@ -88,5 +99,130 @@ public partial class MainWindow : Window
     private void LogTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         LogTextBox.ScrollToEnd();
+    }
+
+    private App RaceControlApp => (App)Application.Current;
+
+    private async void NewRace_Click(object sender, RoutedEventArgs e)
+    {
+        var answer = MessageBox.Show(
+            this,
+            "Create a new race? Unsaved changes to the current race will be discarded.",
+            "New LAN race",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (answer == MessageBoxResult.Yes)
+        {
+            await _viewModel.CreateNewEventAsync();
+        }
+    }
+
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SettingsWindow(RaceControlApp.Settings, RaceControlApp.DataRoot) { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            RaceControlApp.ApplySettings(dialog.Settings);
+            UpdateThemeMenuChecks();
+        }
+    }
+
+    private void ThemeMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string tag } || !Enum.TryParse<AppThemeMode>(tag, out var theme))
+        {
+            return;
+        }
+
+        var settings = RaceControlApp.Settings.Copy();
+        settings.Theme = theme;
+        RaceControlApp.ApplySettings(settings);
+        UpdateThemeMenuChecks();
+    }
+
+    private void UpdateThemeMenuChecks()
+    {
+        ThemeSystemMenuItem.IsChecked = RaceControlApp.Settings.Theme == AppThemeMode.System;
+        ThemeLightMenuItem.IsChecked = RaceControlApp.Settings.Theme == AppThemeMode.Light;
+        ThemeDarkMenuItem.IsChecked = RaceControlApp.Settings.Theme == AppThemeMode.Dark;
+    }
+
+    private void Documentation_Click(object sender, RoutedEventArgs e)
+    {
+        var documentation = FindDocumentation();
+        if (documentation is null)
+        {
+            MessageBox.Show(this, "race-control.md was not found beside the app or in the source tree.",
+                "Documentation", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo(documentation) { UseShellExecute = true });
+    }
+
+    private void About_Click(object sender, RoutedEventArgs e)
+    {
+        MessageBox.Show(
+            this,
+            "AssettoServer Race Control\n\nNative LAN race and server-authoritative bot event editor.\n\nAGPL-3.0 — modified source and build instructions are included with distributed builds.",
+            "About Race Control",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    private void Exit_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+        {
+            return;
+        }
+
+        if (e.Key == Key.N)
+        {
+            NewRace_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (e.Key == Key.S && _viewModel.SavePresetCommand.CanExecute(null))
+        {
+            _viewModel.SavePresetCommand.Execute(null);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.OemComma)
+        {
+            Settings_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+    }
+
+    private void PersistWindowSettings()
+    {
+        if (RaceControlApp.Settings.RememberLastPage)
+        {
+            RaceControlApp.Settings.LastPageIndex = _viewModel.SelectedPageIndex;
+        }
+        RaceControlApp.SaveSettings();
+    }
+
+    private static string? FindDocumentation()
+    {
+        var bundled = Path.Combine(AppContext.BaseDirectory, "race-control.md");
+        if (File.Exists(bundled))
+        {
+            return bundled;
+        }
+
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "docs", "race-control.md");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+            directory = directory.Parent;
+        }
+        return null;
     }
 }

@@ -18,6 +18,14 @@ The application targets .NET 10 WPF and opens in Visual Studio 2026 through `Ass
 
 If more entries are requested than the track has pit boxes, validation shows a warning and staging keeps the first entries that fit. This is not a launch blocker.
 
+## Menus and settings
+
+The native menu bar groups event actions under **File**, appearance under **View**, process actions under **Server**, and documentation under **Help**. The cog button in the header and `Ctrl+,` both open application settings. `Ctrl+N` creates a new race and `Ctrl+S` saves the current preset.
+
+**View -> Theme** switches between System, Light, and Dark immediately. System resolves the current Windows application theme when Race Control starts. The selected palette covers the window chrome, navigation, page backgrounds, cards, inputs, menus, grids, popups, console, and native title bars.
+
+Settings also control compact grid rows, loading the most recent saved race at startup, returning to the last open page, and confirmation before an active server is stopped on exit. These application-wide preferences are independent of race presets and are saved in `%LocalAppData%\AssettoServer Race Control\settings.json`.
+
 ## Content Manager interoperation
 
 **Import latest CM preset** reads the most recently modified `server_cfg.ini` and `entry_list.ini` pair under `<Assetto Corsa>\server\presets`. A single imported entry is cloned to the two-slot minimum. Import does not modify the CM preset.

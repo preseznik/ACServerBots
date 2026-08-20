@@ -225,7 +225,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand OpenContentManagerCommand { get; }
     public RelayCommand ClearLogCommand { get; }
 
-    public async Task InitializeAsync()
+    public async Task InitializeAsync(ApplicationSettings? settings = null)
     {
         try
         {
@@ -242,9 +242,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             var acRoot = InstallationLocator.FindAssettoCorsaRoot() ?? Preset.AssettoCorsaRoot;
             var payload = FindServerPayload() ?? string.Empty;
-            Preset = RaceControlPreset.CreateDefault(acRoot, payload);
-            Preset.Network.BindAddress = NetworkAddressService.GetPreferredPrivateIpv4();
+            if (settings?.LoadMostRecentPresetOnStartup == true && SavedPresets.FirstOrDefault() is { } recent)
+            {
+                Preset = _presetStore.Load(recent.Path);
+                Preset.AssettoCorsaRoot = Directory.Exists(Preset.AssettoCorsaRoot) ? Preset.AssettoCorsaRoot : acRoot;
+                Preset.ServerPayloadPath = File.Exists(Path.Combine(Preset.ServerPayloadPath, "AssettoServer.exe"))
+                    ? Preset.ServerPayloadPath
+                    : payload;
+                SelectedSavedPreset = recent;
+            }
+            else
+            {
+                Preset = RaceControlPreset.CreateDefault(acRoot, payload);
+                Preset.Network.BindAddress = NetworkAddressService.GetPreferredPrivateIpv4();
+            }
             await RefreshContentInternalAsync();
+            SelectedPageIndex = settings?.RememberLastPage == true
+                ? Math.Clamp(settings.LastPageIndex, 0, 5)
+                : 0;
             StatusText = $"Found {Cars.Count} cars and {Tracks.Count} track layouts.";
         }
         catch (Exception exception)
@@ -272,6 +287,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public Task RequestStopAsync() => StopServerAsync();
+
+    public async Task CreateNewEventAsync()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            IsBusy = true;
+            var newPreset = RaceControlPreset.CreateDefault(Preset.AssettoCorsaRoot, Preset.ServerPayloadPath);
+            newPreset.Network.BindAddress = Preset.Network.BindAddress;
+            Preset = newPreset;
+            await RefreshContentInternalAsync();
+            SelectedPageIndex = 0;
+            StatusText = "Created a new unsaved LAN race.";
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not create a new event", exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
 
     private async Task RefreshContentAsync()
     {

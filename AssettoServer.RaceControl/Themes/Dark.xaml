@@ -1,0 +1,38 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="WindowBrush" Color="#111318" />
+    <SolidColorBrush x:Key="ChromeBrush" Color="#15181E" />
+    <SolidColorBrush x:Key="MenuBrush" Color="#181B21" />
+    <SolidColorBrush x:Key="PanelBrush" Color="#191C22" />
+    <SolidColorBrush x:Key="PanelAlternateBrush" Color="#1D2027" />
+    <SolidColorBrush x:Key="PanelRaisedBrush" Color="#21252D" />
+    <SolidColorBrush x:Key="InputBrush" Color="#20242B" />
+    <SolidColorBrush x:Key="BorderBrush" Color="#303641" />
+    <SolidColorBrush x:Key="TextBrush" Color="#F0F2F5" />
+    <SolidColorBrush x:Key="MutedTextBrush" Color="#A4ABB7" />
+    <SolidColorBrush x:Key="DisabledTextBrush" Color="#69717E" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#E4423F" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#F05A56" />
+    <SolidColorBrush x:Key="HoverBrush" Color="#2B303A" />
+    <SolidColorBrush x:Key="SelectedBrush" Color="#343A46" />
+    <SolidColorBrush x:Key="PreviewBrush" Color="#0E1014" />
+    <SolidColorBrush x:Key="ConsoleBrush" Color="#0B0D10" />
+    <SolidColorBrush x:Key="ConsoleTextBrush" Color="#E8EBEF" />
+    <SolidColorBrush x:Key="InfoBrush" Color="#69B7FF" />
+    <SolidColorBrush x:Key="ErrorBrush" Color="#FF625F" />
+    <SolidColorBrush x:Key="WarningBrush" Color="#F5C451" />
+    <SolidColorBrush x:Key="ScrollTrackBrush" Color="#171A20" />
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#525B69" />
+
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#191C22" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}" Color="#F0F2F5" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#111318" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" Color="#F0F2F5" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.MenuBrushKey}" Color="#181B21" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.MenuTextBrushKey}" Color="#F0F2F5" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#E4423F" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.GrayTextBrushKey}" Color="#69717E" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.ActiveBorderBrushKey}" Color="#303641" />
+    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveBorderBrushKey}" Color="#303641" />
+</ResourceDictionary>
