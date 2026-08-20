@@ -64,7 +64,7 @@ Configure and save the event in Content Manager, then double-click:
 tools\Start-CmLanRaceBots.cmd
 ```
 
-The launcher reads Content Manager's server preset directly from `<Assetto Corsa>\server\presets`, waits until `server_cfg.ini` and `entry_list.ini` have stopped changing, snapshots them, stages the standalone server, and launches it. No Pack export or zip is required. The first two CM entries are human-only by default and every remaining entry becomes a replaceable bot. Pass `-HumanSlots` to `Start-CmLanRaceBots.ps1` to change that split.
+The launcher reads Content Manager's server preset directly from `<Assetto Corsa>\server\presets`, waits until `server_cfg.ini` and `entry_list.ini` have stopped changing, snapshots them, stages the standalone server, and launches it. No Pack export or zip is required. It guarantees at least two human slots in the isolated snapshot: if CM contains only one entry, that car entry is cloned into a second unrestricted human slot without changing CM. With a larger grid, the first two entries are human-only by default and every remaining entry becomes a replaceable bot. Pass `-HumanSlots` to `Start-CmLanRaceBots.ps1` to increase the human allocation.
 
 CM's track, layout, sessions, lap count, weather, assists, fuel, damage, tyre wear, ports, passwords, and entry skins are preserved. The isolated server overlay disables public lobby registration and UPnP, selects a private LAN listener, opens the race for bot takeover, and applies the race-bot configuration. It never edits the CM preset or installed game files.
 
@@ -74,7 +74,7 @@ Automatic selection is deliberately conservative. A single valid CM preset is se
 .\tools\Start-CmLanRaceBots.ps1 -CmPresetId SERVER_00
 ```
 
-If Content Manager uses a custom server-preset directory, pass it with `-CmServerPresetsRoot`. Race-bot V1 requires at least one bot entry, one homogeneous car model across all included entries, an installed skin and `data.acd` for each entry, a usable `fast_lane.ai`, enough pit boxes, and a configured race session. Unsupported mixed-car presets fail with the model names instead of being rewritten silently.
+If Content Manager uses a custom server-preset directory, pass it with `-CmServerPresetsRoot`. A two-entry human-only server is valid: AI and takeover are disabled, mixed car models are allowed, and `fast_lane.ai` is not required. If the CM grid has entries beyond the human allocation, those entries become bots; race-bot V1 then requires one homogeneous car model, a usable `fast_lane.ai`, installed skins and `data.acd`, enough pit boxes, and a configured race session. Unsupported mixed-car bot grids fail with the model names instead of being rewritten silently.
 
 Use `-NoLaunch` to validate and stage the current CM preset without starting the server:
 

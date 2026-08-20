@@ -32,18 +32,18 @@ try {
     $carRoot = Join-Path $gameRoot 'content\cars\test_car'
     $trackRoot = Join-Path $gameRoot 'content\tracks\test_track'
     @($cmPreset, $publishedRoot, (Join-Path $carRoot 'skins\skin_0'), (Join-Path $carRoot 'skins\skin_1'),
-        (Join-Path $carRoot 'skins\skin_2'), (Join-Path $trackRoot 'ai'), (Join-Path $trackRoot 'ui')) |
+        (Join-Path $carRoot 'skins\skin_2'), (Join-Path $trackRoot 'test_layout\ai'), (Join-Path $trackRoot 'ui\test_layout')) |
         ForEach-Object { New-Item -ItemType Directory -Path $_ -Force | Out-Null }
 
     Set-Content -LiteralPath (Join-Path $publishedRoot 'AssettoServer.exe') -Value 'test executable'
     Set-Content -LiteralPath (Join-Path $carRoot 'data.acd') -Value 'test checksum source'
-    Set-Content -LiteralPath (Join-Path $trackRoot 'ai\fast_lane.ai') -Value 'test closed spline'
-    Set-Content -LiteralPath (Join-Path $trackRoot 'ui\ui_track.json') -Value '{"pitboxes": 8}'
+    Set-Content -LiteralPath (Join-Path $trackRoot 'test_layout\ai\fast_lane.ai') -Value 'test closed spline'
+    Set-Content -LiteralPath (Join-Path $trackRoot 'ui\test_layout\ui_track.json') -Value '{"pitboxes": 8}'
     Set-Content -LiteralPath (Join-Path $cmPreset 'server_cfg.ini') -Value @'
 [SERVER]
 NAME=CM dynamic test
 CARS=test_car
-CONFIG_TRACK=
+CONFIG_TRACK=test_layout
 TRACK=test_track
 REGISTER_TO_LOBBY=1
 MAX_CLIENTS=3
@@ -86,7 +86,7 @@ SKIN=skin_2
 
     & $stageScript -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
         -PublishedServer $publishedRoot -OutputRoot $outputRoot -PresetName test-dynamic `
-        -HumanSlots 1 -BotSlots 0 -BindAddress 192.168.10.20 -PreserveCmEventSettings
+        -HumanSlots 2 -BotSlots 0 -BindAddress 192.168.10.20 -PreserveCmEventSettings
 
     $stagedCfg = Join-Path $outputRoot 'presets\test-dynamic\server_cfg.ini'
     $stagedEntries = Join-Path $outputRoot 'presets\test-dynamic\entry_list.ini'
@@ -97,13 +97,15 @@ SKIN=skin_2
     Assert-True ((Read-IniValue $stagedCfg RACE IS_OPEN) -eq '1') 'race should be open for mid-race takeover'
     Assert-True ((Read-IniValue $stagedCfg SERVER REGISTER_TO_LOBBY) -eq '0') 'LAN staging should disable lobby registration'
     Assert-True ((Read-IniValue $stagedEntries CAR_0 AI) -eq 'none') 'first entry should be human-only'
-    Assert-True ((Read-IniValue $stagedEntries CAR_1 AI) -eq 'auto') 'remaining entries should become replaceable bots'
-    Assert-True ((Read-IniValue $stagedEntries CAR_2 AI) -eq 'auto') 'all remaining entries should be included'
+    Assert-True ((Read-IniValue $stagedEntries CAR_1 AI) -eq 'none') 'second entry should be human-only'
+    Assert-True ((Read-IniValue $stagedEntries CAR_2 AI) -eq 'auto') 'entries beyond the human allocation should become replaceable bots'
 
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $outputRoot 'race-bot-manifest.json') | ConvertFrom-Json
     Assert-True ($manifest.sourceMode -eq 'currentCmPreset') 'manifest should identify automatic CM discovery'
     Assert-True ($manifest.sourcePresetId -eq 'SERVER_00') 'manifest should identify the selected CM preset'
     Assert-True ($manifest.advertisedSlots -eq 3) 'zero BotSlots should use all remaining CM entries'
+    Assert-True ($manifest.humanSlots -eq 2) 'automatic staging should reserve two human slots'
+    Assert-True ($manifest.botSlots -eq 1) 'the remaining CM entry should become a bot'
     Assert-True ($manifest.preservedCmEventSettings -eq $true) 'manifest should record preserved CM settings'
 
     Copy-Item -LiteralPath $cmPreset -Destination (Join-Path $presetsRoot 'SERVER_01') -Recurse
@@ -111,7 +113,7 @@ SKIN=skin_2
     try {
         & $stageScript -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
             -PublishedServer $publishedRoot -OutputRoot (Join-Path $testRoot 'ambiguous') `
-            -HumanSlots 1 -BotSlots 0 -BindAddress 192.168.10.20 -PreserveCmEventSettings
+            -HumanSlots 2 -BotSlots 0 -BindAddress 192.168.10.20 -PreserveCmEventSettings
     } catch {
         $ambiguousMessage = $_.Exception.Message
     }
@@ -119,7 +121,7 @@ SKIN=skin_2
 
     & $launcherScript -CmPresetId SERVER_00 -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
         -PublishedServer $publishedRoot -OutputRoot $outputRoot -PresetName test-dynamic `
-        -HumanSlots 1 -BindAddress 192.168.10.20 -NoLaunch
+        -HumanSlots 2 -BindAddress 192.168.10.20 -NoLaunch
 
     $compatRoot = Join-Path $testRoot 'windows-powershell-compat'
     $compatTools = Join-Path $compatRoot 'tools'
@@ -139,14 +141,26 @@ MODEL=test_car
 SKIN=skin_0
 '@
 
-    $slotMessage = $null
-    try {
-        & (Join-Path $compatTools 'Start-CmLanRaceBots.ps1') -CmServerPresetsRoot $singlePresetRoot `
-            -AssettoCorsaRoot $gameRoot -HumanSlots 2 -BindAddress 192.168.10.20 -NoLaunch
-    } catch {
-        $slotMessage = $_.Exception.Message
-    }
-    Assert-True ($slotMessage -like '*CM preset has 1 car entry*at least 3 are required*') 'default paths should resolve before reporting an insufficient CM grid'
+    Remove-Item -LiteralPath (Join-Path $trackRoot 'test_layout\ai\fast_lane.ai')
+    & (Join-Path $compatTools 'Start-CmLanRaceBots.ps1') -CmServerPresetsRoot $singlePresetRoot `
+        -AssettoCorsaRoot $gameRoot -HumanSlots 2 -BindAddress 192.168.10.20 -NoLaunch
+
+    $humanOnlyRoot = Join-Path $compatRoot '.artifacts\lan-race-bots'
+    $humanOnlyPreset = Join-Path $humanOnlyRoot 'presets\cm-lan-race-bots'
+    $humanOnlyEntries = Join-Path $humanOnlyPreset 'entry_list.ini'
+    $humanOnlyExtra = Get-Content -Raw -LiteralPath (Join-Path $humanOnlyPreset 'extra_cfg.yml')
+    $humanOnlyManifest = Get-Content -Raw -LiteralPath (Join-Path $humanOnlyRoot 'race-bot-manifest.json') | ConvertFrom-Json
+    Assert-True ((Read-IniValue $humanOnlyEntries CAR_0 AI) -eq 'none') 'the original slot should remain human-only'
+    Assert-True ((Read-IniValue $humanOnlyEntries CAR_1 MODEL) -eq 'test_car') 'a one-entry CM grid should be cloned to two slots'
+    Assert-True ((Read-IniValue $humanOnlyEntries CAR_1 AI) -eq 'none') 'the generated second slot should be human-only'
+    Assert-True ($humanOnlyExtra.Contains('EnableAi: false')) 'AI should be disabled when the CM grid has no bot entries'
+    Assert-True ($humanOnlyExtra.Contains('Behavior: Traffic')) 'human-only staging should avoid race-bot session behavior'
+    Assert-True ($humanOnlyExtra.Contains('AllowMidRaceBotTakeover: false')) 'takeover should be disabled without bots'
+    Assert-True ($humanOnlyManifest.sourceCarSlots -eq 1) 'manifest should retain the CM source slot count'
+    Assert-True ($humanOnlyManifest.autoExpandedSlots -eq 1) 'manifest should record the generated human slot'
+    Assert-True ($humanOnlyManifest.humanSlots -eq 2) 'human-only staging should advertise two human slots'
+    Assert-True ($humanOnlyManifest.botSlots -eq 0) 'human-only staging should not require a bot'
+    Assert-True ($humanOnlyManifest.midRaceBotTakeover -eq $false) 'manifest should disable takeover without bots'
 
     Write-Host 'CM preset staging tests passed.'
 }

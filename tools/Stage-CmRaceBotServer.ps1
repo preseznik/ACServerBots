@@ -79,6 +79,19 @@ function Remove-IniSection([string] $Path, [string] $Section) {
     [IO.File]::WriteAllLines($Path, $output)
 }
 
+function Add-IniCarClone([string] $Path, [string] $SourceSection, [string] $DestinationSection) {
+    $ini = Read-IniFile $Path
+    if (-not $ini.Contains($SourceSection)) { throw "Cannot clone missing entry-list section: $SourceSection" }
+    if ($ini.Contains($DestinationSection)) { throw "Cannot overwrite existing entry-list section: $DestinationSection" }
+    foreach ($key in $ini[$SourceSection].Keys) {
+        $value = [string]$ini[$SourceSection][$key]
+        if ($key -ieq 'GUID' -or $key -ieq 'DRIVERNAME' -or $key -ieq 'TEAM') { $value = '' }
+        if ($key -ieq 'AI') { $value = 'none' }
+        Set-IniValue $Path $DestinationSection $key $value
+    }
+    Set-IniValue $Path $DestinationSection 'AI' 'none'
+}
+
 function Test-PrivateIpv4([string] $Address) {
     $parsed = $null
     if (-not [Net.IPAddress]::TryParse($Address, [ref]$parsed)) { return $false }
@@ -86,6 +99,32 @@ function Test-PrivateIpv4([string] $Address) {
     return $bytes.Length -eq 4 -and ($bytes[0] -eq 10 -or $bytes[0] -eq 127 -or
         ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
         ($bytes[0] -eq 192 -and $bytes[1] -eq 168))
+}
+
+function Get-PreferredPrivateIpv4 {
+    foreach ($networkInterface in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+        if ($networkInterface.OperationalStatus -ne [Net.NetworkInformation.OperationalStatus]::Up) { continue }
+        if ($networkInterface.NetworkInterfaceType -eq [Net.NetworkInformation.NetworkInterfaceType]::Loopback) { continue }
+        $properties = $networkInterface.GetIPProperties()
+        $hasIpv4Gateway = @($properties.GatewayAddresses | Where-Object {
+            $_.Address.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork -and
+            $_.Address.ToString() -ne '0.0.0.0'
+        }).Count -gt 0
+        if (-not $hasIpv4Gateway) { continue }
+        foreach ($unicast in $properties.UnicastAddresses) {
+            $candidate = $unicast.Address.ToString()
+            if ($unicast.Address.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork -and
+                (Test-PrivateIpv4 $candidate) -and $candidate -ne '127.0.0.1') {
+                return $candidate
+            }
+        }
+    }
+
+    return [Net.Dns]::GetHostAddresses([Net.Dns]::GetHostName()) |
+        Where-Object { Test-PrivateIpv4 $_.ToString() -and -not $_.Equals([Net.IPAddress]::Loopback) } |
+        Sort-Object { $bytes = $_.GetAddressBytes(); if ($bytes[0] -eq 192) { 0 } elseif ($bytes[0] -eq 172) { 1 } else { 2 } } |
+        Select-Object -First 1 |
+        ForEach-Object ToString
 }
 
 function Get-PresetFilePair([string] $Root) {
@@ -201,15 +240,22 @@ try {
     if ([string]::IsNullOrWhiteSpace($track)) { throw 'TRACK is empty in server_cfg.ini' }
 
     $carSections = @($entryIni.Keys | Where-Object { $_ -match '^CAR_\d+$' } | Sort-Object { [int]($_ -replace '^CAR_', '') })
+    $sourceCarSlotCount = $carSections.Count
+    if ($sourceCarSlotCount -eq 0) { throw 'CM preset has no car entries to stage' }
+
+    $effectiveHumanSlots = $HumanSlots
     $effectiveBotSlots = $BotSlots
-    if ($effectiveBotSlots -eq 0) {
-        $effectiveBotSlots = $carSections.Count - $HumanSlots
-        if ($effectiveBotSlots -lt 1) {
-            $entryWord = if ($carSections.Count -eq 1) { 'entry' } else { 'entries' }
-            throw "CM preset has $($carSections.Count) car $entryWord; at least $($HumanSlots + 1) are required for $HumanSlots human slots and one bot. Add more entries in Content Manager or lower -HumanSlots."
+    if ($BotSlots -eq 0) {
+        $effectiveHumanSlots = [Math]::Max(2, $HumanSlots)
+        while ($carSections.Count -lt $effectiveHumanSlots) {
+            $sourceSection = $carSections[$carSections.Count % $sourceCarSlotCount]
+            Add-IniCarClone $snapshot.EntryList $sourceSection "CAR_$($carSections.Count)"
+            $entryIni = Read-IniFile $snapshot.EntryList
+            $carSections = @($entryIni.Keys | Where-Object { $_ -match '^CAR_\d+$' } | Sort-Object { [int]($_ -replace '^CAR_', '') })
         }
+        $effectiveBotSlots = [Math]::Max(0, $carSections.Count - $effectiveHumanSlots)
     }
-    $slotCount = $HumanSlots + $effectiveBotSlots
+    $slotCount = $effectiveHumanSlots + $effectiveBotSlots
     if ($slotCount -gt 254) { throw 'The combined human and bot slot count cannot exceed 254' }
     if ($carSections.Count -lt $slotCount) { throw "CM pack has $($carSections.Count) car slots; $slotCount are required" }
     $selectedSections = $carSections | Select-Object -First $slotCount
@@ -224,25 +270,28 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $carRoot 'data.acd') -PathType Leaf)) { throw "Car has no data.acd checksum source: $model" }
         [void]$models.Add($model)
     }
-    if ($models.Count -ne 1) {
+    $hasBots = $effectiveBotSlots -gt 0
+    if ($hasBots -and $models.Count -ne 1) {
         throw "Race bot V1 requires one homogeneous car model across all selected slots. Found: $((@($models) | Sort-Object) -join ', ')"
     }
 
     $trackRoot = Join-Path $AssettoCorsaRoot "content\tracks\$track"
     $layoutRoot = if ([string]::IsNullOrWhiteSpace($trackConfig)) { $trackRoot } else { Join-Path $trackRoot $trackConfig }
     $fastLane = Join-Path $layoutRoot 'ai\fast_lane.ai'
-    if (-not (Test-Path -LiteralPath $fastLane -PathType Leaf)) { throw "Closed-line source not found: $fastLane" }
-    $uiTrack = Join-Path $layoutRoot 'ui\ui_track.json'
+    if ($hasBots -and -not (Test-Path -LiteralPath $fastLane -PathType Leaf)) { throw "Closed-line source not found: $fastLane" }
+    $uiTrack = if ([string]::IsNullOrWhiteSpace($trackConfig)) {
+        Join-Path $trackRoot 'ui\ui_track.json'
+    } else {
+        Join-Path $trackRoot "ui\$trackConfig\ui_track.json"
+    }
+    if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { $uiTrack = Join-Path $layoutRoot 'ui\ui_track.json' }
     if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { $uiTrack = Join-Path $trackRoot 'ui\ui_track.json' }
     if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { throw "Track UI metadata not found for pit capacity: $track" }
     $pitBoxes = [int]((Get-Content -Raw -LiteralPath $uiTrack | ConvertFrom-Json).pitboxes)
     if ($pitBoxes -lt $slotCount) { throw "Track exposes $pitBoxes pit boxes; $slotCount slots were requested" }
 
     if ([string]::IsNullOrWhiteSpace($BindAddress)) {
-        $BindAddress = [Net.Dns]::GetHostAddresses([Net.Dns]::GetHostName()) |
-            Where-Object { Test-PrivateIpv4 $_.ToString() -and -not $_.Equals([Net.IPAddress]::Loopback) } |
-            Select-Object -First 1 |
-            ForEach-Object ToString
+        $BindAddress = Get-PreferredPrivateIpv4
     }
     if ([string]::IsNullOrWhiteSpace($BindAddress) -or -not (Test-PrivateIpv4 $BindAddress) -or $BindAddress -eq '127.0.0.1') {
         throw 'Could not select a private LAN IPv4 address. Pass -BindAddress explicitly.'
@@ -285,18 +334,20 @@ try {
 
     $stagedEntryList = Join-Path $presetRoot 'entry_list.ini'
     for ($i = 0; $i -lt $slotCount; $i++) {
-        Set-IniValue $stagedEntryList "CAR_$i" 'AI' $(if ($i -lt $HumanSlots) { 'none' } else { 'auto' })
+        Set-IniValue $stagedEntryList "CAR_$i" 'AI' $(if ($i -lt $effectiveHumanSlots) { 'none' } else { 'auto' })
     }
 
+    $hasBotsText = $hasBots.ToString().ToLowerInvariant()
+    $aiBehavior = if ($hasBots) { 'Race' } else { 'Traffic' }
     $extraCfg = @(
         "NetworkBindAddress: $BindAddress",
         'UseSteamAuth: false',
         'EnableUPnP: false',
         'IgnoreConfigurationErrors:',
         '  MissingTrackParams: true',
-        'EnableAi: true',
+        "EnableAi: $hasBotsText",
         'AiParams:',
-        '  Behavior: Race',
+        "  Behavior: $aiBehavior",
         '  AutoAssignTrafficCars: false',
         '  HideAiCars: false',
         '  NamePrefix: Bot',
@@ -307,7 +358,7 @@ try {
         '    StartSplinePointId: 0',
         '    GridSpacingMeters: 9',
         "    UpdateHz: $UpdateHz",
-        '    AllowMidRaceBotTakeover: true'
+        "    AllowMidRaceBotTakeover: $hasBotsText"
     )
     [IO.File]::WriteAllLines((Join-Path $presetRoot 'extra_cfg.yml'), $extraCfg)
     [IO.File]::WriteAllText((Join-Path $presetRoot 'welcome.txt'), 'LAN race bots experimental server')
@@ -315,13 +366,15 @@ try {
     New-Item -ItemType Directory -Path $cfgRoot -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $cfgRoot 'data_track_params.ini'), '; Offline LAN staging intentionally uses the configured UTC fallback.')
 
-    $trackAiDestination = if ([string]::IsNullOrWhiteSpace($trackConfig)) {
-        Join-Path $resolvedOutput "content\tracks\$track\ai"
-    } else {
-        Join-Path $resolvedOutput "content\tracks\$track\$trackConfig\ai"
+    if ($hasBots) {
+        $trackAiDestination = if ([string]::IsNullOrWhiteSpace($trackConfig)) {
+            Join-Path $resolvedOutput "content\tracks\$track\ai"
+        } else {
+            Join-Path $resolvedOutput "content\tracks\$track\$trackConfig\ai"
+        }
+        New-Item -ItemType Directory -Path $trackAiDestination -Force | Out-Null
+        Copy-Item -LiteralPath $fastLane -Destination (Join-Path $trackAiDestination 'fast_lane.ai')
     }
-    New-Item -ItemType Directory -Path $trackAiDestination -Force | Out-Null
-    Copy-Item -LiteralPath $fastLane -Destination (Join-Path $trackAiDestination 'fast_lane.ai')
 
     foreach ($model in $models) {
         $carDestination = Join-Path $resolvedOutput "content\cars\$model"
@@ -335,9 +388,12 @@ try {
         track = $track
         trackConfig = $trackConfig
         model = @($models)[0]
-        humanSlots = $HumanSlots
+        models = @($models | Sort-Object)
+        sourceCarSlots = $sourceCarSlotCount
+        autoExpandedSlots = $slotCount - $sourceCarSlotCount
+        humanSlots = $effectiveHumanSlots
         botSlots = $effectiveBotSlots
-        midRaceBotTakeover = $true
+        midRaceBotTakeover = $hasBots
         advertisedSlots = $slotCount
         pitBoxes = $pitBoxes
         sourceMode = $sourceMode
@@ -347,7 +403,7 @@ try {
         assettoCorsaRoot = $resolvedGame
     }
     $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $resolvedOutput 'race-bot-manifest.json') -Encoding utf8
-    Write-Host "Staged $slotCount slots ($HumanSlots human, $effectiveBotSlots bot) at $resolvedOutput"
+    Write-Host "Staged $slotCount slots ($effectiveHumanSlots human, $effectiveBotSlots bot) at $resolvedOutput"
     Write-Host "LAN endpoint: $BindAddress"
     Write-Host "Launch: .\AssettoServer.exe --preset $PresetName"
 }
