@@ -5,13 +5,18 @@ param(
     [string] $Track = 'magione',
     [string] $TrackLayout = '',
     [string] $Car = 'bmw_m3_e30',
+    [string[]] $CarModels,
     [ValidateRange(2, 32)]
     [int] $Slots = 2,
     [ValidateRange(3, 60)]
-    [int] $SmokeSeconds = 8
+    [int] $SmokeSeconds = 8,
+    [switch] $VerifyMovingBots
 )
 
 $ErrorActionPreference = 'Stop'
+if ($VerifyMovingBots -and $SmokeSeconds -lt 30) {
+    throw '-VerifyMovingBots requires -SmokeSeconds 30 or greater so the race countdown can finish.'
+}
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($RaceControlBuild)) {
     $RaceControlBuild = Join-Path $repositoryRoot 'out-race-control'
@@ -28,9 +33,14 @@ Write-Host "Scanned $($catalog.Cars.Count) cars, $($catalog.Tracks.Count) track 
 
 $selectedTrack = $catalog.Tracks | Where-Object { $_.TrackId -ieq $Track -and $_.LayoutId -ieq $TrackLayout } | Select-Object -First 1
 if ($null -eq $selectedTrack) { throw "Track layout is not installed: $Track/$TrackLayout" }
-$selectedCar = $catalog.Cars | Where-Object Id -IEQ $Car | Select-Object -First 1
-if ($null -eq $selectedCar) { throw "Car is not installed: $Car" }
-if ($selectedCar.Skins.Count -eq 0) { throw "Car has no installed skins: $Car" }
+$requestedCarIds = @($(if ($CarModels.Count -gt 0) { $CarModels } else { $Car }))
+$selectedCars = @($requestedCarIds | ForEach-Object {
+    $carId = $_
+    $selected = $catalog.Cars | Where-Object Id -IEQ $carId | Select-Object -First 1
+    if ($null -eq $selected) { throw "Car is not installed: $carId" }
+    if ($selected.Skins.Count -eq 0) { throw "Car has no installed skins: $carId" }
+    $selected
+})
 
 $preset = [AssettoServer.RaceControl.Core.Models.RaceControlPreset]::CreateDefault($AssettoCorsaRoot, $serverPayload)
 $preset.Name = 'Race Control Local Acceptance'
@@ -43,13 +53,15 @@ $preset.Network.UdpPort = 19600
 $preset.Network.HttpPort = 18081
 $preset.Sessions.PracticeMinutes = 2
 $preset.Sessions.RaceLaps = 3
+$preset.Sessions.PracticeEnabled = -not $VerifyMovingBots
 $preset.Bots.Enabled = $true
 $preset.Bots.PhysicsFidelity = [AssettoServer.RaceControl.Core.Models.PhysicsFidelity]::Efficient
 
 $grid = [Collections.Generic.List[AssettoServer.RaceControl.Core.Models.GridSlotPreset]]::new()
 for ($index = 0; $index -lt $Slots; $index++) {
+    $selectedCar = $selectedCars[$index % $selectedCars.Count]
     $slot = [AssettoServer.RaceControl.Core.Models.GridSlotPreset]::new()
-    $slot.CarId = $Car
+    $slot.CarId = $selectedCar.Id
     $slot.SkinId = $selectedCar.Skins[$index % $selectedCar.Skins.Count].Id
     $slot.DriverName = "Smoke Bot $($index + 1)"
     $slot.Mode = [AssettoServer.RaceControl.Core.Models.SlotMode]::Auto
@@ -106,4 +118,13 @@ $combinedLog = (Get-Content -Raw -LiteralPath $stdout -ErrorAction SilentlyConti
     (Get-Content -Raw -LiteralPath $stderr -ErrorAction SilentlyContinue)
 if ($combinedLog -notmatch 'Using preset race-control') { throw 'Server log did not confirm the generated preset' }
 if ($combinedLog -notmatch 'Shutdown requested by control file') { throw 'Server log did not confirm graceful control-file shutdown' }
+if ($VerifyMovingBots) {
+    $samples = @([regex]::Matches($combinedLog,
+        'Race physics: \d+ bots, Y (?<min>-?\d+(?:\.\d+)?)\.\.(?<max>-?\d+(?:\.\d+)?) m, max speed (?<speed>\d+(?:\.\d+)?) m/s, height error (?<height>\d+(?:\.\d+)?) m'))
+    if ($samples.Count -lt 2) { throw 'Server log did not contain enough rigid-body diagnostics.' }
+    $finalSpeed = [double]::Parse($samples[-1].Groups['speed'].Value, [Globalization.CultureInfo]::InvariantCulture)
+    $finalHeightError = [double]::Parse($samples[-1].Groups['height'].Value, [Globalization.CultureInfo]::InvariantCulture)
+    if ($finalHeightError -gt 2.5) { throw "Bots left the road surface: final spline height error was $finalHeightError m." }
+    if ($finalSpeed -lt 1) { throw "Bots did not begin moving after the countdown: final maximum speed was $finalSpeed m/s." }
+}
 Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'

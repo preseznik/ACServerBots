@@ -7,6 +7,8 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
+using BepuPhysics.Collidables;
+using BepuUtilities.Memory;
 
 namespace AssettoServer.Server.Ai.Physics;
 
@@ -23,11 +25,12 @@ public readonly record struct RaceGridPose(Vector3 Position, Quaternion Orientat
 internal sealed class RacePhysicsAsset
 {
     private const string Magic = "ASRPHY01";
-    private const int Version = 1;
+    private const int Version = 2;
 
     public required IReadOnlyList<RaceGridPose> Grid { get; init; }
     public required IReadOnlyList<Kn5Triangle> TrackTriangles { get; init; }
     public required IReadOnlyDictionary<string, Vector3[]> CarColliderVertices { get; init; }
+    public required IReadOnlyDictionary<string, Vector3[]> CarVisualSupportVertices { get; init; }
 
     public static RacePhysicsAsset Load(string path)
     {
@@ -48,6 +51,7 @@ internal sealed class RacePhysicsAsset
             triangles[i] = new Kn5Triangle(ReadVector3(reader), ReadVector3(reader), ReadVector3(reader));
 
         var cars = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
+        var visualSupports = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
         int carCount = ReadCount(reader, 254, "car collider");
         for (int i = 0; i < carCount; i++)
         {
@@ -56,9 +60,19 @@ internal sealed class RacePhysicsAsset
             for (int j = 0; j < vertices.Length; j++)
                 vertices[j] = ReadVector3(reader);
             cars.Add(model, vertices);
+            var visualVertices = new Vector3[ReadCount(reader, 1_000_000, "car visual support vertex")];
+            for (int j = 0; j < visualVertices.Length; j++)
+                visualVertices[j] = ReadVector3(reader);
+            visualSupports.Add(model, visualVertices);
         }
 
-        return new RacePhysicsAsset { Grid = grid, TrackTriangles = triangles, CarColliderVertices = cars };
+        return new RacePhysicsAsset
+        {
+            Grid = grid,
+            TrackTriangles = triangles,
+            CarColliderVertices = cars,
+            CarVisualSupportVertices = visualSupports
+        };
     }
 
     public void Save(string path)
@@ -88,6 +102,10 @@ internal sealed class RacePhysicsAsset
             writer.Write(model);
             writer.Write(vertices.Length);
             foreach (var vertex in vertices)
+                Write(writer, vertex);
+            var visualVertices = CarVisualSupportVertices[model];
+            writer.Write(visualVertices.Length);
+            foreach (var vertex in visualVertices)
                 Write(writer, vertex);
         }
     }
@@ -168,9 +186,11 @@ internal static partial class RacePhysicsAssetBuilder
             throw new InvalidDataException($"Track must expose a contiguous AC_START_0..n race grid: {track}");
 
         var colliders = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
+        var visualSupports = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
         foreach (string model in carModels.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            string colliderPath = Path.Combine(gameRoot, "content", "cars", model, "collider.kn5");
+            string carRoot = Path.Combine(gameRoot, "content", "cars", model);
+            string colliderPath = Path.Combine(carRoot, "collider.kn5");
             if (!File.Exists(colliderPath))
                 throw new FileNotFoundException($"Car has no collider.kn5: {model}", colliderPath);
             var collider = Kn5CollisionReader.Read(colliderPath, _ => true);
@@ -178,13 +198,21 @@ internal static partial class RacePhysicsAssetBuilder
             if (vertices.Length < 4)
                 throw new InvalidDataException($"Car collider has insufficient geometry: {model}");
             colliders.Add(model, vertices);
+
+            string visualModelPath = FindVisualModelFile(carRoot, model);
+            var visualModel = Kn5CollisionReader.Read(visualModelPath, _ => true, includeTriangles: false);
+            var visualSupport = CreateSupportHull(Deduplicate(visualModel.Vertices));
+            if (visualSupport.Length < 4)
+                throw new InvalidDataException($"Car visual model has insufficient geometry: {model}");
+            visualSupports.Add(model, visualSupport);
         }
 
         var asset = new RacePhysicsAsset
         {
             Grid = gridTransforms.Values.ToArray(),
             TrackTriangles = trackTriangles,
-            CarColliderVertices = colliders
+            CarColliderVertices = colliders,
+            CarVisualSupportVertices = visualSupports
         };
         asset.Save(outputPath);
         return new RacePhysicsBuildResult(asset.Grid.Count, asset.TrackTriangles.Count, colliders.Count,
@@ -268,6 +296,58 @@ internal static partial class RacePhysicsAssetBuilder
                 result.Add(vertex);
         }
         return result.ToArray();
+    }
+
+    private static string FindVisualModelFile(string carRoot, string model)
+    {
+        string lodsPath = Path.Combine(carRoot, "lods.ini");
+        if (File.Exists(lodsPath))
+        {
+            foreach (string rawLine in File.ReadLines(lodsPath))
+            {
+                string line = rawLine.Trim();
+                if (!line.StartsWith("FILE=", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                string candidate = Path.GetFullPath(Path.Combine(carRoot, line[5..].Trim()));
+                if (candidate.StartsWith(Path.GetFullPath(carRoot) + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase) && File.Exists(candidate))
+                    return candidate;
+            }
+        }
+
+        string conventional = Path.Combine(carRoot, $"{model}.kn5");
+        if (File.Exists(conventional))
+            return conventional;
+        return Directory.EnumerateFiles(carRoot, "*.kn5", SearchOption.TopDirectoryOnly)
+                   .Where(path => !Path.GetFileName(path).Equals("collider.kn5", StringComparison.OrdinalIgnoreCase))
+                   .OrderByDescending(path => new FileInfo(path).Length)
+                   .FirstOrDefault()
+               ?? throw new FileNotFoundException($"Car has no visual KN5 model: {model}", conventional);
+    }
+
+    private static Vector3[] CreateSupportHull(Vector3[] vertices)
+    {
+        var pool = new BufferPool();
+        var hull = new ConvexHull(vertices.AsSpan(), pool, out var center);
+        try
+        {
+            var result = new List<Vector3>();
+            var seen = new HashSet<(ushort Bundle, ushort Inner)>();
+            for (int i = 0; i < hull.FaceVertexIndices.Length; i++)
+            {
+                var index = hull.FaceVertexIndices[i];
+                if (!seen.Add((index.BundleIndex, index.InnerIndex)))
+                    continue;
+                hull.GetPoint(index, out var point);
+                result.Add(point + center);
+            }
+            return Deduplicate(result);
+        }
+        finally
+        {
+            hull.Dispose(pool);
+            pool.Clear();
+        }
     }
 }
 

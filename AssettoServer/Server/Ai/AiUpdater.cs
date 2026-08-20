@@ -95,8 +95,10 @@ public class AiUpdater
             if (now - _lastPhysicsDiagnosticsMilliseconds >= 5000)
             {
                 var diagnostics = _racePhysicsWorld.GetDiagnostics();
-                Log.Debug("Race physics: {BotCount} bots, Y {MinimumY:F2}..{MaximumY:F2} m, max speed {MaximumSpeed:F1} m/s",
-                    diagnostics.BotCount, diagnostics.MinimumY, diagnostics.MaximumY, diagnostics.MaximumSpeed);
+                Log.Debug("Race physics: {BotCount} bots, Y {MinimumY:F2}..{MaximumY:F2} m, max speed {MaximumSpeed:F1} m/s, "
+                          + "height error {MaximumSplineHeightError:F2} m, static pairs {StaticPairTests}, manifolds {StaticManifolds}",
+                    diagnostics.BotCount, diagnostics.MinimumY, diagnostics.MaximumY, diagnostics.MaximumSpeed,
+                    diagnostics.MaximumSplineHeightError, diagnostics.StaticPairTests, diagnostics.StaticManifolds);
                 _lastPhysicsDiagnosticsMilliseconds = now;
             }
             _accumulatorMilliseconds -= stepMilliseconds;

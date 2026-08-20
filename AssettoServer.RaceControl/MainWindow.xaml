@@ -251,7 +251,8 @@
                             <DataGridTemplateColumn Header="Car" Width="2*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <ComboBox ItemsSource="{Binding Cars}" SelectedItem="{Binding SelectedCar, Mode=TwoWay}" DisplayMemberPath="DisplayName"
+                                        <ComboBox ItemsSource="{Binding Cars}" SelectedValuePath="Id"
+                                                  SelectedValue="{Binding SelectedCarId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="DisplayName"
                                                   IsTextSearchEnabled="True" MinWidth="210" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -259,7 +260,8 @@
                             <DataGridTemplateColumn Header="Skin" Width="2*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <ComboBox ItemsSource="{Binding Skins}" SelectedItem="{Binding SelectedSkin, Mode=TwoWay}" DisplayMemberPath="Name" MinWidth="180" />
+                                        <ComboBox ItemsSource="{Binding Skins}" SelectedValuePath="Id"
+                                                  SelectedValue="{Binding SelectedSkinId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="Name" MinWidth="180" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

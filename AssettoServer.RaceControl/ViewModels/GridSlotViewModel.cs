@@ -53,15 +53,34 @@ public sealed class GridSlotViewModel : ObservableObject
             if (SetProperty(ref _selectedCar, value))
             {
                 RefreshSkins(null);
+                OnPropertyChanged(nameof(SelectedCarId));
                 OnPropertyChanged(nameof(CarDetails));
             }
         }
     }
 
+    public string? SelectedCarId
+    {
+        get => SelectedCar?.Id;
+        set => SelectedCar = _cars.FirstOrDefault(car => car.Id.Equals(value, StringComparison.OrdinalIgnoreCase));
+    }
+
     public AcSkin? SelectedSkin
     {
         get => _selectedSkin;
-        set => SetProperty(ref _selectedSkin, value);
+        set
+        {
+            if (SetProperty(ref _selectedSkin, value))
+            {
+                OnPropertyChanged(nameof(SelectedSkinId));
+            }
+        }
+    }
+
+    public string? SelectedSkinId
+    {
+        get => SelectedSkin?.Id;
+        set => SelectedSkin = Skins.FirstOrDefault(skin => skin.Id.Equals(value, StringComparison.OrdinalIgnoreCase));
     }
 
     public string DriverName

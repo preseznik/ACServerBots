@@ -152,6 +152,10 @@ public class RaceBotsTests
                 CarColliderVertices = new Dictionary<string, Vector3[]>
                 {
                     ["test_car"] = [Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ]
+                },
+                CarVisualSupportVertices = new Dictionary<string, Vector3[]>
+                {
+                    ["test_car"] = [Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ]
                 }
             };
 
@@ -165,6 +169,7 @@ public class RaceBotsTests
                 Assert.That(loaded.TrackTriangles, Has.Count.EqualTo(1));
                 Assert.That(loaded.TrackTriangles[0].C, Is.EqualTo(Vector3.UnitZ));
                 Assert.That(loaded.CarColliderVertices["TEST_CAR"], Has.Length.EqualTo(4));
+                Assert.That(loaded.CarVisualSupportVertices["TEST_CAR"], Has.Length.EqualTo(4));
             });
         }
         finally
@@ -177,7 +182,7 @@ public class RaceBotsTests
     public void Kn5TrackTrianglesAreRewoundForBepuVisibleFaces()
     {
         var source = new Kn5Triangle(Vector3.Zero, Vector3.UnitX, Vector3.UnitZ);
-        var converted = RaceBotPhysicsWorld.RewindTrackTriangle(source);
+        var converted = RaceBotPhysicsWorld.ToBepuTrackTriangle(source);
 
         Assert.Multiple(() =>
         {
@@ -225,6 +230,49 @@ public class RaceBotsTests
             Assert.That(roundTrip.X, Is.EqualTo(protocol.X).Within(1e-5f));
             Assert.That(roundTrip.Y, Is.EqualTo(protocol.Y).Within(1e-5f));
             Assert.That(roundTrip.Z, Is.EqualTo(protocol.Z).Within(1e-5f));
+        });
+    }
+
+    [Test]
+    public void ProtocolRotationUsesAssettoCorsaForwardConvention()
+    {
+        var expectedForward = Vector3.Normalize(new Vector3(1, 0.2f, 0));
+        var protocol = new Vector3(
+            MathF.Atan2(expectedForward.Z, expectedForward.X) - MathF.PI / 2,
+            -(MathF.Atan2(new Vector2(expectedForward.Z, expectedForward.X).Length(), expectedForward.Y) - MathF.PI / 2),
+            0);
+
+        var orientation = RacePhysicsMath.FromProtocolRotation(protocol);
+        var actualForward = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, orientation));
+
+        Assert.That(Vector3.Dot(actualForward, expectedForward), Is.GreaterThan(0.999f));
+    }
+
+    [Test]
+    public void ColliderSupportMapsPhysicsOriginBackToAcVisualHeight()
+    {
+        var colliderVertices = new[]
+        {
+            new Vector3(-1, 0.15f, -2),
+            new Vector3(1, 0.15f, -2),
+            new Vector3(0, 1.25f, 2)
+        };
+        var visualVertices = new[]
+        {
+            new Vector3(-1, 0, -2),
+            new Vector3(1, 0, -2),
+            new Vector3(0, 1.5f, 2)
+        };
+        var visualPose = new RaceGridPose(new Vector3(10, 5.5f, 20), Quaternion.Identity);
+
+        var physicsPose = RaceBotPhysicsWorld.ToPhysicsOriginPose(visualPose, colliderVertices, visualVertices);
+        var protocolPosition = RaceBotPhysicsWorld.ToProtocolPosition(
+            physicsPose.Position, physicsPose.Orientation, colliderVertices, visualVertices);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(physicsPose.Position.Y, Is.EqualTo(5.35f).Within(1e-5f));
+            Assert.That(protocolPosition, Is.EqualTo(visualPose.Position));
         });
     }
 

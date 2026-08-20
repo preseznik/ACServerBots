@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
 using BepuPhysics;
@@ -16,12 +17,13 @@ using Serilog;
 
 namespace AssettoServer.Server.Ai.Physics;
 
-public readonly record struct RaceBotPhysicsState(Vector3 Position, Quaternion Orientation, Vector3 Velocity,
-    float ForwardSpeed, float LongitudinalAcceleration);
+public readonly record struct RaceBotPhysicsState(Vector3 Position, Vector3 ProtocolPosition,
+    Quaternion Orientation, Vector3 Velocity, float ForwardSpeed, float LongitudinalAcceleration);
 
 public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPosition, Vector3 TargetForward,
     float TargetSpeed, float MaximumAcceleration, float MaximumBrakeDeceleration, float LateralGripG);
-public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed);
+public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
+    float MaximumSplineHeightError, long StaticPairTests, long StaticManifolds);
 
 public sealed class RaceBotPhysicsWorld : IDisposable
 {
@@ -33,6 +35,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private readonly Dictionary<byte, BodyRecord> _bodies = [];
     private readonly object _sync = new();
     private readonly ContinuousDetection _botContinuousDetection;
+    private readonly PhysicsContactMetrics _contactMetrics = new();
     private bool _disposed;
 
     private sealed class ColliderShape
@@ -40,6 +43,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public required ConvexHull Hull { get; init; }
         public required TypedIndex ShapeIndex { get; init; }
         public required Vector3 Center { get; init; }
+        public required IReadOnlyList<Vector3> Vertices { get; init; }
+        public required IReadOnlyList<Vector3> VisualSupportVertices { get; init; }
     }
 
     private sealed class BodyRecord
@@ -52,6 +57,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public RaceGridPose HeldPose { get; set; }
         public RaceBotPhysicsControl Control { get; set; }
         public float LastLongitudinalAcceleration { get; set; }
+        public float SplineHeightOffset { get; set; }
     }
 
     public int GridCount => _asset.Grid.Count;
@@ -77,7 +83,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         _botContinuousDetection = physics.Fidelity == RacePhysicsFidelity.High
             ? ContinuousDetection.Continuous(1e-3f, 1e-2f)
             : ContinuousDetection.Passive;
-        _simulation = Simulation.Create(_pool, new NarrowPhaseCallbacks(physics.Friction),
+        _simulation = Simulation.Create(_pool, new NarrowPhaseCallbacks(physics.Friction, _contactMetrics),
             new PoseIntegratorCallbacks(new Vector3(0, -9.81f, 0)), solver);
         if (physics.Fidelity != RacePhysicsFidelity.Efficient && Environment.ProcessorCount > 2)
             _dispatcher = new ThreadDispatcher(Math.Min(8, Environment.ProcessorCount - 1));
@@ -90,7 +96,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             {
                 Hull = hull,
                 ShapeIndex = _simulation.Shapes.Add(hull),
-                Center = center
+                Center = center,
+                Vertices = vertices,
+                VisualSupportVertices = _asset.CarVisualSupportVertices[model]
             });
         }
 
@@ -106,14 +114,15 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         return _asset.Grid[gridIndex];
     }
 
-    public void RegisterBot(byte sessionId, string model, RaceGridPose pose, float massKg)
+    public void RegisterBot(byte sessionId, string model, RaceGridPose pose, float massKg, float visualHeightOffset)
     {
         lock (_sync)
         {
             RemoveBodyUnsafe(sessionId);
             var collider = GetCollider(model);
             var inertia = collider.Hull.ComputeInertia(massKg);
-            var bodyPose = ToCenterOfMassPose(pose, collider.Center);
+            var physicsPose = ToPhysicsOriginPose(pose, collider.Vertices, collider.VisualSupportVertices);
+            var bodyPose = ToCenterOfMassPose(physicsPose, collider.Center);
             var collidable = new CollidableDescription(collider.ShapeIndex, 0.25f, _botContinuousDetection);
             var handle = _simulation.Bodies.Add(BodyDescription.CreateDynamic(bodyPose, inertia, collidable,
                 new BodyActivityDescription(0.01f)));
@@ -123,7 +132,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 Collider = collider,
                 DynamicInertia = inertia,
                 IsBot = true,
-                HeldPose = pose
+                HeldPose = physicsPose,
+                SplineHeightOffset = visualHeightOffset
             });
         }
     }
@@ -198,8 +208,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             }
             var body = _simulation.Bodies[record.Handle];
             var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
+            var protocolPosition = ToProtocolPosition(origin, body.Pose.Orientation,
+                record.Collider.Vertices, record.Collider.VisualSupportVertices);
             var forward = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
-            state = new RaceBotPhysicsState(origin, body.Pose.Orientation, body.Velocity.Linear,
+            state = new RaceBotPhysicsState(origin, protocolPosition, body.Pose.Orientation, body.Velocity.Linear,
                 Vector3.Dot(body.Velocity.Linear, forward), record.LastLongitudinalAcceleration);
             return true;
         }
@@ -213,16 +225,24 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             float minY = float.PositiveInfinity;
             float maxY = float.NegativeInfinity;
             float maxSpeed = 0;
+            float maxSplineHeightError = 0;
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
             {
                 var body = _simulation.Bodies[record.Handle];
                 var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
-                minY = Math.Min(minY, origin.Y);
-                maxY = Math.Max(maxY, origin.Y);
+                var protocolPosition = ToProtocolPosition(origin, body.Pose.Orientation,
+                    record.Collider.Vertices, record.Collider.VisualSupportVertices);
+                minY = Math.Min(minY, protocolPosition.Y);
+                maxY = Math.Max(maxY, protocolPosition.Y);
                 maxSpeed = Math.Max(maxSpeed, body.Velocity.Linear.Length());
+                maxSplineHeightError = Math.Max(maxSplineHeightError,
+                    Math.Abs(protocolPosition.Y - (record.Control.TargetPosition.Y + record.SplineHeightOffset)));
                 count++;
             }
-            return new RacePhysicsDiagnostics(count, count == 0 ? 0 : minY, count == 0 ? 0 : maxY, maxSpeed);
+            return new RacePhysicsDiagnostics(count, count == 0 ? 0 : minY, count == 0 ? 0 : maxY, maxSpeed,
+                maxSplineHeightError,
+                Interlocked.Read(ref _contactMetrics.StaticPairTests),
+                Interlocked.Read(ref _contactMetrics.StaticManifolds));
         }
     }
 
@@ -303,6 +323,32 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private static RigidPose ToCenterOfMassPose(RaceGridPose originPose, Vector3 localCenter) =>
         new(originPose.Position + Vector3.Transform(localCenter, originPose.Orientation), originPose.Orientation);
 
+    internal static RaceGridPose ToPhysicsOriginPose(RaceGridPose visualPose,
+        IReadOnlyList<Vector3> colliderVertices, IReadOnlyList<Vector3> visualSupportVertices)
+    {
+        var position = visualPose.Position;
+        position.Y -= GetMinimumVerticalSupportOffset(colliderVertices, visualPose.Orientation)
+                      - GetMinimumVerticalSupportOffset(visualSupportVertices, visualPose.Orientation);
+        return new RaceGridPose(position, visualPose.Orientation);
+    }
+
+    internal static Vector3 ToProtocolPosition(Vector3 physicsOrigin, Quaternion orientation,
+        IReadOnlyList<Vector3> colliderVertices, IReadOnlyList<Vector3> visualSupportVertices)
+    {
+        var position = physicsOrigin;
+        position.Y += GetMinimumVerticalSupportOffset(colliderVertices, orientation)
+                      - GetMinimumVerticalSupportOffset(visualSupportVertices, orientation);
+        return position;
+    }
+
+    private static float GetMinimumVerticalSupportOffset(IReadOnlyList<Vector3> vertices, Quaternion orientation)
+    {
+        float minimum = float.PositiveInfinity;
+        for (int i = 0; i < vertices.Count; i++)
+            minimum = Math.Min(minimum, Vector3.Transform(vertices[i], orientation).Y);
+        return minimum;
+    }
+
     private void RemoveBodyUnsafe(byte sessionId)
     {
         if (_bodies.Remove(sessionId, out var record) && _simulation.Bodies.BodyExists(record.Handle))
@@ -314,16 +360,16 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         _pool.Take<Triangle>(_asset.TrackTriangles.Count, out var triangles);
         for (int i = 0; i < triangles.Length; i++)
         {
-            var source = RewindTrackTriangle(_asset.TrackTriangles[i]);
+            var source = ToBepuTrackTriangle(_asset.TrackTriangles[i]);
             triangles[i] = new Triangle(source.A, source.B, source.C);
         }
         var mesh = new Mesh(triangles, Vector3.One, _pool);
         _simulation.Statics.Add(new StaticDescription(Vector3.Zero, _simulation.Shapes.Add(mesh)));
     }
 
-    internal static Kn5Triangle RewindTrackTriangle(Kn5Triangle source)
+    internal static Kn5Triangle ToBepuTrackTriangle(Kn5Triangle source)
     {
-        // KN5 uses the opposite visible-face winding from BEPU's right-handed mesh convention.
+        // BEPU's plane mesh convention faces the opposite way from KN5's visible winding.
         return new Kn5Triangle(source.A, source.C, source.B);
     }
 
@@ -336,15 +382,26 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         _pool.Clear();
     }
 
-    private readonly struct NarrowPhaseCallbacks(float friction) : INarrowPhaseCallbacks
+    private sealed class PhysicsContactMetrics
+    {
+        public long StaticPairTests;
+        public long StaticManifolds;
+    }
+
+    private readonly struct NarrowPhaseCallbacks(float friction, PhysicsContactMetrics metrics) : INarrowPhaseCallbacks
     {
         private readonly float _friction = friction;
+        private readonly PhysicsContactMetrics _metrics = metrics;
         public void Initialize(Simulation simulation) { }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool AllowContactGeneration(int workerIndex, CollidableReference a, CollidableReference b,
-            ref float speculativeMargin) =>
-            a.Mobility == CollidableMobility.Dynamic || b.Mobility == CollidableMobility.Dynamic;
+            ref float speculativeMargin)
+        {
+            if (a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static)
+                Interlocked.Increment(ref _metrics.StaticPairTests);
+            return a.Mobility == CollidableMobility.Dynamic || b.Mobility == CollidableMobility.Dynamic;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool AllowContactGeneration(int workerIndex, CollidablePair pair, int childIndexA, int childIndexB) => true;
@@ -354,6 +411,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             ref TManifold manifold, out PairMaterialProperties pairMaterial)
             where TManifold : unmanaged, IContactManifold<TManifold>
         {
+            if (pair.A.Mobility == CollidableMobility.Static || pair.B.Mobility == CollidableMobility.Static)
+                Interlocked.Increment(ref _metrics.StaticManifolds);
             // The convex hull is the chassis, not a tyre. Let the race controller supply longitudinal
             // and lateral tyre forces while retaining friction for car-to-car and car-to-human impacts.
             float contactFriction = pair.A.Mobility == CollidableMobility.Static
@@ -395,7 +454,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 internal static class RacePhysicsMath
 {
     public static Quaternion FromProtocolRotation(Vector3 rotation) =>
-        Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(rotation.X, rotation.Y, rotation.Z));
+        Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(-rotation.X, -rotation.Y, -rotation.Z));
 
     public static Vector3 ToProtocolRotation(Quaternion orientation)
     {
@@ -406,6 +465,6 @@ internal static class RacePhysicsMath
             1 - 2 * (orientation.X * orientation.X + orientation.Y * orientation.Y));
         float roll = MathF.Atan2(2 * (orientation.W * orientation.Z + orientation.X * orientation.Y),
             1 - 2 * (orientation.X * orientation.X + orientation.Z * orientation.Z));
-        return new Vector3(yaw, pitch, roll);
+        return new Vector3(-yaw, -pitch, -roll);
     }
 }

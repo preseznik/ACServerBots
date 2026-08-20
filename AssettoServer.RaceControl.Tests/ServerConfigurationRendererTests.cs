@@ -20,6 +20,8 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.EffectiveGrid, Has.Count.EqualTo(2));
             Assert.That(rendered.Cars.Select(car => car.Id), Is.EquivalentTo(new[] { "car_one", "car_two" }));
             Assert.That(rendered.ServerConfiguration.Get("SERVER", "MAX_CLIENTS"), Is.EqualTo("2"));
+            Assert.That(rendered.EntryList.Get("CAR_0", "MODEL"), Is.EqualTo("car_one"));
+            Assert.That(rendered.EntryList.Get("CAR_1", "MODEL"), Is.EqualTo("car_two"));
             Assert.That(rendered.EntryList.Get("CAR_0", "AI"), Is.EqualTo("auto"));
         });
     }

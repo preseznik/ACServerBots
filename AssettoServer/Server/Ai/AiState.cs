@@ -230,10 +230,12 @@ public class AiState : IDisposable
                 throw new InvalidOperationException("Race bot rigid-body world or vehicle profile is unavailable");
             var pose = gridPose ?? CreateSplinePose(pointId);
             _racePhysicsWorld.RegisterBot(EntryCar.SessionId, EntryCar.Model, pose,
-                EntryCar.RaceVehicleProfile.MassKg);
-            _physicsLastPosition = pose.Position;
+                EntryCar.RaceVehicleProfile.MassKg, EntryCar.AiSplineHeightOffsetMeters);
+            if (!_racePhysicsWorld.TryGetBotState(EntryCar.SessionId, out var physicsState))
+                throw new InvalidOperationException("Race bot rigid body was not registered");
+            _physicsLastPosition = physicsState.Position;
             Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
-            Status.Position = pose.Position;
+            Status.Position = physicsState.ProtocolPosition;
             Status.Rotation = RacePhysicsMath.ToProtocolRotation(pose.Orientation);
             Status.Velocity = Vector3.Zero;
             CurrentSpeed = 0;
@@ -832,7 +834,7 @@ public class AiState : IDisposable
         CurrentSpeed = Math.Max(0, physicsState.ForwardSpeed);
         Acceleration = physicsState.LongitudinalAcceleration;
         Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
-        Status.Position = physicsState.Position;
+        Status.Position = physicsState.ProtocolPosition;
         Status.Rotation = RacePhysicsMath.ToProtocolRotation(physicsState.Orientation);
         Status.Velocity = physicsState.Velocity;
         ApplyStatusTelemetry();

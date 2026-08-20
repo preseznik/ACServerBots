@@ -32,7 +32,7 @@ internal static class Kn5CollisionReader
 {
     private const int MaxCollectionCount = 50_000_000;
 
-    public static Kn5CollisionData Read(string path, Func<string, bool> includeMesh)
+    public static Kn5CollisionData Read(string path, Func<string, bool> includeMesh, bool includeTriangles = true)
     {
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: false);
@@ -57,12 +57,12 @@ internal static class Kn5CollisionReader
             SkipMaterial(reader);
 
         var result = new Kn5CollisionData();
-        ReadNode(reader, Matrix4x4.Identity, includeMesh, result);
+        ReadNode(reader, Matrix4x4.Identity, includeMesh, includeTriangles, result);
         return result;
     }
 
     private static void ReadNode(BinaryReader reader, Matrix4x4 parentTransform,
-        Func<string, bool> includeMesh, Kn5CollisionData result)
+        Func<string, bool> includeMesh, bool includeTriangles, Kn5CollisionData result)
     {
         var nodeClass = (Kn5NodeClass)reader.ReadInt32();
         if (nodeClass is < Kn5NodeClass.Base or > Kn5NodeClass.SkinnedMesh)
@@ -84,19 +84,19 @@ internal static class Kn5CollisionReader
                 break;
             }
             case Kn5NodeClass.Mesh:
-                ReadMesh(reader, name, active, worldTransform, includeMesh, result, skinned: false);
+                ReadMesh(reader, name, active, worldTransform, includeMesh, includeTriangles, result, skinned: false);
                 break;
             case Kn5NodeClass.SkinnedMesh:
-                ReadMesh(reader, name, active, worldTransform, includeMesh, result, skinned: true);
+                ReadMesh(reader, name, active, worldTransform, includeMesh, includeTriangles, result, skinned: true);
                 break;
         }
 
         for (int i = 0; i < childCount; i++)
-            ReadNode(reader, worldTransform, includeMesh, result);
+            ReadNode(reader, worldTransform, includeMesh, includeTriangles, result);
     }
 
     private static void ReadMesh(BinaryReader reader, string name, bool active, Matrix4x4 worldTransform,
-        Func<string, bool> includeMesh, Kn5CollisionData result, bool skinned)
+        Func<string, bool> includeMesh, bool includeTriangles, Kn5CollisionData result, bool skinned)
     {
         reader.ReadBoolean(); // Cast shadows
         reader.ReadBoolean(); // Visible
@@ -143,6 +143,8 @@ internal static class Kn5CollisionReader
 
         result.MeshNames.Add(name);
         result.Vertices.AddRange(vertices);
+        if (!includeTriangles)
+            return;
         for (int i = 0; i + 2 < indices.Length; i += 3)
         {
             int a = indices[i];
