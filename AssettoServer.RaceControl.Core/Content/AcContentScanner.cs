@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Models;
 
 namespace AssettoServer.RaceControl.Core.Content;
@@ -218,8 +219,29 @@ public sealed partial class AcContentScanner
         {
             cancellationToken.ThrowIfCancellationRequested();
             var id = Path.GetFileName(directory);
-            using var metadata = LooseJson.TryRead(Path.Combine(directory, "weather.ini"));
-            weather.Add(new(id, Humanize(id), directory, ExistingPath(Path.Combine(directory, "preview.jpg"))));
+            var name = Humanize(id);
+            int? weatherFxType = null;
+            var configurationPath = Path.Combine(directory, "weather.ini");
+            if (File.Exists(configurationPath))
+            {
+                try
+                {
+                    var configuration = IniDocument.Load(configurationPath);
+                    name = CleanIniValue(configuration.Get("LAUNCHER", "NAME")) ?? name;
+                    var weatherTypeText = CleanIniValue(configuration.Get("__LAUNCHER_CM", "WEATHER_TYPE"));
+                    if (int.TryParse(weatherTypeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedType)
+                        && parsedType is >= 0 and <= 32)
+                    {
+                        weatherFxType = parsedType;
+                    }
+                }
+                catch (IOException)
+                {
+                    // Keep content visible even if optional launcher metadata cannot be read.
+                }
+            }
+
+            weather.Add(new(id, name, directory, ExistingPath(Path.Combine(directory, "preview.jpg")), weatherFxType));
         }
 
         return weather;
@@ -228,6 +250,12 @@ public sealed partial class AcContentScanner
     private static string? ExistingPath(string path) => File.Exists(path) ? path : null;
 
     private static string Humanize(string id) => CultureInfo.CurrentCulture.TextInfo.ToTitleCase(id.Replace('_', ' ').Trim());
+
+    private static string? CleanIniValue(string? value)
+    {
+        var cleaned = value?.Split(';', 2)[0].Trim();
+        return string.IsNullOrWhiteSpace(cleaned) ? null : cleaned;
+    }
 
     private static partial class LooseJson
     {

@@ -27,6 +27,15 @@ public sealed class ServerConfigurationRenderer
             .DistinctBy(car => car.Id, StringComparer.OrdinalIgnoreCase)
             .OrderBy(car => car.Id, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var weather = catalog.Weather.FirstOrDefault(candidate =>
+                candidate.Id.Equals(preset.Conditions.WeatherId, StringComparison.OrdinalIgnoreCase))
+            ?? catalog.Weather.FirstOrDefault(candidate => candidate.Id.Equals("3_clear", StringComparison.OrdinalIgnoreCase))
+            ?? catalog.Weather.FirstOrDefault();
+        var weatherGraphics = weather is null
+            ? "3_clear"
+            : weather.WeatherFxType.HasValue
+                ? $"{weather.Id}_type={weather.WeatherFxType.Value}"
+                : weather.Id;
 
         foreach (var slot in grid)
         {
@@ -38,7 +47,7 @@ public sealed class ServerConfigurationRenderer
         }
 
         return new(
-            RenderServerConfiguration(preset, track, grid, cars),
+            RenderServerConfiguration(preset, track, grid, cars, weatherGraphics),
             RenderEntryList(preset, grid),
             RenderExtraConfiguration(preset, cars),
             grid,
@@ -50,7 +59,8 @@ public sealed class ServerConfigurationRenderer
         RaceControlPreset preset,
         AcTrackLayout track,
         IReadOnlyList<GridSlotPreset> grid,
-        IReadOnlyList<AcCar> cars)
+        IReadOnlyList<AcCar> cars,
+        string weatherGraphics)
     {
         var ini = new IniDocument();
         Set(ini, "SERVER", "NAME", preset.ServerName);
@@ -109,7 +119,7 @@ public sealed class ServerConfigurationRenderer
         Set(ini, "DYNAMIC_TRACK", "SESSION_TRANSFER", preset.Conditions.GripTransferPercent);
         Set(ini, "DYNAMIC_TRACK", "LAP_GAIN", preset.Conditions.LapsPerGripIncrease);
 
-        Set(ini, "WEATHER_0", "GRAPHICS", preset.Conditions.WeatherId);
+        Set(ini, "WEATHER_0", "GRAPHICS", weatherGraphics);
         Set(ini, "WEATHER_0", "BASE_TEMPERATURE_AMBIENT", preset.Conditions.AmbientTemperatureCelsius);
         Set(ini, "WEATHER_0", "BASE_TEMPERATURE_ROAD", preset.Conditions.RoadTemperatureCelsius - preset.Conditions.AmbientTemperatureCelsius);
         Set(ini, "WEATHER_0", "VARIATION_AMBIENT", 0);

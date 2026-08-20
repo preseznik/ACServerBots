@@ -9,6 +9,9 @@ public sealed class AcContentScannerTests
     {
         using var factory = new TestContentFactory();
         factory.CreateInstallation(6, true, "car_one", "car_two");
+        File.AppendAllText(
+            Path.Combine(factory.AcRoot, "content", "weather", "3_clear", "weather.ini"),
+            "\n[__LAUNCHER_CM]\nWEATHER_TYPE=15\n");
 
         var catalog = factory.Scan();
 
@@ -22,6 +25,8 @@ public sealed class AcContentScannerTests
             Assert.That(catalog.Tracks.Single().PitBoxes, Is.EqualTo(6));
             Assert.That(catalog.Tracks.Single().HasFastLane, Is.True);
             Assert.That(catalog.Weather.Single().Id, Is.EqualTo("3_clear"));
+            Assert.That(catalog.Weather.Single().Name, Is.EqualTo("Clear"));
+            Assert.That(catalog.Weather.Single().WeatherFxType, Is.EqualTo(15));
         });
     }
 

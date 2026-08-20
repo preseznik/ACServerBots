@@ -27,6 +27,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private RaceControlPreset _preset = new();
     private AcContentCatalog? _catalog;
     private AcTrackLayout? _selectedTrack;
+    private AcWeather? _selectedWeather;
     private GridSlotViewModel? _selectedGridSlot;
     private PresetSummary? _selectedSavedPreset;
     private InstanceSummary? _selectedRecentInstance;
@@ -104,6 +105,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Preset.TrackLayoutId = value.LayoutId;
                 OnPropertyChanged(nameof(SelectedTrackDetails));
                 RaiseCommandStates();
+            }
+        }
+    }
+
+    public AcWeather? SelectedWeather
+    {
+        get => _selectedWeather;
+        set
+        {
+            // ItemsSource refreshes briefly clear Selector values. Do not let that erase
+            // the persisted weather and produce an empty server GRAPHICS field.
+            if (value is not null && SetProperty(ref _selectedWeather, value))
+            {
+                Preset.Conditions.WeatherId = value.Id;
             }
         }
     }
@@ -346,7 +361,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void ApplyPresetToUi(RaceControlPreset preset)
     {
+        var selectedWeather = Weather.FirstOrDefault(weather =>
+                weather.Id.Equals(preset.Conditions.WeatherId, StringComparison.OrdinalIgnoreCase))
+            ?? Weather.FirstOrDefault(weather => weather.Id.Equals("3_clear", StringComparison.OrdinalIgnoreCase))
+            ?? Weather.FirstOrDefault();
+        preset.Conditions.WeatherId = selectedWeather?.Id ?? "3_clear";
         Preset = preset;
+        _selectedWeather = selectedWeather;
+        OnPropertyChanged(nameof(SelectedWeather));
         SelectedTrack = Tracks.FirstOrDefault(track =>
             track.TrackId.Equals(preset.TrackId, StringComparison.OrdinalIgnoreCase)
             && track.LayoutId.Equals(preset.TrackLayoutId, StringComparison.OrdinalIgnoreCase))

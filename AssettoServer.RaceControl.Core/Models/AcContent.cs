@@ -51,4 +51,4 @@ public sealed record AcTrackLayout(
     public bool HasFastLane => File.Exists(FastLanePath);
 }
 
-public sealed record AcWeather(string Id, string Name, string RootPath, string? PreviewPath);
+public sealed record AcWeather(string Id, string Name, string RootPath, string? PreviewPath, int? WeatherFxType = null);

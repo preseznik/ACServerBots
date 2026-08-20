@@ -12,8 +12,8 @@ public class WeatherConfiguration
         get => _graphics;
         set
         {
-            _graphics = value;
-            WeatherFxParams = WeatherFxParams.FromString(value);
+            _graphics = string.IsNullOrWhiteSpace(value) ? "3_clear" : value;
+            WeatherFxParams = WeatherFxParams.FromString(_graphics);
         }
     }
     [IniField("BASE_TEMPERATURE_AMBIENT")] public float BaseTemperatureAmbient { get; init; }
@@ -24,7 +24,7 @@ public class WeatherConfiguration
     [IniField("WIND_BASE_SPEED_MAX")] public float WindBaseSpeedMax { get; init; }
     [IniField("WIND_BASE_DIRECTION")] public int WindBaseDirection { get; init; }
     [IniField("WIND_VARIATION_DIRECTION")] public int WindVariationDirection { get; init; }
-    public WeatherFxParams WeatherFxParams { get; private set; } = null!;
+    public WeatherFxParams WeatherFxParams { get; private set; } = WeatherFxParams.FromString("3_clear");
 
-    private string _graphics = "";
+    private string _graphics = "3_clear";
 }

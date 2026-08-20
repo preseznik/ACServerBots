@@ -42,4 +42,17 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.ExtraConfiguration, Does.Contain("EnableAi: false"));
         });
     }
+
+    [Test]
+    public void Render_MissingWeatherSelectionFallsBackToInstalledClearWeather()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation();
+        var preset = factory.CreatePreset();
+        preset.Conditions.WeatherId = null!;
+
+        var rendered = new ServerConfigurationRenderer().Render(preset, factory.Scan());
+
+        Assert.That(rendered.ServerConfiguration.Get("WEATHER_0", "GRAPHICS"), Is.EqualTo("3_clear"));
+    }
 }

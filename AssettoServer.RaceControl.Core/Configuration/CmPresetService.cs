@@ -73,7 +73,7 @@ public sealed class CmPresetService
         preset.Rules.FuelRatePercent = ParseInt(server.Get("SERVER", "FUEL_RATE"), 0);
         preset.Rules.DamageRatePercent = ParseInt(server.Get("SERVER", "DAMAGE_MULTIPLIER"), 0);
         preset.Rules.TyreWearRatePercent = ParseInt(server.Get("SERVER", "TYRE_WEAR_RATE"), 0);
-        preset.Conditions.WeatherId = server.Get("WEATHER_0", "GRAPHICS") ?? "3_clear";
+        preset.Conditions.WeatherId = WeatherIdFromGraphics(server.Get("WEATHER_0", "GRAPHICS"));
         preset.Conditions.SunAngleDegrees = ParseInt(server.Get("SERVER", "SUN_ANGLE"), 16);
         preset.Conditions.AmbientTemperatureCelsius = ParseInt(server.Get("WEATHER_0", "BASE_TEMPERATURE_AMBIENT"), 22);
         preset.Conditions.RoadTemperatureCelsius = preset.Conditions.AmbientTemperatureCelsius
@@ -119,6 +119,17 @@ public sealed class CmPresetService
 
     private static ushort ParsePort(string? value, ushort fallback) => ushort.TryParse(value, out var parsed) && parsed > 0 ? parsed : fallback;
     private static int ParseInt(string? value, int fallback) => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+
+    private static string WeatherIdFromGraphics(string? graphics)
+    {
+        if (string.IsNullOrWhiteSpace(graphics))
+        {
+            return "3_clear";
+        }
+
+        var typeMarker = graphics.IndexOf("_type=", StringComparison.OrdinalIgnoreCase);
+        return typeMarker > 0 ? graphics[..typeMarker] : graphics;
+    }
 
     private static string FileNameSanitizer(string value) => new(value.Where(character => char.IsLetterOrDigit(character) || character is '-' or '_').ToArray());
 }

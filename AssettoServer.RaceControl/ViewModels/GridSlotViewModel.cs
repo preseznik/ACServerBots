@@ -10,6 +10,7 @@ public sealed class GridSlotViewModel : ObservableObject
     private int _index;
     private AcCar? _selectedCar;
     private AcSkin? _selectedSkin;
+    private ObservableCollection<AcSkin> _skins = [];
     private string _driverName;
     private string _teamName;
     private string _nationCode;
@@ -38,7 +39,11 @@ public sealed class GridSlotViewModel : ObservableObject
     }
 
     public IReadOnlyList<AcCar> Cars => _cars;
-    public ObservableCollection<AcSkin> Skins { get; } = [];
+    public ObservableCollection<AcSkin> Skins
+    {
+        get => _skins;
+        private set => SetProperty(ref _skins, value);
+    }
 
     public AcCar? SelectedCar
     {
@@ -113,15 +118,10 @@ public sealed class GridSlotViewModel : ObservableObject
 
     private void RefreshSkins(string? selectedSkinId)
     {
-        Skins.Clear();
-        if (_selectedCar is not null)
-        {
-            foreach (var skin in _selectedCar.Skins)
-            {
-                Skins.Add(skin);
-            }
-        }
-
-        SelectedSkin = Skins.FirstOrDefault(skin => skin.Id.Equals(selectedSkinId, StringComparison.OrdinalIgnoreCase)) ?? Skins.FirstOrDefault();
+        Skins = _selectedCar is null
+            ? []
+            : new ObservableCollection<AcSkin>(_selectedCar.Skins);
+        SelectedSkin = Skins.FirstOrDefault(skin => skin.Id.Equals(selectedSkinId, StringComparison.OrdinalIgnoreCase))
+            ?? Skins.FirstOrDefault();
     }
 }

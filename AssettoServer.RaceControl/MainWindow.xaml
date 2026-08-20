@@ -205,8 +205,8 @@
                                 <StackPanel>
                                     <TextBlock Text="Conditions" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Weather" Style="{StaticResource FieldLabel}" />
-                                    <ComboBox ItemsSource="{Binding Weather}" DisplayMemberPath="Name" SelectedValuePath="Id"
-                                              SelectedValue="{Binding Preset.Conditions.WeatherId}" Margin="0,0,0,12" />
+                                    <ComboBox ItemsSource="{Binding Weather}" DisplayMemberPath="Name"
+                                              SelectedItem="{Binding SelectedWeather, Mode=TwoWay}" Margin="0,0,0,12" />
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
                                         <StackPanel Margin="0,0,7,0">
@@ -251,7 +251,7 @@
                             <DataGridTemplateColumn Header="Car" Width="2*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <ComboBox ItemsSource="{Binding Cars}" SelectedItem="{Binding SelectedCar}" DisplayMemberPath="DisplayName"
+                                        <ComboBox ItemsSource="{Binding Cars}" SelectedItem="{Binding SelectedCar, Mode=TwoWay}" DisplayMemberPath="DisplayName"
                                                   IsTextSearchEnabled="True" MinWidth="210" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -259,7 +259,7 @@
                             <DataGridTemplateColumn Header="Skin" Width="2*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <ComboBox ItemsSource="{Binding Skins}" SelectedItem="{Binding SelectedSkin}" DisplayMemberPath="Name" MinWidth="180" />
+                                        <ComboBox ItemsSource="{Binding Skins}" SelectedItem="{Binding SelectedSkin, Mode=TwoWay}" DisplayMemberPath="Name" MinWidth="180" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

@@ -53,6 +53,19 @@ public sealed class RaceControlValidator
             }
         }
 
+        if (catalog is not null)
+        {
+            if (catalog.Weather.Count == 0)
+            {
+                messages.Add(new(ValidationSeverity.Error, "Weather", "No installed weather presets were found."));
+            }
+            else if (string.IsNullOrWhiteSpace(preset.Conditions.WeatherId)
+                || catalog.Weather.All(weather => !weather.Id.Equals(preset.Conditions.WeatherId, StringComparison.OrdinalIgnoreCase)))
+            {
+                messages.Add(new(ValidationSeverity.Warning, "Weather", "The selected weather is unavailable; an installed fallback weather will be staged instead."));
+            }
+        }
+
         for (var index = 0; index < preset.Grid.Count; index++)
         {
             var slot = preset.Grid[index];
