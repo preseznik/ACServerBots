@@ -140,9 +140,32 @@ SKIN=skin_2
     }
     Assert-True ($ambiguousMessage -like '*More than one Content Manager server preset exists*') 'multiple presets should require an explicit selection'
 
+    Set-Content -LiteralPath (Join-Path $trackRoot 'ui\test_layout\ui_track.json') -Value '{"pitboxes": 2}'
     & $launcherScript -CmPresetId SERVER_00 -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
         -PublishedServer $publishedRoot -OutputRoot $outputRoot -PresetName test-dynamic `
         -MinimumSlots 2 -BindAddress 192.168.10.20 -NoLaunch
+
+    $trimmedCfg = Join-Path $outputRoot 'presets\test-dynamic\server_cfg.ini'
+    $trimmedEntries = Join-Path $outputRoot 'presets\test-dynamic\entry_list.ini'
+    $trimmedManifest = Get-Content -Raw -LiteralPath (Join-Path $outputRoot 'race-bot-manifest.json') | ConvertFrom-Json
+    Assert-True ((Read-IniValue $trimmedCfg SERVER MAX_CLIENTS) -eq '2') 'advertised slots should be reduced to pit capacity'
+    Assert-True ((Read-IniValue $trimmedEntries CAR_0 AI) -eq 'auto') 'the first fitting entry should remain a bot'
+    Assert-True ((Read-IniValue $trimmedEntries CAR_1 AI) -eq 'auto') 'the second fitting entry should remain a bot'
+    Assert-True ($null -eq (Read-IniValue $trimmedEntries CAR_2 MODEL)) 'the last non-fitting entry should be removed'
+    Assert-True ($trimmedManifest.requestedSlots -eq 3) 'manifest should retain the requested slot count'
+    Assert-True ($trimmedManifest.trimmedSlots -eq 1) 'manifest should record capacity trimming'
+    Assert-True ($trimmedManifest.trimmedEntrySections[0] -eq 'CAR_2') 'manifest should identify the trailing section removed'
+    Assert-True ($trimmedManifest.advertisedSlots -eq 2) 'manifest should advertise only fitting slots'
+    Assert-True ($trimmedManifest.botSlots -eq 2) 'all fitting slots should remain replaceable bots'
+
+    $oversizedOutput = Join-Path $testRoot 'oversized-request'
+    & $stageScript -CmPresetId SERVER_00 -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
+        -PublishedServer $publishedRoot -OutputRoot $oversizedOutput -PresetName oversized-request `
+        -HumanSlots 2 -BotSlots 6 -SlotMode AllBots -BindAddress 192.168.10.20 -PreserveCmEventSettings
+    $oversizedManifest = Get-Content -Raw -LiteralPath (Join-Path $oversizedOutput 'race-bot-manifest.json') | ConvertFrom-Json
+    Assert-True ($oversizedManifest.requestedSlots -eq 8) 'explicit oversized requests should retain their requested count'
+    Assert-True ($oversizedManifest.advertisedSlots -eq 2) 'pit capacity should be applied before rejecting a short source roster'
+    Assert-True ($oversizedManifest.trimmedSlots -eq 6) 'all requested slots beyond pit capacity should be reported as trimmed'
 
     $compatRoot = Join-Path $testRoot 'windows-powershell-compat'
     $compatTools = Join-Path $compatRoot 'tools'
@@ -179,6 +202,7 @@ SKIN=skin_0
     Assert-True ($automaticManifest.slotMode -eq 'AllBots') 'manifest should record all-bot slot mode'
     Assert-True ($automaticManifest.humanSlots -eq 0) 'all slots should begin under bot control'
     Assert-True ($automaticManifest.botSlots -eq 2) 'the two-slot minimum should contain two bots'
+    Assert-True ($automaticManifest.trimmedSlots -eq 0) 'a roster that fits should not report trimming'
 
     Remove-Item -LiteralPath (Join-Path $trackRoot 'test_layout\ai\fast_lane.ai')
     & (Join-Path $compatTools 'Start-CmLanRaceBots.ps1') -CmServerPresetsRoot $singlePresetRoot `

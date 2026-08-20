@@ -354,6 +354,20 @@ try {
     $trackConfig = [string]$serverIni['SERVER']['CONFIG_TRACK']
     if ([string]::IsNullOrWhiteSpace($track)) { throw 'TRACK is empty in server_cfg.ini' }
 
+    $trackRoot = Join-Path $AssettoCorsaRoot "content\tracks\$track"
+    $layoutRoot = if ([string]::IsNullOrWhiteSpace($trackConfig)) { $trackRoot } else { Join-Path $trackRoot $trackConfig }
+    $fastLane = Join-Path $layoutRoot 'ai\fast_lane.ai'
+    $uiTrack = if ([string]::IsNullOrWhiteSpace($trackConfig)) {
+        Join-Path $trackRoot 'ui\ui_track.json'
+    } else {
+        Join-Path $trackRoot "ui\$trackConfig\ui_track.json"
+    }
+    if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { $uiTrack = Join-Path $layoutRoot 'ui\ui_track.json' }
+    if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { $uiTrack = Join-Path $trackRoot 'ui\ui_track.json' }
+    if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { throw "Track UI metadata not found for pit capacity: $track" }
+    $pitBoxes = [int]((Get-Content -Raw -LiteralPath $uiTrack | ConvertFrom-Json).pitboxes)
+    if ($pitBoxes -lt 1) { throw "Track exposes no usable pit boxes: $track" }
+
     $carSections = @($entryIni.Keys | Where-Object { $_ -match '^CAR_\d+$' } | Sort-Object { [int]($_ -replace '^CAR_', '') })
     $sourceCarSlotCount = $carSections.Count
     if ($sourceCarSlotCount -eq 0) { throw 'CM preset has no car entries to stage' }
@@ -372,6 +386,8 @@ try {
     }
     $slotCount = $effectiveHumanSlots + $effectiveBotSlots
     if ($slotCount -gt 254) { throw 'The combined human and bot slot count cannot exceed 254' }
+    $requestedSlotCount = $slotCount
+    if ($slotCount -gt $pitBoxes) { $slotCount = $pitBoxes }
     if ($carSections.Count -lt $slotCount) { throw "CM pack has $($carSections.Count) car slots; $slotCount are required" }
     if ($SlotMode -eq 'AllBots') {
         $effectiveHumanSlots = 0
@@ -379,6 +395,18 @@ try {
     } elseif ($SlotMode -eq 'NoBots') {
         $effectiveHumanSlots = $slotCount
         $effectiveBotSlots = 0
+    }
+    $effectiveHumanSlots = [Math]::Min($effectiveHumanSlots, $slotCount)
+    $effectiveBotSlots = $slotCount - $effectiveHumanSlots
+    $trimmedSections = @()
+    if ($requestedSlotCount -gt $slotCount) {
+        $trimmedSections = @($carSections | Select-Object -Skip $slotCount)
+        foreach ($section in $trimmedSections) {
+            Remove-IniSection $snapshot.EntryList $section
+        }
+        $entryIni = Read-IniFile $snapshot.EntryList
+        $carSections = @($entryIni.Keys | Where-Object { $_ -match '^CAR_\d+$' } | Sort-Object { [int]($_ -replace '^CAR_', '') })
+        Write-Warning "Track exposes $pitBoxes pit boxes; reduced the staged roster from $requestedSlotCount to $slotCount slots"
     }
     $selectedSections = $carSections | Select-Object -First $slotCount
 
@@ -400,20 +428,7 @@ try {
         })
     }
 
-    $trackRoot = Join-Path $AssettoCorsaRoot "content\tracks\$track"
-    $layoutRoot = if ([string]::IsNullOrWhiteSpace($trackConfig)) { $trackRoot } else { Join-Path $trackRoot $trackConfig }
-    $fastLane = Join-Path $layoutRoot 'ai\fast_lane.ai'
     if ($hasBots -and -not (Test-Path -LiteralPath $fastLane -PathType Leaf)) { throw "Closed-line source not found: $fastLane" }
-    $uiTrack = if ([string]::IsNullOrWhiteSpace($trackConfig)) {
-        Join-Path $trackRoot 'ui\ui_track.json'
-    } else {
-        Join-Path $trackRoot "ui\$trackConfig\ui_track.json"
-    }
-    if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { $uiTrack = Join-Path $layoutRoot 'ui\ui_track.json' }
-    if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { $uiTrack = Join-Path $trackRoot 'ui\ui_track.json' }
-    if (-not (Test-Path -LiteralPath $uiTrack -PathType Leaf)) { throw "Track UI metadata not found for pit capacity: $track" }
-    $pitBoxes = [int]((Get-Content -Raw -LiteralPath $uiTrack | ConvertFrom-Json).pitboxes)
-    if ($pitBoxes -lt $slotCount) { throw "Track exposes $pitBoxes pit boxes; $slotCount slots were requested" }
 
     if ([string]::IsNullOrWhiteSpace($BindAddress)) {
         $BindAddress = Get-PreferredPrivateIpv4
@@ -534,7 +549,10 @@ try {
         models = @($models | Sort-Object)
         vehicleProfiles = @($vehicleProfiles)
         sourceCarSlots = $sourceCarSlotCount
-        autoExpandedSlots = $slotCount - $sourceCarSlotCount
+        requestedSlots = $requestedSlotCount
+        trimmedSlots = $requestedSlotCount - $slotCount
+        trimmedEntrySections = @($trimmedSections)
+        autoExpandedSlots = [Math]::Max(0, $slotCount - $sourceCarSlotCount)
         slotMode = $SlotMode
         humanSlots = $effectiveHumanSlots
         botSlots = $effectiveBotSlots
