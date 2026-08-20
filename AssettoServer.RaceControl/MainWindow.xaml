@@ -9,7 +9,9 @@
         Width="1480" Height="900" MinWidth="1120" MinHeight="720"
         WindowStartupLocation="CenterScreen"
         Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown"
-        SourceInitialized="Window_SourceInitialized">
+        SourceInitialized="Window_SourceInitialized"
+        ToolTipService.InitialShowDelay="350" ToolTipService.BetweenShowDelay="100"
+        ToolTipService.ShowDuration="12000">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="30" />
@@ -70,12 +72,16 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,20,0">
                     <ComboBox Width="225" ItemsSource="{Binding SavedPresets}" SelectedItem="{Binding SelectedSavedPreset}"
                               DisplayMemberPath="Name" ToolTip="Saved Race Control presets" />
-                    <Button Content="Load" Command="{Binding LoadPresetCommand}" Margin="6,0,0,0" />
-                    <Button Content="Save" Command="{Binding SavePresetCommand}" Margin="6,0,0,0" />
+                    <Button Content="Load" Command="{Binding LoadPresetCommand}" Margin="6,0,0,0"
+                            ToolTip="Load the selected saved preset into the editor." />
+                    <Button Content="Save" Command="{Binding SavePresetCommand}" Margin="6,0,0,0"
+                            ToolTip="Save the current event, grid, rules, bots, and network settings as a reusable preset." />
                 </StackPanel>
                 <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Stop" Command="{Binding StopCommand}" Margin="0,0,8,0" />
-                    <Button Content="STAGE &amp; START" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Padding="20,8" />
+                    <Button Content="Stop" Command="{Binding StopCommand}" Margin="0,0,8,0"
+                            ToolTip="Request a graceful shutdown of the running server instance." />
+                    <Button Content="STAGE &amp; START" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Padding="20,8"
+                            ToolTip="Validate the setup, create a fresh standalone instance, and start its server." />
                 </StackPanel>
                 <Button Grid.Column="4" Content="&#xE713;" Style="{StaticResource IconButton}" Click="Settings_Click"
                         ToolTip="Settings" Margin="10,0,0,0" VerticalAlignment="Center" />
@@ -154,9 +160,11 @@
                                 <StackPanel>
                                     <TextBlock Text="Event" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Preset name" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" />
+                                    <TextBox Text="{Binding Preset.Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"
+                                             ToolTip="Local preset name used when saving this Race Control setup." />
                                     <TextBlock Text="Server name shown on LAN" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.ServerName, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBox Text="{Binding Preset.ServerName, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Name shown to players browsing Content Manager's Online → LAN list." />
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource Card}">
@@ -165,19 +173,26 @@
                                     <TextBlock Text="Assetto Corsa root" Style="{StaticResource FieldLabel}" />
                                     <Grid Margin="0,0,0,12">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBox Text="{Binding Preset.AssettoCorsaRoot}" IsReadOnly="True" />
-                                        <Button Grid.Column="1" Content="Browse…" Click="BrowseAcRoot_Click" Margin="7,0,0,0" />
+                                        <TextBox Text="{Binding Preset.AssettoCorsaRoot}" IsReadOnly="True"
+                                                 ToolTip="Assetto Corsa installation used to scan cars, tracks, skins, weather, checksums, and AI lines." />
+                                        <Button Grid.Column="1" Content="Browse…" Click="BrowseAcRoot_Click" Margin="7,0,0,0"
+                                                ToolTip="Choose the Assetto Corsa installation folder." />
                                     </Grid>
                                     <TextBlock Text="Standalone server payload" Style="{StaticResource FieldLabel}" />
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBox Text="{Binding Preset.ServerPayloadPath}" IsReadOnly="True" />
-                                        <Button Grid.Column="1" Content="Browse…" Click="BrowseServerPayload_Click" Margin="7,0,0,0" />
+                                        <TextBox Text="{Binding Preset.ServerPayloadPath}" IsReadOnly="True"
+                                                 ToolTip="Standalone AssettoServer files copied into each staged race instance." />
+                                        <Button Grid.Column="1" Content="Browse…" Click="BrowseServerPayload_Click" Margin="7,0,0,0"
+                                                ToolTip="Choose a different standalone server payload folder." />
                                     </Grid>
                                     <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                        <Button Content="Refresh installed content" Command="{Binding RefreshContentCommand}" />
-                                        <Button Content="Import latest CM preset" Command="{Binding ImportCmPresetCommand}" Margin="7,0,0,0" />
-                                        <Button Content="Export new CM preset" Command="{Binding ExportCmPresetCommand}" Margin="7,0,0,0" />
+                                        <Button Content="Refresh installed content" Command="{Binding RefreshContentCommand}"
+                                                ToolTip="Rescan the selected Assetto Corsa installation for cars, skins, tracks, layouts, and weather." />
+                                        <Button Content="Import latest CM preset" Command="{Binding ImportCmPresetCommand}" Margin="7,0,0,0"
+                                                ToolTip="Replace the current setup with Content Manager's most recently modified server preset." />
+                                        <Button Content="Export new CM preset" Command="{Binding ExportCmPresetCommand}" Margin="7,0,0,0"
+                                                ToolTip="Write the current setup as a new Content Manager server preset without overwriting the source preset." />
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
@@ -186,7 +201,8 @@
                                     <TextBlock Text="Circuit" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Track and layout" Style="{StaticResource FieldLabel}" />
                                     <ComboBox ItemsSource="{Binding Tracks}" SelectedItem="{Binding SelectedTrack}" DisplayMemberPath="DisplayName"
-                                              IsTextSearchEnabled="True" Margin="0,0,0,10" />
+                                              IsTextSearchEnabled="True" Margin="0,0,0,10"
+                                              ToolTip="Select an installed circuit layout. Its pit-box count limits the staged grid size." />
                                     <TextBlock Text="{Binding SelectedTrackDetails}" Foreground="{DynamicResource MutedTextBrush}" />
                                 </StackPanel>
                             </Border>
@@ -206,20 +222,24 @@
                                     <TextBlock Text="Conditions" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Weather" Style="{StaticResource FieldLabel}" />
                                     <ComboBox ItemsSource="{Binding Weather}" DisplayMemberPath="Name"
-                                              SelectedItem="{Binding SelectedWeather, Mode=TwoWay}" Margin="0,0,0,12" />
+                                              SelectedItem="{Binding SelectedWeather, Mode=TwoWay}" Margin="0,0,0,12"
+                                              ToolTip="Weather preset sent to all clients for this event." />
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
                                         <StackPanel Margin="0,0,7,0">
                                             <TextBlock Text="Ambient °C" Style="{StaticResource FieldLabel}" />
-                                            <TextBox Text="{Binding Preset.Conditions.AmbientTemperatureCelsius}" />
+                                            <TextBox Text="{Binding Preset.Conditions.AmbientTemperatureCelsius}"
+                                                     ToolTip="Ambient air temperature in degrees Celsius." />
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" Margin="7,0,0,0">
                                             <TextBlock Text="Road °C" Style="{StaticResource FieldLabel}" />
-                                            <TextBox Text="{Binding Preset.Conditions.RoadTemperatureCelsius}" />
+                                            <TextBox Text="{Binding Preset.Conditions.RoadTemperatureCelsius}"
+                                                     ToolTip="Initial track-surface temperature in degrees Celsius." />
                                         </StackPanel>
                                     </Grid>
                                     <TextBlock Text="Sun angle" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
-                                    <TextBox Text="{Binding Preset.Conditions.SunAngleDegrees}" />
+                                    <TextBox Text="{Binding Preset.Conditions.SunAngleDegrees}"
+                                             ToolTip="Sun angle used by Assetto Corsa to determine event lighting and time of day." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -237,23 +257,32 @@
                             <TextBlock Text="{Binding EffectiveGridSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
-                            <Button Content="All replaceable" Command="{Binding MakeAllReplaceableCommand}" />
-                            <Button Content="Random skins" Command="{Binding RandomizeSkinsCommand}" Margin="7,0,0,0" />
-                            <Button Content="Fill pit boxes" Command="{Binding FillGridCommand}" Margin="7,0,0,0" />
-                            <Button Content="Add entry" Command="{Binding AddSlotCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0" />
+                            <Button Content="All replaceable" Command="{Binding MakeAllReplaceableCommand}"
+                                    ToolTip="Enable bots and set every grid entry to Auto, allowing a human to claim any slot." />
+                            <Button Content="Random skins" Command="{Binding RandomizeSkinsCommand}" Margin="7,0,0,0"
+                                    ToolTip="Choose a random installed skin for each entry's selected car." />
+                            <Button Content="Fill pit boxes" Command="{Binding FillGridCommand}" Margin="7,0,0,0"
+                                    ToolTip="Add or remove entries until the grid matches the selected layout's pit-box capacity." />
+                            <Button Content="Add entry" Command="{Binding AddSlotCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0"
+                                    ToolTip="Append a grid entry based on the selected row, or the last row if none is selected." />
                         </StackPanel>
                     </Grid>
                     <DataGrid Grid.Row="1" ItemsSource="{Binding Grid}" SelectedItem="{Binding SelectedGridSlot}"
                               AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single" AlternationCount="2">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="#" Binding="{Binding Index}" IsReadOnly="True" Width="45" />
-                            <DataGridTextColumn Header="Driver / bot name" Binding="{Binding DriverName, UpdateSourceTrigger=PropertyChanged}" Width="150" />
+                            <DataGridTextColumn Binding="{Binding DriverName, UpdateSourceTrigger=PropertyChanged}" Width="150">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Driver / bot name" ToolTip="Display name used for the human reservation or generated bot in this slot." />
+                                </DataGridTextColumn.Header>
+                            </DataGridTextColumn>
                             <DataGridTemplateColumn Header="Car" Width="2*">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <ComboBox ItemsSource="{Binding Cars}" SelectedValuePath="Id"
                                                   SelectedValue="{Binding SelectedCarId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="DisplayName"
-                                                  IsTextSearchEnabled="True" MinWidth="210" />
+                                                  IsTextSearchEnabled="True" MinWidth="210"
+                                                  ToolTip="Installed car model assigned to this human-or-bot slot. Changing it reloads the available skins." />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -261,7 +290,8 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <ComboBox ItemsSource="{Binding Skins}" SelectedValuePath="Id"
-                                                  SelectedValue="{Binding SelectedSkinId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="Name" MinWidth="180" />
+                                                  SelectedValue="{Binding SelectedSkinId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="Name" MinWidth="180"
+                                                  ToolTip="Installed skin used by this entry's selected car." />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -269,13 +299,26 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <ComboBox ItemsSource="{Binding DataContext.SlotModes, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                  SelectedItem="{Binding Mode}" />
+                                                  SelectedItem="{Binding Mode}"
+                                                  ToolTip="Auto starts as a replaceable bot; Fixed is always a bot; None reserves the slot for a human." />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Team" Binding="{Binding TeamName}" Width="130" />
-                            <DataGridTextColumn Header="Ballast" Binding="{Binding BallastKg}" Width="75" />
-                            <DataGridTextColumn Header="Restrictor" Binding="{Binding RestrictorPercent}" Width="80" />
+                            <DataGridTextColumn Binding="{Binding TeamName}" Width="130">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Team" ToolTip="Optional team name advertised for this grid entry." />
+                                </DataGridTextColumn.Header>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Binding="{Binding BallastKg}" Width="75">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Ballast" ToolTip="Extra ballast mass in kilograms applied to this entry." />
+                                </DataGridTextColumn.Header>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Binding="{Binding RestrictorPercent}" Width="80">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Restrictor" ToolTip="Engine restrictor percentage applied to this entry; 0 means unrestricted." />
+                                </DataGridTextColumn.Header>
+                            </DataGridTextColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                     <Grid Grid.Row="2" Margin="0,12,0,0">
@@ -283,9 +326,12 @@
                         <TextBlock Text="Auto = bot until claimed • Fixed = bot only • None = human only"
                                    Foreground="{DynamicResource MutedTextBrush}" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <Button Content="↑" Command="{Binding MoveSlotUpCommand}" Width="42" />
-                            <Button Content="↓" Command="{Binding MoveSlotDownCommand}" Width="42" Margin="6,0,0,0" />
-                            <Button Content="Remove selected" Command="{Binding RemoveSlotCommand}" Margin="6,0,0,0" />
+                            <Button Content="↑" Command="{Binding MoveSlotUpCommand}" Width="42"
+                                    ToolTip="Move the selected entry one grid position forward." />
+                            <Button Content="↓" Command="{Binding MoveSlotDownCommand}" Width="42" Margin="6,0,0,0"
+                                    ToolTip="Move the selected entry one grid position back." />
+                            <Button Content="Remove selected" Command="{Binding RemoveSlotCommand}" Margin="6,0,0,0"
+                                    ToolTip="Remove the selected entry. Race Control always retains at least two slots." />
                         </StackPanel>
                     </Grid>
                 </Grid>
@@ -297,54 +343,74 @@
                         <Border Style="{StaticResource Card}" Width="390">
                             <StackPanel>
                                 <TextBlock Text="Sessions" Style="{StaticResource SectionTitle}" />
-                                <CheckBox Content="Practice" IsChecked="{Binding Preset.Sessions.PracticeEnabled}" />
+                                <CheckBox Content="Practice" IsChecked="{Binding Preset.Sessions.PracticeEnabled}"
+                                          ToolTip="Include an open practice session before qualifying or the race." />
                                 <TextBlock Text="Practice minutes" Style="{StaticResource FieldLabel}" Margin="0,7,0,5" />
-                                <TextBox Text="{Binding Preset.Sessions.PracticeMinutes}" />
-                                <CheckBox Content="Qualifying" IsChecked="{Binding Preset.Sessions.QualifyingEnabled}" Margin="0,14,0,5" />
+                                <TextBox Text="{Binding Preset.Sessions.PracticeMinutes}"
+                                         ToolTip="Duration of practice in minutes when practice is enabled." />
+                                <CheckBox Content="Qualifying" IsChecked="{Binding Preset.Sessions.QualifyingEnabled}" Margin="0,14,0,5"
+                                          ToolTip="Include a timed qualifying session before the race." />
                                 <TextBlock Text="Qualifying minutes" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Sessions.QualifyingMinutes}" />
+                                <TextBox Text="{Binding Preset.Sessions.QualifyingMinutes}"
+                                         ToolTip="Duration of qualifying in minutes when qualifying is enabled." />
                                 <TextBlock Text="Race laps" Style="{StaticResource FieldLabel}" Margin="0,14,0,5" />
-                                <TextBox Text="{Binding Preset.Sessions.RaceLaps}" />
-                                <CheckBox Content="Reverse grid" IsChecked="{Binding Preset.Sessions.ReverseGrid}" Margin="0,10,0,0" />
+                                <TextBox Text="{Binding Preset.Sessions.RaceLaps}"
+                                         ToolTip="Number of laps required to finish the race." />
+                                <CheckBox Content="Reverse grid" IsChecked="{Binding Preset.Sessions.ReverseGrid}" Margin="0,10,0,0"
+                                          ToolTip="Reverse the qualifying order when assigning race grid positions." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Width="390">
                             <StackPanel>
                                 <TextBlock Text="Simulation rates" Style="{StaticResource SectionTitle}" />
                                 <TextBlock Text="Fuel consumption %" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Rules.FuelRatePercent}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Rules.FuelRatePercent}" Margin="0,0,0,12"
+                                         ToolTip="Fuel-use multiplier: 100% is normal consumption and 0% disables fuel use." />
                                 <TextBlock Text="Damage %" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Rules.DamageRatePercent}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Rules.DamageRatePercent}" Margin="0,0,0,12"
+                                         ToolTip="Damage multiplier: 100% is normal damage and 0% disables damage." />
                                 <TextBlock Text="Tyre wear %" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Rules.TyreWearRatePercent}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Rules.TyreWearRatePercent}" Margin="0,0,0,12"
+                                         ToolTip="Tyre-wear multiplier: 100% is normal wear and 0% disables wear." />
                                 <TextBlock Text="Allowed tyres out" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Rules.AllowedTyresOut}" />
+                                <TextBox Text="{Binding Preset.Rules.AllowedTyresOut}"
+                                         ToolTip="Number of tyres allowed outside the legal track boundary before a cut penalty can apply." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Width="390">
                             <StackPanel>
                                 <TextBlock Text="Assists" Style="{StaticResource SectionTitle}" />
                                 <TextBlock Text="ABS: 0 off, 1 factory, 2 on" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Rules.AbsAllowed}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Rules.AbsAllowed}" Margin="0,0,0,12"
+                                         ToolTip="ABS policy: 0 disables it, 1 follows the car's factory capability, and 2 forces it available." />
                                 <TextBlock Text="TC: 0 off, 1 factory, 2 on" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Rules.TractionControlAllowed}" Margin="0,0,0,12" />
-                                <CheckBox Content="Stability control" IsChecked="{Binding Preset.Rules.StabilityControlAllowed}" />
-                                <CheckBox Content="Auto clutch" IsChecked="{Binding Preset.Rules.AutoClutchAllowed}" />
-                                <CheckBox Content="Tyre blankets" IsChecked="{Binding Preset.Rules.TyreBlanketsAllowed}" />
-                                <CheckBox Content="Force virtual mirror" IsChecked="{Binding Preset.Rules.VirtualMirrorAllowed}" />
+                                <TextBox Text="{Binding Preset.Rules.TractionControlAllowed}" Margin="0,0,0,12"
+                                         ToolTip="Traction-control policy: 0 disables it, 1 follows factory capability, and 2 forces it available." />
+                                <CheckBox Content="Stability control" IsChecked="{Binding Preset.Rules.StabilityControlAllowed}"
+                                          ToolTip="Allow clients to use Assetto Corsa's stability-control driving aid." />
+                                <CheckBox Content="Auto clutch" IsChecked="{Binding Preset.Rules.AutoClutchAllowed}"
+                                          ToolTip="Allow clients to use automatic clutch assistance." />
+                                <CheckBox Content="Tyre blankets" IsChecked="{Binding Preset.Rules.TyreBlanketsAllowed}"
+                                          ToolTip="Start cars with pre-heated tyres rather than cold tyres." />
+                                <CheckBox Content="Force virtual mirror" IsChecked="{Binding Preset.Rules.VirtualMirrorAllowed}"
+                                          ToolTip="Require the virtual rear-view mirror for every connected client." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Width="390">
                             <StackPanel>
                                 <TextBlock Text="Track evolution" Style="{StaticResource SectionTitle}" />
                                 <TextBlock Text="Starting grip %" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Conditions.StartingGripPercent}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Conditions.StartingGripPercent}" Margin="0,0,0,12"
+                                         ToolTip="Track grip available at the beginning of the first session." />
                                 <TextBlock Text="Randomness %" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Conditions.GripRandomnessPercent}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Conditions.GripRandomnessPercent}" Margin="0,0,0,12"
+                                         ToolTip="Random variation applied to the configured starting grip." />
                                 <TextBlock Text="Session transfer %" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Conditions.GripTransferPercent}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Conditions.GripTransferPercent}" Margin="0,0,0,12"
+                                         ToolTip="Percentage of the previous session's gained grip carried into the next session." />
                                 <TextBlock Text="Laps per grip increase" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Conditions.LapsPerGripIncrease}" />
+                                <TextBox Text="{Binding Preset.Conditions.LapsPerGripIncrease}"
+                                         ToolTip="Completed laps required for each incremental increase in track grip." />
                             </StackPanel>
                         </Border>
                     </WrapPanel>
@@ -359,24 +425,31 @@
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="Bot participation" Style="{StaticResource SectionTitle}" />
-                                    <CheckBox Content="Enable server-authoritative race bots" IsChecked="{Binding Preset.Bots.Enabled}" FontWeight="SemiBold" />
+                                    <CheckBox Content="Enable server-authoritative race bots" IsChecked="{Binding Preset.Bots.Enabled}" FontWeight="SemiBold"
+                                              ToolTip="Populate Auto and Fixed grid slots with bots simulated by the standalone server." />
                                     <TextBlock Text="When disabled, every staged grid entry becomes human-only. The saved slot modes are retained."
                                                Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,12" />
-                                    <CheckBox Content="Humans can replace Auto bots during a race" IsChecked="{Binding Preset.Bots.AllowMidRaceTakeover}" />
-                                    <CheckBox Content="Restart session when the first human connects" IsChecked="{Binding Preset.Bots.RestartWhenFirstHumanConnects}" />
+                                    <CheckBox Content="Humans can replace Auto bots during a race" IsChecked="{Binding Preset.Bots.AllowMidRaceTakeover}"
+                                              ToolTip="Let a joining player claim an Auto slot after the race has started; Fixed bots remain protected." />
+                                    <CheckBox Content="Restart session when the first human connects" IsChecked="{Binding Preset.Bots.RestartWhenFirstHumanConnects}"
+                                              ToolTip="If only bots are present, reset the current session when the first human joins so everyone starts together." />
                                     <TextBlock Text="Bot name prefix" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
-                                    <TextBox Text="{Binding Preset.Bots.NamePrefix}" />
+                                    <TextBox Text="{Binding Preset.Bots.NamePrefix}"
+                                             ToolTip="Prefix used when Race Control generates bot driver names." />
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="Racecraft" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Difficulty (0–1)" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Bots.Difficulty}" Margin="0,0,0,12" />
+                                    <TextBox Text="{Binding Preset.Bots.Difficulty}" Margin="0,0,0,12"
+                                             ToolTip="Overall bot pace from 0 to 1; higher values brake later and target greater speed." />
                                     <TextBlock Text="Aggression (0–1)" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Bots.Aggression}" Margin="0,0,0,12" />
+                                    <TextBox Text="{Binding Preset.Bots.Aggression}" Margin="0,0,0,12"
+                                             ToolTip="Overtaking and following assertiveness from 0 to 1; higher values accept smaller gaps." />
                                     <TextBlock Text="Start spline point" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Bots.StartSplinePointId}" />
+                                    <TextBox Text="{Binding Preset.Bots.StartSplinePointId}"
+                                             ToolTip="fast_lane.ai point treated as the start/finish line for lap progress and wrap detection." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -385,15 +458,19 @@
                                 <StackPanel>
                                     <TextBlock Text="Rigid-body physics" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Fidelity" Style="{StaticResource FieldLabel}" />
-                                    <ComboBox ItemsSource="{Binding PhysicsFidelities}" SelectedItem="{Binding Preset.Bots.PhysicsFidelity}" Margin="0,0,0,12" />
+                                    <ComboBox ItemsSource="{Binding PhysicsFidelities}" SelectedItem="{Binding Preset.Bots.PhysicsFidelity}" Margin="0,0,0,12"
+                                              ToolTip="Choose the rigid-body solver cost and collision-detection quality; track and car geometry remain exact." />
                                     <TextBlock Text="Efficient reduces solver work; Balanced is the default; High adds the strongest solver and swept collision detection. Geometry remains exact at every level."
                                                Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,14" />
                                     <TextBlock Text="Simulation update Hz" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Bots.UpdateHz}" Margin="0,0,0,12" />
+                                    <TextBox Text="{Binding Preset.Bots.UpdateHz}" Margin="0,0,0,12"
+                                             ToolTip="Server-side bot simulation steps per second. Higher values improve response but use more CPU." />
                                     <TextBlock Text="Contact friction" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Bots.SurfaceFriction}" Margin="0,0,0,12" />
+                                    <TextBox Text="{Binding Preset.Bots.SurfaceFriction}" Margin="0,0,0,12"
+                                             ToolTip="Rigid-body contact friction used for chassis, road, and vehicle contacts." />
                                     <TextBlock Text="Legacy fallback grid spacing (m)" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Bots.GridSpacingMeters}" />
+                                    <TextBox Text="{Binding Preset.Bots.GridSpacingMeters}"
+                                             ToolTip="Retained for configuration compatibility; rigid-body race mode uses the track's exact AC_START transforms." />
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource Card}">
@@ -415,18 +492,24 @@
                         <Border Grid.Column="0" Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock Text="Private LAN" Style="{StaticResource SectionTitle}" />
-                                <CheckBox Content="LAN-only safety policy" IsChecked="{Binding Preset.Network.LanOnly}" IsEnabled="False" />
+                                <CheckBox Content="LAN-only safety policy" IsChecked="{Binding Preset.Network.LanOnly}" IsEnabled="False"
+                                          ToolTipService.ShowOnDisabled="True"
+                                          ToolTip="This release always disables lobby registration, Steam authentication, UPnP, and port forwarding." />
                                 <TextBlock Text="Lobby registration, Steam authentication, UPnP, and automatic port forwarding are always disabled in this release."
                                            Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,14" />
                                 <TextBlock Text="Bind address" Style="{StaticResource FieldLabel}" />
                                 <ComboBox ItemsSource="{Binding NetworkAddresses}" SelectedItem="{Binding Preset.Network.BindAddress}"
-                                          IsEditable="True" Margin="0,0,0,12" />
+                                          IsEditable="True" Margin="0,0,0,12"
+                                          ToolTip="Local IPv4 interface on which the server accepts LAN connections. Use a private-network address clients can reach." />
                                 <TextBlock Text="TCP port" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Network.TcpPort}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Network.TcpPort}" Margin="0,0,0,12"
+                                         ToolTip="TCP port used for Assetto Corsa client handshakes and reliable server traffic." />
                                 <TextBlock Text="UDP port" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Network.UdpPort}" Margin="0,0,0,12" />
+                                <TextBox Text="{Binding Preset.Network.UdpPort}" Margin="0,0,0,12"
+                                         ToolTip="UDP port used for real-time vehicle state and race updates." />
                                 <TextBlock Text="HTTP / LAN discovery port" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="{Binding Preset.Network.HttpPort}" />
+                                <TextBox Text="{Binding Preset.Network.HttpPort}"
+                                         ToolTip="HTTP port used by server status and Content Manager's LAN discovery flow." />
                             </StackPanel>
                         </Border>
                         <StackPanel Grid.Column="1">
@@ -435,10 +518,12 @@
                                     <TextBlock Text="Access" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="Join password" Style="{StaticResource FieldLabel}" />
                                     <PasswordBox controls:PasswordBinding.Attach="True"
-                                                 controls:PasswordBinding.Password="{Binding Preset.Network.JoinPassword, Mode=TwoWay}" Margin="0,0,0,12" />
+                                                 controls:PasswordBinding.Password="{Binding Preset.Network.JoinPassword, Mode=TwoWay}" Margin="0,0,0,12"
+                                                 ToolTip="Optional password every player must enter to join this server. Leave empty for open LAN access." />
                                     <TextBlock Text="Admin password" Style="{StaticResource FieldLabel}" />
                                     <PasswordBox controls:PasswordBinding.Attach="True"
-                                                 controls:PasswordBinding.Password="{Binding Preset.Network.AdminPassword, Mode=TwoWay}" />
+                                                 controls:PasswordBinding.Password="{Binding Preset.Network.AdminPassword, Mode=TwoWay}"
+                                                 ToolTip="Password used to authenticate Assetto Corsa server administration commands." />
                                     <TextBlock Text="Passwords are stored locally with the preset, like Content Manager server presets. Do not reuse an important password."
                                                Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
                                 </StackPanel>
@@ -448,7 +533,8 @@
                                     <TextBlock Text="Joining" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="After launch, other PCs on the same network can find the event under Content Manager → Drive → Online → LAN."
                                                TextWrapping="Wrap" Margin="0,0,0,12" />
-                                    <Button Content="Open Content Manager" Command="{Binding OpenContentManagerCommand}" HorizontalAlignment="Left" />
+                                    <Button Content="Open Content Manager" Command="{Binding OpenContentManagerCommand}" HorizontalAlignment="Left"
+                                            ToolTip="Launch Content Manager so this PC can browse or join the server under Online → LAN." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -466,7 +552,8 @@
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBlock Text="Preflight" Style="{StaticResource SectionTitle}" />
-                                    <Button Grid.Column="1" Content="Validate now" Command="{Binding ValidateCommand}" Margin="8,-5,0,10" />
+                                    <Button Grid.Column="1" Content="Validate now" Command="{Binding ValidateCommand}" Margin="8,-5,0,10"
+                                            ToolTip="Check content, grid capacity, settings, ports, and bot physics inputs without staging or starting a server." />
                                 </Grid>
                                 <ItemsControl ItemsSource="{Binding ValidationMessages}" MaxHeight="190">
                                     <ItemsControl.ItemTemplate>
@@ -502,18 +589,24 @@
                                         <TextBlock Text="{Binding LastInstanceSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,5,0,0" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-                                        <Button Content="Stage only" Command="{Binding StageCommand}" />
-                                        <Button Content="Start new" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0" />
+                                        <Button Content="Stage only" Command="{Binding StageCommand}"
+                                                ToolTip="Validate and create a complete standalone server instance without launching it." />
+                                        <Button Content="Start new" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0"
+                                                ToolTip="Validate, stage a new timestamped server instance, and launch it." />
                                     </StackPanel>
                                 </Grid>
                                 <ProgressBar Grid.Row="1" Value="{Binding ProgressValue, Mode=OneWay}" Height="5" Margin="0,18,0,7" />
                                 <TextBlock Grid.Row="2" Text="{Binding ProgressText}" Foreground="{DynamicResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
                                 <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,14,0,0">
-                                    <Button Content="Stop" Command="{Binding StopCommand}" />
-                                    <Button Content="Restart" Command="{Binding RestartCommand}" Margin="7,0,0,0" />
+                                    <Button Content="Stop" Command="{Binding StopCommand}"
+                                            ToolTip="Request a graceful shutdown of the running server." />
+                                    <Button Content="Restart" Command="{Binding RestartCommand}" Margin="7,0,0,0"
+                                            ToolTip="Stop and relaunch the current staged instance without rebuilding its configuration." />
                                     <ComboBox ItemsSource="{Binding RecentInstances}" SelectedItem="{Binding SelectedRecentInstance}"
-                                              DisplayMemberPath="DisplayName" Width="340" Margin="14,0,0,0" />
-                                    <Button Content="Open selected folder" Command="{Binding OpenInstanceCommand}" Margin="7,0,0,0" />
+                                              DisplayMemberPath="DisplayName" Width="340" Margin="14,0,0,0"
+                                              ToolTip="Select a recently staged server instance for inspection." />
+                                    <Button Content="Open selected folder" Command="{Binding OpenInstanceCommand}" Margin="7,0,0,0"
+                                            ToolTip="Open the selected instance folder containing generated configuration and server files." />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -524,7 +617,8 @@
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBlock Text="Live server log" Style="{StaticResource SectionTitle}" />
-                                <Button Grid.Column="1" Content="Clear" Command="{Binding ClearLogCommand}" Margin="0,-5,0,10" />
+                                <Button Grid.Column="1" Content="Clear" Command="{Binding ClearLogCommand}" Margin="0,-5,0,10"
+                                        ToolTip="Clear the log text displayed in this window; server files and logs on disk are unchanged." />
                             </Grid>
                             <TextBox x:Name="LogTextBox" Grid.Row="1" Text="{Binding LogText, Mode=OneWay}" TextChanged="LogTextBox_TextChanged"
                                      Style="{StaticResource ConsoleTextBox}"

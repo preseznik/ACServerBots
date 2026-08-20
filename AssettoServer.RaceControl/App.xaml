@@ -315,6 +315,7 @@
                 <Setter Property="Padding" Value="14,8" />
                 <Setter Property="MinHeight" Value="34" />
                 <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
@@ -435,6 +436,19 @@
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
                 <Setter Property="Padding" Value="8,5" />
+                <Setter Property="MaxWidth" Value="440" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToolTip">
+                            <Border Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                    Padding="{TemplateBinding Padding}" CornerRadius="3">
+                                <TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                                           TextWrapping="Wrap" MaxWidth="420" />
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
             </Style>
         </ResourceDictionary>
     </Application.Resources>

@@ -3,7 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Race Control settings" Width="570" Height="570" MinWidth="520" MinHeight="520"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
-        Background="{DynamicResource WindowBrush}" SourceInitialized="Window_SourceInitialized">
+        Background="{DynamicResource WindowBrush}" SourceInitialized="Window_SourceInitialized"
+        ToolTipService.InitialShowDelay="350" ToolTipService.BetweenShowDelay="100"
+        ToolTipService.ShowDuration="12000">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="64" />
@@ -23,8 +25,10 @@
                     <StackPanel>
                         <TextBlock Text="Appearance" Style="{DynamicResource SectionTitle}" />
                         <TextBlock Text="Theme" Style="{DynamicResource FieldLabel}" />
-                        <ComboBox ItemsSource="{Binding ThemeModes}" SelectedItem="{Binding Settings.Theme}" />
-                        <CheckBox Content="Use compact grid rows" IsChecked="{Binding Settings.CompactGridRows}" Margin="0,13,0,0" />
+                        <ComboBox ItemsSource="{Binding ThemeModes}" SelectedItem="{Binding Settings.Theme}"
+                                  ToolTip="Choose Light, Dark, or System. System follows the Windows application theme when Race Control starts." />
+                        <CheckBox Content="Use compact grid rows" IsChecked="{Binding Settings.CompactGridRows}" Margin="0,13,0,0"
+                                  ToolTip="Reduce row height in the GRID table so more entries fit on screen." />
                         <TextBlock Text="Theme and density changes apply as soon as you save. System follows the Windows app theme on startup."
                                    Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
                     </StackPanel>
@@ -34,11 +38,14 @@
                     <StackPanel>
                         <TextBlock Text="Startup and safety" Style="{DynamicResource SectionTitle}" />
                         <CheckBox Content="Load the most recently saved race on startup"
-                                  IsChecked="{Binding Settings.LoadMostRecentPresetOnStartup}" />
+                                  IsChecked="{Binding Settings.LoadMostRecentPresetOnStartup}"
+                                  ToolTip="Open the last saved Race Control preset automatically when the app starts." />
                         <CheckBox Content="Return to the last open page"
-                                  IsChecked="{Binding Settings.RememberLastPage}" />
+                                  IsChecked="{Binding Settings.RememberLastPage}"
+                                  ToolTip="Restore the previously selected navigation page at the next startup." />
                         <CheckBox Content="Confirm before stopping a running server when exiting"
-                                  IsChecked="{Binding Settings.ConfirmBeforeStoppingServerOnExit}" />
+                                  IsChecked="{Binding Settings.ConfirmBeforeStoppingServerOnExit}"
+                                  ToolTip="Ask for confirmation before closing Race Control would stop its active server process." />
                     </StackPanel>
                 </Border>
 
@@ -49,7 +56,8 @@
                             <TextBlock Text="Local application data" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding DataRoot}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,10,0" />
                         </StackPanel>
-                        <Button Grid.Column="1" Content="Open folder" Click="OpenDataFolder_Click" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Open folder" Click="OpenDataFolder_Click" VerticalAlignment="Center"
+                                ToolTip="Open the folder containing saved presets, settings, staged instances, caches, and logs." />
                     </Grid>
                 </Border>
             </StackPanel>
@@ -57,8 +65,10 @@
 
         <Border Grid.Row="2" Background="{DynamicResource ChromeBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="16,0">
-                <Button Content="Cancel" Click="Cancel_Click" MinWidth="90" />
-                <Button Content="Save settings" Click="Save_Click" Style="{DynamicResource PrimaryButton}" MinWidth="115" Margin="8,0,0,0" />
+                <Button Content="Cancel" Click="Cancel_Click" MinWidth="90"
+                        ToolTip="Close this window without applying the changes." />
+                <Button Content="Save settings" Click="Save_Click" Style="{DynamicResource PrimaryButton}" MinWidth="115" Margin="8,0,0,0"
+                        ToolTip="Apply and save these application-wide preferences." />
             </StackPanel>
         </Border>
     </Grid>
