@@ -4,9 +4,9 @@ internal sealed class FirstHumanSessionRestartGate
 {
     public bool IsArmed { get; private set; } = true;
 
-    public bool TrySchedule(bool enabled, int connectedHumanCount, bool remainingSlotsAreBots)
+    public bool TrySchedule(bool enabled, int connectedHumanCount, bool rosterIsBotCapable)
     {
-        if (!enabled || !IsArmed || connectedHumanCount != 1 || !remainingSlotsAreBots)
+        if (!enabled || !IsArmed || connectedHumanCount != 1 || !rosterIsBotCapable)
             return false;
 
         IsArmed = false;

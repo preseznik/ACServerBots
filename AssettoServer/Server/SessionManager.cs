@@ -454,11 +454,14 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         if (!IsFirstHumanSessionRestartEnabled)
             return;
 
-        bool remainingSlotsAreBots = _entryCarManager.EntryCars.Any(car => car.Client == null && car.AiControlled)
-                                            && _entryCarManager.EntryCars.All(car => car.Client != null || car.AiControlled);
+        bool rosterIsBotCapable = client.EntryCar.AiMode == AiMode.Auto
+                                  && _entryCarManager.EntryCars.Any(car =>
+                                      car.Client == null && car.AiMode is AiMode.Auto or AiMode.Fixed)
+                                  && _entryCarManager.EntryCars.All(car =>
+                                      car.Client != null || car.AiMode is AiMode.Auto or AiMode.Fixed);
         lock (_firstHumanRestartLock)
         {
-            if (_firstHumanRestartGate.TrySchedule(true, _entryCarManager.ConnectedCars.Count, remainingSlotsAreBots))
+            if (_firstHumanRestartGate.TrySchedule(true, _entryCarManager.ConnectedCars.Count, rosterIsBotCapable))
             {
                 _firstHumanRestartPending = true;
                 Log.Information("First human joined a bot-only server; current session will restart after client synchronization");
@@ -535,9 +538,12 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
         foreach (var entryCar in _entryCarManager.EntryCars)
         {
+            bool isBotParticipant = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                ? RaceParticipantPolicy.ShouldControlSlot(entryCar.AiMode, entryCar.Client != null)
+                : entryCar.AiControlled;
             var result = entryCar.Client != null
                 ? new EntryCarResult(entryCar.Client)
-                : entryCar.AiControlled
+                : isBotParticipant
                     ? new EntryCarResult((1UL << 63) | entryCar.SessionId, entryCar.AiName ?? $"Bot {entryCar.SessionId}")
                     : new EntryCarResult(null);
             CurrentSession.Results.Add(entryCar.SessionId, result);
