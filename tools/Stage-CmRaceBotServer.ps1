@@ -9,6 +9,7 @@ param(
     [string] $PresetName = 'magione-lan-race-bots',
     [ValidateRange(1, 254)] [int] $HumanSlots = 2,
     [ValidateRange(0, 254)] [int] $BotSlots = 6,
+    [ValidateSet('ReservedHumans', 'AllBots', 'NoBots')] [string] $SlotMode = 'AllBots',
     [ValidateRange(10, 120)] [int] $UpdateHz = 60,
     [ValidateRange(1, 120)] [int] $PracticeMinutes = 5,
     [ValidateRange(0.0, 1.0)] [double] $Difficulty = 0.75,
@@ -258,6 +259,13 @@ try {
     $slotCount = $effectiveHumanSlots + $effectiveBotSlots
     if ($slotCount -gt 254) { throw 'The combined human and bot slot count cannot exceed 254' }
     if ($carSections.Count -lt $slotCount) { throw "CM pack has $($carSections.Count) car slots; $slotCount are required" }
+    if ($SlotMode -eq 'AllBots') {
+        $effectiveHumanSlots = 0
+        $effectiveBotSlots = $slotCount
+    } elseif ($SlotMode -eq 'NoBots') {
+        $effectiveHumanSlots = $slotCount
+        $effectiveBotSlots = 0
+    }
     $selectedSections = $carSections | Select-Object -First $slotCount
 
     $models = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -391,6 +399,7 @@ try {
         models = @($models | Sort-Object)
         sourceCarSlots = $sourceCarSlotCount
         autoExpandedSlots = $slotCount - $sourceCarSlotCount
+        slotMode = $SlotMode
         humanSlots = $effectiveHumanSlots
         botSlots = $effectiveBotSlots
         midRaceBotTakeover = $hasBots

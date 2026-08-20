@@ -86,7 +86,7 @@ SKIN=skin_2
 
     & $stageScript -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
         -PublishedServer $publishedRoot -OutputRoot $outputRoot -PresetName test-dynamic `
-        -HumanSlots 2 -BotSlots 0 -BindAddress 192.168.10.20 -PreserveCmEventSettings
+        -HumanSlots 2 -BotSlots 0 -SlotMode ReservedHumans -BindAddress 192.168.10.20 -PreserveCmEventSettings
 
     $stagedCfg = Join-Path $outputRoot 'presets\test-dynamic\server_cfg.ini'
     $stagedEntries = Join-Path $outputRoot 'presets\test-dynamic\entry_list.ini'
@@ -113,7 +113,7 @@ SKIN=skin_2
     try {
         & $stageScript -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
             -PublishedServer $publishedRoot -OutputRoot (Join-Path $testRoot 'ambiguous') `
-            -HumanSlots 2 -BotSlots 0 -BindAddress 192.168.10.20 -PreserveCmEventSettings
+            -HumanSlots 2 -BotSlots 0 -SlotMode ReservedHumans -BindAddress 192.168.10.20 -PreserveCmEventSettings
     } catch {
         $ambiguousMessage = $_.Exception.Message
     }
@@ -121,7 +121,7 @@ SKIN=skin_2
 
     & $launcherScript -CmPresetId SERVER_00 -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
         -PublishedServer $publishedRoot -OutputRoot $outputRoot -PresetName test-dynamic `
-        -HumanSlots 2 -BindAddress 192.168.10.20 -NoLaunch
+        -MinimumSlots 2 -BindAddress 192.168.10.20 -NoLaunch
 
     $compatRoot = Join-Path $testRoot 'windows-powershell-compat'
     $compatTools = Join-Path $compatRoot 'tools'
@@ -141,9 +141,27 @@ MODEL=test_car
 SKIN=skin_0
 '@
 
+    & (Join-Path $compatTools 'Start-CmLanRaceBots.ps1') -CmServerPresetsRoot $singlePresetRoot `
+        -AssettoCorsaRoot $gameRoot -MinimumSlots 2 -BindAddress 192.168.10.20 -NoLaunch
+
+    $automaticRoot = Join-Path $compatRoot '.artifacts\lan-race-bots'
+    $automaticPreset = Join-Path $automaticRoot 'presets\cm-lan-race-bots'
+    $automaticEntries = Join-Path $automaticPreset 'entry_list.ini'
+    $automaticExtra = Get-Content -Raw -LiteralPath (Join-Path $automaticPreset 'extra_cfg.yml')
+    $automaticManifest = Get-Content -Raw -LiteralPath (Join-Path $automaticRoot 'race-bot-manifest.json') | ConvertFrom-Json
+    Assert-True ((Read-IniValue $automaticEntries CAR_0 AI) -eq 'auto') 'the original slot should be replaceable by default'
+    Assert-True ((Read-IniValue $automaticEntries CAR_1 MODEL) -eq 'test_car') 'a one-entry CM grid should be cloned to two slots'
+    Assert-True ((Read-IniValue $automaticEntries CAR_1 AI) -eq 'auto') 'the generated second slot should be a replaceable bot by default'
+    Assert-True ($automaticExtra.Contains('EnableAi: true')) 'AI should be enabled by default'
+    Assert-True ($automaticExtra.Contains('Behavior: Race')) 'the default launcher should use race-bot behavior'
+    Assert-True ($automaticExtra.Contains('AllowMidRaceBotTakeover: true')) 'takeover should be enabled by default'
+    Assert-True ($automaticManifest.slotMode -eq 'AllBots') 'manifest should record all-bot slot mode'
+    Assert-True ($automaticManifest.humanSlots -eq 0) 'all slots should begin under bot control'
+    Assert-True ($automaticManifest.botSlots -eq 2) 'the two-slot minimum should contain two bots'
+
     Remove-Item -LiteralPath (Join-Path $trackRoot 'test_layout\ai\fast_lane.ai')
     & (Join-Path $compatTools 'Start-CmLanRaceBots.ps1') -CmServerPresetsRoot $singlePresetRoot `
-        -AssettoCorsaRoot $gameRoot -HumanSlots 2 -BindAddress 192.168.10.20 -NoLaunch
+        -AssettoCorsaRoot $gameRoot -MinimumSlots 2 -BindAddress 192.168.10.20 -DisableBots -NoLaunch
 
     $humanOnlyRoot = Join-Path $compatRoot '.artifacts\lan-race-bots'
     $humanOnlyPreset = Join-Path $humanOnlyRoot 'presets\cm-lan-race-bots'
@@ -158,6 +176,7 @@ SKIN=skin_0
     Assert-True ($humanOnlyExtra.Contains('AllowMidRaceBotTakeover: false')) 'takeover should be disabled without bots'
     Assert-True ($humanOnlyManifest.sourceCarSlots -eq 1) 'manifest should retain the CM source slot count'
     Assert-True ($humanOnlyManifest.autoExpandedSlots -eq 1) 'manifest should record the generated human slot'
+    Assert-True ($humanOnlyManifest.slotMode -eq 'NoBots') 'manifest should record disabled-bot slot mode'
     Assert-True ($humanOnlyManifest.humanSlots -eq 2) 'human-only staging should advertise two human slots'
     Assert-True ($humanOnlyManifest.botSlots -eq 0) 'human-only staging should not require a bot'
     Assert-True ($humanOnlyManifest.midRaceBotTakeover -eq $false) 'manifest should disable takeover without bots'

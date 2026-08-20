@@ -6,11 +6,12 @@ param(
     [string] $PublishedServer,
     [string] $OutputRoot,
     [string] $PresetName = 'cm-lan-race-bots',
-    [ValidateRange(1, 254)] [int] $HumanSlots = 2,
+    [ValidateRange(2, 254)] [int] $MinimumSlots = 2,
     [ValidateRange(10, 120)] [int] $UpdateHz = 60,
     [ValidateRange(0.0, 1.0)] [double] $Difficulty = 0.75,
     [ValidateRange(0.0, 1.0)] [double] $Aggression = 0.50,
     [string] $BindAddress,
+    [switch] $DisableBots,
     [switch] $VerboseLog,
     [switch] $NoLaunch
 )
@@ -65,8 +66,9 @@ $stageArguments = @{
     PublishedServer = $PublishedServer
     OutputRoot = $OutputRoot
     PresetName = $PresetName
-    HumanSlots = $HumanSlots
+    HumanSlots = $MinimumSlots
     BotSlots = 0
+    SlotMode = $(if ($DisableBots) { 'NoBots' } else { 'AllBots' })
     UpdateHz = $UpdateHz
     Difficulty = $Difficulty
     Aggression = $Aggression
