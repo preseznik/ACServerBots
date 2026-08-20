@@ -121,6 +121,33 @@ SKIN=skin_2
         -PublishedServer $publishedRoot -OutputRoot $outputRoot -PresetName test-dynamic `
         -HumanSlots 1 -BindAddress 192.168.10.20 -NoLaunch
 
+    $compatRoot = Join-Path $testRoot 'windows-powershell-compat'
+    $compatTools = Join-Path $compatRoot 'tools'
+    $compatPublished = Join-Path $compatRoot 'out-win-x64'
+    $singlePresetRoot = Join-Path $gameRoot 'server\single-preset'
+    $singlePreset = Join-Path $singlePresetRoot 'SERVER_SINGLE'
+    @($compatTools, $compatPublished, $singlePreset) |
+        ForEach-Object { New-Item -ItemType Directory -Path $_ -Force | Out-Null }
+    Copy-Item -LiteralPath $launcherScript -Destination $compatTools
+    Copy-Item -LiteralPath $stageScript -Destination $compatTools
+    Copy-Item -LiteralPath ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\Start-LanRaceBots.ps1'))) -Destination $compatTools
+    Set-Content -LiteralPath (Join-Path $compatPublished 'AssettoServer.exe') -Value 'test executable'
+    Copy-Item -LiteralPath (Join-Path $cmPreset 'server_cfg.ini') -Destination $singlePreset
+    Set-Content -LiteralPath (Join-Path $singlePreset 'entry_list.ini') -Value @'
+[CAR_0]
+MODEL=test_car
+SKIN=skin_0
+'@
+
+    $slotMessage = $null
+    try {
+        & (Join-Path $compatTools 'Start-CmLanRaceBots.ps1') -CmServerPresetsRoot $singlePresetRoot `
+            -AssettoCorsaRoot $gameRoot -HumanSlots 2 -BindAddress 192.168.10.20 -NoLaunch
+    } catch {
+        $slotMessage = $_.Exception.Message
+    }
+    Assert-True ($slotMessage -like '*CM preset has 1 car entry*at least 3 are required*') 'default paths should resolve before reporting an insufficient CM grid'
+
     Write-Host 'CM preset staging tests passed.'
 }
 finally {

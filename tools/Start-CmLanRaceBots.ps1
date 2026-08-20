@@ -3,8 +3,8 @@ param(
     [string] $CmPresetId,
     [string] $CmServerPresetsRoot,
     [string] $AssettoCorsaRoot = 'C:\Program Files (x86)\Steam\steamapps\common\assettocorsa',
-    [string] $PublishedServer = (Join-Path $PSScriptRoot '..\out-win-x64'),
-    [string] $OutputRoot = (Join-Path $PSScriptRoot '..\.artifacts\lan-race-bots'),
+    [string] $PublishedServer,
+    [string] $OutputRoot,
     [string] $PresetName = 'cm-lan-race-bots',
     [ValidateRange(1, 254)] [int] $HumanSlots = 2,
     [ValidateRange(10, 120)] [int] $UpdateHz = 60,
@@ -17,6 +17,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($PublishedServer)) { $PublishedServer = Join-Path $PSScriptRoot '..\out-win-x64' }
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) { $OutputRoot = Join-Path $PSScriptRoot '..\.artifacts\lan-race-bots' }
 
 $targetExecutable = [IO.Path]::GetFullPath((Join-Path $OutputRoot 'AssettoServer.exe'))
 $runningTarget = Get-Process -Name AssettoServer -ErrorAction SilentlyContinue | Where-Object {

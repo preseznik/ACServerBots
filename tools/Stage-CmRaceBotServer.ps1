@@ -4,8 +4,8 @@ param(
     [string] $CmPresetId,
     [string] $CmServerPresetsRoot,
     [string] $AssettoCorsaRoot = 'C:\Program Files (x86)\Steam\steamapps\common\assettocorsa',
-    [string] $PublishedServer = (Join-Path $PSScriptRoot '..\out-win-x64'),
-    [string] $OutputRoot = (Join-Path $PSScriptRoot '..\.artifacts\lan-race-bots'),
+    [string] $PublishedServer,
+    [string] $OutputRoot,
     [string] $PresetName = 'magione-lan-race-bots',
     [ValidateRange(1, 254)] [int] $HumanSlots = 2,
     [ValidateRange(0, 254)] [int] $BotSlots = 6,
@@ -20,6 +20,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($PublishedServer)) { $PublishedServer = Join-Path $PSScriptRoot '..\out-win-x64' }
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) { $OutputRoot = Join-Path $PSScriptRoot '..\.artifacts\lan-race-bots' }
 
 function Read-IniFile([string] $Path) {
     $result = [ordered]@{}
@@ -199,11 +201,15 @@ try {
     if ([string]::IsNullOrWhiteSpace($track)) { throw 'TRACK is empty in server_cfg.ini' }
 
     $carSections = @($entryIni.Keys | Where-Object { $_ -match '^CAR_\d+$' } | Sort-Object { [int]($_ -replace '^CAR_', '') })
-    if ($BotSlots -eq 0) {
-        $BotSlots = $carSections.Count - $HumanSlots
-        if ($BotSlots -lt 1) { throw "CM preset needs at least one bot entry after the first $HumanSlots human slots" }
+    $effectiveBotSlots = $BotSlots
+    if ($effectiveBotSlots -eq 0) {
+        $effectiveBotSlots = $carSections.Count - $HumanSlots
+        if ($effectiveBotSlots -lt 1) {
+            $entryWord = if ($carSections.Count -eq 1) { 'entry' } else { 'entries' }
+            throw "CM preset has $($carSections.Count) car $entryWord; at least $($HumanSlots + 1) are required for $HumanSlots human slots and one bot. Add more entries in Content Manager or lower -HumanSlots."
+        }
     }
-    $slotCount = $HumanSlots + $BotSlots
+    $slotCount = $HumanSlots + $effectiveBotSlots
     if ($slotCount -gt 254) { throw 'The combined human and bot slot count cannot exceed 254' }
     if ($carSections.Count -lt $slotCount) { throw "CM pack has $($carSections.Count) car slots; $slotCount are required" }
     $selectedSections = $carSections | Select-Object -First $slotCount
@@ -330,7 +336,7 @@ try {
         trackConfig = $trackConfig
         model = @($models)[0]
         humanSlots = $HumanSlots
-        botSlots = $BotSlots
+        botSlots = $effectiveBotSlots
         midRaceBotTakeover = $true
         advertisedSlots = $slotCount
         pitBoxes = $pitBoxes
@@ -341,7 +347,7 @@ try {
         assettoCorsaRoot = $resolvedGame
     }
     $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $resolvedOutput 'race-bot-manifest.json') -Encoding utf8
-    Write-Host "Staged $slotCount slots ($HumanSlots human, $BotSlots bot) at $resolvedOutput"
+    Write-Host "Staged $slotCount slots ($HumanSlots human, $effectiveBotSlots bot) at $resolvedOutput"
     Write-Host "LAN endpoint: $BindAddress"
     Write-Host "Launch: .\AssettoServer.exe --preset $PresetName"
 }
