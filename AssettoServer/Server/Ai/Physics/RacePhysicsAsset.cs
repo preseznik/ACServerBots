@@ -7,8 +7,6 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
-using BepuPhysics.Collidables;
-using BepuUtilities.Memory;
 
 namespace AssettoServer.Server.Ai.Physics;
 
@@ -22,15 +20,17 @@ public readonly record struct RaceGridPose(Vector3 Position, Quaternion Orientat
     }
 }
 
+internal readonly record struct RaceWheelCollider(Vector3 Center, float Radius);
+
 internal sealed class RacePhysicsAsset
 {
     private const string Magic = "ASRPHY01";
-    private const int Version = 2;
+    private const int Version = 3;
 
     public required IReadOnlyList<RaceGridPose> Grid { get; init; }
     public required IReadOnlyList<Kn5Triangle> TrackTriangles { get; init; }
     public required IReadOnlyDictionary<string, Vector3[]> CarColliderVertices { get; init; }
-    public required IReadOnlyDictionary<string, Vector3[]> CarVisualSupportVertices { get; init; }
+    public required IReadOnlyDictionary<string, RaceWheelCollider[]> CarWheelColliders { get; init; }
 
     public static RacePhysicsAsset Load(string path)
     {
@@ -51,7 +51,7 @@ internal sealed class RacePhysicsAsset
             triangles[i] = new Kn5Triangle(ReadVector3(reader), ReadVector3(reader), ReadVector3(reader));
 
         var cars = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
-        var visualSupports = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
+        var wheelColliders = new Dictionary<string, RaceWheelCollider[]>(StringComparer.OrdinalIgnoreCase);
         int carCount = ReadCount(reader, 254, "car collider");
         for (int i = 0; i < carCount; i++)
         {
@@ -60,10 +60,10 @@ internal sealed class RacePhysicsAsset
             for (int j = 0; j < vertices.Length; j++)
                 vertices[j] = ReadVector3(reader);
             cars.Add(model, vertices);
-            var visualVertices = new Vector3[ReadCount(reader, 1_000_000, "car visual support vertex")];
-            for (int j = 0; j < visualVertices.Length; j++)
-                visualVertices[j] = ReadVector3(reader);
-            visualSupports.Add(model, visualVertices);
+            var wheels = new RaceWheelCollider[ReadCount(reader, 16, "car wheel collider")];
+            for (int j = 0; j < wheels.Length; j++)
+                wheels[j] = new RaceWheelCollider(ReadVector3(reader), reader.ReadSingle());
+            wheelColliders.Add(model, wheels);
         }
 
         return new RacePhysicsAsset
@@ -71,7 +71,7 @@ internal sealed class RacePhysicsAsset
             Grid = grid,
             TrackTriangles = triangles,
             CarColliderVertices = cars,
-            CarVisualSupportVertices = visualSupports
+            CarWheelColliders = wheelColliders
         };
     }
 
@@ -103,10 +103,13 @@ internal sealed class RacePhysicsAsset
             writer.Write(vertices.Length);
             foreach (var vertex in vertices)
                 Write(writer, vertex);
-            var visualVertices = CarVisualSupportVertices[model];
-            writer.Write(visualVertices.Length);
-            foreach (var vertex in visualVertices)
-                Write(writer, vertex);
+            var wheels = CarWheelColliders[model];
+            writer.Write(wheels.Length);
+            foreach (var wheel in wheels)
+            {
+                Write(writer, wheel.Center);
+                writer.Write(wheel.Radius);
+            }
         }
     }
 
@@ -185,8 +188,12 @@ internal static partial class RacePhysicsAssetBuilder
             !gridTransforms.Keys.SequenceEqual(Enumerable.Range(0, gridTransforms.Count)))
             throw new InvalidDataException($"Track must expose a contiguous AC_START_0..n race grid: {track}");
 
+        var groundedGrid = gridTransforms.Values
+            .Select(pose => GroundGridPose(pose, trackTriangles))
+            .ToArray();
+
         var colliders = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
-        var visualSupports = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
+        var wheelColliders = new Dictionary<string, RaceWheelCollider[]>(StringComparer.OrdinalIgnoreCase);
         foreach (string model in carModels.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             string carRoot = Path.Combine(gameRoot, "content", "cars", model);
@@ -200,19 +207,16 @@ internal static partial class RacePhysicsAssetBuilder
             colliders.Add(model, vertices);
 
             string visualModelPath = FindVisualModelFile(carRoot, model);
-            var visualModel = Kn5CollisionReader.Read(visualModelPath, _ => true, includeTriangles: false);
-            var visualSupport = CreateSupportHull(Deduplicate(visualModel.Vertices));
-            if (visualSupport.Length < 4)
-                throw new InvalidDataException($"Car visual model has insufficient geometry: {model}");
-            visualSupports.Add(model, visualSupport);
+            var visualModel = Kn5CollisionReader.Read(visualModelPath, _ => false, includeTriangles: false);
+            wheelColliders.Add(model, ReadWheelColliders(visualModel.NamedTransforms, model));
         }
 
         var asset = new RacePhysicsAsset
         {
-            Grid = gridTransforms.Values.ToArray(),
+            Grid = groundedGrid,
             TrackTriangles = trackTriangles,
             CarColliderVertices = colliders,
-            CarVisualSupportVertices = visualSupports
+            CarWheelColliders = wheelColliders
         };
         asset.Save(outputPath);
         return new RacePhysicsBuildResult(asset.Grid.Count, asset.TrackTriangles.Count, colliders.Count,
@@ -325,29 +329,75 @@ internal static partial class RacePhysicsAssetBuilder
                ?? throw new FileNotFoundException($"Car has no visual KN5 model: {model}", conventional);
     }
 
-    private static Vector3[] CreateSupportHull(Vector3[] vertices)
+    internal static RaceGridPose GroundGridPose(RaceGridPose pose, IReadOnlyList<Kn5Triangle> triangles)
     {
-        var pool = new BufferPool();
-        var hull = new ConvexHull(vertices.AsSpan(), pool, out var center);
-        try
+        const float maximumDropMeters = 5;
+        float surfaceY = float.NegativeInfinity;
+        foreach (var triangle in triangles)
         {
-            var result = new List<Vector3>();
-            var seen = new HashSet<(ushort Bundle, ushort Inner)>();
-            for (int i = 0; i < hull.FaceVertexIndices.Length; i++)
-            {
-                var index = hull.FaceVertexIndices[i];
-                if (!seen.Add((index.BundleIndex, index.InnerIndex)))
-                    continue;
-                hull.GetPoint(index, out var point);
-                result.Add(point + center);
-            }
-            return Deduplicate(result);
+            if (!TryGetSurfaceHeight(triangle, pose.Position.X, pose.Position.Z, out float candidateY))
+                continue;
+            if (candidateY <= pose.Position.Y + 0.1f && candidateY >= pose.Position.Y - maximumDropMeters)
+                surfaceY = Math.Max(surfaceY, candidateY);
         }
-        finally
+
+        if (!float.IsFinite(surfaceY))
+            throw new InvalidDataException($"AC grid position {pose.Position} has no physical track surface below it");
+        return pose with { Position = pose.Position with { Y = surfaceY } };
+    }
+
+    private static bool TryGetSurfaceHeight(Kn5Triangle triangle, float x, float z, out float height)
+    {
+        float normalY = Vector3.Cross(triangle.B - triangle.A, triangle.C - triangle.A).Y;
+        if (Math.Abs(normalY) <= 1e-6f)
         {
-            hull.Dispose(pool);
-            pool.Clear();
+            height = 0;
+            return false;
         }
+
+        float denominator = (triangle.B.Z - triangle.C.Z) * (triangle.A.X - triangle.C.X)
+                            + (triangle.C.X - triangle.B.X) * (triangle.A.Z - triangle.C.Z);
+        if (Math.Abs(denominator) < 1e-8f)
+        {
+            height = 0;
+            return false;
+        }
+
+        float a = ((triangle.B.Z - triangle.C.Z) * (x - triangle.C.X)
+                   + (triangle.C.X - triangle.B.X) * (z - triangle.C.Z)) / denominator;
+        float b = ((triangle.C.Z - triangle.A.Z) * (x - triangle.C.X)
+                   + (triangle.A.X - triangle.C.X) * (z - triangle.C.Z)) / denominator;
+        float c = 1 - a - b;
+        const float edgeTolerance = -1e-4f;
+        if (a < edgeTolerance || b < edgeTolerance || c < edgeTolerance)
+        {
+            height = 0;
+            return false;
+        }
+
+        height = a * triangle.A.Y + b * triangle.B.Y + c * triangle.C.Y;
+        return true;
+    }
+
+    internal static RaceWheelCollider[] ReadWheelColliders(
+        IReadOnlyList<Kn5NamedTransform> transforms, string model)
+    {
+        string[] wheelNames = ["WHEEL_LF", "WHEEL_RF", "WHEEL_LR", "WHEEL_RR"];
+        var wheels = new RaceWheelCollider[wheelNames.Length];
+        for (int i = 0; i < wheelNames.Length; i++)
+        {
+            string name = wheelNames[i];
+            var matches = transforms.Where(node => node.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1)
+                throw new InvalidDataException($"Car {model} must expose exactly one {name} transform; found {matches.Length}");
+
+            var center = matches[0].Transform.Translation;
+            float radius = center.Y;
+            if (!float.IsFinite(radius) || radius is < 0.1f or > 1.5f)
+                throw new InvalidDataException($"Car {model} has an invalid {name} wheel radius/height: {radius}");
+            wheels[i] = new RaceWheelCollider(center, radius);
+        }
+        return wheels;
     }
 }
 

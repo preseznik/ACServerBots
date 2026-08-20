@@ -153,9 +153,15 @@ public class RaceBotsTests
                 {
                     ["test_car"] = [Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ]
                 },
-                CarVisualSupportVertices = new Dictionary<string, Vector3[]>
+                CarWheelColliders = new Dictionary<string, RaceWheelCollider[]>
                 {
-                    ["test_car"] = [Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ]
+                    ["test_car"] =
+                    [
+                        new RaceWheelCollider(new Vector3(0.7f, 0.3f, 1.2f), 0.3f),
+                        new RaceWheelCollider(new Vector3(-0.7f, 0.3f, 1.2f), 0.3f),
+                        new RaceWheelCollider(new Vector3(0.7f, 0.3f, -1.2f), 0.3f),
+                        new RaceWheelCollider(new Vector3(-0.7f, 0.3f, -1.2f), 0.3f)
+                    ]
                 }
             };
 
@@ -169,7 +175,8 @@ public class RaceBotsTests
                 Assert.That(loaded.TrackTriangles, Has.Count.EqualTo(1));
                 Assert.That(loaded.TrackTriangles[0].C, Is.EqualTo(Vector3.UnitZ));
                 Assert.That(loaded.CarColliderVertices["TEST_CAR"], Has.Length.EqualTo(4));
-                Assert.That(loaded.CarVisualSupportVertices["TEST_CAR"], Has.Length.EqualTo(4));
+                Assert.That(loaded.CarWheelColliders["TEST_CAR"], Has.Length.EqualTo(4));
+                Assert.That(loaded.CarWheelColliders["TEST_CAR"][0].Radius, Is.EqualTo(0.3f));
             });
         }
         finally
@@ -249,30 +256,38 @@ public class RaceBotsTests
     }
 
     [Test]
-    public void ColliderSupportMapsPhysicsOriginBackToAcVisualHeight()
+    public void AcStartPoseIsGroundedOnPhysicalTrackSurface()
     {
-        var colliderVertices = new[]
+        var triangles = new[]
         {
-            new Vector3(-1, 0.15f, -2),
-            new Vector3(1, 0.15f, -2),
-            new Vector3(0, 1.25f, 2)
+            new Kn5Triangle(new Vector3(-10, 5, -10), new Vector3(-10, 5, 10), new Vector3(10, 5, -10))
         };
-        var visualVertices = new[]
-        {
-            new Vector3(-1, 0, -2),
-            new Vector3(1, 0, -2),
-            new Vector3(0, 1.5f, 2)
-        };
-        var visualPose = new RaceGridPose(new Vector3(10, 5.5f, 20), Quaternion.Identity);
+        var pose = new RaceGridPose(new Vector3(0, 6.125f, 0), Quaternion.Identity);
 
-        var physicsPose = RaceBotPhysicsWorld.ToPhysicsOriginPose(visualPose, colliderVertices, visualVertices);
-        var protocolPosition = RaceBotPhysicsWorld.ToProtocolPosition(
-            physicsPose.Position, physicsPose.Orientation, colliderVertices, visualVertices);
+        var grounded = RacePhysicsAssetBuilder.GroundGridPose(pose, triangles);
+
+        Assert.That(grounded.Position, Is.EqualTo(new Vector3(0, 5, 0)));
+    }
+
+    [Test]
+    public void WheelCollidersUseStandardAcWheelNodesAndIgnoreOtherTransforms()
+    {
+        var transforms = new[]
+        {
+            new Kn5NamedTransform("BODY_OUTLIER", Matrix4x4.CreateTranslation(0, -3, 0)),
+            new Kn5NamedTransform("WHEEL_LF", Matrix4x4.CreateTranslation(0.7f, 0.31f, 1.2f)),
+            new Kn5NamedTransform("WHEEL_RF", Matrix4x4.CreateTranslation(-0.7f, 0.31f, 1.2f)),
+            new Kn5NamedTransform("WHEEL_LR", Matrix4x4.CreateTranslation(0.72f, 0.33f, -1.2f)),
+            new Kn5NamedTransform("WHEEL_RR", Matrix4x4.CreateTranslation(-0.72f, 0.33f, -1.2f))
+        };
+
+        var wheels = RacePhysicsAssetBuilder.ReadWheelColliders(transforms, "test_car");
 
         Assert.Multiple(() =>
         {
-            Assert.That(physicsPose.Position.Y, Is.EqualTo(5.35f).Within(1e-5f));
-            Assert.That(protocolPosition, Is.EqualTo(visualPose.Position));
+            Assert.That(wheels, Has.Length.EqualTo(4));
+            Assert.That(wheels.Select(wheel => wheel.Radius), Is.EqualTo(new[] { 0.31f, 0.31f, 0.33f, 0.33f }));
+            Assert.That(wheels.Min(wheel => wheel.Center.Y - wheel.Radius), Is.Zero.Within(1e-6f));
         });
     }
 
