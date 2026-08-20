@@ -14,6 +14,8 @@ The fork is based on upstream commit `6ce86addc1b1c70caf018a7b39f6d7bc9aa9493f`.
 - creates exactly one bot state per frozen bot slot and places each participant on its track-defined `AC_START_n` transform in the session's actual grid order;
 - extracts the selected track's physical KN5 triangle meshes, each selected car's real `collider.kn5`, and its standard `WHEEL_LF/RF/LR/RR` contact transforms into a prepared local physics asset;
 - holds dynamic bodies stationary until the server start time, then advances a shared BEPU rigid-body world with gravity, road contact, pitch/roll, and bot-to-bot collision response;
+- applies bounded attitude control and speed-dependent downforce to resist rollover and crest launches without bypassing rigid-body contacts; propulsion is cut when a car is no longer safely upright;
+- resets a bot to its current spline target after one second continuously overturned or materially off track, preserving its lap state while excluding the teleport from progress accounting;
 - represents connected humans as solver kinematic bodies, so bots physically react to their reported position and collider;
 - offers `Efficient`, `Balanced`, and `High` solver fidelity without reducing collision geometry;
 - selects a vehicle profile by car model and uses its mass, power, top speed, reported 0–100 time, braking, grip, tyre diameter, RPM range, and gear count;

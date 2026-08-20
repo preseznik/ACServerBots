@@ -76,6 +76,7 @@ public class AiState : IDisposable
     private float _targetLateralOffsetMeters;
     private long _overtakeUntil;
     private Vector3 _physicsLastPosition;
+    private int _physicsRecoveryCount;
 
     private readonly ACServerConfiguration _configuration;
     private readonly SessionManager _sessionManager;
@@ -234,6 +235,7 @@ public class AiState : IDisposable
             if (!_racePhysicsWorld.TryGetBotState(EntryCar.SessionId, out var physicsState))
                 throw new InvalidOperationException("Race bot rigid body was not registered");
             _physicsLastPosition = physicsState.Position;
+            _physicsRecoveryCount = physicsState.RecoveryCount;
             Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
             Status.Position = physicsState.ProtocolPosition;
             Status.Rotation = RacePhysicsMath.ToProtocolRotation(pose.Orientation);
@@ -823,7 +825,8 @@ public class AiState : IDisposable
 
         var sampleBeforeMove = GetCurrentSplineSample(out _);
         var forward = Vector3.Normalize(sampleBeforeMove.Tangent);
-        float forwardProgress = Math.Max(0, Vector3.Dot(physicsState.Position - _physicsLastPosition, forward));
+        float forwardProgress = CalculatePhysicsForwardProgress(physicsState.Position, _physicsLastPosition,
+            forward, physicsState.RecoveryCount, _physicsRecoveryCount);
         if (!Move(_currentVecProgress + forwardProgress))
         {
             Despawn();
@@ -831,6 +834,7 @@ public class AiState : IDisposable
         }
 
         _physicsLastPosition = physicsState.Position;
+        _physicsRecoveryCount = physicsState.RecoveryCount;
         CurrentSpeed = Math.Max(0, physicsState.ForwardSpeed);
         Acceleration = physicsState.LongitudinalAcceleration;
         Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
@@ -839,6 +843,12 @@ public class AiState : IDisposable
         Status.Velocity = physicsState.Velocity;
         ApplyStatusTelemetry();
     }
+
+    internal static float CalculatePhysicsForwardProgress(Vector3 position, Vector3 previousPosition,
+        Vector3 forward, int recoveryCount, int previousRecoveryCount) =>
+        recoveryCount == previousRecoveryCount
+            ? Math.Max(0, Vector3.Dot(position - previousPosition, forward))
+            : 0;
 
     private void ApplyStatusTelemetry()
     {

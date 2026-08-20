@@ -8,7 +8,7 @@ param(
     [string[]] $CarModels,
     [ValidateRange(2, 32)]
     [int] $Slots = 2,
-    [ValidateRange(3, 60)]
+    [ValidateRange(3, 180)]
     [int] $SmokeSeconds = 8,
     [switch] $VerifyMovingBots
 )
@@ -126,5 +126,14 @@ if ($VerifyMovingBots) {
     $finalHeightError = [double]::Parse($samples[-1].Groups['height'].Value, [Globalization.CultureInfo]::InvariantCulture)
     if ($finalHeightError -gt 2.5) { throw "Bots left the road surface: final spline height error was $finalHeightError m." }
     if ($finalSpeed -lt 1) { throw "Bots did not begin moving after the countdown: final maximum speed was $finalSpeed m/s." }
+
+    $stabilitySamples = @([regex]::Matches($combinedLog,
+        'upright (?<upright>-?\d+(?:\.\d+)?), overturned (?<overturned>\d+), recoveries (?<recoveries>\d+)'))
+    if ($stabilitySamples.Count -lt 2) { throw 'Server log did not contain enough rollover diagnostics.' }
+    $finalUpright = [double]::Parse($stabilitySamples[-1].Groups['upright'].Value, [Globalization.CultureInfo]::InvariantCulture)
+    $finalOverturned = [int]$stabilitySamples[-1].Groups['overturned'].Value
+    if ($finalOverturned -ne 0 -or $finalUpright -lt 0.5) {
+        throw "Bots did not finish the smoke interval upright: dot=$finalUpright, overturned=$finalOverturned."
+    }
 }
 Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'

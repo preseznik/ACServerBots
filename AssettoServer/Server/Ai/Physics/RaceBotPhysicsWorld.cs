@@ -18,15 +18,26 @@ using Serilog;
 namespace AssettoServer.Server.Ai.Physics;
 
 public readonly record struct RaceBotPhysicsState(Vector3 Position, Vector3 ProtocolPosition,
-    Quaternion Orientation, Vector3 Velocity, float ForwardSpeed, float LongitudinalAcceleration);
+    Quaternion Orientation, Vector3 Velocity, float ForwardSpeed, float LongitudinalAcceleration, int RecoveryCount);
 
 public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPosition, Vector3 TargetForward,
     float TargetSpeed, float MaximumAcceleration, float MaximumBrakeDeceleration, float LateralGripG);
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
-    float MaximumSplineHeightError, long StaticPairTests, long StaticManifolds);
+    float MaximumSplineHeightError, float MinimumUprightDot, int OverturnedBots, int TotalRecoveries,
+    long StaticPairTests, long StaticManifolds);
 
 public sealed class RaceBotPhysicsWorld : IDisposable
 {
+    private const float OverturnedUprightDot = 0.25f;
+    private const float RecoveryDelaySeconds = 1f;
+    private const float MaximumRecoveryHorizontalError = 25f;
+    private const float MaximumRecoveryHeightError = 3f;
+    private const float MaximumAngularSpeed = 2.5f;
+    private const float MaximumAngularAcceleration = 16f;
+    private const float AttitudeGain = 4f;
+    private const float DownforceCoefficient = 0.0035f;
+    private const float MaximumDownforceAcceleration = 6f;
+
     private readonly BufferPool _pool = new();
     private readonly Simulation _simulation;
     private readonly ThreadDispatcher? _dispatcher;
@@ -48,6 +59,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
     private sealed class BodyRecord
     {
+        public required byte SessionId { get; init; }
+        public required string Model { get; init; }
         public required BodyHandle Handle { get; init; }
         public required ColliderShape Collider { get; init; }
         public required BodyInertia DynamicInertia { get; init; }
@@ -56,6 +69,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public RaceGridPose HeldPose { get; set; }
         public RaceBotPhysicsControl Control { get; set; }
         public float LastLongitudinalAcceleration { get; set; }
+        public float RecoveryNeededSeconds { get; set; }
+        public int RecoveryCount { get; set; }
     }
 
     public int GridCount => _asset.Grid.Count;
@@ -120,6 +135,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 new BodyActivityDescription(0.01f)));
             _bodies.Add(sessionId, new BodyRecord
             {
+                SessionId = sessionId,
+                Model = model,
                 Handle = handle,
                 Collider = collider,
                 DynamicInertia = inertia,
@@ -155,6 +172,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                     new BodyActivityDescription(0.01f)));
                 record = new BodyRecord
                 {
+                    SessionId = sessionId,
+                    Model = model,
                     Handle = handle,
                     Collider = collider,
                     DynamicInertia = default,
@@ -206,7 +225,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 record.Collider.ProtocolReferenceHeight);
             var forward = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
             state = new RaceBotPhysicsState(origin, protocolPosition, body.Pose.Orientation, body.Velocity.Linear,
-                Vector3.Dot(body.Velocity.Linear, forward), record.LastLongitudinalAcceleration);
+                Vector3.Dot(body.Velocity.Linear, forward), record.LastLongitudinalAcceleration,
+                record.RecoveryCount);
             return true;
         }
     }
@@ -220,19 +240,27 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             float maxY = float.NegativeInfinity;
             float maxSpeed = 0;
             float maxSplineHeightError = 0;
+            float minUprightDot = 1;
+            int overturnedBots = 0;
+            int totalRecoveries = 0;
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
             {
                 var body = _simulation.Bodies[record.Handle];
                 var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
+                float uprightDot = GetUprightDot(body.Pose.Orientation);
                 minY = Math.Min(minY, origin.Y);
                 maxY = Math.Max(maxY, origin.Y);
                 maxSpeed = Math.Max(maxSpeed, body.Velocity.Linear.Length());
                 maxSplineHeightError = Math.Max(maxSplineHeightError,
                     Math.Abs(origin.Y - record.Control.TargetPosition.Y));
+                minUprightDot = Math.Min(minUprightDot, uprightDot);
+                if (uprightDot < OverturnedUprightDot)
+                    overturnedBots++;
+                totalRecoveries += record.RecoveryCount;
                 count++;
             }
             return new RacePhysicsDiagnostics(count, count == 0 ? 0 : minY, count == 0 ? 0 : maxY, maxSpeed,
-                maxSplineHeightError,
+                maxSplineHeightError, count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries,
                 Interlocked.Read(ref _contactMetrics.StaticPairTests),
                 Interlocked.Read(ref _contactMetrics.StaticManifolds));
         }
@@ -264,13 +292,29 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var orientation = body.Pose.Orientation;
         var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, orientation);
         var targetForward = Vector3.Normalize(control.TargetForward);
+        float uprightDot = GetUprightDot(orientation);
+        if (NeedsRecovery(uprightDot, origin, control.TargetPosition))
+            record.RecoveryNeededSeconds += deltaSeconds;
+        else
+            record.RecoveryNeededSeconds = 0;
+
+        if (record.RecoveryNeededSeconds >= RecoveryDelaySeconds)
+        {
+            RecoverBot(record, control);
+            return;
+        }
+
         var lineError = control.TargetPosition - origin;
         lineError.Y = 0;
-        var guidedForward = Vector3.Normalize(targetForward + Vector3.Clamp(lineError * 0.12f,
+        var guidedForward = Vector3.Normalize(targetForward + Vector3.Clamp(lineError * 0.2f,
             new Vector3(-0.5f), new Vector3(0.5f)));
 
         float forwardSpeed = Vector3.Dot(body.Velocity.Linear, guidedForward);
-        float speedError = control.TargetSpeed - forwardSpeed;
+        float uprightDriveScale = GetDriveScale(uprightDot);
+        float courseDriveScale = GetCourseDriveScale(lineError.Length(),
+            Math.Abs(origin.Y - control.TargetPosition.Y));
+        float driveScale = uprightDriveScale * courseDriveScale;
+        float speedError = control.TargetSpeed * driveScale - forwardSpeed;
         float acceleration = Math.Clamp(speedError / Math.Max(deltaSeconds, 1e-3f),
             -control.MaximumBrakeDeceleration, control.MaximumAcceleration);
         body.Velocity.Linear += guidedForward * (acceleration * deltaSeconds);
@@ -279,24 +323,33 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var verticalVelocity = Vector3.UnitY * Vector3.Dot(body.Velocity.Linear, Vector3.UnitY);
         var longitudinalVelocity = guidedForward * Vector3.Dot(body.Velocity.Linear, guidedForward);
         var lateralVelocity = body.Velocity.Linear - verticalVelocity - longitudinalVelocity;
-        float maximumLateralCorrection = Math.Max(0.4f, control.LateralGripG) * 9.81f * deltaSeconds;
+        float maximumLateralCorrection = Math.Max(0.4f, control.LateralGripG) * 9.81f * deltaSeconds
+                                         * uprightDriveScale;
         body.Velocity.Linear -= Vector3.Clamp(lateralVelocity, new Vector3(-maximumLateralCorrection),
             new Vector3(maximumLateralCorrection));
 
-        var actualForward = Vector3.Transform(Vector3.UnitZ, orientation);
-        actualForward.Y = 0;
-        guidedForward.Y = 0;
-        if (actualForward.LengthSquared() > 1e-5f && guidedForward.LengthSquared() > 1e-5f)
-        {
-            actualForward = Vector3.Normalize(actualForward);
-            guidedForward = Vector3.Normalize(guidedForward);
-            float yawError = MathF.Atan2(Vector3.Cross(actualForward, guidedForward).Y,
-                Vector3.Dot(actualForward, guidedForward));
-            float targetYawRate = Math.Clamp(yawError * 4f, -2.5f, 2.5f);
-            body.Velocity.Angular.Y += Math.Clamp(targetYawRate - body.Velocity.Angular.Y,
-                -6f * deltaSeconds, 6f * deltaSeconds);
-        }
+        float downforceAcceleration = Math.Min(MaximumDownforceAcceleration,
+            Math.Max(0, forwardSpeed) * Math.Max(0, forwardSpeed) * DownforceCoefficient);
+        body.Velocity.Linear.Y -= downforceAcceleration * deltaSeconds;
+        body.Velocity.Angular = CalculateStabilizedAngularVelocity(orientation, targetForward,
+            body.Velocity.Angular, deltaSeconds);
         body.Awake = true;
+    }
+
+    private void RecoverBot(BodyRecord record, RaceBotPhysicsControl control)
+    {
+        var body = _simulation.Bodies[record.Handle];
+        var recoveryPose = CreateRecoveryPose(control.TargetPosition, control.TargetForward,
+            record.Collider.ProtocolReferenceHeight);
+        body.Pose = ToCenterOfMassPose(recoveryPose, record.Collider.Center);
+        body.Velocity.Linear = Vector3.Normalize(control.TargetForward) * Math.Min(Math.Max(0, control.TargetSpeed), 5f);
+        body.Velocity.Angular = Vector3.Zero;
+        body.Awake = true;
+        record.LastLongitudinalAcceleration = 0;
+        record.RecoveryNeededSeconds = 0;
+        record.RecoveryCount++;
+        Log.Warning("Recovered overturned/off-track race bot {SessionId} ({Model}) at spline target; recovery {RecoveryCount}",
+            record.SessionId, record.Model, record.RecoveryCount);
     }
 
     private void HoldAtGrid(BodyRecord record)
@@ -325,6 +378,68 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
     internal static float GetProtocolReferenceHeight(IReadOnlyList<RaceWheelCollider> wheels) =>
         wheels.Average(wheel => wheel.Center.Y);
+
+    internal static float GetUprightDot(Quaternion orientation) =>
+        Vector3.Dot(Vector3.Transform(Vector3.UnitY, orientation), Vector3.UnitY);
+
+    internal static float GetDriveScale(float uprightDot) =>
+        Math.Clamp((uprightDot - 0.45f) / 0.5f, 0, 1);
+
+    internal static float GetCourseDriveScale(float horizontalError, float heightError)
+    {
+        float horizontalScale = Math.Clamp((15f - Math.Max(0, horizontalError)) / 10f, 0, 1);
+        float heightScale = Math.Clamp((4f - Math.Max(0, heightError)) / 3f, 0, 1);
+        return Math.Min(horizontalScale, heightScale);
+    }
+
+    internal static bool NeedsRecovery(float uprightDot, Vector3 physicalOrigin, Vector3 targetPosition)
+    {
+        var horizontalError = physicalOrigin - targetPosition;
+        horizontalError.Y = 0;
+        return uprightDot < OverturnedUprightDot
+               || horizontalError.LengthSquared() > MaximumRecoveryHorizontalError * MaximumRecoveryHorizontalError
+               || Math.Abs(physicalOrigin.Y - targetPosition.Y) > MaximumRecoveryHeightError;
+    }
+
+    internal static Vector3 CalculateStabilizedAngularVelocity(Quaternion orientation, Vector3 targetForward,
+        Vector3 angularVelocity, float deltaSeconds)
+    {
+        targetForward = Vector3.Normalize(targetForward);
+        var targetRight = Vector3.Cross(Vector3.UnitY, targetForward);
+        if (targetRight.LengthSquared() < 1e-6f)
+            return MoveTowards(angularVelocity, Vector3.Zero, MaximumAngularAcceleration * deltaSeconds);
+        targetRight = Vector3.Normalize(targetRight);
+        var targetUp = Vector3.Normalize(Vector3.Cross(targetForward, targetRight));
+        var actualForward = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, orientation));
+        var actualUp = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, orientation));
+        var desired = (Vector3.Cross(actualForward, targetForward) + Vector3.Cross(actualUp, targetUp))
+                      * AttitudeGain;
+        desired = ClampMagnitude(desired, MaximumAngularSpeed);
+        var boundedAngularVelocity = ClampMagnitude(angularVelocity, MaximumAngularSpeed);
+        return MoveTowards(boundedAngularVelocity, desired,
+            MaximumAngularAcceleration * Math.Max(0, deltaSeconds));
+    }
+
+    internal static RaceGridPose CreateRecoveryPose(Vector3 protocolTargetPosition, Vector3 targetForward,
+        float protocolReferenceHeight)
+    {
+        var orientation = RacePhysicsMath.FromForward(targetForward);
+        var physicalOrigin = FromProtocolPosition(protocolTargetPosition, orientation, protocolReferenceHeight);
+        return new RaceGridPose(physicalOrigin, orientation);
+    }
+
+    private static Vector3 ClampMagnitude(Vector3 value, float maximum)
+    {
+        float lengthSquared = value.LengthSquared();
+        return lengthSquared > maximum * maximum ? value * (maximum / MathF.Sqrt(lengthSquared)) : value;
+    }
+
+    private static Vector3 MoveTowards(Vector3 current, Vector3 target, float maximumDelta)
+    {
+        var delta = target - current;
+        float length = delta.Length();
+        return length <= maximumDelta || length <= 1e-6f ? target : current + delta * (maximumDelta / length);
+    }
 
     private ColliderShape CreateVehicleCollider(Vector3[] chassisVertices, RaceWheelCollider[] wheels)
     {
@@ -467,6 +582,15 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
 internal static class RacePhysicsMath
 {
+    public static Quaternion FromForward(Vector3 forward)
+    {
+        forward = Vector3.Normalize(forward);
+        return FromProtocolRotation(new Vector3(
+            MathF.Atan2(forward.Z, forward.X) - MathF.PI / 2,
+            -(MathF.Atan2(new Vector2(forward.Z, forward.X).Length(), forward.Y) - MathF.PI / 2),
+            0));
+    }
+
     public static Quaternion FromProtocolRotation(Vector3 rotation) =>
         Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(-rotation.X, -rotation.Y, -rotation.Z));
 

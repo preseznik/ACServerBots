@@ -96,9 +96,11 @@ public class AiUpdater
             {
                 var diagnostics = _racePhysicsWorld.GetDiagnostics();
                 Log.Debug("Race physics: {BotCount} bots, Y {MinimumY:F2}..{MaximumY:F2} m, max speed {MaximumSpeed:F1} m/s, "
-                          + "height error {MaximumSplineHeightError:F2} m, static pairs {StaticPairTests}, manifolds {StaticManifolds}",
+                          + "height error {MaximumSplineHeightError:F2} m, upright {MinimumUprightDot:F2}, "
+                          + "overturned {OverturnedBots}, recoveries {TotalRecoveries}, static pairs {StaticPairTests}, manifolds {StaticManifolds}",
                     diagnostics.BotCount, diagnostics.MinimumY, diagnostics.MaximumY, diagnostics.MaximumSpeed,
-                    diagnostics.MaximumSplineHeightError, diagnostics.StaticPairTests, diagnostics.StaticManifolds);
+                    diagnostics.MaximumSplineHeightError, diagnostics.MinimumUprightDot, diagnostics.OverturnedBots,
+                    diagnostics.TotalRecoveries, diagnostics.StaticPairTests, diagnostics.StaticManifolds);
                 _lastPhysicsDiagnosticsMilliseconds = now;
             }
             _accumulatorMilliseconds -= stepMilliseconds;

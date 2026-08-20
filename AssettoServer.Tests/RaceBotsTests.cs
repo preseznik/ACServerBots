@@ -319,6 +319,80 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void RacePhysicsStabilityCutsDriveAndRequestsRecoveryWhenOverturned()
+    {
+        var physicalOrigin = new Vector3(10, 2, 20);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotPhysicsWorld.GetDriveScale(1), Is.EqualTo(1));
+            Assert.That(RaceBotPhysicsWorld.GetDriveScale(0.2f), Is.Zero);
+            Assert.That(RaceBotPhysicsWorld.GetCourseDriveScale(2, 0.5f), Is.EqualTo(1));
+            Assert.That(RaceBotPhysicsWorld.GetCourseDriveScale(10, 0.5f), Is.EqualTo(0.5f));
+            Assert.That(RaceBotPhysicsWorld.GetCourseDriveScale(2, 4), Is.Zero);
+            Assert.That(RaceBotPhysicsWorld.NeedsRecovery(-0.9f, physicalOrigin, physicalOrigin), Is.True);
+            Assert.That(RaceBotPhysicsWorld.NeedsRecovery(1, physicalOrigin,
+                physicalOrigin + new Vector3(26, 0, 0)), Is.True);
+            Assert.That(RaceBotPhysicsWorld.NeedsRecovery(1, physicalOrigin,
+                physicalOrigin + new Vector3(5, 0.3f, 0)), Is.False);
+        });
+    }
+
+    [Test]
+    public void RacePhysicsAttitudeControlCountersRollWithoutSuppressingTargetHeading()
+    {
+        var rolled = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 0.6f);
+        var correctedVelocity = RaceBotPhysicsWorld.CalculateStabilizedAngularVelocity(
+            rolled, Vector3.UnitZ, Vector3.Zero, 1f / 60);
+        var alignedVelocity = RaceBotPhysicsWorld.CalculateStabilizedAngularVelocity(
+            Quaternion.Identity, Vector3.UnitZ, Vector3.Zero, 1f / 60);
+        var boundedImpactVelocity = RaceBotPhysicsWorld.CalculateStabilizedAngularVelocity(
+            Quaternion.Identity, Vector3.UnitZ, new Vector3(20, 0, 0), 1f / 60);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(correctedVelocity.Z, Is.LessThan(0), "positive roll must receive a negative restoring rate");
+            Assert.That(correctedVelocity.Length(), Is.LessThanOrEqualTo(16f / 60 + 1e-5f));
+            Assert.That(alignedVelocity.Length(), Is.Zero.Within(1e-6f));
+            Assert.That(boundedImpactVelocity.Length(), Is.LessThanOrEqualTo(2.5f));
+        });
+    }
+
+    [Test]
+    public void RecoveryPoseIsUprightAndRoundTripsToSplineProtocolTarget()
+    {
+        var protocolTarget = new Vector3(20, 4, -15);
+        var targetForward = Vector3.Normalize(new Vector3(1, 0.12f, 2));
+
+        var pose = RaceBotPhysicsWorld.CreateRecoveryPose(protocolTarget, targetForward, 0.32f);
+        var recoveredProtocolPosition = RaceBotPhysicsWorld.ToProtocolPosition(
+            pose.Position, pose.Orientation, 0.32f);
+        var recoveredForward = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, pose.Orientation));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Vector3.Distance(recoveredProtocolPosition, protocolTarget), Is.LessThan(1e-5f));
+            Assert.That(Vector3.Dot(recoveredForward, targetForward), Is.GreaterThan(0.999f));
+            Assert.That(RaceBotPhysicsWorld.GetUprightDot(pose.Orientation), Is.GreaterThan(0.99f));
+        });
+    }
+
+    [Test]
+    public void RecoveryTeleportDoesNotCountAsRaceProgress()
+    {
+        var previousPosition = Vector3.Zero;
+        var recoveredPosition = new Vector3(0, 0, 40);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(AiState.CalculatePhysicsForwardProgress(recoveredPosition, previousPosition,
+                Vector3.UnitZ, recoveryCount: 1, previousRecoveryCount: 0), Is.Zero);
+            Assert.That(AiState.CalculatePhysicsForwardProgress(recoveredPosition, previousPosition,
+                Vector3.UnitZ, recoveryCount: 1, previousRecoveryCount: 1), Is.EqualTo(40));
+        });
+    }
+
+    [Test]
     public void MidRaceTakeoverReplacesBotWithFreshHumanResult()
     {
         var results = new Dictionary<byte, EntryCarResult>
