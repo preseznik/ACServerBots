@@ -1,17 +1,20 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [string] $CmServerPack,
+    [string] $CmServerPack,
+    [string] $CmPresetId,
+    [string] $CmServerPresetsRoot,
     [string] $AssettoCorsaRoot = 'C:\Program Files (x86)\Steam\steamapps\common\assettocorsa',
     [string] $PublishedServer = (Join-Path $PSScriptRoot '..\out-win-x64'),
     [string] $OutputRoot = (Join-Path $PSScriptRoot '..\.artifacts\lan-race-bots'),
     [string] $PresetName = 'magione-lan-race-bots',
     [ValidateRange(1, 254)] [int] $HumanSlots = 2,
-    [ValidateRange(1, 254)] [int] $BotSlots = 6,
+    [ValidateRange(0, 254)] [int] $BotSlots = 6,
     [ValidateRange(10, 120)] [int] $UpdateHz = 60,
     [ValidateRange(1, 120)] [int] $PracticeMinutes = 5,
     [ValidateRange(0.0, 1.0)] [double] $Difficulty = 0.75,
     [ValidateRange(0.0, 1.0)] [double] $Aggression = 0.50,
     [string] $BindAddress,
+    [switch] $PreserveCmEventSettings,
     [switch] $Force
 )
 
@@ -83,42 +86,125 @@ function Test-PrivateIpv4([string] $Address) {
         ($bytes[0] -eq 192 -and $bytes[1] -eq 168))
 }
 
+function Get-PresetFilePair([string] $Root) {
+    $candidates = @(
+        Get-ChildItem -LiteralPath $Root -Filter server_cfg.ini -File -Recurse |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'entry_list.ini') -PathType Leaf }
+    )
+    if ($candidates.Count -eq 0) { throw "No server_cfg.ini and entry_list.ini pair was found under: $Root" }
+    if ($candidates.Count -gt 1) { throw "More than one server preset was found under: $Root" }
+    return [pscustomobject]@{
+        ServerCfg = $candidates[0].FullName
+        EntryList = Join-Path $candidates[0].DirectoryName 'entry_list.ini'
+    }
+}
+
+function Get-FileSignature([string] $Path) {
+    $item = Get-Item -LiteralPath $Path
+    return "$($item.Length)|$($item.LastWriteTimeUtc.Ticks)|$((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash)"
+}
+
+function Copy-StablePresetFiles([string] $ServerCfg, [string] $EntryList, [string] $Destination) {
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        try {
+            $before = (Get-FileSignature $ServerCfg) + '|' + (Get-FileSignature $EntryList)
+            Start-Sleep -Milliseconds 300
+            $settled = (Get-FileSignature $ServerCfg) + '|' + (Get-FileSignature $EntryList)
+            if ($before -ne $settled) { continue }
+
+            Copy-Item -LiteralPath $ServerCfg -Destination (Join-Path $Destination 'server_cfg.ini') -Force
+            Copy-Item -LiteralPath $EntryList -Destination (Join-Path $Destination 'entry_list.ini') -Force
+            $after = (Get-FileSignature $ServerCfg) + '|' + (Get-FileSignature $EntryList)
+            if ($settled -eq $after) {
+                return [pscustomobject]@{
+                    ServerCfg = Join-Path $Destination 'server_cfg.ini'
+                    EntryList = Join-Path $Destination 'entry_list.ini'
+                }
+            }
+        } catch [IO.IOException] {
+            # Content Manager can briefly hold either file while flushing a preset.
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    throw 'Content Manager preset did not settle. Finish editing it and try again.'
+}
+
 if (-not (Test-Path -LiteralPath $AssettoCorsaRoot -PathType Container)) { throw "Assetto Corsa root not found: $AssettoCorsaRoot" }
 if (-not (Test-Path -LiteralPath $PublishedServer -PathType Container)) { throw "Published server not found: $PublishedServer. Run dotnet publish first." }
 if (-not (Test-Path -LiteralPath (Join-Path $PublishedServer 'AssettoServer.exe') -PathType Leaf)) { throw 'Published server is missing AssettoServer.exe' }
 
+if (-not [string]::IsNullOrWhiteSpace($CmServerPack) -and -not [string]::IsNullOrWhiteSpace($CmPresetId)) {
+    throw 'Use either -CmServerPack or -CmPresetId, not both.'
+}
+
+$sourceMode = 'serverPack'
+$sourcePresetId = $null
+$sourcePath = $CmServerPack
+if ([string]::IsNullOrWhiteSpace($CmServerPack)) {
+    $sourceMode = 'currentCmPreset'
+    if ([string]::IsNullOrWhiteSpace($CmServerPresetsRoot)) {
+        $CmServerPresetsRoot = Join-Path $AssettoCorsaRoot 'server\presets'
+    }
+    if (-not (Test-Path -LiteralPath $CmServerPresetsRoot -PathType Container)) {
+        throw "Content Manager server preset directory not found: $CmServerPresetsRoot"
+    }
+
+    $presetDirectories = @(
+        Get-ChildItem -LiteralPath $CmServerPresetsRoot -Directory |
+            Where-Object {
+                (Test-Path -LiteralPath (Join-Path $_.FullName 'server_cfg.ini') -PathType Leaf) -and
+                (Test-Path -LiteralPath (Join-Path $_.FullName 'entry_list.ini') -PathType Leaf)
+            } |
+            Sort-Object Name
+    )
+    if (-not [string]::IsNullOrWhiteSpace($CmPresetId)) {
+        if ([IO.Path]::GetFileName($CmPresetId) -ne $CmPresetId) { throw 'CmPresetId must be a preset directory name, not a path.' }
+        $presetDirectories = @($presetDirectories | Where-Object Name -CEQ $CmPresetId)
+        if ($presetDirectories.Count -eq 0) { throw "Content Manager server preset not found: $CmPresetId" }
+    } elseif ($presetDirectories.Count -gt 1) {
+        $available = ($presetDirectories | ForEach-Object Name) -join ', '
+        throw "More than one Content Manager server preset exists ($available). Pass -CmPresetId with the one to use."
+    }
+    if ($presetDirectories.Count -eq 0) { throw "No Content Manager server presets were found in: $CmServerPresetsRoot" }
+    $sourcePath = $presetDirectories[0].FullName
+    $sourcePresetId = $presetDirectories[0].Name
+}
+
 $resolvedOutput = [IO.Path]::GetFullPath($OutputRoot)
 $resolvedGame = [IO.Path]::GetFullPath($AssettoCorsaRoot)
 if ($resolvedOutput -eq [IO.Path]::GetPathRoot($resolvedOutput) -or $resolvedOutput -eq $resolvedGame) { throw "Unsafe output path: $resolvedOutput" }
-if (Test-Path -LiteralPath $resolvedOutput) {
-    if (-not $Force) { throw "Output already exists: $resolvedOutput. Pass -Force to replace this exact staging directory." }
-    Remove-Item -LiteralPath $resolvedOutput -Recurse -Force
-}
 
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ("assettoserver-racebots-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
-    $packRoot = $CmServerPack
-    if (Test-Path -LiteralPath $CmServerPack -PathType Leaf) {
-        if ([IO.Path]::GetExtension($CmServerPack) -ine '.zip') { throw 'CM server pack must be a directory or .zip file' }
-        [IO.Compression.ZipFile]::ExtractToDirectory([IO.Path]::GetFullPath($CmServerPack), $temporary)
-        $packRoot = $temporary
+    $packRoot = $sourcePath
+    if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {
+        if ([IO.Path]::GetExtension($sourcePath) -ine '.zip') { throw 'CM server pack must be a directory or .zip file' }
+        $expandedRoot = Join-Path $temporary 'expanded'
+        New-Item -ItemType Directory -Path $expandedRoot | Out-Null
+        [IO.Compression.ZipFile]::ExtractToDirectory([IO.Path]::GetFullPath($sourcePath), $expandedRoot)
+        $packRoot = $expandedRoot
     }
-    if (-not (Test-Path -LiteralPath $packRoot -PathType Container)) { throw "CM server pack not found: $CmServerPack" }
+    if (-not (Test-Path -LiteralPath $packRoot -PathType Container)) { throw "CM server pack not found: $sourcePath" }
 
-    $serverCfg = Get-ChildItem -LiteralPath $packRoot -Filter server_cfg.ini -File -Recurse | Select-Object -First 1
-    $entryList = Get-ChildItem -LiteralPath $packRoot -Filter entry_list.ini -File -Recurse | Select-Object -First 1
-    if ($null -eq $serverCfg -or $null -eq $entryList) { throw 'CM server pack must contain server_cfg.ini and entry_list.ini' }
+    $sourceFiles = Get-PresetFilePair $packRoot
+    $snapshot = Copy-StablePresetFiles $sourceFiles.ServerCfg $sourceFiles.EntryList (Join-Path $temporary 'snapshot')
 
-    $serverIni = Read-IniFile $serverCfg.FullName
-    $entryIni = Read-IniFile $entryList.FullName
+    $serverIni = Read-IniFile $snapshot.ServerCfg
+    $entryIni = Read-IniFile $snapshot.EntryList
     if (-not $serverIni.Contains('SERVER')) { throw 'server_cfg.ini is missing [SERVER]' }
     $track = [string]$serverIni['SERVER']['TRACK']
     $trackConfig = [string]$serverIni['SERVER']['CONFIG_TRACK']
     if ([string]::IsNullOrWhiteSpace($track)) { throw 'TRACK is empty in server_cfg.ini' }
 
-    $slotCount = $HumanSlots + $BotSlots
     $carSections = @($entryIni.Keys | Where-Object { $_ -match '^CAR_\d+$' } | Sort-Object { [int]($_ -replace '^CAR_', '') })
+    if ($BotSlots -eq 0) {
+        $BotSlots = $carSections.Count - $HumanSlots
+        if ($BotSlots -lt 1) { throw "CM preset needs at least one bot entry after the first $HumanSlots human slots" }
+    }
+    $slotCount = $HumanSlots + $BotSlots
+    if ($slotCount -gt 254) { throw 'The combined human and bot slot count cannot exceed 254' }
     if ($carSections.Count -lt $slotCount) { throw "CM pack has $($carSections.Count) car slots; $slotCount are required" }
     $selectedSections = $carSections | Select-Object -First $slotCount
 
@@ -132,7 +218,9 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $carRoot 'data.acd') -PathType Leaf)) { throw "Car has no data.acd checksum source: $model" }
         [void]$models.Add($model)
     }
-    if ($models.Count -ne 1) { throw 'Race bot V1 requires one homogeneous car model across all selected slots' }
+    if ($models.Count -ne 1) {
+        throw "Race bot V1 requires one homogeneous car model across all selected slots. Found: $((@($models) | Sort-Object) -join ', ')"
+    }
 
     $trackRoot = Join-Path $AssettoCorsaRoot "content\tracks\$track"
     $layoutRoot = if ([string]::IsNullOrWhiteSpace($trackConfig)) { $trackRoot } else { Join-Path $trackRoot $trackConfig }
@@ -154,30 +242,40 @@ try {
         throw 'Could not select a private LAN IPv4 address. Pass -BindAddress explicitly.'
     }
 
+    if ($PreserveCmEventSettings -and -not $serverIni.Contains('RACE')) {
+        throw 'The current Content Manager preset has no race session. Add a race session in CM and try again.'
+    }
+
+    if (Test-Path -LiteralPath $resolvedOutput) {
+        if (-not $Force) { throw "Output already exists: $resolvedOutput. Pass -Force to replace this exact staging directory." }
+        Remove-Item -LiteralPath $resolvedOutput -Recurse -Force
+    }
     New-Item -ItemType Directory -Path $resolvedOutput | Out-Null
     Copy-Item -Path (Join-Path $PublishedServer '*') -Destination $resolvedOutput -Recurse -Force
     New-Item -ItemType Directory -Path (Join-Path $resolvedOutput 'plugins') -Force | Out-Null
     $presetRoot = Join-Path $resolvedOutput "presets\$PresetName"
     New-Item -ItemType Directory -Path $presetRoot -Force | Out-Null
-    Copy-Item -LiteralPath $serverCfg.FullName -Destination (Join-Path $presetRoot 'server_cfg.ini')
-    Copy-Item -LiteralPath $entryList.FullName -Destination (Join-Path $presetRoot 'entry_list.ini')
+    Copy-Item -LiteralPath $snapshot.ServerCfg -Destination (Join-Path $presetRoot 'server_cfg.ini')
+    Copy-Item -LiteralPath $snapshot.EntryList -Destination (Join-Path $presetRoot 'entry_list.ini')
 
     $stagedServerCfg = Join-Path $presetRoot 'server_cfg.ini'
     Set-IniValue $stagedServerCfg 'SERVER' 'REGISTER_TO_LOBBY' '0'
     Set-IniValue $stagedServerCfg 'SERVER' 'MAX_CLIENTS' $slotCount
     Set-IniValue $stagedServerCfg 'SERVER' 'CLIENT_SEND_INTERVAL_HZ' $UpdateHz
-    Set-IniValue $stagedServerCfg 'SERVER' 'FUEL_RATE' '0'
-    Set-IniValue $stagedServerCfg 'SERVER' 'DAMAGE_MULTIPLIER' '0'
-    Set-IniValue $stagedServerCfg 'SERVER' 'TYRE_WEAR_RATE' '0'
-    Set-IniValue $stagedServerCfg 'SERVER' 'LOOP_MODE' '1'
-    Set-IniValue $stagedServerCfg 'PRACTICE' 'INFINITE' '0'
-    Set-IniValue $stagedServerCfg 'PRACTICE' 'TIME' $PracticeMinutes
-    Set-IniValue $stagedServerCfg 'PRACTICE' 'IS_OPEN' '1'
-    Remove-IniSection $stagedServerCfg 'QUALIFY'
-    Set-IniValue $stagedServerCfg 'RACE' 'TIME' '0'
-    Set-IniValue $stagedServerCfg 'RACE' 'LAPS' '3'
-    Set-IniValue $stagedServerCfg 'RACE' 'WAIT_TIME' '20'
     Set-IniValue $stagedServerCfg 'RACE' 'IS_OPEN' '1'
+    if (-not $PreserveCmEventSettings) {
+        Set-IniValue $stagedServerCfg 'SERVER' 'FUEL_RATE' '0'
+        Set-IniValue $stagedServerCfg 'SERVER' 'DAMAGE_MULTIPLIER' '0'
+        Set-IniValue $stagedServerCfg 'SERVER' 'TYRE_WEAR_RATE' '0'
+        Set-IniValue $stagedServerCfg 'SERVER' 'LOOP_MODE' '1'
+        Set-IniValue $stagedServerCfg 'PRACTICE' 'INFINITE' '0'
+        Set-IniValue $stagedServerCfg 'PRACTICE' 'TIME' $PracticeMinutes
+        Set-IniValue $stagedServerCfg 'PRACTICE' 'IS_OPEN' '1'
+        Remove-IniSection $stagedServerCfg 'QUALIFY'
+        Set-IniValue $stagedServerCfg 'RACE' 'TIME' '0'
+        Set-IniValue $stagedServerCfg 'RACE' 'LAPS' '3'
+        Set-IniValue $stagedServerCfg 'RACE' 'WAIT_TIME' '20'
+    }
 
     $stagedEntryList = Join-Path $presetRoot 'entry_list.ini'
     for ($i = 0; $i -lt $slotCount; $i++) {
@@ -236,7 +334,10 @@ try {
         midRaceBotTakeover = $true
         advertisedSlots = $slotCount
         pitBoxes = $pitBoxes
-        sourcePack = [IO.Path]::GetFullPath($CmServerPack)
+        sourceMode = $sourceMode
+        sourcePresetId = $sourcePresetId
+        sourcePack = [IO.Path]::GetFullPath($sourcePath)
+        preservedCmEventSettings = [bool]$PreserveCmEventSettings
         assettoCorsaRoot = $resolvedGame
     }
     $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $resolvedOutput 'race-bot-manifest.json') -Encoding utf8

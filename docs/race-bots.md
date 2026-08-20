@@ -54,6 +54,39 @@ Prerequisite: a .NET 9 or newer SDK. The repository pins the upstream target fra
 $env:DOTNET_ROLL_FORWARD = 'Major'
 dotnet test AssettoServer.slnx --configuration Release
 dotnet publish AssettoServer\AssettoServer.csproj --configuration Release --runtime win-x64 --self-contained true
+```
+
+### One-click Content Manager workflow
+
+Configure and save the event in Content Manager, then double-click:
+
+```text
+tools\Start-CmLanRaceBots.cmd
+```
+
+The launcher reads Content Manager's server preset directly from `<Assetto Corsa>\server\presets`, waits until `server_cfg.ini` and `entry_list.ini` have stopped changing, snapshots them, stages the standalone server, and launches it. No Pack export or zip is required. The first two CM entries are human-only by default and every remaining entry becomes a replaceable bot. Pass `-HumanSlots` to `Start-CmLanRaceBots.ps1` to change that split.
+
+CM's track, layout, sessions, lap count, weather, assists, fuel, damage, tyre wear, ports, passwords, and entry skins are preserved. The isolated server overlay disables public lobby registration and UPnP, selects a private LAN listener, opens the race for bot takeover, and applies the race-bot configuration. It never edits the CM preset or installed game files.
+
+Automatic selection is deliberately conservative. A single valid CM preset is selected automatically; if several exist, the double-click launcher displays their directory IDs and asks which one to use. For scripts or shortcuts, select one explicitly:
+
+```powershell
+.\tools\Start-CmLanRaceBots.ps1 -CmPresetId SERVER_00
+```
+
+If Content Manager uses a custom server-preset directory, pass it with `-CmServerPresetsRoot`. Race-bot V1 requires at least one bot entry, one homogeneous car model across all included entries, an installed skin and `data.acd` for each entry, a usable `fast_lane.ai`, enough pit boxes, and a configured race session. Unsupported mixed-car presets fail with the model names instead of being rewritten silently.
+
+Use `-NoLaunch` to validate and stage the current CM preset without starting the server:
+
+```powershell
+.\tools\Start-CmLanRaceBots.ps1 -NoLaunch
+```
+
+### Explicit pack workflow
+
+The reproducible pack workflow remains available for the fixed Magione acceptance event:
+
+```powershell
 
 .\tools\Stage-CmRaceBotServer.ps1 `
   -CmServerPack 'C:\path\to\content-manager-server-pack.zip' `
@@ -63,7 +96,7 @@ dotnet publish AssettoServer\AssettoServer.csproj --configuration Release --runt
 .\tools\Start-LanRaceBots.ps1
 ```
 
-The staging script treats Content Manager as the preset authoring source. It accepts a directory or zip, locates `server_cfg.ini` and `entry_list.ini`, validates the selected cars, skins, `data.acd`, `fast_lane.ai`, and track pit count, then creates an isolated runtime. It copies only server-required checksum/spline data from the installed game. It does not edit Assetto Corsa or Content Manager.
+The staging script treats Content Manager as the preset authoring source. It accepts automatic discovery, a directory, or a zip; locates a matching `server_cfg.ini` and `entry_list.ini` pair; validates the selected cars, skins, `data.acd`, `fast_lane.ai`, and track pit count; then creates an isolated runtime. It copies only server-required checksum/spline data from the installed game. It does not edit Assetto Corsa or Content Manager.
 
 The staged event forces lobby registration and UPnP off, binds HTTP/TCP/UDP to the selected private LAN address, advertises eight slots, assigns the first two as human-only and the next six as replaceable `AI=auto` bots, removes qualifying, and writes the five-minute practice/three-lap race settings. The race is advertised as open, but its slot filter only offers active unfinished bots once the race has started. Content Manager clients should find it under `Drive -> Online -> LAN`.
 
