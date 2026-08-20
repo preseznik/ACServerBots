@@ -43,6 +43,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public required TypedIndex ShapeIndex { get; init; }
         public required Vector3 Center { get; init; }
         public required BodyInertia UnitInertia { get; init; }
+        public required float ProtocolReferenceHeight { get; init; }
     }
 
     private sealed class BodyRecord
@@ -55,7 +56,6 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public RaceGridPose HeldPose { get; set; }
         public RaceBotPhysicsControl Control { get; set; }
         public float LastLongitudinalAcceleration { get; set; }
-        public float SplineHeightOffset { get; set; }
     }
 
     public int GridCount => _asset.Grid.Count;
@@ -88,7 +88,12 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
         AddTrackMesh();
         foreach (var (model, vertices) in _asset.CarColliderVertices)
-            _colliders.Add(model, CreateVehicleCollider(vertices, _asset.CarWheelColliders[model]));
+        {
+            var collider = CreateVehicleCollider(vertices, _asset.CarWheelColliders[model]);
+            _colliders.Add(model, collider);
+            Log.Debug("Race collider {Model}: AC protocol reference height {Height:F3} m", model,
+                collider.ProtocolReferenceHeight);
+        }
 
         Log.Information("Rigid-body race world loaded: {Triangles} track triangles, {GridSlots} grid slots, "
                         + "{Colliders} car colliders, fidelity {Fidelity}", _asset.TrackTriangles.Count,
@@ -102,7 +107,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         return _asset.Grid[gridIndex];
     }
 
-    public void RegisterBot(byte sessionId, string model, RaceGridPose pose, float massKg, float visualHeightOffset)
+    public void RegisterBot(byte sessionId, string model, RaceGridPose pose, float massKg)
     {
         lock (_sync)
         {
@@ -119,8 +124,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 Collider = collider,
                 DynamicInertia = inertia,
                 IsBot = true,
-                HeldPose = pose,
-                SplineHeightOffset = visualHeightOffset
+                HeldPose = pose
             });
         }
     }
@@ -144,7 +148,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             {
                 RemoveBodyUnsafe(sessionId);
                 var collider = GetCollider(model);
-                var pose = ToCenterOfMassPose(new RaceGridPose(position, orientation), collider.Center);
+                var origin = FromProtocolPosition(position, orientation, collider.ProtocolReferenceHeight);
+                var pose = ToCenterOfMassPose(new RaceGridPose(origin, orientation), collider.Center);
                 var handle = _simulation.Bodies.Add(BodyDescription.CreateKinematic(pose,
                     new CollidableDescription(collider.ShapeIndex, ContinuousDetection.Passive),
                     new BodyActivityDescription(0.01f)));
@@ -159,7 +164,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             }
 
             var body = _simulation.Bodies[record.Handle];
-            body.Pose = ToCenterOfMassPose(new RaceGridPose(position, orientation), record.Collider.Center);
+            var physicalOrigin = FromProtocolPosition(position, orientation,
+                record.Collider.ProtocolReferenceHeight);
+            body.Pose = ToCenterOfMassPose(new RaceGridPose(physicalOrigin, orientation), record.Collider.Center);
             body.Velocity.Linear = velocity;
             body.Velocity.Angular = Vector3.Zero;
             body.Awake = true;
@@ -195,8 +202,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             }
             var body = _simulation.Bodies[record.Handle];
             var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
+            var protocolPosition = ToProtocolPosition(origin, body.Pose.Orientation,
+                record.Collider.ProtocolReferenceHeight);
             var forward = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
-            state = new RaceBotPhysicsState(origin, origin, body.Pose.Orientation, body.Velocity.Linear,
+            state = new RaceBotPhysicsState(origin, protocolPosition, body.Pose.Orientation, body.Velocity.Linear,
                 Vector3.Dot(body.Velocity.Linear, forward), record.LastLongitudinalAcceleration);
             return true;
         }
@@ -219,7 +228,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 maxY = Math.Max(maxY, origin.Y);
                 maxSpeed = Math.Max(maxSpeed, body.Velocity.Linear.Length());
                 maxSplineHeightError = Math.Max(maxSplineHeightError,
-                    Math.Abs(origin.Y - (record.Control.TargetPosition.Y + record.SplineHeightOffset)));
+                    Math.Abs(origin.Y - record.Control.TargetPosition.Y));
                 count++;
             }
             return new RacePhysicsDiagnostics(count, count == 0 ? 0 : minY, count == 0 ? 0 : maxY, maxSpeed,
@@ -306,6 +315,17 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private static RigidPose ToCenterOfMassPose(RaceGridPose originPose, Vector3 localCenter) =>
         new(originPose.Position + Vector3.Transform(localCenter, originPose.Orientation), originPose.Orientation);
 
+    internal static Vector3 ToProtocolPosition(Vector3 physicalOrigin, Quaternion orientation,
+        float protocolReferenceHeight) =>
+        physicalOrigin + Vector3.Transform(Vector3.UnitY * protocolReferenceHeight, orientation);
+
+    internal static Vector3 FromProtocolPosition(Vector3 protocolPosition, Quaternion orientation,
+        float protocolReferenceHeight) =>
+        protocolPosition - Vector3.Transform(Vector3.UnitY * protocolReferenceHeight, orientation);
+
+    internal static float GetProtocolReferenceHeight(IReadOnlyList<RaceWheelCollider> wheels) =>
+        wheels.Average(wheel => wheel.Center.Y);
+
     private ColliderShape CreateVehicleCollider(Vector3[] chassisVertices, RaceWheelCollider[] wheels)
     {
         var hull = new ConvexHull(chassisVertices.AsSpan(), _pool, out var center);
@@ -332,7 +352,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         {
             ShapeIndex = _simulation.Shapes.Add(new Compound(children)),
             Center = center,
-            UnitInertia = unitInertia
+            UnitInertia = unitInertia,
+            ProtocolReferenceHeight = GetProtocolReferenceHeight(wheels)
         };
     }
 

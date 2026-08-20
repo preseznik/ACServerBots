@@ -292,6 +292,33 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void ProtocolPositionUsesModelWheelHeightWithoutMovingPhysicalOrigin()
+    {
+        var wheels = new[]
+        {
+            new RaceWheelCollider(new Vector3(0.7f, 0.31f, 1.2f), 0.31f),
+            new RaceWheelCollider(new Vector3(-0.7f, 0.31f, 1.2f), 0.31f),
+            new RaceWheelCollider(new Vector3(0.72f, 0.33f, -1.2f), 0.33f),
+            new RaceWheelCollider(new Vector3(-0.72f, 0.33f, -1.2f), 0.33f)
+        };
+        var physicalOrigin = new Vector3(12, 4, -8);
+        var orientation = Quaternion.CreateFromYawPitchRoll(0.4f, -0.15f, 0.08f);
+        float referenceHeight = RaceBotPhysicsWorld.GetProtocolReferenceHeight(wheels);
+
+        var protocolPosition = RaceBotPhysicsWorld.ToProtocolPosition(physicalOrigin, orientation, referenceHeight);
+        var roundTrip = RaceBotPhysicsWorld.FromProtocolPosition(protocolPosition, orientation, referenceHeight);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(referenceHeight, Is.EqualTo(0.32f).Within(1e-6f));
+            Assert.That(Vector3.Distance(protocolPosition, physicalOrigin), Is.EqualTo(0.32f).Within(1e-5f));
+            Assert.That(roundTrip.X, Is.EqualTo(physicalOrigin.X).Within(1e-5f));
+            Assert.That(roundTrip.Y, Is.EqualTo(physicalOrigin.Y).Within(1e-5f));
+            Assert.That(roundTrip.Z, Is.EqualTo(physicalOrigin.Z).Within(1e-5f));
+        });
+    }
+
+    [Test]
     public void MidRaceTakeoverReplacesBotWithFreshHumanResult()
     {
         var results = new Dictionary<byte, EntryCarResult>

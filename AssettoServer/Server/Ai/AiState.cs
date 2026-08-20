@@ -230,7 +230,7 @@ public class AiState : IDisposable
                 throw new InvalidOperationException("Race bot rigid-body world or vehicle profile is unavailable");
             var pose = gridPose ?? CreateSplinePose(pointId);
             _racePhysicsWorld.RegisterBot(EntryCar.SessionId, EntryCar.Model, pose,
-                EntryCar.RaceVehicleProfile.MassKg, EntryCar.AiSplineHeightOffsetMeters);
+                EntryCar.RaceVehicleProfile.MassKg);
             if (!_racePhysicsWorld.TryGetBotState(EntryCar.SessionId, out var physicsState))
                 throw new InvalidOperationException("Race bot rigid body was not registered");
             _physicsLastPosition = physicsState.Position;
