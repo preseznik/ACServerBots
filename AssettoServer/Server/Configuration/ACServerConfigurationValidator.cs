@@ -1,4 +1,5 @@
 ﻿using FluentValidation;
+using System.Linq;
 
 namespace AssettoServer.Server.Configuration;
 
@@ -108,5 +109,16 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 car.RuleFor(c => c.Ballast).GreaterThanOrEqualTo(0);
             });
         });
+
+        RuleFor(cfg => cfg.Server.Race)
+            .Must(race => race?.IsOpen == Kunos.IsOpenMode.Open)
+            .When(cfg => cfg.Extra.AiParams is
+                { Behavior: AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race, Race.AllowMidRaceBotTakeover: true })
+            .WithMessage("Mid-race bot takeover requires RACE IS_OPEN=1 so Content Manager clients can join");
+        RuleFor(cfg => cfg.EntryList.Cars)
+            .Must(cars => cars.Any(car => car.AiMode == AiMode.Auto))
+            .When(cfg => cfg.Extra.AiParams is
+                { Behavior: AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race, Race.AllowMidRaceBotTakeover: true })
+            .WithMessage("Mid-race bot takeover requires at least one AI=auto entry-list slot");
     }
 }

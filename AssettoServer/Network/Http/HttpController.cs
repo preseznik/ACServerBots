@@ -101,11 +101,12 @@ public class HttpController : ControllerBase
         var cars = new List<EntryListResponseCar>(_entryCarManager.EntryCars.Length);
         foreach (var ec in _entryCarManager.EntryCars)
         {
+            var adminBypassAllowed = isAdmin && !_sessionManager.IsMidRaceBotTakeoverSession;
             cars.Add(new EntryListResponseCar
             {
                 Model = ec.Model,
                 Skin = ec.Skin,
-                IsEntryList = isAdmin || await _openSlotFilter.IsSlotOpen(ec, ulongGuid),
+                IsEntryList = adminBypassAllowed || await _openSlotFilter.IsSlotOpen(ec, ulongGuid),
                 DriverName = ec.Client?.Name,
                 DriverTeam = ec.Client?.Team,
                 IsConnected = ec.Client != null
@@ -130,11 +131,12 @@ public class HttpController : ControllerBase
         var cars = new List<DetailResponseCar>(_entryCarManager.EntryCars.Length);
         foreach (var ec in _entryCarManager.EntryCars)
         {
+            var adminBypassAllowed = isAdmin && !_sessionManager.IsMidRaceBotTakeoverSession;
             cars.Add(new DetailResponseCar
             {
                 Model = ec.Model,
                 Skin = ec.Skin,
-                IsEntryList = isAdmin || await _openSlotFilter.IsSlotOpen(ec, ulongGuid),
+                IsEntryList = adminBypassAllowed || await _openSlotFilter.IsSlotOpen(ec, ulongGuid),
                 DriverName = ec.Client?.Name,
                 DriverTeam = ec.Client?.Team,
                 DriverNation = ec.Client?.NationCode,

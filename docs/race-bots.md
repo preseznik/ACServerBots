@@ -8,15 +8,17 @@ The fork is based on upstream commit `6ce86addc1b1c70caf018a7b39f6d7bc9aa9493f`.
 
 `AiParams.Behavior` defaults to `Traffic`, leaving existing configurations unchanged. `Race` mode:
 
-- freezes `AI=auto` claims when the server enters the race session;
+- freezes the starting roster when the server enters the race session;
 - keeps `AI=fixed` as bots and `AI=none` as human-only slots;
-- rejects race-session joins through the normal closed-session gate;
+- can optionally expose only active, unfinished `AI=auto` bots for replacement by players joining during a race;
 - creates exactly one bot state per frozen bot slot and places it behind the human grid allocation;
 - holds bots stationary until the server start time and advances them with a bounded fixed-step accumulator;
 - uses `fast_lane.ai` radius and side-width fields for corner speed, following, a committed lateral overtake, AI obstacle avoidance, and collision recovery;
 - accepts a bot lap only after at least 85% forward travel around a closed spline and a forward start-line wrap;
 - publishes bot laps in the normal classification packet and includes bot identities in final results;
 - marks a disconnected racing human DNF and does not replace that driver until the next practice session.
+
+With `AllowMidRaceBotTakeover: true`, a successful handshake atomically despawns the selected bot before assigning its slot to the player. The bot is removed from the classification and the player starts with a fresh result from the normal online spawn path. Standard clients cannot inherit the bot's moving physics state, so this is a pit-lane entry rather than a seamless moving-car takeover. A player that disconnects is still a DNF and does not turn back into a bot during that race. `AI=fixed` and `AI=none` slots are never offered as ordinary mid-race takeover slots.
 
 This is not Kunos physics. The bot model does not reproduce tyre, suspension, aero, damage, pit strategy, weather adaptation, or offline AI behavior. The first supported event is stock Magione with homogeneous `bmw_m3_e30` entries. The client protocol milestone is a classified human/bot race; do not expand into a client patch or a replacement physics engine if that milestone is unstable.
 
@@ -39,9 +41,10 @@ AiParams:
     StartSplinePointId: 0
     GridSpacingMeters: 9
     UpdateHz: 60
+    AllowMidRaceBotTakeover: true
 ```
 
-`Difficulty` and `Aggression` must be in `0..1`, spacing must be positive, the update rate must be `10..120`, the start point must belong to a closed usable spline, and the configured grid must fit on it. Race mode also requires visible AI and a private IPv4 listener. Dynamic hourly traffic density cannot be combined with race mode.
+`Difficulty` and `Aggression` must be in `0..1`, spacing must be positive, the update rate must be `10..120`, the start point must belong to a closed usable spline, and the configured grid must fit on it. Race mode also requires visible AI and a private IPv4 listener. Dynamic hourly traffic density cannot be combined with race mode. Mid-race takeover is disabled by default; enabling it additionally requires `RACE IS_OPEN=1` and at least one `AI=auto` slot.
 
 ## Build and stage
 
@@ -62,10 +65,10 @@ dotnet publish AssettoServer\AssettoServer.csproj --configuration Release --runt
 
 The staging script treats Content Manager as the preset authoring source. It accepts a directory or zip, locates `server_cfg.ini` and `entry_list.ini`, validates the selected cars, skins, `data.acd`, `fast_lane.ai`, and track pit count, then creates an isolated runtime. It copies only server-required checksum/spline data from the installed game. It does not edit Assetto Corsa or Content Manager.
 
-The staged event forces lobby registration and UPnP off, binds HTTP/TCP/UDP to the selected private LAN address, advertises eight slots, assigns the first two as human-only and the next six as fixed bots, removes qualifying, and writes the five-minute practice/three-lap race settings. Content Manager clients should find it under `Drive -> Online -> LAN`.
+The staged event forces lobby registration and UPnP off, binds HTTP/TCP/UDP to the selected private LAN address, advertises eight slots, assigns the first two as human-only and the next six as replaceable `AI=auto` bots, removes qualifying, and writes the five-minute practice/three-lap race settings. The race is advertised as open, but its slot filter only offers active unfinished bots once the race has started. Content Manager clients should find it under `Drive -> Online -> LAN`.
 
 ## Acceptance
 
-Automated acceptance covers configuration, closed-spline/grid math, countdown holding, forward lap wraps, wrong-way/double-crossing rejection, roster claims/freeze, DNF policy, classification ordering, packet rows, cornering, following, overtaking, and collision recovery. A self-contained publish and a headless startup prove server packaging/configuration only.
+Automated acceptance covers configuration, closed-spline/grid math, countdown holding, forward lap wraps, wrong-way/double-crossing rejection, roster claims/freeze, mid-race takeover eligibility and fresh results, DNF policy, classification ordering, packet rows, cornering, following, overtaking, and collision recovery. A self-contained publish and a headless startup prove server packaging/configuration only.
 
 Release acceptance still requires two real LAN clients using Content Manager. Both clients must see all eight cars start together, stable bot motion and classification updates, coherent finishes/DNFs, final results, and the return to practice. Physical contact quality and on-track behavior cannot be certified by unit or headless tests.

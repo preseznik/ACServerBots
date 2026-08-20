@@ -40,6 +40,24 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         _ => false,
     };
 
+    public bool IsMidRaceBotTakeoverSession =>
+        _configuration.Extra.AiParams is
+            { Behavior: Configuration.Extra.AiBehaviorMode.Race, Race.AllowMidRaceBotTakeover: true }
+        && CurrentSession.Configuration.Type == SessionType.Race;
+
+    public bool CanTakeOverBotSlot(EntryCar entryCar)
+    {
+        if (!IsMidRaceBotTakeoverSession)
+            return false;
+
+        EntryCarResult? result = null;
+        CurrentSession.Results?.TryGetValue(entryCar.SessionId, out result);
+        var raceIsActive = CurrentSession.EndTimeMilliseconds == 0
+                           && result is { HasCompletedLastLap: false, IsDnf: false };
+        return RaceParticipantPolicy.CanTakeOverBotSlot(
+            true, raceIsActive, entryCar.AiMode, entryCar.AiControlled);
+    }
+
     /// <summary>
     /// Fires when a new session is started
     /// </summary>
@@ -173,11 +191,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
             if (CurrentSession.Configuration.Type == SessionType.Race)
             {
-                foreach (var res in RaceParticipantPolicy.OrderClassification(CurrentSession.Results)
-                             .Select((x, i) => new { Car = x, Index = i }) )
-                {
-                    res.Car.Value.RacePos = (uint)res.Index;
-                }
+                RaceParticipantPolicy.RefreshClassification(CurrentSession.Results);
             }
 
             if (CurrentSession.SessionOverFlag)
@@ -309,9 +323,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         result.IsDnf = true;
         result.HasCompletedLastLap = true;
 
-        int position = 0;
-        foreach (var classified in RaceParticipantPolicy.OrderClassification(results))
-            classified.Value.RacePos = (uint)position++;
+        RaceParticipantPolicy.RefreshClassification(results);
 
         _entryCarManager.BroadcastPacket(CreateLapCompletedPacket(entryCar.SessionId, result.LastLap, 0));
         Log.Information("{ParticipantName} classified DNF after {CompletedLaps} laps", participantName, result.NumLaps);
@@ -407,9 +419,29 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     {
         var currentResult = CurrentSession.Results;
         
-        if (currentResult != null && currentResult[client.SessionId].Guid != client.Guid)
+        if (currentResult != null
+            && currentResult.TryGetValue(client.SessionId, out var previousResult)
+            && previousResult.Guid != client.Guid)
         {
-            currentResult[client.SessionId] = new EntryCarResult(client);
+            var replacement = new EntryCarResult(client);
+            if (CurrentSession.Configuration.Type == SessionType.Race)
+            {
+                CurrentSession.LeaderLapCount = RaceParticipantPolicy.ReplaceParticipant(
+                    currentResult, client.SessionId, replacement);
+                CurrentSession.LeaderHasCompletedLastLap = currentResult.Values.Any(result =>
+                    result.NumLaps == CurrentSession.LeaderLapCount && result.HasCompletedLastLap);
+                _entryCarManager.BroadcastPacket(CreateLapCompletedPacket(client.SessionId, 0, 0));
+
+                if ((previousResult.Guid & (1UL << 63)) != 0)
+                {
+                    Log.Information("{ClientName} replaced {BotName} in race slot {SessionId} and starts with a fresh result",
+                        client.Name, previousResult.Name, client.SessionId);
+                }
+            }
+            else
+            {
+                currentResult[client.SessionId] = replacement;
+            }
         }    
     }
 

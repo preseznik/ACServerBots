@@ -410,7 +410,11 @@ public class ACTcpClient : IClient
                              && !_configuration.Server.CheckAdminPassword(handshakeRequest.Password))
                         SendPacket(new WrongPasswordResponse());
                     else if (!_sessionManager.IsOpen)
+                    {
+                        Logger.Information("Rejecting handshake for {ClientName}: session {SessionType} is closed to new connections",
+                            Name, _sessionManager.CurrentSession.Configuration.Type);
                         SendPacket(new SessionClosedResponse());
+                    }
                     else if (Name.Length == 0)
                         SendPacket(new AuthFailedResponse("Driver name cannot be empty."));
                     else if (!_cspFeatureManager.ValidateHandshake(cspFeatures))
@@ -418,7 +422,11 @@ public class ACTcpClient : IClient
                     else if ((response = await _openSlotFilter.ShouldAcceptConnectionAsync(this, handshakeRequest)).HasValue)
                         SendPacket(response.Value);
                     else if (!await _entryCarManager.TrySecureSlotAsync(this, handshakeRequest))
+                    {
+                        Logger.Information("Rejecting handshake for {ClientName}: no eligible slot is available for {CarModel}",
+                            Name, handshakeRequest.RequestedCar);
                         SendPacket(new NoSlotsAvailableResponse());
+                    }
                     else
                     {
                         if (EntryCar == null)

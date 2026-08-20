@@ -89,6 +89,45 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void MidRaceTakeoverOnlyClaimsActiveAutoBot()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceParticipantPolicy.CanTakeOverBotSlot(true, true, AiMode.Auto, true), Is.True);
+            Assert.That(RaceParticipantPolicy.CanTakeOverBotSlot(false, true, AiMode.Auto, true), Is.False);
+            Assert.That(RaceParticipantPolicy.CanTakeOverBotSlot(true, false, AiMode.Auto, true), Is.False);
+            Assert.That(RaceParticipantPolicy.CanTakeOverBotSlot(true, true, AiMode.Auto, false), Is.False);
+            Assert.That(RaceParticipantPolicy.CanTakeOverBotSlot(true, true, AiMode.Fixed, true), Is.False);
+            Assert.That(RaceParticipantPolicy.CanTakeOverBotSlot(true, true, AiMode.None, false), Is.False);
+        });
+    }
+
+    [Test]
+    public void MidRaceTakeoverReplacesBotWithFreshHumanResult()
+    {
+        var results = new Dictionary<byte, EntryCarResult>
+        {
+            [0] = Result("Leader", laps: 1, total: 100_000),
+            [2] = Result("Bot 2", laps: 2, total: 190_000)
+        };
+        var human = Result("Late driver", laps: 0, total: 0);
+
+        var leaderLaps = RaceParticipantPolicy.ReplaceParticipant(results, 2, human);
+        var packetRows = SessionManager.BuildClassificationLaps(results, SessionType.Race);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[2], Is.SameAs(human));
+            Assert.That(results[2].NumLaps, Is.Zero);
+            Assert.That(leaderLaps, Is.EqualTo(1));
+            Assert.That(results[0].RacePos, Is.Zero);
+            Assert.That(results[2].RacePos, Is.EqualTo(1));
+            Assert.That(packetRows.Single(row => row.SessionId == 2).NumLaps, Is.Zero);
+            Assert.That(RaceParticipantPolicy.HasUnfinishedActiveParticipant([(true, results[2])]), Is.True);
+        });
+    }
+
+    [Test]
     public void ClassificationOrdersFinishersBeforeDnfThenByProgress()
     {
         var results = new Dictionary<byte, EntryCarResult>

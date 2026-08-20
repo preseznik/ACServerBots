@@ -53,6 +53,7 @@ public partial class EntryCar
     // Theoretically, this list should never include null values. Since we access it as a Span later, we might catch a null anyway
     // when it is updated concurrently
     private readonly List<AiState?> _aiStates = [];
+    private readonly object _aiControlLock = new();
     private Span<AiState?> AiStatesSpan => CollectionsMarshal.AsSpan(_aiStates);
     
     private readonly Func<EntryCar, AiState> _aiStateFactory;
@@ -149,17 +150,29 @@ public partial class EntryCar
 
     public void AiUpdate(float? fixedDeltaSeconds = null)
     {
-        foreach (var aiState in AiStatesSpan)
+        lock (_aiControlLock)
         {
-            aiState?.Update(fixedDeltaSeconds);
+            if (!AiControlled)
+                return;
+
+            foreach (var aiState in AiStatesSpan)
+            {
+                aiState?.Update(fixedDeltaSeconds);
+            }
         }
     }
 
     public void AiObstacleDetection()
     {
-        foreach (var aiState in AiStatesSpan)
+        lock (_aiControlLock)
         {
-            aiState?.DetectObstacles();
+            if (!AiControlled)
+                return;
+
+            foreach (var aiState in AiStatesSpan)
+            {
+                aiState?.DetectObstacles();
+            }
         }
     }
 
@@ -294,47 +307,50 @@ public partial class EntryCar
 
     public void SetAiControl(bool aiControlled)
     {
-        if (AiControlled != aiControlled)
+        lock (_aiControlLock)
         {
-            AiControlled = aiControlled;
-
-            if (AiControlled)
+            if (AiControlled != aiControlled)
             {
-                Logger.Debug("Slot {SessionId} is now controlled by AI", SessionId);
+                AiControlled = aiControlled;
 
-                AiReset();
-                _entryCarManager.BroadcastPacket(new CarConnected
+                if (AiControlled)
                 {
-                    SessionId = SessionId,
-                    Name = AiName
-                });
-                if (_configuration.Extra.AiParams.HideAiCars)
-                {
-                    _entryCarManager.BroadcastPacket(new CSPCarVisibilityUpdate
+                    Logger.Debug("Slot {SessionId} is now controlled by AI", SessionId);
+
+                    AiReset();
+                    _entryCarManager.BroadcastPacket(new CarConnected
                     {
                         SessionId = SessionId,
-                        Visible = CSPCarVisibility.Invisible
+                        Name = AiName
                     });
-                }
-            }
-            else
-            {
-                Logger.Debug("Slot {SessionId} is no longer controlled by AI", SessionId);
-                if (_aiStates.Count > 0)
-                {
-                    _entryCarManager.BroadcastPacket(new CarDisconnected { SessionId = SessionId });
-                }
-
-                if (_configuration.Extra.AiParams.HideAiCars)
-                {
-                    _entryCarManager.BroadcastPacket(new CSPCarVisibilityUpdate
+                    if (_configuration.Extra.AiParams.HideAiCars)
                     {
-                        SessionId = SessionId,
-                        Visible = CSPCarVisibility.Visible
-                    });
+                        _entryCarManager.BroadcastPacket(new CSPCarVisibilityUpdate
+                        {
+                            SessionId = SessionId,
+                            Visible = CSPCarVisibility.Invisible
+                        });
+                    }
                 }
+                else
+                {
+                    Logger.Debug("Slot {SessionId} is no longer controlled by AI", SessionId);
+                    if (_aiStates.Count > 0)
+                    {
+                        _entryCarManager.BroadcastPacket(new CarDisconnected { SessionId = SessionId });
+                    }
 
-                AiReset();
+                    if (_configuration.Extra.AiParams.HideAiCars)
+                    {
+                        _entryCarManager.BroadcastPacket(new CSPCarVisibilityUpdate
+                        {
+                            SessionId = SessionId,
+                            Visible = CSPCarVisibility.Visible
+                        });
+                    }
+
+                    AiReset();
+                }
             }
         }
     }

@@ -177,11 +177,11 @@ try {
     Set-IniValue $stagedServerCfg 'RACE' 'TIME' '0'
     Set-IniValue $stagedServerCfg 'RACE' 'LAPS' '3'
     Set-IniValue $stagedServerCfg 'RACE' 'WAIT_TIME' '20'
-    Set-IniValue $stagedServerCfg 'RACE' 'IS_OPEN' '0'
+    Set-IniValue $stagedServerCfg 'RACE' 'IS_OPEN' '1'
 
     $stagedEntryList = Join-Path $presetRoot 'entry_list.ini'
     for ($i = 0; $i -lt $slotCount; $i++) {
-        Set-IniValue $stagedEntryList "CAR_$i" 'AI' $(if ($i -lt $HumanSlots) { 'none' } else { 'fixed' })
+        Set-IniValue $stagedEntryList "CAR_$i" 'AI' $(if ($i -lt $HumanSlots) { 'none' } else { 'auto' })
     }
 
     $extraCfg = @(
@@ -202,7 +202,8 @@ try {
         ('    Aggression: ' + $Aggression.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)),
         '    StartSplinePointId: 0',
         '    GridSpacingMeters: 9',
-        "    UpdateHz: $UpdateHz"
+        "    UpdateHz: $UpdateHz",
+        '    AllowMidRaceBotTakeover: true'
     )
     [IO.File]::WriteAllLines((Join-Path $presetRoot 'extra_cfg.yml'), $extraCfg)
     [IO.File]::WriteAllText((Join-Path $presetRoot 'welcome.txt'), 'LAN race bots experimental server')
@@ -232,6 +233,7 @@ try {
         model = @($models)[0]
         humanSlots = $HumanSlots
         botSlots = $BotSlots
+        midRaceBotTakeover = $true
         advertisedSlots = $slotCount
         pitBoxes = $pitBoxes
         sourcePack = [IO.Path]::GetFullPath($CmServerPack)

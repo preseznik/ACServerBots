@@ -27,6 +27,7 @@ public class EntryCarManager
     private readonly IAdminService _adminService;
     private readonly SemaphoreSlim _connectSemaphore = new(1, 1);
     private readonly Lazy<OpenSlotFilterChain> _openSlotFilterChain;
+    private readonly Lazy<SessionManager> _sessionManager;
 
     /// <summary>
     /// Fires when a client has secured a slot and established a TCP connection.
@@ -48,13 +49,15 @@ public class EntryCarManager
     /// </summary>
     public event EventHandler<ACTcpClient, EventArgs>? ClientDisconnected;
 
-    public EntryCarManager(ACServerConfiguration configuration, EntryCar.Factory entryCarFactory, IBlacklistService blacklist, IAdminService adminService, Lazy<OpenSlotFilterChain> openSlotFilterChain)
+    public EntryCarManager(ACServerConfiguration configuration, EntryCar.Factory entryCarFactory, IBlacklistService blacklist,
+        IAdminService adminService, Lazy<OpenSlotFilterChain> openSlotFilterChain, Lazy<SessionManager> sessionManager)
     {
         _configuration = configuration;
         _entryCarFactory = entryCarFactory;
         _blacklist = blacklist;
         _adminService = adminService;
         _openSlotFilterChain = openSlotFilterChain;
+        _sessionManager = sessionManager;
     }
 
     public async Task KickAsync(ACTcpClient? client, string? reason = null, ACTcpClient? admin = null)
@@ -208,8 +211,18 @@ public class EntryCarManager
             var isAdmin = await _adminService.IsAdminAsync(handshakeRequest.Guid);
             foreach (var entryCar in candidates.OrderByDescending(x => x.AllowedGuids.Count))
             {
-                if (entryCar.Client == null && (isAdmin || await _openSlotFilterChain.Value.IsSlotOpen(entryCar, handshakeRequest.Guid)))
+                var slotOpen = await _openSlotFilterChain.Value.IsSlotOpen(entryCar, handshakeRequest.Guid);
+                var adminBypassAllowed = isAdmin && !_sessionManager.Value.IsMidRaceBotTakeoverSession;
+                if (entryCar.Client == null && (slotOpen || adminBypassAllowed))
                 {
+                    if (entryCar.AiControlled)
+                    {
+                        client.Logger.Information("{ClientName} is replacing AI in slot {SessionId} ({CarModel}-{CarSkin})",
+                            client.Name, entryCar.SessionId, entryCar.Model, entryCar.Skin);
+                        entryCar.SetAiControl(false);
+                        entryCar.SetAiOverbooking(0);
+                    }
+
                     entryCar.Reset();
                     entryCar.Client = client;
                     client.EntryCar = entryCar;

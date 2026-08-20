@@ -20,6 +20,28 @@ public static class RaceParticipantPolicy
 
     public static bool ShouldReplaceDisconnectedDriver(bool raceRosterFrozen) => !raceRosterFrozen;
 
+    public static bool CanTakeOverBotSlot(bool enabled, bool raceIsActive, AiMode mode, bool aiControlled)
+        => enabled && raceIsActive && mode == AiMode.Auto && aiControlled;
+
+    public static uint RefreshClassification(IDictionary<byte, EntryCarResult> results)
+    {
+        uint position = 0;
+        uint leaderLapCount = 0;
+        foreach (var participant in OrderClassification(results))
+        {
+            participant.Value.RacePos = position++;
+            leaderLapCount = uint.Max(leaderLapCount, participant.Value.NumLaps);
+        }
+
+        return leaderLapCount;
+    }
+
+    public static uint ReplaceParticipant(IDictionary<byte, EntryCarResult> results, byte sessionId, EntryCarResult replacement)
+    {
+        results[sessionId] = replacement;
+        return RefreshClassification(results);
+    }
+
     public static IEnumerable<KeyValuePair<byte, EntryCarResult>> OrderClassification(
         IEnumerable<KeyValuePair<byte, EntryCarResult>> results)
         => results.OrderBy(result => result.Value.IsDnf)
