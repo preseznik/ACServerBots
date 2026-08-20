@@ -20,6 +20,7 @@ If you have trouble setting up a server feel free to visit the #server-troublesh
 ## License
 AssettoServer is licensed under the GNU Affero General Public License v3.0, see [LICENSE](https://github.com/compujuckel/AssettoServer/blob/master/LICENSE) for more info.  
 Additionally, you must preserve the legal notices and author attributions present in the server.
+The race-bot rigid-body extension also uses BEPUphysics under Apache-2.0; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ```
 Copyright (C)  2025 Niewiarowski, compujuckel

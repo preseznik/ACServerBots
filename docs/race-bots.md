@@ -1,6 +1,6 @@
 # LAN race bots
 
-This fork adds an experimental `Race` behavior beside AssettoServer's existing `Traffic` AI. It does not expose Assetto Corsa's offline AI session. The standalone server owns one spline-constrained state per bot slot and sends it through AssettoServer's normal car position protocol, so unmodified Assetto Corsa clients can join through Content Manager.
+This fork adds an experimental `Race` behavior beside AssettoServer's existing `Traffic` AI. It does not expose Assetto Corsa's offline AI session. The standalone server owns one dynamic rigid body per bot slot and sends it through AssettoServer's normal car position protocol, so unmodified Assetto Corsa clients can join through Content Manager.
 
 The fork is based on upstream commit `6ce86addc1b1c70caf018a7b39f6d7bc9aa9493f`. The Git remote named `upstream` points to `https://github.com/compujuckel/AssettoServer.git`. AssettoServer and this modification remain AGPL-3.0; anyone receiving or interacting with a hosted modified build must be offered the corresponding modified source and build instructions.
 
@@ -11,10 +11,12 @@ The fork is based on upstream commit `6ce86addc1b1c70caf018a7b39f6d7bc9aa9493f`.
 - freezes the starting roster when the server enters the race session;
 - keeps `AI=fixed` as bots and `AI=none` as human-only slots;
 - can optionally expose only active, unfinished `AI=auto` bots for replacement by players joining during a race;
-- creates exactly one bot state per frozen bot slot and places it behind the human grid allocation;
-- holds bots stationary until the server start time and advances them with a bounded fixed-step accumulator;
+- creates exactly one bot state per frozen bot slot and places each participant on its track-defined `AC_START_n` transform in the session's actual grid order;
+- extracts the selected track's physical KN5 triangle meshes and each selected car's real `collider.kn5` into a prepared local physics asset;
+- holds dynamic bodies stationary until the server start time, then advances a shared BEPU rigid-body world with gravity, road contact, pitch/roll, and bot-to-bot collision response;
+- represents connected humans as solver kinematic bodies, so bots physically react to their reported position and collider;
+- offers `Efficient`, `Balanced`, and `High` solver fidelity without reducing collision geometry;
 - selects a vehicle profile by car model and uses its mass, power, top speed, reported 0–100 time, braking, grip, tyre diameter, RPM range, and gear count;
-- raises each model origin above the spline surface using its profile height offset, avoiding cars being positioned with their body origin at road level;
 - uses `fast_lane.ai` radius and side-width fields for corner speed, following, a committed lateral overtake, AI obstacle avoidance, and collision recovery;
 - accepts a bot lap only after at least 85% forward travel around a closed spline and a forward start-line wrap;
 - publishes bot laps in the normal classification packet and includes bot identities in final results;
@@ -24,7 +26,7 @@ With `AllowMidRaceBotTakeover: true`, a successful handshake atomically despawns
 
 With `RestartSessionOnFirstHumanConnect: true`, the first human joining an otherwise bot-filled server restarts the current session after initial client synchronization. In a race this produces a fresh grid, countdown, lap state, and classification. Additional humans do not restart it. The behavior re-arms after the last human disconnects, so a later first human does not inherit an unattended bot session. If multiple clients connect together, the restart waits until all currently connected clients have sent their first update.
 
-This is not Kunos physics. Bots remain constrained to the racing spline and the vehicle model does not reproduce tyre slip, suspension, detailed aero, damage, pit strategy, weather adaptation, or offline AI behavior. Mixed models are supported through locally derived profiles, but profile quality depends on installed car metadata. The first acceptance event remains stock Magione with homogeneous `bmw_m3_e30` entries. The client protocol milestone is a classified human/bot race; do not expand into a client patch or a replacement physics engine if that milestone is unstable.
+Track contact and collision geometry are no longer height approximations: they come from the installed KN5 files and are solved as rigid-body contacts. This is still not the proprietary Kunos vehicle simulation. Longitudinal and lateral tyre forces are supplied by the race controller from installed car metadata; the server does not reproduce Kunos tyre slip, suspension, detailed aero, damage, pit strategy, weather adaptation, or offline AI behavior. Connected humans remain authoritative on their clients and therefore act as kinematic obstacles in the server world: bots receive contact response, but the server cannot apply the equal collision impulse back into an unmodified human client. Mixed models are supported, but control-profile quality depends on installed car metadata.
 
 ## Configuration
 
@@ -43,8 +45,11 @@ AiParams:
     Difficulty: 0.75
     Aggression: 0.50
     StartSplinePointId: 0
-    GridSpacingMeters: 9
     UpdateHz: 60
+    Physics:
+      Fidelity: Balanced
+      AssetFile: race-physics.bin
+      Friction: 1.15
     AllowMidRaceBotTakeover: true
     RestartSessionOnFirstHumanConnect: true
     VehicleProfiles:
@@ -57,13 +62,12 @@ AiParams:
         MaxBrakeDeceleration: 8.5
         LateralGripG: 1
         TyreDiameterMeters: 0.65
-        SplineHeightOffsetMeters: 0.325
         EngineIdleRpm: 900
         EngineMaxRpm: 7250
         GearCount: 6
 ```
 
-`Difficulty` and `Aggression` must be in `0..1`, spacing must be positive, the update rate must be `10..120`, the start point must belong to a closed usable spline, and the configured grid must fit on it. Vehicle profile models must be unique and their physical inputs, including a `0..1.5` metre spline height offset, are bounded during configuration validation. Race mode also requires visible AI and a private IPv4 listener. Dynamic hourly traffic density cannot be combined with race mode. Mid-race takeover and first-human restart are disabled by default in generic configuration; the CM LAN stager enables both when bots are active. Takeover additionally requires `RACE IS_OPEN=1` and at least one `AI=auto` slot.
+`Difficulty` and `Aggression` must be in `0..1`, the update rate must be `10..120`, the start point must belong to a closed usable spline, and the prepared asset must contain enough contiguous `AC_START_0..n` transforms for the roster. `Fidelity` selects solver iterations, substeps, worker threads, and continuous collision detection: `Efficient` is the lowest CPU setting, `Balanced` is the default, and `High` enables swept continuous collision detection with the strongest solver. All levels use the same exact track triangles and car colliders. Vehicle profile models must be unique and their physical inputs are bounded during configuration validation. Race mode also requires visible AI and a private IPv4 listener. Dynamic hourly traffic density cannot be combined with race mode. Mid-race takeover and first-human restart are disabled by default in generic configuration; the CM LAN stager enables both when bots are active. Takeover additionally requires `RACE IS_OPEN=1` and at least one `AI=auto` slot.
 
 ## Build and stage
 
@@ -83,7 +87,7 @@ Configure and save the event in Content Manager, then double-click:
 tools\Start-CmLanRaceBots.cmd
 ```
 
-The launcher reads Content Manager's server preset directly from `<Assetto Corsa>\server\presets`, waits until `server_cfg.ini` and `entry_list.ini` have stopped changing, snapshots them, stages the standalone server, and launches it. No Pack export or zip is required. It guarantees at least two replaceable slots in the isolated snapshot: if CM contains only one entry, that car entry is cloned without changing CM. Every staged slot defaults to `AI=auto`, so a bot occupies it until a human claims it before the grid freezes or through the enabled mid-race takeover path. Pass `-MinimumSlots` to create more than two slots.
+The launcher reads Content Manager's server preset directly from `<Assetto Corsa>\server\presets`, waits until `server_cfg.ini` and `entry_list.ini` have stopped changing, snapshots them, stages the standalone server, prepares `race-physics.bin` from the installed track/car KN5 files, and launches it. No Pack export or zip is required. Physics preparation is mandatory when bots are enabled and fails closed if the selected layout has no usable physical mesh, contiguous grid transforms, or a selected car lacks `collider.kn5`. It guarantees at least two replaceable slots in the isolated snapshot: if CM contains only one entry, that car entry is cloned without changing CM. Every staged slot defaults to `AI=auto`, so a bot occupies it until a human claims it before the grid freezes or through the enabled mid-race takeover path. Pass `-MinimumSlots` to create more than two slots.
 
 CM's track, layout, sessions, lap count, weather, assists, fuel, damage, tyre wear, ports, passwords, and entry skins are preserved. If the CM roster exceeds the selected layout's pit capacity, staging removes the trailing `CAR_n` entries from the isolated snapshot until it fits and records them in `race-bot-manifest.json`; the CM preset itself is unchanged. The isolated server overlay disables public lobby registration and UPnP, selects a private LAN listener, opens the race for bot takeover, enables a fresh-session restart for the first human, and applies the race-bot configuration. It never edits the CM preset or installed game files.
 
@@ -94,6 +98,13 @@ Automatic selection is deliberately conservative. A single valid CM preset is se
 ```
 
 If Content Manager uses a custom server-preset directory, pass it with `-CmServerPresetsRoot`. Use `-DisableBots` to make every staged slot human-only; AI and takeover are then disabled and `fast_lane.ai` is not required. Mixed car models are accepted in both modes. With bots enabled, staging derives one profile per model from the installed `ui/ui_car.json`, using bounded defaults when metadata is missing or incomplete. A usable `fast_lane.ai`, installed skins and `data.acd`, enough pit boxes, and a configured race session are still required. Profile values and provenance are recorded in `race-bot-manifest.json`; installed car files are not modified.
+
+Choose server CPU cost without changing the prepared collision geometry:
+
+```powershell
+.\tools\Start-CmLanRaceBots.ps1 -PhysicsFidelity Efficient
+.\tools\Start-CmLanRaceBots.ps1 -PhysicsFidelity High
+```
 
 Use `-NoLaunch` to validate and stage the current CM preset without starting the server:
 
@@ -122,12 +133,12 @@ The reproducible pack workflow remains available for the fixed Magione acceptanc
 .\tools\Start-LanRaceBots.ps1
 ```
 
-The staging script treats Content Manager as the preset authoring source. It accepts automatic discovery, a directory, or a zip; locates a matching `server_cfg.ini` and `entry_list.ini` pair; validates the selected cars, skins, `data.acd`, `fast_lane.ai`, and track pit count; then creates an isolated runtime. It copies only server-required checksum/spline data from the installed game. It does not edit Assetto Corsa or Content Manager.
+The staging script treats Content Manager as the preset authoring source. It accepts automatic discovery, a directory, or a zip; locates a matching `server_cfg.ini` and `entry_list.ini` pair; validates the selected cars, skins, `data.acd`, `collider.kn5`, `fast_lane.ai`, and track pit count; then creates an isolated runtime. It copies only server-required checksum/spline data and a compressed prepared physics asset from the installed game. It does not edit Assetto Corsa or Content Manager.
 
 The staged event forces lobby registration and UPnP off, binds HTTP/TCP/UDP to the selected private LAN address, advertises eight slots, assigns the first two as human-only and the next six as replaceable `AI=auto` bots, removes qualifying, and writes the five-minute practice/three-lap race settings. The race is advertised as open, but its slot filter only offers active unfinished bots once the race has started. Content Manager clients should find it under `Drive -> Online -> LAN`.
 
 ## Acceptance
 
-Automated acceptance covers configuration, closed-spline/grid math, countdown holding, forward lap wraps, wrong-way/double-crossing rejection, roster claims/freeze, mid-race takeover eligibility and fresh results, first-human restart gating/re-arming, DNF policy, classification ordering, packet rows, cornering, following, overtaking, collision recovery, mixed-model staging, model height offsets, profile-driven acceleration, bounded top speed, braking, gears, and RPM. A self-contained publish and a headless startup prove server packaging/configuration only.
+Automated acceptance covers configuration, exact grid-transform handling, prepared-geometry serialization and winding, countdown holding, forward lap wraps, wrong-way/double-crossing rejection, roster claims/freeze, mid-race takeover eligibility and fresh results, first-human restart gating/re-arming, DNF policy, classification ordering, packet rows, cornering, following, overtaking, collision recovery, mixed-model staging, profile-driven acceleration, bounded top speed, braking, gears, and RPM. Headless acceptance loads the current CM Battersea event with eight exact grid transforms, 48,297 track triangles, and three distinct car colliders, then verifies a stable 60 Hz launch without bodies falling through the track or a tick backlog.
 
 Release acceptance still requires two real LAN clients using Content Manager. Both clients must see all eight cars start together, stable bot motion and classification updates, coherent finishes/DNFs, final results, and the return to practice. Physical contact quality and on-track behavior cannot be certified by unit or headless tests.

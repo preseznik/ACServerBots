@@ -11,12 +11,14 @@ param(
     [ValidateRange(0, 254)] [int] $BotSlots = 6,
     [ValidateSet('ReservedHumans', 'AllBots', 'NoBots')] [string] $SlotMode = 'AllBots',
     [ValidateRange(10, 120)] [int] $UpdateHz = 60,
+    [ValidateSet('Efficient', 'Balanced', 'High')] [string] $PhysicsFidelity = 'Balanced',
     [ValidateRange(1, 120)] [int] $PracticeMinutes = 5,
     [ValidateRange(0.0, 1.0)] [double] $Difficulty = 0.75,
     [ValidateRange(0.0, 1.0)] [double] $Aggression = 0.50,
     [string] $BindAddress,
     [switch] $PreserveCmEventSettings,
-    [switch] $Force
+    [switch] $Force,
+    [Parameter(DontShow)] [switch] $SkipPhysicsPreparation
 )
 
 Set-StrictMode -Version Latest
@@ -197,7 +199,6 @@ function Get-RaceBotVehicleProfile([string] $Model, [string] $CarRoot) {
         MaxBrakeDeceleration = 8.5
         LateralGripG = 1.0
         TyreDiameterMeters = 0.65
-        SplineHeightOffsetMeters = 0.325
         EngineIdleRpm = 900
         EngineMaxRpm = $engineMaxRpm
         GearCount = 6
@@ -498,8 +499,11 @@ try {
         ('    Difficulty: ' + $Difficulty.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)),
         ('    Aggression: ' + $Aggression.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)),
         '    StartSplinePointId: 0',
-        '    GridSpacingMeters: 9',
         "    UpdateHz: $UpdateHz",
+        '    Physics:',
+        "      Fidelity: $PhysicsFidelity",
+        '      AssetFile: race-physics.bin',
+        '      Friction: 1.15',
         "    AllowMidRaceBotTakeover: $hasBotsText",
         "    RestartSessionOnFirstHumanConnect: $hasBotsText"
     )
@@ -515,7 +519,6 @@ try {
             $extraCfg += "        MaxBrakeDeceleration: $(Format-Invariant $profile.MaxBrakeDeceleration)"
             $extraCfg += "        LateralGripG: $(Format-Invariant $profile.LateralGripG)"
             $extraCfg += "        TyreDiameterMeters: $(Format-Invariant $profile.TyreDiameterMeters)"
-            $extraCfg += "        SplineHeightOffsetMeters: $(Format-Invariant $profile.SplineHeightOffsetMeters)"
             $extraCfg += "        EngineIdleRpm: $($profile.EngineIdleRpm)"
             $extraCfg += "        EngineMaxRpm: $($profile.EngineMaxRpm)"
             $extraCfg += "        GearCount: $($profile.GearCount)"
@@ -543,6 +546,25 @@ try {
         Copy-Item -LiteralPath (Join-Path $AssettoCorsaRoot "content\cars\$model\data.acd") -Destination (Join-Path $carDestination 'data.acd')
     }
 
+    if ($hasBots -and -not $SkipPhysicsPreparation) {
+        $physicsOutput = Join-Path $presetRoot 'race-physics.bin'
+        $physicsArguments = @(
+            '--prepare-race-physics',
+            '--ac-root', $resolvedGame,
+            '--track', $track,
+            '--cars', ((@($models | Sort-Object)) -join ';'),
+            '--physics-output', $physicsOutput
+        )
+        if (-not [string]::IsNullOrWhiteSpace($trackConfig)) {
+            $physicsArguments += @('--track-config', $trackConfig)
+        }
+        Write-Host 'Preparing exact track, grid and car collision geometry...'
+        & (Join-Path $resolvedOutput 'AssettoServer.exe') @physicsArguments
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $physicsOutput -PathType Leaf)) {
+            throw "Rigid-body physics preparation failed with exit code $LASTEXITCODE"
+        }
+    }
+
     $manifest = [ordered]@{
         preset = $PresetName
         bindAddress = $BindAddress
@@ -551,6 +573,8 @@ try {
         model = @($models)[0]
         models = @($models | Sort-Object)
         vehicleProfiles = @($vehicleProfiles)
+        physicsFidelity = $PhysicsFidelity
+        physicsPrepared = [bool]($hasBots -and -not $SkipPhysicsPreparation)
         sourceCarSlots = $sourceCarSlotCount
         requestedSlots = $requestedSlotCount
         trimmedSlots = $requestedSlotCount - $slotCount

@@ -1,6 +1,8 @@
 using System;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Ai.Physics;
+using Serilog;
 
 namespace AssettoServer.Server.Ai;
 
@@ -9,14 +11,18 @@ public class AiUpdater
     private readonly EntryCarManager _entryCarManager;
     private readonly ACServerConfiguration _configuration;
     private readonly SessionManager _sessionManager;
+    private readonly RaceBotPhysicsWorld? _racePhysicsWorld;
     private long _lastUpdateMilliseconds;
     private double _accumulatorMilliseconds;
+    private long _lastPhysicsDiagnosticsMilliseconds;
 
-    public AiUpdater(EntryCarManager entryCarManager, ACServer server, ACServerConfiguration configuration, SessionManager sessionManager)
+    public AiUpdater(EntryCarManager entryCarManager, ACServer server, ACServerConfiguration configuration,
+        SessionManager sessionManager, RaceBotPhysicsWorld? racePhysicsWorld = null)
     {
         _entryCarManager = entryCarManager;
         _configuration = configuration;
         _sessionManager = sessionManager;
+        _racePhysicsWorld = racePhysicsWorld;
         server.Update += OnUpdate;
     }
 
@@ -55,13 +61,43 @@ public class AiUpdater
         while (_accumulatorMilliseconds >= stepMilliseconds && steps++ < 8)
         {
             var stepSeconds = (float)(stepMilliseconds / 1000d);
+            if (_racePhysicsWorld == null)
+                throw new InvalidOperationException("Race bot rigid-body world is not registered");
+
+            for (var i = 0; i < _entryCarManager.EntryCars.Length; i++)
+            {
+                var entryCar = _entryCarManager.EntryCars[i];
+                if (!entryCar.AiControlled && entryCar.Client?.HasSentFirstUpdate == true)
+                {
+                    _racePhysicsWorld.SynchronizeHuman(entryCar.SessionId, entryCar.Model,
+                        entryCar.Status.Position, entryCar.Status.Rotation, entryCar.Status.Velocity);
+                }
+                else if (!entryCar.AiControlled && entryCar.Client == null)
+                {
+                    _racePhysicsWorld.RemoveBody(entryCar.SessionId);
+                }
+            }
             for (var i = 0; i < _entryCarManager.EntryCars.Length; i++)
             {
                 var entryCar = _entryCarManager.EntryCars[i];
                 if (entryCar.AiControlled)
                 {
-                    entryCar.AiUpdate(stepSeconds);
+                    entryCar.AiPrepareRacePhysics(stepSeconds);
                 }
+            }
+            _racePhysicsWorld.Step(stepSeconds);
+            for (var i = 0; i < _entryCarManager.EntryCars.Length; i++)
+            {
+                var entryCar = _entryCarManager.EntryCars[i];
+                if (entryCar.AiControlled)
+                    entryCar.AiCompleteRacePhysics(stepSeconds);
+            }
+            if (now - _lastPhysicsDiagnosticsMilliseconds >= 5000)
+            {
+                var diagnostics = _racePhysicsWorld.GetDiagnostics();
+                Log.Debug("Race physics: {BotCount} bots, Y {MinimumY:F2}..{MaximumY:F2} m, max speed {MaximumSpeed:F1} m/s",
+                    diagnostics.BotCount, diagnostics.MinimumY, diagnostics.MaximumY, diagnostics.MaximumSpeed);
+                _lastPhysicsDiagnosticsMilliseconds = now;
             }
             _accumulatorMilliseconds -= stepMilliseconds;
         }

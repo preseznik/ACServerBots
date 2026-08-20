@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AssettoServer.Network.Http;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Ai.Splines;
+using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Shared.Model;
@@ -27,6 +28,7 @@ public class AiBehavior : BackgroundService
     private readonly AiSpline _spline;
     private readonly HttpInfoCache _httpInfoCache;
     private readonly RaceSplineLayout? _raceLayout;
+    private readonly RaceBotPhysicsWorld? _racePhysicsWorld;
     private readonly HashSet<byte> _frozenBotSessionIds = [];
     private bool _raceRosterFrozen;
 
@@ -45,23 +47,25 @@ public class AiBehavior : BackgroundService
         EntryCarManager entryCarManager,
         CSPServerScriptProvider serverScriptProvider, 
         AiSpline spline,
-        HttpInfoCache httpInfoCache)
+        HttpInfoCache httpInfoCache,
+        RaceBotPhysicsWorld? racePhysicsWorld = null)
     {
         _sessionManager = sessionManager;
         _configuration = configuration;
         _entryCarManager = entryCarManager;
         _spline = spline;
         _httpInfoCache = httpInfoCache;
+        _racePhysicsWorld = racePhysicsWorld;
         _junctionEvaluator = new JunctionEvaluator(spline, false);
 
         if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
         {
+            if (_racePhysicsWorld == null)
+                throw new ConfigurationException("Race bot rigid-body world is not registered");
             _raceLayout = RaceSplineLayout.Create(spline.Points, _configuration.Extra.AiParams.Race.StartSplinePointId);
-            var requiredGridLength = _configuration.EntryList.Cars.Count * _configuration.Extra.AiParams.Race.GridSpacingMeters;
-            if (requiredGridLength >= _raceLayout.LengthMeters)
-            {
-                throw new ConfigurationException($"Race grid requires {requiredGridLength:F0} m but the closed AI spline is only {_raceLayout.LengthMeters:F0} m");
-            }
+            if (_racePhysicsWorld.GridCount < _configuration.EntryList.Cars.Count)
+                throw new ConfigurationException($"Track physics asset exposes {_racePhysicsWorld.GridCount} grid slots "
+                                                 + $"but {_configuration.EntryList.Cars.Count} entries are configured");
         }
 
         if (_configuration.Extra.AiParams.Debug)
@@ -549,15 +553,22 @@ public class AiBehavior : BackgroundService
             car.DespawnAiStates();
         }
 
+        var grid = (_sessionManager.CurrentSession.Grid ?? _entryCarManager.EntryCars).ToList();
         int humanGridSlots = _entryCarManager.EntryCars.Count(car => car.AiMode == AiMode.None || car.Client != null);
         for (int i = 0; i < bots.Count; i++)
         {
             var car = bots[i];
             car.SetAiControl(true);
-            var distanceBehindStart = (humanGridSlots + i) * _configuration.Extra.AiParams.Race.GridSpacingMeters;
-            var pointId = RaceSplineLayout.GetPointBehind(_spline.Points,
-                _configuration.Extra.AiParams.Race.StartSplinePointId, distanceBehindStart);
-            car.PrepareSingleAiState(pointId, _raceLayout);
+            int gridIndex = grid.FindIndex(entry => entry.SessionId == car.SessionId);
+            if (gridIndex < 0)
+                throw new InvalidOperationException($"Race grid does not contain slot {car.SessionId}");
+            var gridPose = _racePhysicsWorld!.GetGridPose(gridIndex);
+            var (pointId, _) = _spline.WorldToSpline(gridPose.Position);
+            if (pointId < 0)
+                throw new InvalidOperationException($"Cannot project AC_START_{gridIndex} onto fast_lane.ai");
+            Log.Debug("Race grid AC_START_{GridIndex} -> slot {SessionId}, spline point {PointId}",
+                gridIndex, car.SessionId, pointId);
+            car.PrepareSingleAiState(pointId, _raceLayout, gridPose);
         }
 
         Log.Information("Race bot roster {State}: {BotCount} bots, {HumanSlots} human grid slots",

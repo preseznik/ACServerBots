@@ -1,5 +1,6 @@
 ﻿using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.OpenSlotFilters;
 using Autofac;
 using Microsoft.Extensions.Hosting;
@@ -21,6 +22,10 @@ public class AiModule : Module
 
         if (_configuration.Extra.EnableAi)
         {
+            if (_configuration.Extra.AiParams.Behavior == AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race)
+            {
+                builder.RegisterType<RaceBotPhysicsWorld>().AsSelf().SingleInstance();
+            }
             builder.RegisterType<AiBehavior>().AsSelf().As<IHostedService>().SingleInstance();
             builder.RegisterType<AiUpdater>().AsSelf().SingleInstance().AutoActivate();
             builder.RegisterType<AiSlotFilter>().As<IOpenSlotFilter>();

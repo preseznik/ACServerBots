@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using AssettoServer.Server.Ai;
+using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Shared.Model;
@@ -182,6 +183,26 @@ public partial class EntryCar
             {
                 aiState?.Update(fixedDeltaSeconds);
             }
+        }
+    }
+
+    public void AiPrepareRacePhysics(float fixedDeltaSeconds)
+    {
+        lock (_aiControlLock)
+        {
+            if (!AiControlled) return;
+            foreach (var aiState in AiStatesSpan)
+                aiState?.PrepareRacePhysics(fixedDeltaSeconds);
+        }
+    }
+
+    public void AiCompleteRacePhysics(float fixedDeltaSeconds)
+    {
+        lock (_aiControlLock)
+        {
+            if (!AiControlled) return;
+            foreach (var aiState in AiStatesSpan)
+                aiState?.CompleteRacePhysics(fixedDeltaSeconds);
         }
     }
 
@@ -397,13 +418,13 @@ public partial class EntryCar
         TargetAiStateCount = count;
     }
 
-    public AiState PrepareSingleAiState(int pointId, RaceSplineLayout raceLayout)
+    public AiState PrepareSingleAiState(int pointId, RaceSplineLayout raceLayout, RaceGridPose? gridPose = null)
     {
         AiReset();
         TargetAiStateCount = 1;
         var state = _aiStates[0] ?? throw new InvalidOperationException("Failed to create AI state");
         state.ConfigureRace(raceLayout);
-        state.Teleport(pointId);
+        state.Teleport(pointId, gridPose);
         return state;
     }
 

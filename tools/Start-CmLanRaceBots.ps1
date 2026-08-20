@@ -8,12 +8,14 @@ param(
     [string] $PresetName = 'cm-lan-race-bots',
     [ValidateRange(2, 254)] [int] $MinimumSlots = 2,
     [ValidateRange(10, 120)] [int] $UpdateHz = 60,
+    [ValidateSet('Efficient', 'Balanced', 'High')] [string] $PhysicsFidelity = 'Balanced',
     [ValidateRange(0.0, 1.0)] [double] $Difficulty = 0.75,
     [ValidateRange(0.0, 1.0)] [double] $Aggression = 0.50,
     [string] $BindAddress,
     [switch] $DisableBots,
     [switch] $VerboseLog,
-    [switch] $NoLaunch
+    [switch] $NoLaunch,
+    [Parameter(DontShow)] [switch] $SkipPhysicsPreparation
 )
 
 Set-StrictMode -Version Latest
@@ -70,11 +72,13 @@ $stageArguments = @{
     BotSlots = 0
     SlotMode = $(if ($DisableBots) { 'NoBots' } else { 'AllBots' })
     UpdateHz = $UpdateHz
+    PhysicsFidelity = $PhysicsFidelity
     Difficulty = $Difficulty
     Aggression = $Aggression
     PreserveCmEventSettings = $true
     Force = $true
 }
+if ($SkipPhysicsPreparation) { $stageArguments.SkipPhysicsPreparation = $true }
 if (-not [string]::IsNullOrWhiteSpace($CmPresetId)) { $stageArguments.CmPresetId = $CmPresetId }
 if (-not [string]::IsNullOrWhiteSpace($CmServerPresetsRoot)) { $stageArguments.CmServerPresetsRoot = $CmServerPresetsRoot }
 if (-not [string]::IsNullOrWhiteSpace($BindAddress)) { $stageArguments.BindAddress = $BindAddress }

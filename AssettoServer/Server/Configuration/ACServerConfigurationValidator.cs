@@ -46,6 +46,9 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 aiParams.RuleFor(ai => ai.Race.StartSplinePointId).GreaterThanOrEqualTo(0);
                 aiParams.RuleFor(ai => ai.Race.GridSpacingMeters).GreaterThan(0);
                 aiParams.RuleFor(ai => ai.Race.UpdateHz).InclusiveBetween(10, 120);
+                aiParams.RuleFor(ai => ai.Race.Physics).NotNull();
+                aiParams.RuleFor(ai => ai.Race.Physics.AssetFile).NotEmpty();
+                aiParams.RuleFor(ai => ai.Race.Physics.Friction).InclusiveBetween(0.1f, 4);
                 aiParams.RuleFor(ai => ai.Race.VehicleProfiles).NotNull();
                 aiParams.RuleFor(ai => ai.Race.VehicleProfiles)
                     .Must(profiles => profiles.Select(profile => profile.Model).Distinct(System.StringComparer.OrdinalIgnoreCase).Count() == profiles.Count)

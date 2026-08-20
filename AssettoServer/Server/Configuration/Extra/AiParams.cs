@@ -13,6 +13,24 @@ public enum AiBehaviorMode
     Race
 }
 
+public enum RacePhysicsFidelity
+{
+    Efficient,
+    Balanced,
+    High
+}
+
+[UsedImplicitly(ImplicitUseKindFlags.Assign, ImplicitUseTargetFlags.WithMembers)]
+public class RacePhysicsParams
+{
+    [YamlMember(Description = "Rigid-body solver quality. Geometry remains exact at every level; solver substeps, iterations and CCD scale with fidelity.")]
+    public RacePhysicsFidelity Fidelity { get; init; } = RacePhysicsFidelity.Balanced;
+    [YamlMember(Description = "Prepared collision and grid asset path relative to the preset directory")]
+    public string AssetFile { get; init; } = "race-physics.bin";
+    [YamlMember(Description = "Car-to-car contact friction used by the server rigid-body solver")]
+    public float Friction { get; init; } = 1.15f;
+}
+
 [UsedImplicitly(ImplicitUseKindFlags.Assign, ImplicitUseTargetFlags.WithMembers)]
 public class RaceAiParams
 {
@@ -22,10 +40,12 @@ public class RaceAiParams
     public float Aggression { get; init; } = 0.5f;
     [YamlMember(Description = "Closed fast_lane.ai point used as the start/finish line")]
     public int StartSplinePointId { get; init; }
-    [YamlMember(Description = "Longitudinal spacing between race grid slots")]
+    [YamlMember(Description = "Legacy virtual-grid spacing; retained for configuration compatibility. Rigid-body race mode uses the track's exact AC_START transforms.")]
     public float GridSpacingMeters { get; init; } = 9;
     [YamlMember(Description = "Fixed simulation update rate")]
     public int UpdateHz { get; init; } = 60;
+    [YamlMember(Description = "Server-authoritative rigid-body contact settings")]
+    public RacePhysicsParams Physics { get; init; } = new();
     [YamlMember(Description = "Allow players joining an active race to replace unfinished AI=auto bots. Players start with a fresh result; AI=fixed slots remain unavailable.")]
     public bool AllowMidRaceBotTakeover { get; init; }
     [YamlMember(Description = "Restart the current session after the first human joins a bot-only server and finishes initial synchronization. Re-arms when all humans disconnect.")]

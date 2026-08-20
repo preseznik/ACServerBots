@@ -11,12 +11,14 @@ AiParams:
   HideAiCars: false
   NamePrefix: Bot
   MaxSpeedKph: 160
-  SplineHeightOffsetMeters: 0.325
   Race:
     Difficulty: 0.75
     Aggression: 0.50
     StartSplinePointId: 0
-    GridSpacingMeters: 9
     UpdateHz: 60
+    Physics:
+      Fidelity: Balanced
+      AssetFile: race-physics.bin
+      Friction: 1.15
     AllowMidRaceBotTakeover: true
     RestartSessionOnFirstHumanConnect: true

@@ -1,5 +1,7 @@
+using System.Numerics;
 using AssettoServer.Server;
 using AssettoServer.Server.Ai;
+using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
@@ -123,14 +125,106 @@ public class RaceBotsTests
     }
 
     [Test]
-    public void RaceVehicleProfileRaisesModelOriginAboveSplineSurface()
+    public void RaceGridPoseUsesExactAcStartTransform()
     {
-        var profile = new RaceBotVehicleProfile();
+        var orientation = Quaternion.CreateFromYawPitchRoll(0.4f, -0.1f, 0.05f);
+        var transform = Matrix4x4.CreateFromQuaternion(orientation)
+                        * Matrix4x4.CreateTranslation(12.5f, 3.25f, -44);
+        var pose = RaceGridPose.FromMatrix(transform);
 
         Assert.Multiple(() =>
         {
-            Assert.That(profile.TyreDiameterMeters, Is.EqualTo(0.65f));
-            Assert.That(profile.SplineHeightOffsetMeters, Is.EqualTo(profile.TyreDiameterMeters / 2));
+            Assert.That(pose.Position, Is.EqualTo(new Vector3(12.5f, 3.25f, -44)));
+            Assert.That(Math.Abs(Quaternion.Dot(pose.Orientation, orientation)), Is.EqualTo(1).Within(1e-5f));
+        });
+    }
+
+    [Test]
+    public void RacePhysicsAssetRoundTripsExactGeometryAndGrid()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"race-physics-{Guid.NewGuid():N}.bin");
+        try
+        {
+            var asset = new RacePhysicsAsset
+            {
+                Grid = [new RaceGridPose(new Vector3(1, 2, 3), Quaternion.Identity)],
+                TrackTriangles = [new Kn5Triangle(Vector3.Zero, Vector3.UnitX, Vector3.UnitZ)],
+                CarColliderVertices = new Dictionary<string, Vector3[]>
+                {
+                    ["test_car"] = [Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ]
+                }
+            };
+
+            asset.Save(path);
+            var loaded = RacePhysicsAsset.Load(path);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(loaded.Grid, Has.Count.EqualTo(1));
+                Assert.That(loaded.Grid[0].Position, Is.EqualTo(new Vector3(1, 2, 3)));
+                Assert.That(loaded.TrackTriangles, Has.Count.EqualTo(1));
+                Assert.That(loaded.TrackTriangles[0].C, Is.EqualTo(Vector3.UnitZ));
+                Assert.That(loaded.CarColliderVertices["TEST_CAR"], Has.Length.EqualTo(4));
+            });
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public void Kn5TrackTrianglesAreRewoundForBepuVisibleFaces()
+    {
+        var source = new Kn5Triangle(Vector3.Zero, Vector3.UnitX, Vector3.UnitZ);
+        var converted = RaceBotPhysicsWorld.RewindTrackTriangle(source);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(converted.A, Is.EqualTo(source.A));
+            Assert.That(converted.B, Is.EqualTo(source.C));
+            Assert.That(converted.C, Is.EqualTo(source.B));
+        });
+    }
+
+    [Test]
+    public void RacePhysicsFidelityDefaultsToBalancedAndKeepsExactAsset()
+    {
+        var physics = new RacePhysicsParams();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(physics.Fidelity, Is.EqualTo(RacePhysicsFidelity.Balanced));
+            Assert.That(physics.AssetFile, Is.EqualTo("race-physics.bin"));
+            Assert.That(physics.Friction, Is.GreaterThan(0));
+        });
+    }
+
+    [Test]
+    public void PhysicalTrackMeshSelectionUsesAcSurfaceConventions()
+    {
+        IReadOnlySet<string> surfaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ROAD", "GRASS" };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("1ROAD", surfaces), Is.True);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("ROAD_SUB0", surfaces), Is.True);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("WALL_OUTER", surfaces), Is.True);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("grandstand", surfaces), Is.False);
+        });
+    }
+
+    [Test]
+    public void ProtocolRotationRoundTripsRigidBodyOrientation()
+    {
+        var protocol = new Vector3(0.6f, -0.2f, 0.1f);
+        var roundTrip = RacePhysicsMath.ToProtocolRotation(RacePhysicsMath.FromProtocolRotation(protocol));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(roundTrip.X, Is.EqualTo(protocol.X).Within(1e-5f));
+            Assert.That(roundTrip.Y, Is.EqualTo(protocol.Y).Within(1e-5f));
+            Assert.That(roundTrip.Z, Is.EqualTo(protocol.Z).Within(1e-5f));
         });
     }
 

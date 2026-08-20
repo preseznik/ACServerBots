@@ -95,7 +95,8 @@ SKIN=skin_2
 
     & $stageScript -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
         -PublishedServer $publishedRoot -OutputRoot $outputRoot -PresetName test-dynamic `
-        -HumanSlots 2 -BotSlots 0 -SlotMode ReservedHumans -BindAddress 192.168.10.20 -PreserveCmEventSettings
+        -HumanSlots 2 -BotSlots 0 -SlotMode ReservedHumans -BindAddress 192.168.10.20 `
+        -PreserveCmEventSettings -SkipPhysicsPreparation
 
     $stagedCfg = Join-Path $outputRoot 'presets\test-dynamic\server_cfg.ini'
     $stagedEntries = Join-Path $outputRoot 'presets\test-dynamic\entry_list.ini'
@@ -118,7 +119,8 @@ SKIN=skin_2
     Assert-True ($stagedExtra.Contains('PowerKw: 74.57')) 'horsepower should retain decimal precision when converted to kW'
     Assert-True ($stagedExtra.Contains('ZeroToHundredSeconds: 5.5')) 'acceleration metadata should retain decimal precision'
     Assert-True ($stagedExtra.Contains('EngineMaxRpm: 8000')) 'RPM should be recovered from permissive CM metadata'
-    Assert-True ($stagedExtra.Contains('SplineHeightOffsetMeters: 0.325')) 'vehicle profiles should raise the model origin above the spline surface'
+    Assert-True ($stagedExtra.Contains('Fidelity: Balanced')) 'rigid-body physics should use balanced fidelity by default'
+    Assert-True ($stagedExtra.Contains('AssetFile: race-physics.bin')) 'race physics should reference its prepared collision asset'
     Assert-True ($stagedExtra.Contains('RestartSessionOnFirstHumanConnect: true')) 'bot staging should restart after the first human synchronizes'
 
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $outputRoot 'race-bot-manifest.json') | ConvertFrom-Json
@@ -145,7 +147,7 @@ SKIN=skin_2
     Set-Content -LiteralPath (Join-Path $trackRoot 'ui\test_layout\ui_track.json') -Value '{"pitboxes": 2}'
     & $launcherScript -CmPresetId SERVER_00 -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
         -PublishedServer $publishedRoot -OutputRoot $outputRoot -PresetName test-dynamic `
-        -MinimumSlots 2 -BindAddress 192.168.10.20 -NoLaunch
+        -MinimumSlots 2 -BindAddress 192.168.10.20 -NoLaunch -SkipPhysicsPreparation
 
     $trimmedCfg = Join-Path $outputRoot 'presets\test-dynamic\server_cfg.ini'
     $trimmedEntries = Join-Path $outputRoot 'presets\test-dynamic\entry_list.ini'
@@ -163,7 +165,8 @@ SKIN=skin_2
     $oversizedOutput = Join-Path $testRoot 'oversized-request'
     & $stageScript -CmPresetId SERVER_00 -CmServerPresetsRoot $presetsRoot -AssettoCorsaRoot $gameRoot `
         -PublishedServer $publishedRoot -OutputRoot $oversizedOutput -PresetName oversized-request `
-        -HumanSlots 2 -BotSlots 6 -SlotMode AllBots -BindAddress 192.168.10.20 -PreserveCmEventSettings
+        -HumanSlots 2 -BotSlots 6 -SlotMode AllBots -BindAddress 192.168.10.20 `
+        -PreserveCmEventSettings -SkipPhysicsPreparation
     $oversizedManifest = Get-Content -Raw -LiteralPath (Join-Path $oversizedOutput 'race-bot-manifest.json') | ConvertFrom-Json
     Assert-True ($oversizedManifest.requestedSlots -eq 8) 'explicit oversized requests should retain their requested count'
     Assert-True ($oversizedManifest.advertisedSlots -eq 2) 'pit capacity should be applied before rejecting a short source roster'
@@ -188,7 +191,7 @@ SKIN=skin_0
 '@
 
     & (Join-Path $compatTools 'Start-CmLanRaceBots.ps1') -CmServerPresetsRoot $singlePresetRoot `
-        -AssettoCorsaRoot $gameRoot -MinimumSlots 2 -BindAddress 192.168.10.20 -NoLaunch
+        -AssettoCorsaRoot $gameRoot -MinimumSlots 2 -BindAddress 192.168.10.20 -NoLaunch -SkipPhysicsPreparation
 
     $automaticRoot = Join-Path $compatRoot '.artifacts\lan-race-bots'
     $automaticPreset = Join-Path $automaticRoot 'presets\cm-lan-race-bots'

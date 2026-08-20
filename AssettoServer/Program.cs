@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Utils;
 using Autofac.Extensions.DependencyInjection;
 using CommandLine;
@@ -54,6 +55,24 @@ public static class Program
         
         [Option('g',"generate-config", Required = false, HelpText = "Generate configuration file for all installed plugins")]
         public bool GenerateConfigs { get; set; } = false;
+
+        [Option("prepare-race-physics", Required = false, HelpText = "Build race-physics.bin from an Assetto Corsa installation and exit")]
+        public bool PrepareRacePhysics { get; set; }
+
+        [Option("ac-root", Required = false, HelpText = "Assetto Corsa installation root used by --prepare-race-physics")]
+        public string AssettoCorsaRoot { get; set; } = "";
+
+        [Option("track", Required = false, HelpText = "Track id used by --prepare-race-physics")]
+        public string PhysicsTrack { get; set; } = "";
+
+        [Option("track-config", Required = false, HelpText = "Track layout id used by --prepare-race-physics")]
+        public string PhysicsTrackConfig { get; set; } = "";
+
+        [Option("cars", Required = false, HelpText = "Semicolon-separated car ids used by --prepare-race-physics")]
+        public string PhysicsCars { get; set; } = "";
+
+        [Option("physics-output", Required = false, HelpText = "Output race-physics.bin path used by --prepare-race-physics")]
+        public string PhysicsOutput { get; set; } = "";
     }
 
     private class StartOptions
@@ -79,6 +98,12 @@ public static class Program
         
         var options = Parser.Default.ParseArguments<Options>(args).Value;
         if (options == null) return;
+
+        if (options.PrepareRacePhysics)
+        {
+            PrepareRacePhysics(options);
+            return;
+        }
 
         _loadPluginsFromWorkdir = options.LoadPluginsFromWorkdir;
         _generatePluginConfigs = options.GenerateConfigs;
@@ -133,6 +158,23 @@ public static class Program
             }
             else break;
         }
+    }
+
+    private static void PrepareRacePhysics(Options options)
+    {
+        if (string.IsNullOrWhiteSpace(options.AssettoCorsaRoot)
+            || string.IsNullOrWhiteSpace(options.PhysicsTrack)
+            || string.IsNullOrWhiteSpace(options.PhysicsCars)
+            || string.IsNullOrWhiteSpace(options.PhysicsOutput))
+        {
+            throw new ArgumentException("--prepare-race-physics requires --ac-root, --track, --cars and --physics-output");
+        }
+
+        var result = RacePhysicsAssetBuilder.Build(options.AssettoCorsaRoot, options.PhysicsTrack,
+            options.PhysicsTrackConfig, options.PhysicsCars.Split(';', StringSplitOptions.RemoveEmptyEntries),
+            options.PhysicsOutput);
+        Console.WriteLine($"Prepared rigid-body assets: {result.GridSlots} grid slots, "
+                          + $"{result.TrackTriangles} track triangles, {result.CarColliders} car colliders");
     }
 
     public static void RestartServer(

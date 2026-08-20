@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Numerics;
 using AssettoServer.Server.Ai.Splines;
+using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Server.Weather;
@@ -74,6 +75,7 @@ public class AiState : IDisposable
     private float _lateralOffsetMeters;
     private float _targetLateralOffsetMeters;
     private long _overtakeUntil;
+    private Vector3 _physicsLastPosition;
 
     private readonly ACServerConfiguration _configuration;
     private readonly SessionManager _sessionManager;
@@ -81,6 +83,7 @@ public class AiState : IDisposable
     private readonly WeatherManager _weatherManager;
     private readonly AiSpline _spline;
     private readonly JunctionEvaluator _junctionEvaluator;
+    private readonly RaceBotPhysicsWorld? _racePhysicsWorld;
 
     private static readonly List<Color> CarColors =
     [
@@ -104,7 +107,9 @@ public class AiState : IDisposable
         Color.FromArgb(18, 46, 43)
     ];
 
-    public AiState(EntryCar entryCar, SessionManager sessionManager, WeatherManager weatherManager, ACServerConfiguration configuration, EntryCarManager entryCarManager, AiSpline spline)
+    public AiState(EntryCar entryCar, SessionManager sessionManager, WeatherManager weatherManager,
+        ACServerConfiguration configuration, EntryCarManager entryCarManager, AiSpline spline,
+        RaceBotPhysicsWorld? racePhysicsWorld = null)
     {
         EntryCar = entryCar;
         _sessionManager = sessionManager;
@@ -113,6 +118,7 @@ public class AiState : IDisposable
         _entryCarManager = entryCarManager;
         _spline = spline;
         _junctionEvaluator = new JunctionEvaluator(spline);
+        _racePhysicsWorld = racePhysicsWorld;
 
         _lastTick = _sessionManager.ServerTimeMilliseconds;
     }
@@ -132,6 +138,8 @@ public class AiState : IDisposable
     {
         Initialized = false;
         _spline.SlowestAiStates.Leave(CurrentSplinePointId, this);
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+            _racePhysicsWorld?.RemoveBody(EntryCar.SessionId);
     }
 
     private void SetRandomSpeed()
@@ -165,7 +173,7 @@ public class AiState : IDisposable
         Color = CarColors[Random.Shared.Next(CarColors.Count)];
     }
 
-    public void Teleport(int pointId)
+    public void Teleport(int pointId, RaceGridPose? gridPose = null)
     {
         _junctionEvaluator.Clear();
         CurrentSplinePointId = pointId;
@@ -216,7 +224,26 @@ public class AiState : IDisposable
         _overtakeUntil = 0;
         SpawnCounter++;
         Initialized = true;
-        Update();
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+        {
+            if (_racePhysicsWorld == null || EntryCar.RaceVehicleProfile == null)
+                throw new InvalidOperationException("Race bot rigid-body world or vehicle profile is unavailable");
+            var pose = gridPose ?? CreateSplinePose(pointId);
+            _racePhysicsWorld.RegisterBot(EntryCar.SessionId, EntryCar.Model, pose,
+                EntryCar.RaceVehicleProfile.MassKg);
+            _physicsLastPosition = pose.Position;
+            Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
+            Status.Position = pose.Position;
+            Status.Rotation = RacePhysicsMath.ToProtocolRotation(pose.Orientation);
+            Status.Velocity = Vector3.Zero;
+            CurrentSpeed = 0;
+            Acceleration = 0;
+            ApplyStatusTelemetry();
+        }
+        else
+        {
+            Update();
+        }
     }
 
     public void ConfigureRace(RaceSplineLayout layout)
@@ -546,6 +573,13 @@ public class AiState : IDisposable
     public void DetectObstacles()
     {
         if (!Initialized) return;
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            && RaceBotMath.ShouldHoldForCountdown(_sessionManager.CurrentSession.Configuration.Type,
+                _sessionManager.ServerTimeMilliseconds, _sessionManager.CurrentSession.StartTimeMilliseconds))
+        {
+            SetTargetSpeed(0);
+            return;
+        }
             
         if (_sessionManager.ServerTimeMilliseconds < _ignoreObstaclesUntil)
         {
@@ -712,6 +746,124 @@ public class AiState : IDisposable
     private void SetTargetSpeed(float speed)
     {
         SetTargetSpeed(speed, EntryCar.AiDeceleration, EntryCar.AiAcceleration);
+    }
+
+    private RaceGridPose CreateSplinePose(int pointId)
+    {
+        if (!_junctionEvaluator.TryNext(pointId, out var nextPointId))
+            throw new InvalidOperationException($"Cannot orient race bot at spline point {pointId}");
+        var tangent = Vector3.Normalize(_spline.Points[nextPointId].Position - _spline.Points[pointId].Position);
+        var rotation = new Vector3
+        {
+            X = MathF.Atan2(tangent.Z, tangent.X) - MathF.PI / 2,
+            Y = (MathF.Atan2(new Vector2(tangent.Z, tangent.X).Length(), tangent.Y) - MathF.PI / 2) * -1f,
+            Z = _spline.Operations.GetCamber(pointId, 0)
+        };
+        return new RaceGridPose(_spline.Points[pointId].Position,
+            RacePhysicsMath.FromProtocolRotation(rotation));
+    }
+
+    private CatmullRom.CatmullRomPoint GetCurrentSplineSample(out int nextPoint)
+    {
+        if (!_junctionEvaluator.TryNext(CurrentSplinePointId, out nextPoint))
+            throw new InvalidOperationException($"Cannot get next spline point for {CurrentSplinePointId}");
+        return CatmullRom.Evaluate(_spline.Points[CurrentSplinePointId].Position,
+            _spline.Points[nextPoint].Position, _startTangent, _endTangent,
+            _currentVecLength > 1e-5f ? _currentVecProgress / _currentVecLength : 0);
+    }
+
+    public void PrepareRacePhysics(float fixedDeltaSeconds)
+    {
+        if (!Initialized || _racePhysicsWorld == null || EntryCar.RaceVehicleProfile == null)
+            return;
+
+        long currentTime = _sessionManager.ServerTimeMilliseconds;
+        bool raceCountdown = RaceBotMath.ShouldHoldForCountdown(_sessionManager.CurrentSession.Configuration.Type,
+            currentTime, _sessionManager.CurrentSession.StartTimeMilliseconds);
+        if (raceCountdown)
+        {
+            _holdingForRaceStart = true;
+            CurrentSpeed = 0;
+            TargetSpeed = 0;
+            Acceleration = 0;
+        }
+        else if (_holdingForRaceStart)
+        {
+            _holdingForRaceStart = false;
+            SetTargetSpeed(InitialMaxSpeed);
+        }
+
+        float lateralStep = Math.Max(0, fixedDeltaSeconds) * 1.5f;
+        _lateralOffsetMeters = Math.Abs(_targetLateralOffsetMeters - _lateralOffsetMeters) <= lateralStep
+            ? _targetLateralOffsetMeters
+            : _lateralOffsetMeters + Math.Sign(_targetLateralOffsetMeters - _lateralOffsetMeters) * lateralStep;
+
+        var sample = GetCurrentSplineSample(out _);
+        var tangent = Vector3.Normalize(sample.Tangent);
+        var lateral = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, tangent));
+        var targetPosition = sample.Position + lateral * _lateralOffsetMeters;
+        var vehicleStep = RaceBotVehicleDynamics.Step(CurrentSpeed, TargetSpeed, fixedDeltaSeconds,
+            EntryCar.RaceVehicleProfile);
+        float maximumAcceleration = vehicleStep.AccelerationMetersPerSecondSquared > 0
+            ? vehicleStep.AccelerationMetersPerSecondSquared
+            : EntryCar.AiAcceleration;
+        _racePhysicsWorld.SetBotControl(EntryCar.SessionId, new RaceBotPhysicsControl(raceCountdown,
+            targetPosition, tangent, TargetSpeed, Math.Max(0.1f, maximumAcceleration),
+            EntryCar.RaceVehicleProfile.MaxBrakeDeceleration, EntryCar.RaceVehicleProfile.LateralGripG));
+        _lastTick = currentTime;
+    }
+
+    public void CompleteRacePhysics(float fixedDeltaSeconds)
+    {
+        if (!Initialized || _racePhysicsWorld == null
+            || !_racePhysicsWorld.TryGetBotState(EntryCar.SessionId, out var physicsState))
+            return;
+
+        var sampleBeforeMove = GetCurrentSplineSample(out _);
+        var forward = Vector3.Normalize(sampleBeforeMove.Tangent);
+        float forwardProgress = Math.Max(0, Vector3.Dot(physicsState.Position - _physicsLastPosition, forward));
+        if (!Move(_currentVecProgress + forwardProgress))
+        {
+            Despawn();
+            return;
+        }
+
+        _physicsLastPosition = physicsState.Position;
+        CurrentSpeed = Math.Max(0, physicsState.ForwardSpeed);
+        Acceleration = physicsState.LongitudinalAcceleration;
+        Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
+        Status.Position = physicsState.Position;
+        Status.Rotation = RacePhysicsMath.ToProtocolRotation(physicsState.Orientation);
+        Status.Velocity = physicsState.Velocity;
+        ApplyStatusTelemetry();
+    }
+
+    private void ApplyStatusTelemetry()
+    {
+        float tyreAngularSpeed = GetTyreAngularSpeed(CurrentSpeed, EntryCar.TyreDiameterMeters);
+        byte encodedTyreAngularSpeed = (byte)(Math.Clamp(
+            MathF.Round(MathF.Log10(tyreAngularSpeed + 1f) * 20f) * Math.Sign(tyreAngularSpeed), -100f, 154f) + 100f);
+        Status.SteerAngle = 127;
+        Status.WheelAngle = 127;
+        Status.TyreAngularSpeed[0] = encodedTyreAngularSpeed;
+        Status.TyreAngularSpeed[1] = encodedTyreAngularSpeed;
+        Status.TyreAngularSpeed[2] = encodedTyreAngularSpeed;
+        Status.TyreAngularSpeed[3] = encodedTyreAngularSpeed;
+        if (EntryCar.RaceVehicleProfile != null)
+        {
+            var telemetry = RaceBotVehicleDynamics.GetTelemetry(CurrentSpeed, EntryCar.RaceVehicleProfile);
+            Status.EngineRpm = telemetry.EngineRpm;
+            Status.Gear = telemetry.ProtocolGear;
+        }
+        Status.StatusFlag = GetLights(_configuration.Extra.AiParams.EnableDaytimeLights,
+                                _weatherManager.CurrentSunPosition, _randomTwilight)
+                            | (_sessionManager.ServerTimeMilliseconds < _stoppedForCollisionUntil
+                               || CurrentSpeed < 20 / 3.6f ? CarStatusFlags.HazardsOn : 0)
+                            | (CurrentSpeed == 0 || Acceleration < 0 ? CarStatusFlags.BrakeLightsOn : 0)
+                            | (_stoppedForObstacle && _sessionManager.ServerTimeMilliseconds > _obstacleHonkStart
+                               && _sessionManager.ServerTimeMilliseconds < _obstacleHonkEnd ? CarStatusFlags.Horn : 0)
+                            | GetWiperSpeed(_weatherManager.CurrentWeather.RainIntensity)
+                            | _indicator;
     }
 
     public void Update(float? fixedDeltaSeconds = null)
