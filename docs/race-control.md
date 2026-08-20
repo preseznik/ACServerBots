@@ -54,7 +54,7 @@ dotnet test .\AssettoServer.RaceControl.Tests\AssettoServer.RaceControl.Tests.cs
 .\tools\Publish-RaceControl.ps1
 ```
 
-The portable self-contained output is `out-race-control-win-x64`. It includes the matching self-contained server under `Server`, the AGPL license, third-party notices, and these build/use instructions. Source and build instructions must accompany any distributed or network-accessible modified AGPL build.
+The portable self-contained output is always replaced at `out-race-control`; publishing does not create architecture- or change-specific output folders. The root contains the single-file Race Control executable and notices, runtime/server files live under `lib`, framework localization resources live under `lang`, and documentation lives under `docs`. Source and build instructions must accompany any distributed or network-accessible modified AGPL build.
 
 For a local installed-content smoke test using two bots at Magione:
 

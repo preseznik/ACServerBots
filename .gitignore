@@ -365,6 +365,7 @@ FodyWeavers.xsd
 out-linux-*
 out-win-*
 out-race-control-*
+out-race-control/
 .artifacts/
 
 # Jetbrains IDEs

@@ -14,10 +14,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($RaceControlBuild)) {
-    $RaceControlBuild = Join-Path $repositoryRoot 'out-race-control-win-x64'
+    $RaceControlBuild = Join-Path $repositoryRoot 'out-race-control'
 }
-$coreAssembly = Join-Path $RaceControlBuild 'AssettoServer.RaceControl.Core.dll'
-$serverPayload = Join-Path $RaceControlBuild 'Server'
+$coreAssembly = Join-Path $RaceControlBuild 'lib\AssettoServer.RaceControl.Core.dll'
+$serverPayload = Join-Path $RaceControlBuild 'lib\Server'
 if (-not (Test-Path -LiteralPath $coreAssembly -PathType Leaf)) { throw "Race Control core not found: $coreAssembly" }
 if (-not (Test-Path -LiteralPath (Join-Path $serverPayload 'AssettoServer.exe') -PathType Leaf)) { throw "Bundled server not found: $serverPayload" }
 

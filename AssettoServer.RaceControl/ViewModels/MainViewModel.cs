@@ -813,7 +813,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private static string? FindServerPayload()
     {
-        var bundled = Path.Combine(AppContext.BaseDirectory, "Server");
+        var bundled = Path.Combine(AppContext.BaseDirectory, "lib", "Server");
         if (File.Exists(Path.Combine(bundled, "AssettoServer.exe")))
         {
             return bundled;
@@ -822,6 +822,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
+            var packaged = Path.Combine(directory.FullName, "out-race-control", "lib", "Server");
+            if (File.Exists(Path.Combine(packaged, "AssettoServer.exe")))
+            {
+                return packaged;
+            }
+
             var candidate = Path.Combine(directory.FullName, "out-win-x64");
             if (File.Exists(Path.Combine(candidate, "AssettoServer.exe")))
             {

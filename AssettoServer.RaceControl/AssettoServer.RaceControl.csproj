@@ -11,4 +11,15 @@
   <ItemGroup>
     <ProjectReference Include="..\AssettoServer.RaceControl.Core\AssettoServer.RaceControl.Core.csproj" />
   </ItemGroup>
+  <Target Name="KeepSatelliteResourcesExternal"
+          AfterTargets="ComputeResolvedFilesToPublishList"
+          BeforeTargets="_ComputeFilesToBundle"
+          Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)"
+                             Condition="'%(ResolvedFileToPublish.Extension)' == '.dll' and $([System.String]::Copy('%(ResolvedFileToPublish.Filename)').EndsWith('.resources'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 </Project>
