@@ -1,0 +1,472 @@
+<Window x:Class="AssettoServer.RaceControl.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:controls="clr-namespace:AssettoServer.RaceControl.Controls"
+        mc:Ignorable="d"
+        Title="AssettoServer Race Control"
+        Width="1480" Height="900" MinWidth="1120" MinHeight="720"
+        WindowStartupLocation="CenterScreen"
+        Loaded="Window_Loaded" Closing="Window_Closing">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="78" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="34" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#15181E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="20,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border Width="42" Height="42" CornerRadius="5" Background="{StaticResource AccentBrush}" Margin="0,0,13,0">
+                    <TextBlock Text="RC" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="ASSETTOSERVER RACE CONTROL" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding EventTitle}" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,20,0">
+                    <ComboBox Width="225" ItemsSource="{Binding SavedPresets}" SelectedItem="{Binding SelectedSavedPreset}"
+                              DisplayMemberPath="Name" ToolTip="Saved Race Control presets" />
+                    <Button Content="Load" Command="{Binding LoadPresetCommand}" Margin="6,0,0,0" />
+                    <Button Content="Save" Command="{Binding SavePresetCommand}" Margin="6,0,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="Stop" Command="{Binding StopCommand}" Margin="0,0,8,0" />
+                    <Button Content="STAGE &amp; START" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Padding="20,8" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <TabControl Grid.Row="1" SelectedIndex="{Binding SelectedPageIndex}" TabStripPlacement="Left" Background="Transparent" BorderThickness="0">
+            <TabControl.Resources>
+                <Style TargetType="TabItem">
+                    <Setter Property="Width" Value="194" />
+                    <Setter Property="Height" Value="52" />
+                    <Setter Property="HorizontalContentAlignment" Value="Left" />
+                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                    <Setter Property="Padding" Value="22,0" />
+                    <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+                    <Setter Property="Background" Value="#15181E" />
+                    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Foreground" Value="White" />
+                            <Setter Property="Background" Value="#242831" />
+                            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="#20242B" />
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </TabControl.Resources>
+
+            <TabItem Header="EVENT &amp; CONTENT">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Grid Margin="24">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="3*" />
+                            <ColumnDefinition Width="2*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Event" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Preset name" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding Preset.Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" />
+                                    <TextBlock Text="Server name shown on LAN" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding Preset.ServerName, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Local installations" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Assetto Corsa root" Style="{StaticResource FieldLabel}" />
+                                    <Grid Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBox Text="{Binding Preset.AssettoCorsaRoot}" IsReadOnly="True" />
+                                        <Button Grid.Column="1" Content="Browse…" Click="BrowseAcRoot_Click" Margin="7,0,0,0" />
+                                    </Grid>
+                                    <TextBlock Text="Standalone server payload" Style="{StaticResource FieldLabel}" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBox Text="{Binding Preset.ServerPayloadPath}" IsReadOnly="True" />
+                                        <Button Grid.Column="1" Content="Browse…" Click="BrowseServerPayload_Click" Margin="7,0,0,0" />
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                        <Button Content="Refresh installed content" Command="{Binding RefreshContentCommand}" />
+                                        <Button Content="Import latest CM preset" Command="{Binding ImportCmPresetCommand}" Margin="7,0,0,0" />
+                                        <Button Content="Export new CM preset" Command="{Binding ExportCmPresetCommand}" Margin="7,0,0,0" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Circuit" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Track and layout" Style="{StaticResource FieldLabel}" />
+                                    <ComboBox ItemsSource="{Binding Tracks}" SelectedItem="{Binding SelectedTrack}" DisplayMemberPath="DisplayName"
+                                              IsTextSearchEnabled="True" Margin="0,0,0,10" />
+                                    <TextBlock Text="{Binding SelectedTrackDetails}" Foreground="{StaticResource MutedTextBrush}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Track preview" Style="{StaticResource SectionTitle}" />
+                                    <Border Height="245" Background="#0E1014" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                        <Image Source="{Binding SelectedTrack.PreviewPath}" Stretch="UniformToFill" />
+                                    </Border>
+                                    <Image Source="{Binding SelectedTrack.OutlinePath}" Height="120" Stretch="Uniform" Margin="0,14,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Conditions" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Weather" Style="{StaticResource FieldLabel}" />
+                                    <ComboBox ItemsSource="{Binding Weather}" DisplayMemberPath="Name" SelectedValuePath="Id"
+                                              SelectedValue="{Binding Preset.Conditions.WeatherId}" Margin="0,0,0,12" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,7,0">
+                                            <TextBlock Text="Ambient °C" Style="{StaticResource FieldLabel}" />
+                                            <TextBox Text="{Binding Preset.Conditions.AmbientTemperatureCelsius}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="7,0,0,0">
+                                            <TextBlock Text="Road °C" Style="{StaticResource FieldLabel}" />
+                                            <TextBox Text="{Binding Preset.Conditions.RoadTemperatureCelsius}" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock Text="Sun angle" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                    <TextBox Text="{Binding Preset.Conditions.SunAngleDegrees}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="GRID">
+                <Grid Margin="24">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Race grid" FontSize="22" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding EffectiveGridSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
+                            <Button Content="All replaceable" Command="{Binding MakeAllReplaceableCommand}" />
+                            <Button Content="Random skins" Command="{Binding RandomizeSkinsCommand}" Margin="7,0,0,0" />
+                            <Button Content="Fill pit boxes" Command="{Binding FillGridCommand}" Margin="7,0,0,0" />
+                            <Button Content="Add entry" Command="{Binding AddSlotCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0" />
+                        </StackPanel>
+                    </Grid>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Grid}" SelectedItem="{Binding SelectedGridSlot}"
+                              AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single" AlternationCount="2">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="#" Binding="{Binding Index}" IsReadOnly="True" Width="45" />
+                            <DataGridTextColumn Header="Driver / bot name" Binding="{Binding DriverName, UpdateSourceTrigger=PropertyChanged}" Width="150" />
+                            <DataGridTemplateColumn Header="Car" Width="2*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{Binding Cars}" SelectedItem="{Binding SelectedCar}" DisplayMemberPath="DisplayName"
+                                                  IsTextSearchEnabled="True" MinWidth="210" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Skin" Width="2*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{Binding Skins}" SelectedItem="{Binding SelectedSkin}" DisplayMemberPath="Name" MinWidth="180" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Slot mode" Width="115">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{Binding DataContext.SlotModes, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  SelectedItem="{Binding Mode}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Team" Binding="{Binding TeamName}" Width="130" />
+                            <DataGridTextColumn Header="Ballast" Binding="{Binding BallastKg}" Width="75" />
+                            <DataGridTextColumn Header="Restrictor" Binding="{Binding RestrictorPercent}" Width="80" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <Grid Grid.Row="2" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="Auto = bot until claimed • Fixed = bot only • None = human only"
+                                   Foreground="{StaticResource MutedTextBrush}" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="↑" Command="{Binding MoveSlotUpCommand}" Width="42" />
+                            <Button Content="↓" Command="{Binding MoveSlotDownCommand}" Width="42" Margin="6,0,0,0" />
+                            <Button Content="Remove selected" Command="{Binding RemoveSlotCommand}" Margin="6,0,0,0" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="SESSIONS &amp; RULES">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <WrapPanel Margin="24">
+                        <Border Style="{StaticResource Card}" Width="390">
+                            <StackPanel>
+                                <TextBlock Text="Sessions" Style="{StaticResource SectionTitle}" />
+                                <CheckBox Content="Practice" IsChecked="{Binding Preset.Sessions.PracticeEnabled}" />
+                                <TextBlock Text="Practice minutes" Style="{StaticResource FieldLabel}" Margin="0,7,0,5" />
+                                <TextBox Text="{Binding Preset.Sessions.PracticeMinutes}" />
+                                <CheckBox Content="Qualifying" IsChecked="{Binding Preset.Sessions.QualifyingEnabled}" Margin="0,14,0,5" />
+                                <TextBlock Text="Qualifying minutes" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Sessions.QualifyingMinutes}" />
+                                <TextBlock Text="Race laps" Style="{StaticResource FieldLabel}" Margin="0,14,0,5" />
+                                <TextBox Text="{Binding Preset.Sessions.RaceLaps}" />
+                                <CheckBox Content="Reverse grid" IsChecked="{Binding Preset.Sessions.ReverseGrid}" Margin="0,10,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Width="390">
+                            <StackPanel>
+                                <TextBlock Text="Simulation rates" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="Fuel consumption %" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Rules.FuelRatePercent}" Margin="0,0,0,12" />
+                                <TextBlock Text="Damage %" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Rules.DamageRatePercent}" Margin="0,0,0,12" />
+                                <TextBlock Text="Tyre wear %" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Rules.TyreWearRatePercent}" Margin="0,0,0,12" />
+                                <TextBlock Text="Allowed tyres out" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Rules.AllowedTyresOut}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Width="390">
+                            <StackPanel>
+                                <TextBlock Text="Assists" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="ABS: 0 off, 1 factory, 2 on" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Rules.AbsAllowed}" Margin="0,0,0,12" />
+                                <TextBlock Text="TC: 0 off, 1 factory, 2 on" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Rules.TractionControlAllowed}" Margin="0,0,0,12" />
+                                <CheckBox Content="Stability control" IsChecked="{Binding Preset.Rules.StabilityControlAllowed}" />
+                                <CheckBox Content="Auto clutch" IsChecked="{Binding Preset.Rules.AutoClutchAllowed}" />
+                                <CheckBox Content="Tyre blankets" IsChecked="{Binding Preset.Rules.TyreBlanketsAllowed}" />
+                                <CheckBox Content="Force virtual mirror" IsChecked="{Binding Preset.Rules.VirtualMirrorAllowed}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Width="390">
+                            <StackPanel>
+                                <TextBlock Text="Track evolution" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="Starting grip %" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Conditions.StartingGripPercent}" Margin="0,0,0,12" />
+                                <TextBlock Text="Randomness %" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Conditions.GripRandomnessPercent}" Margin="0,0,0,12" />
+                                <TextBlock Text="Session transfer %" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Conditions.GripTransferPercent}" Margin="0,0,0,12" />
+                                <TextBlock Text="Laps per grip increase" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Conditions.LapsPerGripIncrease}" />
+                            </StackPanel>
+                        </Border>
+                    </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="RACE BOTS">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="24">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Bot participation" Style="{StaticResource SectionTitle}" />
+                                    <CheckBox Content="Enable server-authoritative race bots" IsChecked="{Binding Preset.Bots.Enabled}" FontWeight="SemiBold" />
+                                    <TextBlock Text="When disabled, every staged grid entry becomes human-only. The saved slot modes are retained."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,12" />
+                                    <CheckBox Content="Humans can replace Auto bots during a race" IsChecked="{Binding Preset.Bots.AllowMidRaceTakeover}" />
+                                    <CheckBox Content="Restart session when the first human connects" IsChecked="{Binding Preset.Bots.RestartWhenFirstHumanConnects}" />
+                                    <TextBlock Text="Bot name prefix" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                    <TextBox Text="{Binding Preset.Bots.NamePrefix}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Racecraft" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Difficulty (0–1)" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding Preset.Bots.Difficulty}" Margin="0,0,0,12" />
+                                    <TextBlock Text="Aggression (0–1)" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding Preset.Bots.Aggression}" Margin="0,0,0,12" />
+                                    <TextBlock Text="Start spline point" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding Preset.Bots.StartSplinePointId}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Rigid-body physics" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Fidelity" Style="{StaticResource FieldLabel}" />
+                                    <ComboBox ItemsSource="{Binding PhysicsFidelities}" SelectedItem="{Binding Preset.Bots.PhysicsFidelity}" Margin="0,0,0,12" />
+                                    <TextBlock Text="Efficient reduces solver work; Balanced is the default; High adds the strongest solver and swept collision detection. Geometry remains exact at every level."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,14" />
+                                    <TextBlock Text="Simulation update Hz" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding Preset.Bots.UpdateHz}" Margin="0,0,0,12" />
+                                    <TextBlock Text="Contact friction" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding Preset.Bots.SurfaceFriction}" Margin="0,0,0,12" />
+                                    <TextBlock Text="Legacy fallback grid spacing (m)" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding Preset.Bots.GridSpacingMeters}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Model support" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Each grid entry can use an arbitrary installed model. Race Control derives a bounded vehicle profile from ui_car.json and prepares the model’s real collider.kn5. Cars without packed data or a collider are reported before launch."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="NETWORK">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="24">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Private LAN" Style="{StaticResource SectionTitle}" />
+                                <CheckBox Content="LAN-only safety policy" IsChecked="{Binding Preset.Network.LanOnly}" IsEnabled="False" />
+                                <TextBlock Text="Lobby registration, Steam authentication, UPnP, and automatic port forwarding are always disabled in this release."
+                                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,14" />
+                                <TextBlock Text="Bind address" Style="{StaticResource FieldLabel}" />
+                                <ComboBox ItemsSource="{Binding NetworkAddresses}" SelectedItem="{Binding Preset.Network.BindAddress}"
+                                          IsEditable="True" Margin="0,0,0,12" />
+                                <TextBlock Text="TCP port" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Network.TcpPort}" Margin="0,0,0,12" />
+                                <TextBlock Text="UDP port" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Network.UdpPort}" Margin="0,0,0,12" />
+                                <TextBlock Text="HTTP / LAN discovery port" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Network.HttpPort}" />
+                            </StackPanel>
+                        </Border>
+                        <StackPanel Grid.Column="1">
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Access" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Join password" Style="{StaticResource FieldLabel}" />
+                                    <PasswordBox controls:PasswordBinding.Attach="True"
+                                                 controls:PasswordBinding.Password="{Binding Preset.Network.JoinPassword, Mode=TwoWay}" Margin="0,0,0,12" />
+                                    <TextBlock Text="Admin password" Style="{StaticResource FieldLabel}" />
+                                    <PasswordBox controls:PasswordBinding.Attach="True"
+                                                 controls:PasswordBinding.Password="{Binding Preset.Network.AdminPassword, Mode=TwoWay}" />
+                                    <TextBlock Text="Passwords are stored locally with the preset, like Content Manager server presets. Do not reuse an important password."
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Joining" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="After launch, other PCs on the same network can find the event under Content Manager → Drive → Online → LAN."
+                                               TextWrapping="Wrap" Margin="0,0,0,12" />
+                                    <Button Content="Open Content Manager" Command="{Binding OpenContentManagerCommand}" HorizontalAlignment="Left" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="LAUNCH &amp; LIVE">
+                <Grid Margin="24">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="3*" /></Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Preflight" Style="{StaticResource SectionTitle}" />
+                                    <Button Grid.Column="1" Content="Validate now" Command="{Binding ValidateCommand}" Margin="8,-5,0,10" />
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding ValidationMessages}" MaxHeight="190">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,3">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Symbol}" FontWeight="Bold">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="#69B7FF" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Error"><Setter Property="Foreground" Value="#FF625F" /></DataTrigger>
+                                                                <DataTrigger Binding="{Binding Severity}" Value="Warning"><Setter Property="Foreground" Value="#F5C451" /></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Grid.Column="1" Text="{Binding Message}" TextWrapping="Wrap" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="1" Style="{StaticResource Card}">
+                            <Grid>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Server instance" Style="{StaticResource SectionTitle}" />
+                                        <TextBlock Text="{Binding ServerStateText}" FontSize="17" FontWeight="Bold" />
+                                        <TextBlock Text="{Binding LastInstanceSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                        <Button Content="Stage only" Command="{Binding StageCommand}" />
+                                        <Button Content="Start new" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0" />
+                                    </StackPanel>
+                                </Grid>
+                                <ProgressBar Grid.Row="1" Value="{Binding ProgressValue, Mode=OneWay}" Height="5" Foreground="{StaticResource AccentBrush}" Background="#303641" Margin="0,18,0,7" />
+                                <TextBlock Grid.Row="2" Text="{Binding ProgressText}" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                                <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,14,0,0">
+                                    <Button Content="Stop" Command="{Binding StopCommand}" />
+                                    <Button Content="Restart" Command="{Binding RestartCommand}" Margin="7,0,0,0" />
+                                    <ComboBox ItemsSource="{Binding RecentInstances}" SelectedItem="{Binding SelectedRecentInstance}"
+                                              DisplayMemberPath="DisplayName" Width="340" Margin="14,0,0,0" />
+                                    <Button Content="Open selected folder" Command="{Binding OpenInstanceCommand}" Margin="7,0,0,0" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock Text="Live server log" Style="{StaticResource SectionTitle}" />
+                                <Button Grid.Column="1" Content="Clear" Command="{Binding ClearLogCommand}" Margin="0,-5,0,10" />
+                            </Grid>
+                            <TextBox x:Name="LogTextBox" Grid.Row="1" Text="{Binding LogText, Mode=OneWay}" TextChanged="LogTextBox_TextChanged"
+                                     FontFamily="Cascadia Mono, Consolas" FontSize="12" IsReadOnly="True" AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" TextWrapping="NoWrap" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Background="#15181E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+            <Grid Margin="16,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Margin="0,0,9,0" />
+                <TextBlock Grid.Column="1" Text="{Binding StatusText}" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="2" Text="LAN ONLY  •  NO LOBBY  •  NO GAME FILE CHANGES" Foreground="#69717E" FontSize="11" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

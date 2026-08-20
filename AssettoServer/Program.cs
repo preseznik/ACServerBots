@@ -73,6 +73,9 @@ public static class Program
 
         [Option("physics-output", Required = false, HelpText = "Output race-physics.bin path used by --prepare-race-physics")]
         public string PhysicsOutput { get; set; } = "";
+
+        [Option("shutdown-file", Required = false, SetName = "AssettoServer", HelpText = "Gracefully stop when this file is created")]
+        public string ShutdownFile { get; set; } = "";
     }
 
     private class StartOptions
@@ -98,6 +101,11 @@ public static class Program
         
         var options = Parser.Default.ParseArguments<Options>(args).Value;
         if (options == null) return;
+
+        if (!string.IsNullOrWhiteSpace(options.ShutdownFile) && File.Exists(options.ShutdownFile))
+        {
+            File.Delete(options.ShutdownFile);
+        }
 
         if (options.PrepareRacePhysics)
         {
@@ -147,7 +155,8 @@ public static class Program
             _restartTask = new TaskCompletionSource<StartOptions>();
             using var cts = new CancellationTokenSource();
             var serverTask = RunServerAsync(startOptions.Preset, startOptions.ServerCfgPath, startOptions.EntryListPath, startOptions.PortOverrides ,options.UseVerboseLogging, cts.Token);
-            var finishedTask = await Task.WhenAny(serverTask, _restartTask.Task);
+            var shutdownTask = WaitForShutdownFileAsync(options.ShutdownFile, cts.Token);
+            var finishedTask = await Task.WhenAny(serverTask, _restartTask.Task, shutdownTask);
 
             if (finishedTask == _restartTask.Task)
             {
@@ -156,8 +165,31 @@ public static class Program
 
                 startOptions = _restartTask.Task.Result;
             }
+            else if (finishedTask == shutdownTask)
+            {
+                await cts.CancelAsync();
+                await serverTask;
+                break;
+            }
             else break;
         }
+    }
+
+    private static async Task WaitForShutdownFileAsync(string path, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return;
+        }
+
+        path = Path.GetFullPath(path);
+        while (!File.Exists(path))
+        {
+            await Task.Delay(250, cancellationToken);
+        }
+
+        Log.Information("Shutdown requested by control file");
     }
 
     private static void PrepareRacePhysics(Options options)

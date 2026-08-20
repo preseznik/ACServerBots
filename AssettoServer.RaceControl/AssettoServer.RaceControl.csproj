@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>AssettoServer Race Control</AssemblyName>
+    <ApplicationIcon>..\AssettoServer\Assets\assettoserver.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AssettoServer.RaceControl.Core\AssettoServer.RaceControl.Core.csproj" />
+  </ItemGroup>
+</Project>

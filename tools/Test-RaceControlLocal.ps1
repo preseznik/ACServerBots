@@ -1,0 +1,109 @@
+[CmdletBinding()]
+param(
+    [string] $AssettoCorsaRoot = 'C:\Program Files (x86)\Steam\steamapps\common\assettocorsa',
+    [string] $RaceControlBuild,
+    [string] $Track = 'magione',
+    [string] $TrackLayout = '',
+    [string] $Car = 'bmw_m3_e30',
+    [ValidateRange(2, 32)]
+    [int] $Slots = 2,
+    [ValidateRange(3, 60)]
+    [int] $SmokeSeconds = 8
+)
+
+$ErrorActionPreference = 'Stop'
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if ([string]::IsNullOrWhiteSpace($RaceControlBuild)) {
+    $RaceControlBuild = Join-Path $repositoryRoot 'out-race-control-win-x64'
+}
+$coreAssembly = Join-Path $RaceControlBuild 'AssettoServer.RaceControl.Core.dll'
+$serverPayload = Join-Path $RaceControlBuild 'Server'
+if (-not (Test-Path -LiteralPath $coreAssembly -PathType Leaf)) { throw "Race Control core not found: $coreAssembly" }
+if (-not (Test-Path -LiteralPath (Join-Path $serverPayload 'AssettoServer.exe') -PathType Leaf)) { throw "Bundled server not found: $serverPayload" }
+
+Add-Type -Path $coreAssembly
+$scanner = [AssettoServer.RaceControl.Core.Content.AcContentScanner]::new()
+$catalog = $scanner.Scan($AssettoCorsaRoot)
+Write-Host "Scanned $($catalog.Cars.Count) cars, $($catalog.Tracks.Count) track layouts, and $($catalog.Weather.Count) weather sets"
+
+$selectedTrack = $catalog.Tracks | Where-Object { $_.TrackId -ieq $Track -and $_.LayoutId -ieq $TrackLayout } | Select-Object -First 1
+if ($null -eq $selectedTrack) { throw "Track layout is not installed: $Track/$TrackLayout" }
+$selectedCar = $catalog.Cars | Where-Object Id -IEQ $Car | Select-Object -First 1
+if ($null -eq $selectedCar) { throw "Car is not installed: $Car" }
+if ($selectedCar.Skins.Count -eq 0) { throw "Car has no installed skins: $Car" }
+
+$preset = [AssettoServer.RaceControl.Core.Models.RaceControlPreset]::CreateDefault($AssettoCorsaRoot, $serverPayload)
+$preset.Name = 'Race Control Local Acceptance'
+$preset.ServerName = 'Race Control Local Acceptance'
+$preset.TrackId = $Track
+$preset.TrackLayoutId = $TrackLayout
+$preset.Network.BindAddress = '127.0.0.1'
+$preset.Network.TcpPort = 19600
+$preset.Network.UdpPort = 19600
+$preset.Network.HttpPort = 18081
+$preset.Sessions.PracticeMinutes = 2
+$preset.Sessions.RaceLaps = 3
+$preset.Bots.Enabled = $true
+$preset.Bots.PhysicsFidelity = [AssettoServer.RaceControl.Core.Models.PhysicsFidelity]::Efficient
+
+$grid = [Collections.Generic.List[AssettoServer.RaceControl.Core.Models.GridSlotPreset]]::new()
+for ($index = 0; $index -lt $Slots; $index++) {
+    $slot = [AssettoServer.RaceControl.Core.Models.GridSlotPreset]::new()
+    $slot.CarId = $Car
+    $slot.SkinId = $selectedCar.Skins[$index % $selectedCar.Skins.Count].Id
+    $slot.DriverName = "Smoke Bot $($index + 1)"
+    $slot.Mode = [AssettoServer.RaceControl.Core.Models.SlotMode]::Auto
+    $grid.Add($slot)
+}
+$preset.Grid = $grid
+
+$acceptanceRoot = Join-Path $repositoryRoot '.artifacts\race-control-local-acceptance'
+$paths = [AssettoServer.RaceControl.Core.Infrastructure.RaceControlPaths]::new($acceptanceRoot)
+$validator = [AssettoServer.RaceControl.Core.Validation.RaceControlValidator]::new()
+$renderer = [AssettoServer.RaceControl.Core.Configuration.ServerConfigurationRenderer]::new()
+$validation = $validator.Validate($preset, $catalog)
+if (-not $validation.IsValid) {
+    $errors = $validation.Messages | Where-Object Severity -EQ ([AssettoServer.RaceControl.Core.Validation.ValidationSeverity]::Error)
+    throw (($errors | ForEach-Object Message) -join [Environment]::NewLine)
+}
+
+$stager = [AssettoServer.RaceControl.Core.Staging.ServerInstanceStager]::new($paths, $validator, $renderer)
+Write-Host 'Staging and preparing rigid-body inputs...'
+$instance = $stager.StageAsync($preset, $catalog, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+Write-Host "Staged $($instance.SlotCount) slots ($($instance.BotSlotCount) bot-capable) at $($instance.RootPath)"
+
+$stdout = Join-Path $instance.RootPath 'acceptance-stdout.log'
+$stderr = Join-Path $instance.RootPath 'acceptance-stderr.log'
+$arguments = @('--preset', $instance.PresetName, '--shutdown-file', $instance.ShutdownFilePath)
+$serverProcess = Start-Process -FilePath $instance.ExecutablePath -WorkingDirectory $instance.RootPath `
+    -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
+try {
+    Start-Sleep -Seconds $SmokeSeconds
+    if ($serverProcess.HasExited) {
+        throw "Server exited early with code $($serverProcess.ExitCode): $((Get-Content -Raw -LiteralPath $stderr -ErrorAction SilentlyContinue))"
+    }
+    $startupLog = Get-Content -Raw -LiteralPath $stdout -ErrorAction SilentlyContinue
+    if ($startupLog -match 'Fatal exception occurred|\sFTL\]') {
+        throw "Server reported a fatal startup error: $startupLog"
+    }
+
+    [IO.File]::WriteAllText($instance.ShutdownFilePath, 'stop')
+    Wait-Process -Id $serverProcess.Id -Timeout 15 -ErrorAction SilentlyContinue
+    $serverProcess.Refresh()
+    if (-not $serverProcess.HasExited) {
+        Stop-Process -Id $serverProcess.Id
+        throw 'Server did not honor the graceful shutdown signal within 15 seconds'
+    }
+    if ($serverProcess.ExitCode -ne 0) {
+        throw "Server returned exit code $($serverProcess.ExitCode)"
+    }
+} finally {
+    $serverProcess.Refresh()
+    if (-not $serverProcess.HasExited) { Stop-Process -Id $serverProcess.Id }
+}
+
+$combinedLog = (Get-Content -Raw -LiteralPath $stdout -ErrorAction SilentlyContinue) + [Environment]::NewLine + `
+    (Get-Content -Raw -LiteralPath $stderr -ErrorAction SilentlyContinue)
+if ($combinedLog -notmatch 'Using preset race-control') { throw 'Server log did not confirm the generated preset' }
+if ($combinedLog -notmatch 'Shutdown requested by control file') { throw 'Server log did not confirm graceful control-file shutdown' }
+Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'
