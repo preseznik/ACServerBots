@@ -197,6 +197,7 @@ function Get-RaceBotVehicleProfile([string] $Model, [string] $CarRoot) {
         MaxBrakeDeceleration = 8.5
         LateralGripG = 1.0
         TyreDiameterMeters = 0.65
+        SplineHeightOffsetMeters = 0.325
         EngineIdleRpm = 900
         EngineMaxRpm = $engineMaxRpm
         GearCount = 6
@@ -499,7 +500,8 @@ try {
         '    StartSplinePointId: 0',
         '    GridSpacingMeters: 9',
         "    UpdateHz: $UpdateHz",
-        "    AllowMidRaceBotTakeover: $hasBotsText"
+        "    AllowMidRaceBotTakeover: $hasBotsText",
+        "    RestartSessionOnFirstHumanConnect: $hasBotsText"
     )
     if ($hasBots) {
         $extraCfg += '    VehicleProfiles:'
@@ -513,6 +515,7 @@ try {
             $extraCfg += "        MaxBrakeDeceleration: $(Format-Invariant $profile.MaxBrakeDeceleration)"
             $extraCfg += "        LateralGripG: $(Format-Invariant $profile.LateralGripG)"
             $extraCfg += "        TyreDiameterMeters: $(Format-Invariant $profile.TyreDiameterMeters)"
+            $extraCfg += "        SplineHeightOffsetMeters: $(Format-Invariant $profile.SplineHeightOffsetMeters)"
             $extraCfg += "        EngineIdleRpm: $($profile.EngineIdleRpm)"
             $extraCfg += "        EngineMaxRpm: $($profile.EngineMaxRpm)"
             $extraCfg += "        GearCount: $($profile.GearCount)"
@@ -557,6 +560,7 @@ try {
         humanSlots = $effectiveHumanSlots
         botSlots = $effectiveBotSlots
         midRaceBotTakeover = $hasBots
+        restartSessionOnFirstHumanConnect = $hasBots
         advertisedSlots = $slotCount
         pitBoxes = $pitBoxes
         sourceMode = $sourceMode

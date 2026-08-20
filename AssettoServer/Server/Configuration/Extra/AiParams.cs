@@ -28,6 +28,8 @@ public class RaceAiParams
     public int UpdateHz { get; init; } = 60;
     [YamlMember(Description = "Allow players joining an active race to replace unfinished AI=auto bots. Players start with a fresh result; AI=fixed slots remain unavailable.")]
     public bool AllowMidRaceBotTakeover { get; init; }
+    [YamlMember(Description = "Restart the current session after the first human joins a bot-only server and finishes initial synchronization. Re-arms when all humans disconnect.")]
+    public bool RestartSessionOnFirstHumanConnect { get; init; }
     [YamlMember(Description = "Locally-derived, per-model vehicle profiles used by race bots")]
     public List<RaceBotVehicleProfile> VehicleProfiles { get; init; } = [];
 }

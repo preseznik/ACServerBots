@@ -118,6 +118,8 @@ SKIN=skin_2
     Assert-True ($stagedExtra.Contains('PowerKw: 74.57')) 'horsepower should retain decimal precision when converted to kW'
     Assert-True ($stagedExtra.Contains('ZeroToHundredSeconds: 5.5')) 'acceleration metadata should retain decimal precision'
     Assert-True ($stagedExtra.Contains('EngineMaxRpm: 8000')) 'RPM should be recovered from permissive CM metadata'
+    Assert-True ($stagedExtra.Contains('SplineHeightOffsetMeters: 0.325')) 'vehicle profiles should raise the model origin above the spline surface'
+    Assert-True ($stagedExtra.Contains('RestartSessionOnFirstHumanConnect: true')) 'bot staging should restart after the first human synchronizes'
 
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $outputRoot 'race-bot-manifest.json') | ConvertFrom-Json
     Assert-True ($manifest.sourceMode -eq 'currentCmPreset') 'manifest should identify automatic CM discovery'
@@ -199,6 +201,7 @@ SKIN=skin_0
     Assert-True ($automaticExtra.Contains('EnableAi: true')) 'AI should be enabled by default'
     Assert-True ($automaticExtra.Contains('Behavior: Race')) 'the default launcher should use race-bot behavior'
     Assert-True ($automaticExtra.Contains('AllowMidRaceBotTakeover: true')) 'takeover should be enabled by default'
+    Assert-True ($automaticExtra.Contains('RestartSessionOnFirstHumanConnect: true')) 'first-human restart should be enabled by default'
     Assert-True ($automaticManifest.slotMode -eq 'AllBots') 'manifest should record all-bot slot mode'
     Assert-True ($automaticManifest.humanSlots -eq 0) 'all slots should begin under bot control'
     Assert-True ($automaticManifest.botSlots -eq 2) 'the two-slot minimum should contain two bots'
@@ -219,12 +222,14 @@ SKIN=skin_0
     Assert-True ($humanOnlyExtra.Contains('EnableAi: false')) 'AI should be disabled when the CM grid has no bot entries'
     Assert-True ($humanOnlyExtra.Contains('Behavior: Traffic')) 'human-only staging should avoid race-bot session behavior'
     Assert-True ($humanOnlyExtra.Contains('AllowMidRaceBotTakeover: false')) 'takeover should be disabled without bots'
+    Assert-True ($humanOnlyExtra.Contains('RestartSessionOnFirstHumanConnect: false')) 'first-human restart should be disabled without bots'
     Assert-True ($humanOnlyManifest.sourceCarSlots -eq 1) 'manifest should retain the CM source slot count'
     Assert-True ($humanOnlyManifest.autoExpandedSlots -eq 1) 'manifest should record the generated human slot'
     Assert-True ($humanOnlyManifest.slotMode -eq 'NoBots') 'manifest should record disabled-bot slot mode'
     Assert-True ($humanOnlyManifest.humanSlots -eq 2) 'human-only staging should advertise two human slots'
     Assert-True ($humanOnlyManifest.botSlots -eq 0) 'human-only staging should not require a bot'
     Assert-True ($humanOnlyManifest.midRaceBotTakeover -eq $false) 'manifest should disable takeover without bots'
+    Assert-True ($humanOnlyManifest.restartSessionOnFirstHumanConnect -eq $false) 'manifest should disable first-human restart without bots'
 
     Write-Host 'CM preset staging tests passed.'
 }

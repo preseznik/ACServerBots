@@ -17,6 +17,8 @@ public class RaceBotVehicleProfile
     public float MaxBrakeDeceleration { get; init; } = 8.5f;
     public float LateralGripG { get; init; } = 1;
     public float TyreDiameterMeters { get; init; } = 0.65f;
+    [YamlMember(Description = "Vertical offset from the AI spline surface to the car model origin")]
+    public float SplineHeightOffsetMeters { get; init; } = 0.325f;
     public int EngineIdleRpm { get; init; } = 900;
     public int EngineMaxRpm { get; init; } = 7000;
     public int GearCount { get; init; } = 6;

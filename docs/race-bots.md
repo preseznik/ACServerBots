@@ -14,12 +14,15 @@ The fork is based on upstream commit `6ce86addc1b1c70caf018a7b39f6d7bc9aa9493f`.
 - creates exactly one bot state per frozen bot slot and places it behind the human grid allocation;
 - holds bots stationary until the server start time and advances them with a bounded fixed-step accumulator;
 - selects a vehicle profile by car model and uses its mass, power, top speed, reported 0–100 time, braking, grip, tyre diameter, RPM range, and gear count;
+- raises each model origin above the spline surface using its profile height offset, avoiding cars being positioned with their body origin at road level;
 - uses `fast_lane.ai` radius and side-width fields for corner speed, following, a committed lateral overtake, AI obstacle avoidance, and collision recovery;
 - accepts a bot lap only after at least 85% forward travel around a closed spline and a forward start-line wrap;
 - publishes bot laps in the normal classification packet and includes bot identities in final results;
 - marks a disconnected racing human DNF and does not replace that driver until the next practice session.
 
 With `AllowMidRaceBotTakeover: true`, a successful handshake atomically despawns the selected bot before assigning its slot to the player. The bot is removed from the classification and the player starts with a fresh result from the normal online spawn path. Standard clients cannot inherit the bot's moving physics state, so this is a pit-lane entry rather than a seamless moving-car takeover. A player that disconnects is still a DNF and does not turn back into a bot during that race. `AI=fixed` and `AI=none` slots are never offered as ordinary mid-race takeover slots.
+
+With `RestartSessionOnFirstHumanConnect: true`, the first human joining an otherwise bot-filled server restarts the current session after initial client synchronization. In a race this produces a fresh grid, countdown, lap state, and classification. Additional humans do not restart it. The behavior re-arms after the last human disconnects, so a later first human does not inherit an unattended bot session. If multiple clients connect together, the restart waits until all currently connected clients have sent their first update.
 
 This is not Kunos physics. Bots remain constrained to the racing spline and the vehicle model does not reproduce tyre slip, suspension, detailed aero, damage, pit strategy, weather adaptation, or offline AI behavior. Mixed models are supported through locally derived profiles, but profile quality depends on installed car metadata. The first acceptance event remains stock Magione with homogeneous `bmw_m3_e30` entries. The client protocol milestone is a classified human/bot race; do not expand into a client patch or a replacement physics engine if that milestone is unstable.
 
@@ -43,6 +46,7 @@ AiParams:
     GridSpacingMeters: 9
     UpdateHz: 60
     AllowMidRaceBotTakeover: true
+    RestartSessionOnFirstHumanConnect: true
     VehicleProfiles:
       - Model: bmw_m3_e30
         Source: ui_car.json
@@ -53,12 +57,13 @@ AiParams:
         MaxBrakeDeceleration: 8.5
         LateralGripG: 1
         TyreDiameterMeters: 0.65
+        SplineHeightOffsetMeters: 0.325
         EngineIdleRpm: 900
         EngineMaxRpm: 7250
         GearCount: 6
 ```
 
-`Difficulty` and `Aggression` must be in `0..1`, spacing must be positive, the update rate must be `10..120`, the start point must belong to a closed usable spline, and the configured grid must fit on it. Vehicle profile models must be unique and their physical inputs are bounded during configuration validation. Race mode also requires visible AI and a private IPv4 listener. Dynamic hourly traffic density cannot be combined with race mode. Mid-race takeover is disabled by default; enabling it additionally requires `RACE IS_OPEN=1` and at least one `AI=auto` slot.
+`Difficulty` and `Aggression` must be in `0..1`, spacing must be positive, the update rate must be `10..120`, the start point must belong to a closed usable spline, and the configured grid must fit on it. Vehicle profile models must be unique and their physical inputs, including a `0..1.5` metre spline height offset, are bounded during configuration validation. Race mode also requires visible AI and a private IPv4 listener. Dynamic hourly traffic density cannot be combined with race mode. Mid-race takeover and first-human restart are disabled by default in generic configuration; the CM LAN stager enables both when bots are active. Takeover additionally requires `RACE IS_OPEN=1` and at least one `AI=auto` slot.
 
 ## Build and stage
 
@@ -80,7 +85,7 @@ tools\Start-CmLanRaceBots.cmd
 
 The launcher reads Content Manager's server preset directly from `<Assetto Corsa>\server\presets`, waits until `server_cfg.ini` and `entry_list.ini` have stopped changing, snapshots them, stages the standalone server, and launches it. No Pack export or zip is required. It guarantees at least two replaceable slots in the isolated snapshot: if CM contains only one entry, that car entry is cloned without changing CM. Every staged slot defaults to `AI=auto`, so a bot occupies it until a human claims it before the grid freezes or through the enabled mid-race takeover path. Pass `-MinimumSlots` to create more than two slots.
 
-CM's track, layout, sessions, lap count, weather, assists, fuel, damage, tyre wear, ports, passwords, and entry skins are preserved. If the CM roster exceeds the selected layout's pit capacity, staging removes the trailing `CAR_n` entries from the isolated snapshot until it fits and records them in `race-bot-manifest.json`; the CM preset itself is unchanged. The isolated server overlay disables public lobby registration and UPnP, selects a private LAN listener, opens the race for bot takeover, and applies the race-bot configuration. It never edits the CM preset or installed game files.
+CM's track, layout, sessions, lap count, weather, assists, fuel, damage, tyre wear, ports, passwords, and entry skins are preserved. If the CM roster exceeds the selected layout's pit capacity, staging removes the trailing `CAR_n` entries from the isolated snapshot until it fits and records them in `race-bot-manifest.json`; the CM preset itself is unchanged. The isolated server overlay disables public lobby registration and UPnP, selects a private LAN listener, opens the race for bot takeover, enables a fresh-session restart for the first human, and applies the race-bot configuration. It never edits the CM preset or installed game files.
 
 Automatic selection is deliberately conservative. A single valid CM preset is selected automatically; if several exist, the double-click launcher displays their directory IDs and asks which one to use. For scripts or shortcuts, select one explicitly:
 
@@ -123,6 +128,6 @@ The staged event forces lobby registration and UPnP off, binds HTTP/TCP/UDP to t
 
 ## Acceptance
 
-Automated acceptance covers configuration, closed-spline/grid math, countdown holding, forward lap wraps, wrong-way/double-crossing rejection, roster claims/freeze, mid-race takeover eligibility and fresh results, DNF policy, classification ordering, packet rows, cornering, following, overtaking, collision recovery, mixed-model staging, profile-driven acceleration, bounded top speed, braking, gears, and RPM. A self-contained publish and a headless startup prove server packaging/configuration only.
+Automated acceptance covers configuration, closed-spline/grid math, countdown holding, forward lap wraps, wrong-way/double-crossing rejection, roster claims/freeze, mid-race takeover eligibility and fresh results, first-human restart gating/re-arming, DNF policy, classification ordering, packet rows, cornering, following, overtaking, collision recovery, mixed-model staging, model height offsets, profile-driven acceleration, bounded top speed, braking, gears, and RPM. A self-contained publish and a headless startup prove server packaging/configuration only.
 
 Release acceptance still requires two real LAN clients using Content Manager. Both clients must see all eight cars start together, stable bot motion and classification updates, coherent finishes/DNFs, final results, and the return to practice. Physical contact quality and on-track behavior cannot be certified by unit or headless tests.

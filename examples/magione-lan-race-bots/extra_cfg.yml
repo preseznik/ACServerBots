@@ -11,6 +11,7 @@ AiParams:
   HideAiCars: false
   NamePrefix: Bot
   MaxSpeedKph: 160
+  SplineHeightOffsetMeters: 0.325
   Race:
     Difficulty: 0.75
     Aggression: 0.50
@@ -18,3 +19,4 @@ AiParams:
     GridSpacingMeters: 9
     UpdateHz: 60
     AllowMidRaceBotTakeover: true
+    RestartSessionOnFirstHumanConnect: true

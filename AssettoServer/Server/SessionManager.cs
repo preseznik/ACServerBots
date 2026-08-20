@@ -25,6 +25,9 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     private readonly EntryCarManager _entryCarManager;
     private readonly Lazy<WeatherManager> _weatherManager;
     private readonly IHostApplicationLifetime _applicationLifetime;
+    private readonly object _firstHumanRestartLock = new();
+    private readonly FirstHumanSessionRestartGate _firstHumanRestartGate = new();
+    private bool _firstHumanRestartPending;
 
     public int CurrentSessionIndex { get; private set; } = -1;
     public bool IsLastRaceInverted { get; private set; } = false;
@@ -76,6 +79,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         _applicationLifetime = applicationLifetime;
 
         _entryCarManager.ClientConnected += OnClientConnected;
+        _entryCarManager.ClientDisconnected += OnClientDisconnected;
     }
 
     protected override async Task ExecuteAsync(CancellationToken token)
@@ -417,6 +421,9 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
     private void OnClientConnected(ACTcpClient client, EventArgs eventArgs)
     {
+        if (IsFirstHumanSessionRestartEnabled)
+            client.FirstUpdateSent += OnClientFirstUpdateSent;
+
         var currentResult = CurrentSession.Results;
         
         if (currentResult != null
@@ -442,7 +449,77 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             {
                 currentResult[client.SessionId] = replacement;
             }
-        }    
+        }
+
+        if (!IsFirstHumanSessionRestartEnabled)
+            return;
+
+        bool remainingSlotsAreBots = _entryCarManager.EntryCars.Any(car => car.Client == null && car.AiControlled)
+                                            && _entryCarManager.EntryCars.All(car => car.Client != null || car.AiControlled);
+        lock (_firstHumanRestartLock)
+        {
+            if (_firstHumanRestartGate.TrySchedule(true, _entryCarManager.ConnectedCars.Count, remainingSlotsAreBots))
+            {
+                _firstHumanRestartPending = true;
+                Log.Information("First human joined a bot-only server; current session will restart after client synchronization");
+            }
+        }
+    }
+
+    private bool IsFirstHumanSessionRestartEnabled =>
+        _configuration.Extra.AiParams is
+            { Behavior: AiBehaviorMode.Race, Race.RestartSessionOnFirstHumanConnect: true };
+
+    private void OnClientFirstUpdateSent(ACTcpClient client, EventArgs eventArgs)
+    {
+        client.FirstUpdateSent -= OnClientFirstUpdateSent;
+        TryRestartPendingFirstHumanSession();
+    }
+
+    private void OnClientDisconnected(ACTcpClient client, EventArgs eventArgs)
+    {
+        client.FirstUpdateSent -= OnClientFirstUpdateSent;
+
+        lock (_firstHumanRestartLock)
+        {
+            int connectedHumanCount = _entryCarManager.ConnectedCars.Count;
+            _firstHumanRestartGate.UpdateConnectedHumanCount(connectedHumanCount);
+            if (connectedHumanCount == 0)
+                _firstHumanRestartPending = false;
+        }
+
+        TryRestartPendingFirstHumanSession();
+    }
+
+    private void TryRestartPendingFirstHumanSession()
+    {
+        lock (_firstHumanRestartLock)
+        {
+            if (!_firstHumanRestartPending
+                || _entryCarManager.ConnectedCars.Count == 0
+                || _entryCarManager.ConnectedCars.Values.Any(car => car.Client is not { HasSentFirstUpdate: true }))
+            {
+                return;
+            }
+
+            _firstHumanRestartPending = false;
+        }
+
+        if (RestartSession())
+        {
+            Log.Information("Restarted current session for the first human joining the bot-only server");
+            return;
+        }
+
+        lock (_firstHumanRestartLock)
+        {
+            if (_entryCarManager.ConnectedCars.Count > 0)
+                _firstHumanRestartPending = true;
+        }
+
+        // A second client can secure a slot between the readiness check and RestartSession().
+        // Re-check immediately in case that client already finished its first update.
+        TryRestartPendingFirstHumanSession();
     }
 
     public void SetSession(int sessionId)

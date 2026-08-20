@@ -104,6 +104,37 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void FirstHumanRestartWaitsForBotOnlyTransitionAndRearmsWhenEmpty()
+    {
+        var gate = new FirstHumanSessionRestartGate();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gate.TrySchedule(false, 1, true), Is.False, "disabled configurations must not restart");
+            Assert.That(gate.TrySchedule(true, 1, false), Is.False, "human-only rosters must not restart");
+            Assert.That(gate.TrySchedule(true, 2, true), Is.False, "additional humans must not restart");
+            Assert.That(gate.TrySchedule(true, 1, true), Is.True, "the first human in a bot-only roster should restart");
+            Assert.That(gate.TrySchedule(true, 1, true), Is.False, "the same occupied period must restart only once");
+        });
+
+        gate.UpdateConnectedHumanCount(0);
+
+        Assert.That(gate.TrySchedule(true, 1, true), Is.True, "an empty server should re-arm the next first-human restart");
+    }
+
+    [Test]
+    public void RaceVehicleProfileRaisesModelOriginAboveSplineSurface()
+    {
+        var profile = new RaceBotVehicleProfile();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.TyreDiameterMeters, Is.EqualTo(0.65f));
+            Assert.That(profile.SplineHeightOffsetMeters, Is.EqualTo(profile.TyreDiameterMeters / 2));
+        });
+    }
+
+    [Test]
     public void MidRaceTakeoverReplacesBotWithFreshHumanResult()
     {
         var results = new Dictionary<byte, EntryCarResult>

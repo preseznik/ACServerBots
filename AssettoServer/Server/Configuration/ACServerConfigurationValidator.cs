@@ -61,6 +61,7 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                     profile.RuleFor(p => p.MaxBrakeDeceleration).InclusiveBetween(2, 20);
                     profile.RuleFor(p => p.LateralGripG).InclusiveBetween(0.4f, 3);
                     profile.RuleFor(p => p.TyreDiameterMeters).InclusiveBetween(0.3f, 1.5f);
+                    profile.RuleFor(p => p.SplineHeightOffsetMeters).InclusiveBetween(0, 1.5f);
                     profile.RuleFor(p => p.EngineIdleRpm).InclusiveBetween(300, 3000);
                     profile.RuleFor(p => p.EngineMaxRpm).InclusiveBetween(2000, 25000)
                         .GreaterThan(p => p.EngineIdleRpm);

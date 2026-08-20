@@ -95,6 +95,7 @@ public partial class EntryCar
             AiDeceleration = RaceVehicleProfile.MaxBrakeDeceleration;
             AiCorneringSpeedFactor *= RaceVehicleProfile.LateralGripG;
             TyreDiameterMeters = RaceVehicleProfile.TyreDiameterMeters;
+            AiSplineHeightOffsetMeters = RaceVehicleProfile.SplineHeightOffsetMeters;
             Logger.Debug("Using {Source} race vehicle profile: {MassKg} kg, {PowerKw} kW, {TopSpeedKph} km/h",
                 RaceVehicleProfile.Source, RaceVehicleProfile.MassKg, RaceVehicleProfile.PowerKw,
                 RaceVehicleProfile.TopSpeedKph);
