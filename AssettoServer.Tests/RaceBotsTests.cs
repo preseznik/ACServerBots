@@ -70,6 +70,7 @@ public class RaceBotsTests
             Assert.That(layout.SignedDistanceAhead(98, 0, 2, 0, points), Is.EqualTo(40));
             Assert.That(layout.SignedDistanceAhead(2, 0, 98, 0, points), Is.EqualTo(-40));
             Assert.That(layout.SignedDistanceAhead(0, 0.5f, 1, 0.5f, points), Is.EqualTo(10));
+            Assert.That(layout.DistanceFromStart(2, 0.5f, points), Is.EqualTo(25));
         });
     }
 
@@ -532,6 +533,8 @@ public class RaceBotsTests
                 "near-stationary motion must not advance a lane change");
             Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 10, 1), Is.EqualTo(0.6f).Within(1e-6f));
             Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 30, 1), Is.EqualTo(0.9f).Within(1e-6f));
+            Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 10, 1, 2),
+                Is.EqualTo(1.2f).Within(1e-6f), "committed passes may request a quicker path change");
             Assert.That(RaceBotMath.AdvanceLaneOffset(1.9f, 2, 30, 1), Is.EqualTo(2));
         });
     }
@@ -706,50 +709,102 @@ public class RaceBotsTests
         {
             Assert.That(slowCorner, Is.LessThan(fastCorner));
             Assert.That(RaceBotMath.FollowingTargetSpeed(30, 10, 3, 0.5f), Is.Zero);
-            Assert.That(RaceBotMath.ChooseOvertakeOffset(4, 1, 0.8f, 0), Is.LessThan(0));
+            Assert.That(RaceBotMath.ChooseOvertakeOffset(5, 1, 0.8f, 0), Is.LessThan(0));
             Assert.That(RaceBotMath.ChooseOvertakeOffset(1, 1, 0.8f, 0), Is.Zero);
-            Assert.That(RaceBotMath.ChooseOvertakeOffset(4, 1, 0.1f, 0), Is.LessThan(-1.4f));
-            Assert.That(RaceBotMath.BaseLaneOffset(4, 4, 0), Is.EqualTo(-0.65f));
-            Assert.That(RaceBotMath.BaseLaneOffset(4, 4, 1), Is.EqualTo(0.65f));
+            Assert.That(RaceBotMath.ChooseOvertakeOffset(5, 1, 0.1f, 0), Is.LessThan(-1.4f));
+            Assert.That(RaceBotMath.BaseLaneOffset(4, 4, 0), Is.EqualTo(-1.2f));
+            Assert.That(RaceBotMath.BaseLaneOffset(4, 4, 1), Is.EqualTo(1.2f));
             Assert.That(RaceBotMath.BaseLaneOffset(1, 1, 1), Is.Zero);
+            Assert.That(RaceBotMath.RacingLineOffset(4, 4, 0, 90),
+                Is.Not.EqualTo(RaceBotMath.RacingLineOffset(4, 4, 0, 0)));
+            Assert.That(Math.Abs(RaceBotMath.RacingLineOffset(4, 4, 3, 101)
+                                 - RaceBotMath.RacingLineOffset(4, 4, 3, 100)),
+                Is.LessThan(0.02f), "line variation must be continuous rather than a lane jump");
+            Assert.That(RaceBotMath.RacingLineOffset(1, 1, 1, 500), Is.Zero);
             Assert.That(RaceBotMath.GridPaceFactor(0.15f, 0), Is.EqualTo(0.85f));
-            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 4), Is.EqualTo(1));
+            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 1), Is.EqualTo(1));
+            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 4), Is.EqualTo(0.8875f).Within(1e-6f));
             Assert.That(RaceBotMath.GridPaceFactor(0.02f, 2), Is.EqualTo(0.99f));
-            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 4, 4, false, false, 0),
-                Is.EqualTo(-2.2f));
-            Assert.That(RaceBotMath.ChoosePassTarget(0, 0.65f, 4, 4, false, false, 0),
-                Is.EqualTo(-1.55f).Within(1e-6f));
-            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 4, 4, true, false, 0),
-                Is.EqualTo(2.2f));
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 5, 5, false, false, 0),
+                Is.EqualTo(-3.75f));
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0.65f, 5, 5, false, false, 0),
+                Is.EqualTo(-3.15f).Within(1e-6f));
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 5, 5, true, false, 0),
+                Is.EqualTo(3.75f));
+            Assert.That(RaceBotMath.CommittedPassTarget(1.2f, true, 6, 6),
+                Is.EqualTo(-2.6f).Within(1e-6f));
+            Assert.That(RaceBotMath.CommittedPassTarget(1.2f, false, 6, 6),
+                Is.EqualTo(4.75f), "a committed lane must remain inside the car-safe track bound");
+            Assert.That(RaceBotMath.IsPracticalPassTarget(0, 6.5f, 10), Is.True);
+            Assert.That(RaceBotMath.IsPracticalPassTarget(0, 6.6f, 10), Is.False,
+                "a moving pass should wait for a usable corridor instead of crossing the track");
+            Assert.That(RaceBotMath.IsPracticalPassTarget(0, 5, 0), Is.True,
+                "a stopped car must remain passable even when only a wide escape route exists");
+            Assert.That(RaceBotMath.HasPassTargetClearance(-3.2f, 0.2f, 10), Is.False);
+            Assert.That(RaceBotMath.HasPassTargetClearance(4.0f, 0.2f, 10), Is.True);
+            Assert.That(RaceBotMath.HasPassTargetClearance(-3.2f, 0.2f, 0), Is.True,
+                "stopped-car escape must accept the best available safe corridor");
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 4, 4, false, false, 0), Is.Null,
+                "a pass must be rejected when neither side has steering tolerance");
             Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 1, 1, false, false, 0), Is.Null);
             Assert.That(RaceBotMath.PassingTargetSpeed(20, 30, 20, 0.5f), Is.EqualTo(25f));
             Assert.That(RaceBotMath.PassingTargetSpeed(20, 21, 20, 1), Is.EqualTo(23.52f).Within(1e-5f));
-            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 20, 0), Is.EqualTo(18).Within(1e-5f));
-            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 20, 1), Is.EqualTo(19.2f).Within(1e-5f));
-            Assert.That(RaceBotMath.YieldingTargetSpeed(12, 20, 0), Is.EqualTo(12));
-            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 2, 0), Is.EqualTo(8));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 20, 12, 0),
+                Is.EqualTo(9.84f).Within(1e-5f));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 20, 12, 1),
+                Is.EqualTo(10.56f).Within(1e-5f));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(9, 20, 20, 0), Is.EqualTo(9));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 2, 2, 0), Is.EqualTo(6));
             Assert.That(RaceBotMath.PassingCornerSpeedLimit(20, 30, 0), Is.EqualTo(23f));
+            Assert.That(RaceBotMath.PassingCornerSpeedLimit(4, 30, 0), Is.EqualTo(10));
             Assert.That(RaceBotMath.PassingCornerSpeedLimit(float.PositiveInfinity, 30, 0), Is.EqualTo(30f));
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 12, 0.1f), Is.True);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 20, 0.1f), Is.True);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 25, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 25, 20, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 2, 0.1f), Is.False);
-            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 7.9f, 0.1f), Is.False);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 3.4f, 0.1f), Is.False);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 3.6f, 0.1f), Is.True,
+                "a stopped bot must remain passable after the follower has braked close");
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 5, 7.9f, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 8.1f, 0.1f), Is.True);
+            Assert.That(RaceBotMath.ShouldAttemptPass(0, 0, 4, 0.1f), Is.True,
+                "a stopped queue must not deadlock the pass planner");
+            Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 4), Is.EqualTo(1.5f));
+            Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 23), Is.EqualTo(5));
+            Assert.That(RaceBotMath.CommittedPassApproachSpeed(8, 7), Is.EqualTo(8));
+            Assert.That(RaceBotMath.HasPassAccelerationClearance(3.99f), Is.False);
+            Assert.That(RaceBotMath.HasPassAccelerationClearance(4.0f), Is.True);
+            Assert.That(RaceBotMath.ShouldResetPassAccelerationClearance(3.79f), Is.True);
+            Assert.That(RaceBotMath.ShouldResetPassAccelerationClearance(3.8f), Is.False);
+            Assert.That(RaceBotMath.HasSustainedPassAccelerationClearance(4, 1_000, 2_999), Is.False);
+            Assert.That(RaceBotMath.HasSustainedPassAccelerationClearance(4, 1_000, 3_000), Is.True);
             Assert.That(RaceBotMath.FollowingDecisionDistance(20, 15, 0.1f),
                 Is.LessThan(RaceBotMath.FollowingDecisionDistance(20, 0, 0.1f)));
             Assert.That(RaceBotMath.PassAttemptDistance(20, 0, 0.1f),
                 Is.GreaterThan(RaceBotMath.PassAttemptDistance(20, 19, 0.1f)));
             Assert.That(RaceBotMath.CanAttemptPass(SessionType.Race, 4_999, 1_000), Is.False);
             Assert.That(RaceBotMath.CanAttemptPass(SessionType.Race, 5_000, 1_000), Is.True);
+            Assert.That(RaceBotMath.CanAttemptPassPair(2, 2, 89_999, 90_000), Is.False);
+            Assert.That(RaceBotMath.CanAttemptPassPair(2, 2, 90_000, 90_000), Is.True);
+            Assert.That(RaceBotMath.CanAttemptPassPair(2, 1, 1, 60_000), Is.True,
+                "pair cooldown must not block a different opponent");
             Assert.That(RaceBotMath.OvertakeCommitMilliseconds(0), Is.GreaterThan(
                 RaceBotMath.OvertakeCommitMilliseconds(1)));
             Assert.That(RaceBotMath.OvertakeCommitMilliseconds(0.5f, 30), Is.GreaterThan(
                 RaceBotMath.OvertakeCommitMilliseconds(0.5f, 5)));
-            Assert.That(RaceBotMath.ShouldExtendPass(5, 15, 10, 0.5f, false), Is.True);
-            Assert.That(RaceBotMath.ShouldExtendPass(5, 10, 15, 0.5f, false), Is.False);
-            Assert.That(RaceBotMath.ShouldExtendPass(5, 15, 10, 0.5f, true), Is.False);
+            Assert.That(RaceBotMath.ShouldExtendPass(5, 15, 10, 0.5f, 0), Is.True);
+            Assert.That(RaceBotMath.ShouldExtendPass(5, 10, 15, 0.5f, 0), Is.True,
+                "a safe pass must survive a temporary corner-speed disadvantage");
+            Assert.That(RaceBotMath.ShouldExtendPass(50, 15, 10, 0.5f, 0), Is.True);
+            Assert.That(RaceBotMath.ShouldExtendPass(65, 15, 10, 0.5f, 0), Is.False);
+            Assert.That(RaceBotMath.ShouldExtendPass(5, 15, 10, 0.5f,
+                RaceBotMath.MaximumPassExtensions), Is.False);
+            Assert.That(RaceBotMath.HasCompletedPass(false, 18, -17, 3), Is.False,
+                "contact or ordering alone must not count as a pass");
+            Assert.That(RaceBotMath.HasCompletedPass(true, 18, -17, 3), Is.True);
+            Assert.That(RaceBotMath.HasCompletedPass(true, 18, -17, 7), Is.False);
+            Assert.That(RaceBotMath.HasCompletedPass(true, 25, -17, 3), Is.False);
             Assert.That(RaceBotMath.CollisionRecoveryMilliseconds(1000, 3000, 0.5f, 7), Is.InRange(1000, 3000));
             Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 1), Is.EqualTo(20).Within(1e-6f));
             Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 0), Is.EqualTo(13).Within(1e-6f));

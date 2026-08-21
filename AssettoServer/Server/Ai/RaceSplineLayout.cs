@@ -51,19 +51,22 @@ public sealed class RaceSplineLayout
     public float SignedDistanceAhead(int fromPointId, float fromSegmentProgress,
         int toPointId, float toSegmentProgress, ReadOnlySpan<SplinePoint> points)
     {
-        if (!_pointDistances.TryGetValue(fromPointId, out var fromDistance)
-            || !_pointDistances.TryGetValue(toPointId, out var toDistance))
-            throw new ArgumentOutOfRangeException(nameof(fromPointId),
-                "Spline point is not part of the configured race route");
-
-        fromDistance += Math.Clamp(fromSegmentProgress, 0, 1) * points[fromPointId].Length;
-        toDistance += Math.Clamp(toSegmentProgress, 0, 1) * points[toPointId].Length;
+        float fromDistance = DistanceFromStart(fromPointId, fromSegmentProgress, points);
+        float toDistance = DistanceFromStart(toPointId, toSegmentProgress, points);
         float distance = toDistance - fromDistance;
         if (distance > LengthMeters * 0.5f)
             distance -= LengthMeters;
         else if (distance < -LengthMeters * 0.5f)
             distance += LengthMeters;
         return distance;
+    }
+
+    public float DistanceFromStart(int pointId, float segmentProgress, ReadOnlySpan<SplinePoint> points)
+    {
+        if (!_pointDistances.TryGetValue(pointId, out var distance))
+            throw new ArgumentOutOfRangeException(nameof(pointId),
+                "Spline point is not part of the configured race route");
+        return distance + Math.Clamp(segmentProgress, 0, 1) * points[pointId].Length;
     }
 
     public static int GetPointBehind(ReadOnlySpan<SplinePoint> points, int startPointId, float distanceMeters)
