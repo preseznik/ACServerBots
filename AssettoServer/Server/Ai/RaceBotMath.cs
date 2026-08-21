@@ -8,6 +8,10 @@ public static class RaceBotMath
 {
     public const int RaceLaunchGraceMilliseconds = 500;
     public const int RaceLaneTransitionDelayMilliseconds = 2_000;
+    public const float RaceGridForwardLaunchDistanceMeters = 25f;
+    public const float RaceGridMergeRearClearanceMeters = 8f;
+    public const float RaceGridMergeFrontClearanceMeters = 14f;
+    public const float RaceGridMergeTransitionMultiplier = 0.5f;
     public const int RacePassStartDelayMilliseconds = 4_000;
     public const float EmergencyObstacleDistanceMeters = 3f;
     public const float MinimumMovingPassCommitClearanceMeters = 8f;
@@ -57,6 +61,19 @@ public static class RaceBotMath
                                        || serverTimeMilliseconds >= startTimeMilliseconds
                                            + RaceLaneTransitionDelayMilliseconds;
 
+    public static bool CanBeginGridLineMerge(SessionType sessionType, long serverTimeMilliseconds,
+        long startTimeMilliseconds, float forwardDistanceMeters, bool corridorOccupied) =>
+        sessionType != SessionType.Race
+        || (!corridorOccupied
+            && CanTransitionLane(sessionType, serverTimeMilliseconds, startTimeMilliseconds)
+            && forwardDistanceMeters >= RaceGridForwardLaunchDistanceMeters);
+
+    public static bool OccupiesGridLineMergeCorridor(float longitudinalMeters,
+        float participantOffsetMeters, float targetOffsetMeters) =>
+        longitudinalMeters >= -RaceGridMergeRearClearanceMeters
+        && longitudinalMeters <= RaceGridMergeFrontClearanceMeters
+        && Math.Abs(participantOffsetMeters - targetOffsetMeters) < MinimumPassingSeparationMeters;
+
     public static float PaceFactor(float difficulty) => 0.65f + Math.Clamp(difficulty, 0, 1) * 0.35f;
 
     public static float GridPaceFactor(float configuredVariationPercent, int seed)
@@ -80,7 +97,7 @@ public static class RaceBotMath
             return currentOffsetMeters;
 
         float transitionRate = Math.Clamp(forwardSpeedMetersPerSecond * 0.06f, 0.20f, 0.90f)
-                               * Math.Clamp(transitionMultiplier, 1, 4);
+                               * Math.Clamp(transitionMultiplier, 0.25f, 4);
         float maximumStep = transitionRate * deltaSeconds;
         return Math.Abs(targetOffsetMeters - currentOffsetMeters) <= maximumStep
             ? targetOffsetMeters

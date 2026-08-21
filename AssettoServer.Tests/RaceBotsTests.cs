@@ -535,7 +535,33 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 30, 1), Is.EqualTo(0.9f).Within(1e-6f));
             Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 10, 1, 2),
                 Is.EqualTo(1.2f).Within(1e-6f), "committed passes may request a quicker path change");
+            Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 10, 1,
+                    RaceBotMath.RaceGridMergeTransitionMultiplier),
+                Is.EqualTo(0.3f).Within(1e-6f), "the launch merge must be gentler than a normal line change");
             Assert.That(RaceBotMath.AdvanceLaneOffset(1.9f, 2, 30, 1), Is.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public void RaceGridLaunchRequiresForwardDistanceAndAnOpenMergeCorridor()
+    {
+        const long start = 10_000;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotMath.CanBeginGridLineMerge(SessionType.Race, start + 10_000, start,
+                RaceBotMath.RaceGridForwardLaunchDistanceMeters - 0.1f, corridorOccupied: false), Is.False,
+                "elapsed time alone must not pull a bot off its grid line");
+            Assert.That(RaceBotMath.CanBeginGridLineMerge(SessionType.Race, start + 10_000, start,
+                RaceBotMath.RaceGridForwardLaunchDistanceMeters, corridorOccupied: true), Is.False,
+                "a bot must not merge into an occupied line");
+            Assert.That(RaceBotMath.CanBeginGridLineMerge(SessionType.Race,
+                start + RaceBotMath.RaceLaneTransitionDelayMilliseconds, start,
+                RaceBotMath.RaceGridForwardLaunchDistanceMeters, corridorOccupied: false), Is.True);
+            Assert.That(RaceBotMath.OccupiesGridLineMergeCorridor(5, 1, 1.5f), Is.True);
+            Assert.That(RaceBotMath.OccupiesGridLineMergeCorridor(
+                RaceBotMath.RaceGridMergeFrontClearanceMeters + 0.1f, 1, 1.5f), Is.False);
+            Assert.That(RaceBotMath.OccupiesGridLineMergeCorridor(5, -2, 2), Is.False);
         });
     }
 
