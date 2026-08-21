@@ -41,8 +41,12 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private const float AttitudeGain = 4f;
     private const float DownforceCoefficient = 0.0035f;
     private const float MaximumDownforceAcceleration = 6f;
-    private const float MaximumSubmergedTrackError = 0.15f;
-    private const float MaximumAirborneTrackError = 0.35f;
+    private const float MaximumSubmergedTrackError = 0.90f;
+    private const float MaximumAirborneTrackError = 1.00f;
+    private const float TrackSupportStartError = 0.05f;
+    private const float TrackSupportGain = 4f;
+    private const float MaximumTrackSupportLiftSpeed = 2f;
+    private const float MaximumTrackSupportAcceleration = 12f;
     private const float TrackRayHeight = 50f;
     private const float TrackRayLength = 100f;
 
@@ -257,7 +261,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
                 EnforceSuspensionTravel(record);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
-                KeepBotNearTrack(record);
+                KeepBotNearTrack(record, deltaSeconds);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
                 RecoverTransientLaunch(record);
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
@@ -278,11 +282,14 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             var chassisOrigin = GetChassisOrigin(record, body);
             var supportedOrigin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
             var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
-            var trackTarget = GetTrackContactTarget(record.Control, supportedOrigin);
-            var renderOrigin = GetTrackRenderOrigin(supportedOrigin, trackTarget);
+            var trackTarget = GetTrackSupportTarget(record.Control, supportedOrigin);
+            var renderOrigin = GetTrackRenderOrigin(supportedOrigin, trackTarget,
+                GetNetworkRideHeightClearance(record.Collider.ProtocolReferenceHeight));
             var protocolPosition = ToProtocolPosition(renderOrigin, body.Pose.Orientation,
                 record.Collider.ProtocolReferenceHeight);
             var forward = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
+            supportedVelocity.Y = GetTargetVerticalSpeed(record.Control.TargetForward,
+                body.Velocity.Linear, body.Pose.Orientation);
             state = new RaceBotPhysicsState(supportedOrigin, protocolPosition, body.Pose.Orientation,
                 supportedVelocity,
                 Vector3.Dot(body.Velocity.Linear, forward), record.LastLongitudinalAcceleration,
@@ -351,7 +358,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
         var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
-        var physicalTarget = GetTrackContactTarget(record.Control, origin);
+        var physicalTarget = GetTrackSupportTarget(record.Control, origin);
         record.MaximumUpwardSpeed = Math.Max(record.MaximumUpwardSpeed, supportedVelocity.Y);
         record.MaximumSplineHeightError = Math.Max(record.MaximumSplineHeightError,
             Math.Abs(origin.Y - physicalTarget.Y));
@@ -392,7 +399,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, orientation);
         var targetForward = Vector3.Normalize(control.TargetForward);
-        var physicalTarget = GetTrackContactTarget(control, origin);
+        var physicalTarget = GetTrackSupportTarget(control, origin);
         float uprightDot = GetUprightDot(orientation);
         if (NeedsRecovery(uprightDot, origin, physicalTarget))
             record.RecoveryNeededSeconds += deltaSeconds;
@@ -444,7 +451,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
         var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
-        var physicalTarget = GetTrackContactTarget(control, origin);
+        var physicalTarget = GetTrackSupportTarget(control, origin);
         if (NeedsImmediateRecovery(GetUprightDot(body.Pose.Orientation), origin, physicalTarget,
                 supportedVelocity, control.TargetForward))
             RecoverBot(record, control);
@@ -468,19 +475,36 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         body.Awake = true;
     }
 
-    private void KeepBotNearTrack(BodyRecord record)
+    private void KeepBotNearTrack(BodyRecord record, float deltaSeconds)
     {
         var body = _simulation.Bodies[record.Handle];
         var chassisOrigin = GetChassisOrigin(record, body);
         var supportedOrigin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
-        var trackTarget = GetTrackContactTarget(record.Control, supportedOrigin);
-        float correction = GetTrackSupportCorrection(trackTarget.Y - supportedOrigin.Y);
-        if (correction == 0)
-            return;
+        var trackTarget = GetTrackSupportTarget(record.Control, supportedOrigin);
+        float trackHeightError = trackTarget.Y - supportedOrigin.Y;
+        float correction = GetTrackSupportCorrection(trackHeightError);
 
-        body.Pose.Position.Y += correction;
         float targetVerticalSpeed = GetTargetVerticalSpeed(record.Control.TargetForward,
             body.Velocity.Linear, body.Pose.Orientation);
+        if (correction == 0)
+        {
+            if (trackHeightError <= TrackSupportStartError)
+                return;
+            targetVerticalSpeed = GetTrackSupportVerticalSpeed(trackHeightError, targetVerticalSpeed);
+            float maximumDelta = MaximumTrackSupportAcceleration * Math.Max(0, deltaSeconds);
+            body.Velocity.Linear.Y = MoveTowards(body.Velocity.Linear.Y, targetVerticalSpeed, maximumDelta);
+            body.Awake = true;
+            foreach (var wheel in record.Wheels)
+            {
+                var wheelBody = _simulation.Bodies[wheel.Handle];
+                wheelBody.Velocity.Linear.Y = MoveTowards(wheelBody.Velocity.Linear.Y,
+                    targetVerticalSpeed, maximumDelta);
+                wheelBody.Awake = true;
+            }
+            return;
+        }
+
+        body.Pose.Position.Y += correction;
         body.Velocity.Linear.Y = targetVerticalSpeed;
         body.Awake = true;
         foreach (var wheel in record.Wheels)
@@ -498,7 +522,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var body = _simulation.Bodies[record.Handle];
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
-        var recoveryPose = CreateRecoveryPose(GetTrackContactTarget(control, origin),
+        var recoveryPose = CreateRecoveryPose(GetTrackRecoveryTarget(control, origin),
             control.TargetForward);
         body.Pose = ToCenterOfMassPose(recoveryPose, record.Collider.Center);
         body.Velocity.Linear = Vector3.Normalize(control.TargetForward) * Math.Min(Math.Max(0, control.TargetSpeed), 5f);
@@ -557,7 +581,16 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         return chassisVelocity;
     }
 
-    private Vector3 GetTrackContactTarget(RaceBotPhysicsControl control, Vector3 fallbackOrigin)
+    private Vector3 GetTrackSupportTarget(RaceBotPhysicsControl control, Vector3 physicalOrigin)
+    {
+        var target = physicalOrigin with { Y = control.TargetPosition.Y };
+        target.Y = TryGetTrackSurfaceHeight(target, out float surfaceHeight)
+            ? surfaceHeight
+            : physicalOrigin.Y;
+        return target;
+    }
+
+    private Vector3 GetTrackRecoveryTarget(RaceBotPhysicsControl control, Vector3 fallbackOrigin)
     {
         var target = control.TargetPosition;
         target.Y = TryGetTrackSurfaceHeight(control.TargetPosition, out float surfaceHeight)
@@ -599,8 +632,16 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         return 0;
     }
 
-    internal static Vector3 GetTrackRenderOrigin(Vector3 physicalOrigin, Vector3 trackTarget) =>
-        physicalOrigin with { Y = trackTarget.Y };
+    internal static float GetTrackSupportVerticalSpeed(float trackHeightError, float slopeVerticalSpeed) =>
+        slopeVerticalSpeed + Math.Clamp(trackHeightError * TrackSupportGain,
+            0, MaximumTrackSupportLiftSpeed);
+
+    internal static Vector3 GetTrackRenderOrigin(Vector3 physicalOrigin, Vector3 trackTarget,
+        float rideHeightClearance = 0) =>
+        physicalOrigin with { Y = trackTarget.Y + Math.Max(0, rideHeightClearance) };
+
+    internal static float GetNetworkRideHeightClearance(float protocolReferenceHeight) =>
+        Math.Clamp(protocolReferenceHeight * 0.125f, 0.03f, 0.05f);
 
     internal static float GetTargetVerticalSpeed(Vector3 targetForward, Vector3 velocity,
         Quaternion orientation)
@@ -694,6 +735,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         float length = delta.Length();
         return length <= maximumDelta || length <= 1e-6f ? target : current + delta * (maximumDelta / length);
     }
+
+    private static float MoveTowards(float current, float target, float maximumDelta) =>
+        current + Math.Clamp(target - current, -maximumDelta, maximumDelta);
 
     private ColliderShape CreateVehicleCollider(Vector3[] chassisVertices, RaceWheelCollider[] wheels)
     {

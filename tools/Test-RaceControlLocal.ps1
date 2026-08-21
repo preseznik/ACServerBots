@@ -12,6 +12,8 @@ param(
     [int] $SmokeSeconds = 8,
     [ValidateSet('Efficient', 'Balanced', 'High')]
     [string] $PhysicsFidelity = 'Efficient',
+    [ValidateRange(0, 1)]
+    [double] $BotAggression = 0.5,
     [switch] $VerifyMovingBots
 )
 
@@ -57,6 +59,7 @@ $preset.Sessions.PracticeMinutes = 2
 $preset.Sessions.RaceLaps = 3
 $preset.Sessions.PracticeEnabled = -not $VerifyMovingBots
 $preset.Bots.Enabled = $true
+$preset.Bots.Aggression = $BotAggression
 $preset.Bots.PhysicsFidelity = [Enum]::Parse(
     [AssettoServer.RaceControl.Core.Models.PhysicsFidelity], $PhysicsFidelity)
 

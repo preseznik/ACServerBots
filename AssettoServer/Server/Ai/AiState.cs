@@ -545,6 +545,27 @@ public class AiState : IDisposable
         return (null, float.MaxValue);
     }
 
+    private bool TryBeginRaceOvertake(float obstacleDistance)
+    {
+        if (_configuration.Extra.AiParams.Behavior != AiBehaviorMode.Race
+            || obstacleDistance <= RaceBotMath.EmergencyObstacleDistanceMeters)
+            return false;
+
+        ref readonly var point = ref _spline.Points[CurrentSplinePointId];
+        float offset = RaceBotMath.ChooseOvertakeOffset(point.SideLeft, point.SideRight,
+            _configuration.Extra.AiParams.Race.Aggression, EntryCar.SessionId);
+        if (offset == 0)
+            return false;
+
+        _targetLateralOffsetMeters = offset;
+        _overtakeUntil = _sessionManager.ServerTimeMilliseconds
+                         + RaceBotMath.OvertakeCommitMilliseconds(
+                             _configuration.Extra.AiParams.Race.Aggression);
+        Log.Debug("Race bot {SessionId} committed to pass at {Distance:F1} m with {Offset:F1} m lateral offset",
+            EntryCar.SessionId, obstacleDistance, offset);
+        return true;
+    }
+
     private bool IsObstacle(EntryCar playerCar)
     {
         float aiRectWidth = 4; // Lane width
@@ -620,13 +641,62 @@ public class AiState : IDisposable
         var splineLookahead = SplineLookahead();
         var playerObstacle = FindClosestPlayerObstacle();
 
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            && _overtakeUntil != 0
+            && _sessionManager.ServerTimeMilliseconds >= _overtakeUntil)
+        {
+            _targetLateralOffsetMeters = 0;
+            _overtakeUntil = 0;
+        }
+
         bool committedOvertake = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
                                  && _sessionManager.ServerTimeMilliseconds < _overtakeUntil
                                  && _targetLateralOffsetMeters != 0;
 
         ClosestAiObstacleDistance = splineLookahead.ClosestAiState != null ? splineLookahead.ClosestAiStateDistance : -1;
 
-        if (playerObstacle.distance < _minObstacleDistance || (!committedOvertake && splineLookahead.ClosestAiStateDistance < _minObstacleDistance))
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+        {
+            float playerSpeed = playerObstacle.entryCar?.Status.Velocity.Length() ?? float.MaxValue;
+            float aiSpeed = splineLookahead.ClosestAiState == null
+                ? float.MaxValue
+                : Math.Min(splineLookahead.ClosestAiState.CurrentSpeed,
+                    splineLookahead.ClosestAiState.TargetSpeed);
+            bool playerIsClosest = playerObstacle.entryCar != null
+                                   && playerObstacle.distance < splineLookahead.ClosestAiStateDistance;
+            float obstacleDistance = playerIsClosest
+                ? playerObstacle.distance
+                : splineLookahead.ClosestAiStateDistance;
+            float obstacleSpeed = playerIsClosest ? playerSpeed : aiSpeed;
+            float aggression = _configuration.Extra.AiParams.Race.Aggression;
+
+            if (!committedOvertake
+                && RaceBotMath.ShouldAttemptPass(CurrentSpeed, obstacleSpeed, obstacleDistance, aggression))
+                committedOvertake = TryBeginRaceOvertake(obstacleDistance);
+
+            if (obstacleDistance <= RaceBotMath.EmergencyObstacleDistanceMeters)
+            {
+                targetSpeed = 0;
+                hasObstacle = true;
+            }
+            else if (committedOvertake)
+            {
+                // Match the lead car while moving sideways, then accelerate once there is passing clearance.
+                if (Math.Abs(_lateralOffsetMeters) < Math.Abs(_targetLateralOffsetMeters) * 0.7f)
+                {
+                    targetSpeed = Math.Min(targetSpeed, Math.Max(WalkingSpeed, obstacleSpeed));
+                    hasObstacle = true;
+                }
+            }
+            else if (obstacleDistance < RaceBotMath.FollowingGapMeters(CurrentSpeed, aggression) * 1.5f)
+            {
+                targetSpeed = RaceBotMath.FollowingTargetSpeed(CurrentSpeed, obstacleSpeed,
+                    obstacleDistance, aggression);
+                hasObstacle = true;
+            }
+        }
+        else if (playerObstacle.distance < _minObstacleDistance
+                 || splineLookahead.ClosestAiStateDistance < _minObstacleDistance)
         {
             targetSpeed = 0;
             hasObstacle = true;
@@ -647,45 +717,17 @@ public class AiState : IDisposable
                 hasObstacle = true;
             }
         }
-        else if (splineLookahead.ClosestAiState != null && !committedOvertake)
+        else if (splineLookahead.ClosestAiState != null)
         {
             float closestTargetSpeed = Math.Min(splineLookahead.ClosestAiState.CurrentSpeed, splineLookahead.ClosestAiState.TargetSpeed);
-            float followingGap = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
-                ? RaceBotMath.FollowingGapMeters(CurrentSpeed, _configuration.Extra.AiParams.Race.Aggression)
-                : PhysicsUtils.CalculateBrakingDistance(CurrentSpeed - closestTargetSpeed, EntryCar.AiDeceleration) * 2 + 20;
+            float followingGap = PhysicsUtils.CalculateBrakingDistance(CurrentSpeed - closestTargetSpeed,
+                EntryCar.AiDeceleration) * 2 + 20;
             if ((closestTargetSpeed < CurrentSpeed || splineLookahead.ClosestAiState.CurrentSpeed == 0)
                 && splineLookahead.ClosestAiStateDistance < followingGap)
             {
-                if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
-                {
-                    ref readonly var point = ref _spline.Points[CurrentSplinePointId];
-                    _targetLateralOffsetMeters = RaceBotMath.ChooseOvertakeOffset(
-                        point.SideLeft, point.SideRight, _configuration.Extra.AiParams.Race.Aggression, EntryCar.SessionId);
-                    if (_targetLateralOffsetMeters != 0)
-                    {
-                        _overtakeUntil = _sessionManager.ServerTimeMilliseconds + 2500 + (long)(_configuration.Extra.AiParams.Race.Aggression * 2500);
-                    }
-                    else
-                    {
-                        targetSpeed = RaceBotMath.FollowingTargetSpeed(CurrentSpeed, closestTargetSpeed,
-                            splineLookahead.ClosestAiStateDistance, _configuration.Extra.AiParams.Race.Aggression);
-                        hasObstacle = true;
-                    }
-                }
-                else
-                {
-                    targetSpeed = Math.Max(WalkingSpeed, closestTargetSpeed);
-                    hasObstacle = true;
-                }
+                targetSpeed = Math.Max(WalkingSpeed, closestTargetSpeed);
+                hasObstacle = true;
             }
-        }
-
-        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
-            && _overtakeUntil != 0
-            && _sessionManager.ServerTimeMilliseconds >= _overtakeUntil)
-        {
-            _targetLateralOffsetMeters = 0;
-            _overtakeUntil = 0;
         }
 
         targetSpeed = Math.Min(splineLookahead.MaxSpeed, targetSpeed);

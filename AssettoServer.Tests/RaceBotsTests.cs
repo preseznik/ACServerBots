@@ -402,16 +402,30 @@ public class RaceBotsTests
     }
 
     [Test]
-    public void TrackSupportOnlyCorrectsVisibleSubmersionOrFlight()
+    public void TrackSupportOnlyCorrectsEmergencySubmersionOrFlight()
     {
         Assert.Multiple(() =>
         {
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(0.14f), Is.Zero);
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(0.30f),
-                Is.EqualTo(0.30f).Within(1e-6f));
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(-0.34f), Is.Zero);
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(0.89f), Is.Zero);
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(1.10f),
+                Is.EqualTo(1.10f).Within(1e-6f));
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(-0.99f), Is.Zero);
             Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(-1.20f),
                 Is.EqualTo(-1.20f).Within(1e-6f));
+        });
+    }
+
+    [Test]
+    public void TrackSupportLiftsSubmergedBotsWithoutAPositionSnap()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportVerticalSpeed(0.10f, 0.5f),
+                Is.EqualTo(0.9f).Within(1e-6f));
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportVerticalSpeed(1f, 0.5f),
+                Is.EqualTo(2.5f).Within(1e-6f));
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportVerticalSpeed(-0.25f, 0.5f),
+                Is.EqualTo(0.5f).Within(1e-6f));
         });
     }
 
@@ -424,6 +438,19 @@ public class RaceBotsTests
         var renderOrigin = RaceBotPhysicsWorld.GetTrackRenderOrigin(physicalOrigin, trackTarget);
 
         Assert.That(renderOrigin, Is.EqualTo(new Vector3(12, 4.5f, 8)));
+    }
+
+    [Test]
+    public void NetworkRideHeightAddsSmallModelScaledClearance()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.20f), Is.EqualTo(0.03f));
+            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.32f), Is.EqualTo(0.04f));
+            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.60f), Is.EqualTo(0.05f));
+            Assert.That(RaceBotPhysicsWorld.GetTrackRenderOrigin(Vector3.Zero,
+                new Vector3(0, 4, 0), 0.04f).Y, Is.EqualTo(4.04f));
+        });
     }
 
     [Test]
@@ -589,6 +616,12 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.FollowingTargetSpeed(30, 10, 3, 0.5f), Is.Zero);
             Assert.That(RaceBotMath.ChooseOvertakeOffset(4, 1, 0.8f, 0), Is.LessThan(0));
             Assert.That(RaceBotMath.ChooseOvertakeOffset(1, 1, 0.8f, 0), Is.Zero);
+            Assert.That(RaceBotMath.ChooseOvertakeOffset(4, 1, 0.1f, 0), Is.LessThan(-1.4f));
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 20, 0.1f), Is.True);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 25, 20, 0.1f), Is.False);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 2, 0.1f), Is.False);
+            Assert.That(RaceBotMath.OvertakeCommitMilliseconds(0), Is.GreaterThan(
+                RaceBotMath.OvertakeCommitMilliseconds(1)));
             Assert.That(RaceBotMath.CollisionRecoveryMilliseconds(1000, 3000, 0.5f, 7), Is.InRange(1000, 3000));
             Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 1), Is.EqualTo(20).Within(1e-6f));
             Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 0), Is.EqualTo(13).Within(1e-6f));

@@ -7,6 +7,7 @@ namespace AssettoServer.Server.Ai;
 public static class RaceBotMath
 {
     public const int RaceLaunchGraceMilliseconds = 2_000;
+    public const float EmergencyObstacleDistanceMeters = 3f;
 
     public static bool ShouldHoldForCountdown(SessionType sessionType, long serverTimeMilliseconds, long startTimeMilliseconds)
         => sessionType == SessionType.Race && serverTimeMilliseconds < startTimeMilliseconds;
@@ -38,20 +39,33 @@ public static class RaceBotMath
         return Math.Min(currentSpeed, Math.Max(0, leadSpeed));
     }
 
+    public static float OvertakeTriggerDistance(float speedMetersPerSecond, float aggression) =>
+        FollowingGapMeters(speedMetersPerSecond, aggression) * 1.25f;
+
+    public static bool ShouldAttemptPass(float currentSpeed, float leadSpeed, float distanceMeters,
+        float aggression) => distanceMeters > EmergencyObstacleDistanceMeters
+                             && distanceMeters <= OvertakeTriggerDistance(currentSpeed, aggression)
+                             && leadSpeed <= currentSpeed + 1f;
+
+    public static int OvertakeCommitMilliseconds(float aggression) =>
+        6_000 - (int)(Math.Clamp(aggression, 0, 1) * 1_500);
+
     public static float ChooseOvertakeOffset(float sideLeftMeters, float sideRightMeters, float aggression, int seed)
     {
-        if (aggression < 0.15f)
-            return 0;
-
         const float carHalfWidthWithMargin = 1.25f;
+        const float minimumPassingOffset = 1.65f;
         var leftRoom = sideLeftMeters - carHalfWidthWithMargin;
         var rightRoom = sideRightMeters - carHalfWidthWithMargin;
-        if (leftRoom <= 0 && rightRoom <= 0)
+        if (leftRoom < minimumPassingOffset && rightRoom < minimumPassingOffset)
             return 0;
 
-        bool useLeft = leftRoom > rightRoom || (Math.Abs(leftRoom - rightRoom) < 0.1f && (seed & 1) == 0);
+        bool useLeft = rightRoom < minimumPassingOffset
+                       || (leftRoom >= minimumPassingOffset
+                           && (leftRoom > rightRoom
+                               || (Math.Abs(leftRoom - rightRoom) < 0.1f && (seed & 1) == 0)));
         float room = useLeft ? leftRoom : rightRoom;
-        float offset = Math.Min(1.8f, room) * (0.6f + 0.4f * Math.Clamp(aggression, 0, 1));
+        float scaledOffset = Math.Min(2.2f, room) * (0.9f + 0.1f * Math.Clamp(aggression, 0, 1));
+        float offset = Math.Min(room, Math.Max(minimumPassingOffset, scaledOffset));
         return useLeft ? -offset : offset;
     }
 
