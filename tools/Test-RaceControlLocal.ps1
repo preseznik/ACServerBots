@@ -14,12 +14,16 @@ param(
     [string] $PhysicsFidelity = 'Efficient',
     [ValidateRange(0, 1)]
     [double] $BotAggression = 0.5,
-    [switch] $VerifyMovingBots
+    [switch] $VerifyMovingBots,
+    [switch] $VerifyPassing
 )
 
 $ErrorActionPreference = 'Stop'
 if ($VerifyMovingBots -and $SmokeSeconds -lt 30) {
     throw '-VerifyMovingBots requires -SmokeSeconds 30 or greater so the race countdown can finish.'
+}
+if ($VerifyPassing -and -not $VerifyMovingBots) {
+    throw '-VerifyPassing requires -VerifyMovingBots.'
 }
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($RaceControlBuild)) {
@@ -160,6 +164,33 @@ if ($VerifyMovingBots) {
     $finalOverturned = [int]$stabilitySamples[-1].Groups['overturned'].Value
     if ($finalOverturned -ne 0 -or $finalUpright -lt 0.5) {
         throw "Bots did not finish the smoke interval upright: dot=$finalUpright, overturned=$finalOverturned."
+    }
+
+    if ($VerifyPassing) {
+        $passingSamples = @([regex]::Matches($combinedLog,
+            'lane offset (?<lane>\d+(?:\.\d+)?) m, pass separation (?<separation>\d+(?:\.\d+)?) m, passes (?<commits>\d+)/(?<separated>\d+)/(?<completed>\d+) committed/separated/completed'))
+        if ($passingSamples.Count -lt 2) { throw 'Server log did not contain enough passing diagnostics.' }
+        $lastPassing = $passingSamples[-1]
+        $maximumLaneOffset = [double]::Parse($lastPassing.Groups['lane'].Value,
+            [Globalization.CultureInfo]::InvariantCulture)
+        $maximumPassSeparation = [double]::Parse($lastPassing.Groups['separation'].Value,
+            [Globalization.CultureInfo]::InvariantCulture)
+        $passCommits = [int]$lastPassing.Groups['commits'].Value
+        $separatedPasses = [int]$lastPassing.Groups['separated'].Value
+        $completedPasses = [int]$lastPassing.Groups['completed'].Value
+        if ($maximumLaneOffset -lt 0.25) { throw 'Bots converged on the spline instead of using varied lines.' }
+        $passingFailed = $passCommits -lt 1 -or $separatedPasses -lt 1 -or `
+            $maximumPassSeparation -lt 2.0 -or $completedPasses -lt 1
+        if ($passingFailed) {
+            throw "Bots did not execute a measured pass: lane=$maximumLaneOffset m, separation=$maximumPassSeparation m, passes=$passCommits/$separatedPasses/$completedPasses."
+        }
+        $contactSamples = @([regex]::Matches($combinedLog, 'vehicle contacts (?<contacts>\d+)'))
+        if ($contactSamples.Count -lt 2) { throw 'Server log did not contain enough vehicle-contact diagnostics.' }
+        $vehicleContacts = [int]$contactSamples[-1].Groups['contacts'].Value
+        $maximumContactFrames = [Math]::Max(10, $completedPasses * 40)
+        if ($vehicleContacts -gt $maximumContactFrames) {
+            throw "Passing produced prolonged vehicle contact: $vehicleContacts contact frames for $completedPasses completed passes (maximum $maximumContactFrames)."
+        }
     }
 }
 Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'

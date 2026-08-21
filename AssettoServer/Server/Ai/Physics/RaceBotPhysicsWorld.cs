@@ -26,7 +26,8 @@ public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPos
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
     float MaximumUpwardSpeed, float MaximumSplineHeightError, float MaximumSuspensionCompression,
     float MinimumUprightDot, int OverturnedBots, int TotalRecoveries, int TotalTrackCorrections,
-    int LaunchedBots, long LaunchStepSpread, long StaticPairTests, long StaticManifolds);
+    int LaunchedBots, long LaunchStepSpread, long StaticPairTests, long StaticManifolds,
+    long VehicleManifolds);
 
 public sealed class RaceBotPhysicsWorld : IDisposable
 {
@@ -348,7 +349,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries, totalTrackCorrections,
                 launchedBots, launchStepSpread,
                 Interlocked.Read(ref _contactMetrics.StaticPairTests),
-                Interlocked.Read(ref _contactMetrics.StaticManifolds));
+                Interlocked.Read(ref _contactMetrics.StaticManifolds),
+                Interlocked.Read(ref _contactMetrics.VehicleManifolds));
         }
     }
 
@@ -937,6 +939,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     {
         public long StaticPairTests;
         public long StaticManifolds;
+        public long VehicleManifolds;
     }
 
     private sealed class PhysicsCollisionGroups
@@ -987,6 +990,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         {
             if (pair.A.Mobility == CollidableMobility.Static || pair.B.Mobility == CollidableMobility.Static)
                 Interlocked.Increment(ref _metrics.StaticManifolds);
+            else
+                Interlocked.Increment(ref _metrics.VehicleManifolds);
             // The convex hull is the chassis, not a tyre. Let the race controller supply longitudinal
             // and lateral tyre forces while retaining friction for car-to-car and car-to-human impacts.
             float contactFriction = pair.A.Mobility == CollidableMobility.Static

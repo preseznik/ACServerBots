@@ -63,6 +63,9 @@ public class RaceBotsTests
         {
             Assert.That(layout.LengthMeters, Is.EqualTo(1000));
             Assert.That(RaceSplineLayout.GetPointBehind(points, 0, 25), Is.EqualTo(97));
+            Assert.That(layout.SignedDistanceAhead(98, 0, 2, 0, points), Is.EqualTo(40));
+            Assert.That(layout.SignedDistanceAhead(2, 0, 98, 0, points), Is.EqualTo(-40));
+            Assert.That(layout.SignedDistanceAhead(0, 0.5f, 1, 0.5f, points), Is.EqualTo(10));
         });
     }
 
@@ -617,11 +620,45 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.ChooseOvertakeOffset(4, 1, 0.8f, 0), Is.LessThan(0));
             Assert.That(RaceBotMath.ChooseOvertakeOffset(1, 1, 0.8f, 0), Is.Zero);
             Assert.That(RaceBotMath.ChooseOvertakeOffset(4, 1, 0.1f, 0), Is.LessThan(-1.4f));
+            Assert.That(RaceBotMath.BaseLaneOffset(4, 4, 0), Is.EqualTo(-0.65f));
+            Assert.That(RaceBotMath.BaseLaneOffset(4, 4, 1), Is.EqualTo(0.65f));
+            Assert.That(RaceBotMath.BaseLaneOffset(1, 1, 1), Is.Zero);
+            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 0), Is.EqualTo(0.85f));
+            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 4), Is.EqualTo(1));
+            Assert.That(RaceBotMath.GridPaceFactor(0.02f, 2), Is.EqualTo(0.99f));
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 4, 4, false, false, 0),
+                Is.EqualTo(-2.2f));
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0.65f, 4, 4, false, false, 0),
+                Is.EqualTo(-1.55f).Within(1e-6f));
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 4, 4, true, false, 0),
+                Is.EqualTo(2.2f));
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 1, 1, false, false, 0), Is.Null);
+            Assert.That(RaceBotMath.PassingTargetSpeed(20, 30, 20, 0.5f), Is.EqualTo(25f));
+            Assert.That(RaceBotMath.PassingTargetSpeed(20, 21, 20, 1), Is.EqualTo(23.52f).Within(1e-5f));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 20, 0), Is.EqualTo(18).Within(1e-5f));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 20, 1), Is.EqualTo(19.2f).Within(1e-5f));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(12, 20, 0), Is.EqualTo(12));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 2, 0), Is.EqualTo(8));
+            Assert.That(RaceBotMath.PassingCornerSpeedLimit(20, 30, 0), Is.EqualTo(23f));
+            Assert.That(RaceBotMath.PassingCornerSpeedLimit(float.PositiveInfinity, 30, 0), Is.EqualTo(30f));
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 12, 0.1f), Is.True);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 20, 0.1f), Is.True);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 25, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 25, 20, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 2, 0.1f), Is.False);
+            Assert.That(RaceBotMath.FollowingDecisionDistance(20, 15, 0.1f),
+                Is.LessThan(RaceBotMath.FollowingDecisionDistance(20, 0, 0.1f)));
+            Assert.That(RaceBotMath.PassAttemptDistance(20, 0, 0.1f),
+                Is.GreaterThan(RaceBotMath.PassAttemptDistance(20, 19, 0.1f)));
+            Assert.That(RaceBotMath.CanAttemptPass(SessionType.Race, 4_999, 1_000), Is.False);
+            Assert.That(RaceBotMath.CanAttemptPass(SessionType.Race, 5_000, 1_000), Is.True);
             Assert.That(RaceBotMath.OvertakeCommitMilliseconds(0), Is.GreaterThan(
                 RaceBotMath.OvertakeCommitMilliseconds(1)));
+            Assert.That(RaceBotMath.OvertakeCommitMilliseconds(0.5f, 30), Is.GreaterThan(
+                RaceBotMath.OvertakeCommitMilliseconds(0.5f, 5)));
+            Assert.That(RaceBotMath.ShouldExtendPass(5, 15, 10, 0.5f, false), Is.True);
+            Assert.That(RaceBotMath.ShouldExtendPass(5, 10, 15, 0.5f, false), Is.False);
+            Assert.That(RaceBotMath.ShouldExtendPass(5, 15, 10, 0.5f, true), Is.False);
             Assert.That(RaceBotMath.CollisionRecoveryMilliseconds(1000, 3000, 0.5f, 7), Is.InRange(1000, 3000));
             Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 1), Is.EqualTo(20).Within(1e-6f));
             Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 0), Is.EqualTo(13).Within(1e-6f));

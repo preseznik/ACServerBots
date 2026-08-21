@@ -19,6 +19,10 @@ public enum AiMode
     Fixed
 }
 
+public readonly record struct RaceAiDiagnostics(float MaximumAbsoluteLateralOffsetMeters,
+    float MaximumPassSeparationMeters, int PassCommitCount, int SeparatedPassCount,
+    int CompletedPassCount);
+
 public partial class EntryCar
 {
     public bool AiControlled { get; set; }
@@ -396,6 +400,29 @@ public partial class EntryCar
                     AiReset();
                 }
             }
+        }
+    }
+
+    public RaceAiDiagnostics GetRaceAiDiagnostics()
+    {
+        lock (_aiControlLock)
+        {
+            float maximumOffset = 0;
+            float maximumSeparation = 0;
+            int commits = 0;
+            int separated = 0;
+            int completed = 0;
+            foreach (var state in AiStatesSpan)
+            {
+                if (state is not { Initialized: true })
+                    continue;
+                maximumOffset = Math.Max(maximumOffset, state.MaximumAbsoluteLateralOffsetMeters);
+                maximumSeparation = Math.Max(maximumSeparation, state.MaximumPassSeparationMeters);
+                commits += state.PassCommitCount;
+                separated += state.SeparatedPassCount;
+                completed += state.CompletedPassCount;
+            }
+            return new RaceAiDiagnostics(maximumOffset, maximumSeparation, commits, separated, completed);
         }
     }
 

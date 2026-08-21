@@ -9,11 +9,14 @@ public sealed class RaceSplineLayout
 {
     public IReadOnlyList<int> Route { get; }
     public float LengthMeters { get; }
+    private readonly IReadOnlyDictionary<int, float> _pointDistances;
 
-    private RaceSplineLayout(List<int> route, float lengthMeters)
+    private RaceSplineLayout(List<int> route, float lengthMeters,
+        Dictionary<int, float> pointDistances)
     {
         Route = route;
         LengthMeters = lengthMeters;
+        _pointDistances = pointDistances;
     }
 
     public static RaceSplineLayout Create(ReadOnlySpan<SplinePoint> points, int startPointId)
@@ -22,6 +25,7 @@ public sealed class RaceSplineLayout
             throw new ConfigurationException($"Race StartSplinePointId {startPointId} is outside the AI spline");
 
         var route = new List<int>(points.Length);
+        var pointDistances = new Dictionary<int, float>(points.Length);
         var visited = new HashSet<int>();
         var current = startPointId;
         float length = 0;
@@ -29,6 +33,7 @@ public sealed class RaceSplineLayout
         while (visited.Add(current))
         {
             route.Add(current);
+            pointDistances[current] = length;
             ref readonly var point = ref points[current];
             if (point.Length <= 0 || (uint)point.NextId >= (uint)points.Length)
                 throw new ConfigurationException("Race behavior requires a closed usable fast_lane.ai spline");
@@ -40,7 +45,25 @@ public sealed class RaceSplineLayout
         if (current != startPointId || route.Count < 20 || length < 100)
             throw new ConfigurationException("Race behavior requires a closed usable fast_lane.ai spline");
 
-        return new RaceSplineLayout(route, length);
+        return new RaceSplineLayout(route, length, pointDistances);
+    }
+
+    public float SignedDistanceAhead(int fromPointId, float fromSegmentProgress,
+        int toPointId, float toSegmentProgress, ReadOnlySpan<SplinePoint> points)
+    {
+        if (!_pointDistances.TryGetValue(fromPointId, out var fromDistance)
+            || !_pointDistances.TryGetValue(toPointId, out var toDistance))
+            throw new ArgumentOutOfRangeException(nameof(fromPointId),
+                "Spline point is not part of the configured race route");
+
+        fromDistance += Math.Clamp(fromSegmentProgress, 0, 1) * points[fromPointId].Length;
+        toDistance += Math.Clamp(toSegmentProgress, 0, 1) * points[toPointId].Length;
+        float distance = toDistance - fromDistance;
+        if (distance > LengthMeters * 0.5f)
+            distance -= LengthMeters;
+        else if (distance < -LengthMeters * 0.5f)
+            distance += LengthMeters;
+        return distance;
     }
 
     public static int GetPointBehind(ReadOnlySpan<SplinePoint> points, int startPointId, float distanceMeters)

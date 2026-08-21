@@ -6,8 +6,18 @@ namespace AssettoServer.Server.Ai;
 
 public static class RaceBotMath
 {
-    public const int RaceLaunchGraceMilliseconds = 2_000;
+    public const int RaceLaunchGraceMilliseconds = 500;
+    public const int RacePassStartDelayMilliseconds = 4_000;
     public const float EmergencyObstacleDistanceMeters = 3f;
+    public const float ObstacleCorridorHalfWidthMeters = 2f;
+    public const float MinimumPassingSeparationMeters = 2.1f;
+    public const float PassCompletionClearanceMeters = 7f;
+    public const int PassLaneReleaseMilliseconds = 4_000;
+    public const int RecentlyPassedCooldownMilliseconds = 15_000;
+    public const int PassExtensionMilliseconds = 10_000;
+    public const float PassLaneRearReservationMeters = 15f;
+    private const float CarHalfWidthWithMarginMeters = 1.25f;
+    private const float PreferredPassingSeparationMeters = 2.2f;
 
     public static bool ShouldHoldForCountdown(SessionType sessionType, long serverTimeMilliseconds, long startTimeMilliseconds)
         => sessionType == SessionType.Race && serverTimeMilliseconds < startTimeMilliseconds;
@@ -17,7 +27,19 @@ public static class RaceBotMath
                                        && serverTimeMilliseconds >= startTimeMilliseconds
                                        && serverTimeMilliseconds < startTimeMilliseconds + RaceLaunchGraceMilliseconds;
 
+    public static bool CanAttemptPass(SessionType sessionType, long serverTimeMilliseconds,
+        long startTimeMilliseconds) => sessionType != SessionType.Race
+                                       || serverTimeMilliseconds >= startTimeMilliseconds
+                                           + RacePassStartDelayMilliseconds;
+
     public static float PaceFactor(float difficulty) => 0.65f + Math.Clamp(difficulty, 0, 1) * 0.35f;
+
+    public static float GridPaceFactor(float configuredVariationPercent, int seed)
+    {
+        float variation = Math.Clamp(configuredVariationPercent, 0, 0.15f);
+        float gridStep = Math.Abs(seed % 5) / 4f;
+        return 1 - variation + variation * gridStep;
+    }
 
     public static float CorneringSpeedSquared(float radiusMeters, float corneringFactor, float difficulty)
         => PhysicsUtils.CalculateMaxCorneringSpeedSquared(radiusMeters, corneringFactor)
@@ -40,33 +62,101 @@ public static class RaceBotMath
     }
 
     public static float OvertakeTriggerDistance(float speedMetersPerSecond, float aggression) =>
-        FollowingGapMeters(speedMetersPerSecond, aggression) * 1.25f;
+        Math.Clamp(8 + Math.Max(0, speedMetersPerSecond) * 0.75f, 12, 25)
+        * (0.90f + Math.Clamp(aggression, 0, 1) * 0.10f);
+
+    public static float FollowingDecisionDistance(float currentSpeed, float leadSpeed,
+        float aggression) => leadSpeed < 8 || leadSpeed < currentSpeed * 0.6f
+        ? FollowingGapMeters(currentSpeed, aggression) * 1.5f
+        : OvertakeTriggerDistance(currentSpeed, aggression) * 1.25f;
+
+    public static float PassAttemptDistance(float currentSpeed, float leadSpeed,
+        float aggression) => leadSpeed < 8 || leadSpeed < currentSpeed * 0.6f
+        ? Math.Min(35, FollowingGapMeters(currentSpeed, aggression))
+        : OvertakeTriggerDistance(currentSpeed, aggression);
 
     public static bool ShouldAttemptPass(float currentSpeed, float leadSpeed, float distanceMeters,
         float aggression) => distanceMeters > EmergencyObstacleDistanceMeters
-                             && distanceMeters <= OvertakeTriggerDistance(currentSpeed, aggression)
+                             && distanceMeters <= PassAttemptDistance(currentSpeed, leadSpeed, aggression)
                              && leadSpeed <= currentSpeed + 1f;
 
-    public static int OvertakeCommitMilliseconds(float aggression) =>
-        6_000 - (int)(Math.Clamp(aggression, 0, 1) * 1_500);
+    public static int OvertakeCommitMilliseconds(float aggression, float clearanceMeters = 0) =>
+        20_000 - (int)(Math.Clamp(aggression, 0, 1) * 5_000)
+        + (int)(Math.Clamp(clearanceMeters, 0, 40) * 200);
+
+    public static bool ShouldExtendPass(float longitudinalGapMeters, float passerSpeed,
+        float targetSpeed, float aggression, bool alreadyExtended) => !alreadyExtended
+        && longitudinalGapMeters > -PassCompletionClearanceMeters
+        && longitudinalGapMeters <= OvertakeTriggerDistance(passerSpeed, aggression) * 1.5f
+        && passerSpeed > targetSpeed + 0.5f;
+
+    public static float BaseLaneOffset(float sideLeftMeters, float sideRightMeters, int seed)
+    {
+        float requested = Math.Abs(seed % 5) switch
+        {
+            0 => -0.65f,
+            1 => 0.65f,
+            2 => -0.30f,
+            3 => 0.30f,
+            _ => 0
+        };
+        return ClampLaneOffset(requested, sideLeftMeters, sideRightMeters);
+    }
+
+    public static float ClampLaneOffset(float offsetMeters, float sideLeftMeters, float sideRightMeters) =>
+        Math.Clamp(offsetMeters,
+            -Math.Max(0, sideLeftMeters - CarHalfWidthWithMarginMeters),
+            Math.Max(0, sideRightMeters - CarHalfWidthWithMarginMeters));
+
+    public static float? ChoosePassTarget(float currentOffsetMeters, float obstacleOffsetMeters,
+        float sideLeftMeters, float sideRightMeters, bool leftBlocked, bool rightBlocked, int seed)
+    {
+        float leftLimit = Math.Max(0, sideLeftMeters - CarHalfWidthWithMarginMeters);
+        float rightLimit = Math.Max(0, sideRightMeters - CarHalfWidthWithMarginMeters);
+        float leftTarget = Math.Max(-leftLimit, obstacleOffsetMeters - PreferredPassingSeparationMeters);
+        float rightTarget = Math.Min(rightLimit, obstacleOffsetMeters + PreferredPassingSeparationMeters);
+        bool leftAvailable = !leftBlocked
+                             && obstacleOffsetMeters - leftTarget >= MinimumPassingSeparationMeters;
+        bool rightAvailable = !rightBlocked
+                              && rightTarget - obstacleOffsetMeters >= MinimumPassingSeparationMeters;
+        if (!leftAvailable && !rightAvailable)
+            return null;
+        if (!rightAvailable)
+            return leftTarget;
+        if (!leftAvailable)
+            return rightTarget;
+
+        float leftMove = Math.Abs(currentOffsetMeters - leftTarget);
+        float rightMove = Math.Abs(currentOffsetMeters - rightTarget);
+        if (Math.Abs(leftMove - rightMove) > 0.1f)
+            return leftMove < rightMove ? leftTarget : rightTarget;
+        return (seed & 1) == 0 ? leftTarget : rightTarget;
+    }
+
+    public static float PassingTargetSpeed(float initialMaxSpeed, float absoluteMaxSpeed,
+        float leadSpeed, float aggression) => Math.Min(Math.Max(0, absoluteMaxSpeed) * 1.12f,
+        Math.Max(Math.Max(0, initialMaxSpeed), Math.Max(0, leadSpeed) + 4f
+                                                   + Math.Clamp(aggression, 0, 1) * 2f));
+
+    public static float YieldingTargetSpeed(float normalTargetSpeed, float speedAtYieldStart,
+        float aggression) => Math.Min(Math.Max(0, normalTargetSpeed),
+        Math.Max(8, Math.Max(0, speedAtYieldStart)
+                    * (0.90f + Math.Clamp(aggression, 0, 1) * 0.06f)));
+
+    public static float PassingCornerSpeedLimit(float normalLimit, float absoluteMaxSpeed,
+        float aggression)
+    {
+        if (float.IsPositiveInfinity(normalLimit))
+            return Math.Max(0, absoluteMaxSpeed);
+        return Math.Min(Math.Max(0, absoluteMaxSpeed) * 1.12f, Math.Max(0, normalLimit)
+            * (1.15f + Math.Clamp(aggression, 0, 1) * 0.05f));
+    }
 
     public static float ChooseOvertakeOffset(float sideLeftMeters, float sideRightMeters, float aggression, int seed)
     {
-        const float carHalfWidthWithMargin = 1.25f;
-        const float minimumPassingOffset = 1.65f;
-        var leftRoom = sideLeftMeters - carHalfWidthWithMargin;
-        var rightRoom = sideRightMeters - carHalfWidthWithMargin;
-        if (leftRoom < minimumPassingOffset && rightRoom < minimumPassingOffset)
-            return 0;
-
-        bool useLeft = rightRoom < minimumPassingOffset
-                       || (leftRoom >= minimumPassingOffset
-                           && (leftRoom > rightRoom
-                               || (Math.Abs(leftRoom - rightRoom) < 0.1f && (seed & 1) == 0)));
-        float room = useLeft ? leftRoom : rightRoom;
-        float scaledOffset = Math.Min(2.2f, room) * (0.9f + 0.1f * Math.Clamp(aggression, 0, 1));
-        float offset = Math.Min(room, Math.Max(minimumPassingOffset, scaledOffset));
-        return useLeft ? -offset : offset;
+        var target = ChoosePassTarget(0, 0, sideLeftMeters, sideRightMeters,
+            leftBlocked: false, rightBlocked: false, seed);
+        return target ?? 0;
     }
 
     public static int CollisionRecoveryMilliseconds(int minimum, int maximum, float aggression, int seed)
