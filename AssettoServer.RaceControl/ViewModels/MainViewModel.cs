@@ -637,6 +637,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             IsBusy = true;
+            int recoveredServers = await _processController.StopOrphanedServersAsync(
+                _paths.InstancesDirectory);
+            if (recoveredServers > 0)
+                StatusText = $"Stopped {recoveredServers} previous server process(es); staging the new race…";
             _lastInstance = await StageAsync();
             _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath, _lastInstance.PresetName, _lastInstance.ShutdownFilePath);
             StatusText = $"Server is running on {Preset.Network.BindAddress}:{Preset.Network.HttpPort}.";
