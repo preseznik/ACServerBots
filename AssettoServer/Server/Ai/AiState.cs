@@ -81,8 +81,13 @@ public class AiState : IDisposable
     private bool _holdingForRaceStart;
     private bool _gridLineMergePending;
     private bool _gridLineMergeStarted;
+    private bool _gridLineMergeBlocked;
+    private bool _gridPathBlendStarted;
     private float _gridLaunchDistanceMeters;
     private float _gridLaunchLateralOffsetMeters;
+    private float _gridPathBlend;
+    private Vector3 _gridLaunchOrigin;
+    private Vector3 _gridLaunchForward;
     private float _lateralOffsetMeters;
     private float _targetLateralOffsetMeters;
     private float _baseLateralOffsetMeters;
@@ -254,7 +259,10 @@ public class AiState : IDisposable
         _holdingForRaceStart = false;
         _gridLineMergePending = false;
         _gridLineMergeStarted = false;
+        _gridLineMergeBlocked = false;
+        _gridPathBlendStarted = false;
         _gridLaunchDistanceMeters = 0;
+        _gridPathBlend = 1;
         ref readonly var spawnPoint = ref _spline.Points[CurrentSplinePointId];
         _baseLateralOffsetMeters = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
             ? GetRaceBaseLaneOffset(spawnPoint)
@@ -301,9 +309,24 @@ public class AiState : IDisposable
             _gridLaunchLateralOffsetMeters = _lateralOffsetMeters;
             _gridLineMergePending = gridPose.HasValue
                                     && _sessionManager.CurrentSession.Configuration.Type == SessionType.Race;
+            _gridLineMergeBlocked = _gridLineMergePending;
+            _gridPathBlendStarted = !_gridLineMergePending;
+            _gridPathBlend = _gridLineMergePending ? 0 : 1;
+            _gridLaunchOrigin = pose.Position;
+            _gridLaunchForward = Vector3.Transform(Vector3.UnitZ, pose.Orientation) with { Y = 0 };
+            if (_gridLaunchForward.LengthSquared() < 1e-6f)
+                _gridLaunchForward = startTangent;
+            if (_gridLaunchForward.LengthSquared() > 1e-6f)
+                _gridLaunchForward = Vector3.Normalize(_gridLaunchForward);
             _targetLateralOffsetMeters = _gridLineMergePending
                 ? _gridLaunchLateralOffsetMeters
                 : _baseLateralOffsetMeters;
+            if (_gridLineMergePending)
+            {
+                Log.Debug("Race bot {SessionId} grid launch heading differs from spline by {HeadingDifference:F1} degrees",
+                    EntryCar.SessionId,
+                    RaceBotMath.PlanarHeadingDifferenceDegrees(_gridLaunchForward, startTangent));
+            }
             _racePhysicsWorld.RegisterBot(EntryCar.SessionId, EntryCar.Model, pose,
                 EntryCar.RaceVehicleProfile.MassKg);
             if (!_racePhysicsWorld.TryGetBotState(EntryCar.SessionId, out var physicsState))
@@ -769,6 +792,17 @@ public class AiState : IDisposable
         if (_gridLineMergePending)
         {
             bool corridorOccupied = IsGridLineMergeCorridorOccupied(_baseLateralOffsetMeters);
+            if (!_gridPathBlendStarted
+                && RaceBotMath.CanBeginGridPathBlend(
+                    _sessionManager.CurrentSession.Configuration.Type,
+                    _sessionManager.ServerTimeMilliseconds,
+                    _sessionManager.CurrentSession.StartTimeMilliseconds,
+                    _gridLaunchDistanceMeters))
+            {
+                _gridPathBlendStarted = true;
+                Log.Debug("Race bot {SessionId} blending grid path into spline after {LaunchDistance:F1} m",
+                    EntryCar.SessionId, _gridLaunchDistanceMeters);
+            }
             if (!_gridLineMergeStarted)
             {
                 bool canBeginMerge = RaceBotMath.CanBeginGridLineMerge(
@@ -785,15 +819,20 @@ public class AiState : IDisposable
                 }
             }
 
-            if (!_gridLineMergeStarted || corridorOccupied)
+            _gridLineMergeBlocked = !_gridLineMergeStarted || corridorOccupied;
+            if (_gridLineMergeBlocked)
             {
                 _targetLateralOffsetMeters = _lateralOffsetMeters;
                 return;
             }
 
             _targetLateralOffsetMeters = _baseLateralOffsetMeters;
-            if (Math.Abs(_lateralOffsetMeters - _targetLateralOffsetMeters) < 0.05f)
+            if (_gridPathBlend >= 1
+                && Math.Abs(_lateralOffsetMeters - _targetLateralOffsetMeters) < 0.05f)
+            {
                 _gridLineMergePending = false;
+                _gridLineMergeBlocked = false;
+            }
             return;
         }
 
@@ -842,6 +881,7 @@ public class AiState : IDisposable
     private bool TryBeginRaceOvertake(RaceObstacle obstacle)
     {
         if (_configuration.Extra.AiParams.Behavior != AiBehaviorMode.Race
+            || _gridLineMergePending
             || obstacle.ClearanceMeters <= RaceBotMath.EmergencyObstacleDistanceMeters
             || _sessionManager.ServerTimeMilliseconds < _returnToLineAt
             || _sessionManager.ServerTimeMilliseconds < _passCooldownUntil)
@@ -1408,13 +1448,27 @@ public class AiState : IDisposable
         var tangent = Vector3.Normalize(sample.Tangent);
         var lateral = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, tangent));
         var targetPosition = sample.Position + lateral * _lateralOffsetMeters;
+        var targetForward = tangent;
+        if (_gridLineMergePending)
+        {
+            if (_gridPathBlendStarted)
+            {
+                _gridPathBlend = RaceBotMath.AdvanceGridPathBlend(_gridPathBlend,
+                    CurrentSpeed, fixedDeltaSeconds);
+            }
+            var launchTarget = RaceBotMath.GridLaunchLineTarget(_gridLaunchOrigin,
+                _gridLaunchForward, _physicsLastPosition, sample.Position.Y);
+            targetPosition = Vector3.Lerp(launchTarget, targetPosition, _gridPathBlend);
+            targetForward = RaceBotMath.BlendGridLaunchForward(_gridLaunchForward,
+                tangent, _gridPathBlend);
+        }
         var vehicleStep = RaceBotVehicleDynamics.Step(CurrentSpeed, TargetSpeed, fixedDeltaSeconds,
             EntryCar.RaceVehicleProfile);
         float maximumAcceleration = vehicleStep.AccelerationMetersPerSecondSquared > 0
             ? vehicleStep.AccelerationMetersPerSecondSquared
             : EntryCar.AiAcceleration;
         _racePhysicsWorld.SetBotControl(EntryCar.SessionId, new RaceBotPhysicsControl(raceCountdown,
-            targetPosition, tangent, TargetSpeed, Math.Max(0.1f, maximumAcceleration),
+            targetPosition, targetForward, TargetSpeed, Math.Max(0.1f, maximumAcceleration),
             EntryCar.RaceVehicleProfile.MaxBrakeDeceleration, EntryCar.RaceVehicleProfile.LateralGripG));
         _lastTick = currentTime;
     }
@@ -1430,7 +1484,11 @@ public class AiState : IDisposable
         float forwardProgress = CalculatePhysicsForwardProgress(physicsState.Position, _physicsLastPosition,
             forward, physicsState.RecoveryCount, _physicsRecoveryCount);
         if (_gridLineMergePending)
-            _gridLaunchDistanceMeters += Math.Max(0, forwardProgress);
+        {
+            _gridLaunchDistanceMeters = Math.Max(_gridLaunchDistanceMeters,
+                RaceBotMath.GridLaunchDistance(_gridLaunchOrigin, _gridLaunchForward,
+                    physicsState.Position));
+        }
         if (!Move(_currentVecProgress + forwardProgress))
         {
             Despawn();

@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 using AssettoServer.Shared.Model;
 using AssettoServer.Utils;
 
@@ -12,6 +13,7 @@ public static class RaceBotMath
     public const float RaceGridMergeRearClearanceMeters = 8f;
     public const float RaceGridMergeFrontClearanceMeters = 14f;
     public const float RaceGridMergeTransitionMultiplier = 0.5f;
+    public const float RaceGridPathBlendDistanceMeters = 40f;
     public const int RacePassStartDelayMilliseconds = 4_000;
     public const float EmergencyObstacleDistanceMeters = 3f;
     public const float MinimumMovingPassCommitClearanceMeters = 8f;
@@ -63,9 +65,13 @@ public static class RaceBotMath
 
     public static bool CanBeginGridLineMerge(SessionType sessionType, long serverTimeMilliseconds,
         long startTimeMilliseconds, float forwardDistanceMeters, bool corridorOccupied) =>
+        !corridorOccupied && CanBeginGridPathBlend(sessionType, serverTimeMilliseconds,
+            startTimeMilliseconds, forwardDistanceMeters);
+
+    public static bool CanBeginGridPathBlend(SessionType sessionType, long serverTimeMilliseconds,
+        long startTimeMilliseconds, float forwardDistanceMeters) =>
         sessionType != SessionType.Race
-        || (!corridorOccupied
-            && CanTransitionLane(sessionType, serverTimeMilliseconds, startTimeMilliseconds)
+        || (CanTransitionLane(sessionType, serverTimeMilliseconds, startTimeMilliseconds)
             && forwardDistanceMeters >= RaceGridForwardLaunchDistanceMeters);
 
     public static bool OccupiesGridLineMergeCorridor(float longitudinalMeters,
@@ -73,6 +79,61 @@ public static class RaceBotMath
         longitudinalMeters >= -RaceGridMergeRearClearanceMeters
         && longitudinalMeters <= RaceGridMergeFrontClearanceMeters
         && Math.Abs(participantOffsetMeters - targetOffsetMeters) < MinimumPassingSeparationMeters;
+
+    public static float GridLaunchDistance(Vector3 origin, Vector3 gridForward, Vector3 position)
+    {
+        gridForward.Y = 0;
+        if (gridForward.LengthSquared() < 1e-6f)
+            return 0;
+        return Math.Max(0, Vector3.Dot(position - origin, Vector3.Normalize(gridForward)));
+    }
+
+    public static Vector3 GridLaunchLineTarget(Vector3 origin, Vector3 gridForward,
+        Vector3 position, float referenceHeight)
+    {
+        gridForward.Y = 0;
+        if (gridForward.LengthSquared() < 1e-6f)
+            return position with { Y = referenceHeight };
+        gridForward = Vector3.Normalize(gridForward);
+        float distance = GridLaunchDistance(origin, gridForward, position);
+        return (origin + gridForward * distance) with { Y = referenceHeight };
+    }
+
+    public static float AdvanceGridPathBlend(float currentBlend, float forwardSpeedMetersPerSecond,
+        float deltaSeconds) => Math.Clamp(currentBlend
+                                          + Math.Max(0, forwardSpeedMetersPerSecond)
+                                          * Math.Max(0, deltaSeconds)
+                                          / RaceGridPathBlendDistanceMeters, 0, 1);
+
+    public static Vector3 BlendGridLaunchForward(Vector3 gridForward, Vector3 splineForward,
+        float blend)
+    {
+        var horizontalGridForward = gridForward with { Y = 0 };
+        if (horizontalGridForward.LengthSquared() < 1e-6f)
+            horizontalGridForward = splineForward with { Y = 0 };
+        if (horizontalGridForward.LengthSquared() < 1e-6f)
+            horizontalGridForward = Vector3.UnitZ;
+        horizontalGridForward = Vector3.Normalize(horizontalGridForward);
+
+        if (splineForward.LengthSquared() < 1e-6f)
+            splineForward = horizontalGridForward;
+        else
+            splineForward = Vector3.Normalize(splineForward);
+        var launchForward = Vector3.Normalize(new Vector3(horizontalGridForward.X,
+            splineForward.Y, horizontalGridForward.Z));
+        var blended = Vector3.Lerp(launchForward, splineForward, Math.Clamp(blend, 0, 1));
+        return blended.LengthSquared() < 1e-6f ? splineForward : Vector3.Normalize(blended);
+    }
+
+    public static float PlanarHeadingDifferenceDegrees(Vector3 first, Vector3 second)
+    {
+        first.Y = 0;
+        second.Y = 0;
+        if (first.LengthSquared() < 1e-6f || second.LengthSquared() < 1e-6f)
+            return 0;
+        float dot = Math.Clamp(Vector3.Dot(Vector3.Normalize(first), Vector3.Normalize(second)), -1, 1);
+        return MathF.Acos(dot) * 180 / MathF.PI;
+    }
 
     public static float PaceFactor(float difficulty) => 0.65f + Math.Clamp(difficulty, 0, 1) * 0.35f;
 

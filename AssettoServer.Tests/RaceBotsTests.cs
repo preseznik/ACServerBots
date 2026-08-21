@@ -558,10 +558,44 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.CanBeginGridLineMerge(SessionType.Race,
                 start + RaceBotMath.RaceLaneTransitionDelayMilliseconds, start,
                 RaceBotMath.RaceGridForwardLaunchDistanceMeters, corridorOccupied: false), Is.True);
+            Assert.That(RaceBotMath.CanBeginGridPathBlend(SessionType.Race,
+                start + RaceBotMath.RaceLaneTransitionDelayMilliseconds, start,
+                RaceBotMath.RaceGridForwardLaunchDistanceMeters), Is.True,
+                "track-course blending must not wait for lateral merge space");
             Assert.That(RaceBotMath.OccupiesGridLineMergeCorridor(5, 1, 1.5f), Is.True);
             Assert.That(RaceBotMath.OccupiesGridLineMergeCorridor(
                 RaceBotMath.RaceGridMergeFrontClearanceMeters + 0.1f, 1, 1.5f), Is.False);
             Assert.That(RaceBotMath.OccupiesGridLineMergeCorridor(5, -2, 2), Is.False);
+        });
+    }
+
+    [Test]
+    public void RaceGridLaunchFollowsAuthoredHeadingBeforeBlendingToSpline()
+    {
+        var gridOrigin = new Vector3(10, 5, 20);
+        var gridForward = Vector3.UnitX;
+        var currentPosition = new Vector3(18, 6, 20);
+        var splineForward = Vector3.UnitZ;
+        var launchTarget = RaceBotMath.GridLaunchLineTarget(gridOrigin, gridForward,
+            currentPosition, referenceHeight: 7);
+        var launchForward = RaceBotMath.BlendGridLaunchForward(gridForward, splineForward, blend: 0);
+        var mergedForward = RaceBotMath.BlendGridLaunchForward(gridForward, splineForward, blend: 1);
+        var steeringDirection = RaceBotPhysicsWorld.CalculateSteeringDirection(currentPosition,
+            launchTarget, launchForward, 10);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(launchTarget, Is.EqualTo(new Vector3(18, 7, 20)));
+            Assert.That(RaceBotMath.GridLaunchDistance(gridOrigin, gridForward, currentPosition),
+                Is.EqualTo(8).Within(1e-6f));
+            Assert.That(Vector3.Dot(launchForward, gridForward), Is.GreaterThan(0.999f),
+                "the pre-merge controller must use the authored grid heading");
+            Assert.That(Vector3.Dot(mergedForward, splineForward), Is.GreaterThan(0.999f));
+            Assert.That(Vector3.Dot(steeringDirection, gridForward), Is.GreaterThan(0.999f),
+                "a grid/spline heading mismatch must not produce immediate steering");
+            Assert.That(RaceBotMath.AdvanceGridPathBlend(0, 20, 1), Is.EqualTo(0.5f));
+            Assert.That(RaceBotMath.PlanarHeadingDifferenceDegrees(gridForward, splineForward),
+                Is.EqualTo(90).Within(1e-4f));
         });
     }
 
