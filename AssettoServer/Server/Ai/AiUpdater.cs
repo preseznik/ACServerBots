@@ -95,6 +95,7 @@ public class AiUpdater
             if (now - _lastPhysicsDiagnosticsMilliseconds >= 5000)
             {
                 var diagnostics = _racePhysicsWorld.GetDiagnostics();
+                var contactPair = _racePhysicsWorld.GetMostFrequentVehicleContactPair();
                 float maximumLaneOffset = 0;
                 float maximumPassSeparation = 0;
                 int passCommits = 0;
@@ -113,21 +114,25 @@ public class AiUpdater
                 }
                 Log.Debug("Race physics: {BotCount} bots, Y {MinimumY:F2}..{MaximumY:F2} m, max speed {MaximumSpeed:F1} m/s, "
                           + "max rise {MaximumUpwardSpeed:F1} m/s, height error {MaximumSplineHeightError:F2} m, "
-                          + "suspension {MaximumSuspensionCompression:F2} m, upright {MinimumUprightDot:F2}, "
+                          + "suspension {MaximumSuspensionCompression:F2} m, slip {MaximumSlipAngleDegrees:F1} deg, "
+                          + "steer {MaximumSteeringAngleDegrees:F1} deg, upright {MinimumUprightDot:F2}, "
                           + "overturned {OverturnedBots}, recoveries {TotalRecoveries}, track corrections {TotalTrackCorrections}, "
                           + "launched {LaunchedBots}/{BotCount}, launch spread {LaunchStepSpread} ticks, "
                           + "lane offset {MaximumLaneOffset:F2} m, pass separation {MaximumPassSeparation:F2} m, "
                           + "passes {PassCommits}/{SeparatedPasses}/{CompletedPasses} committed/separated/completed, "
-                          + "vehicle contacts {VehicleManifolds}, static pairs {StaticPairTests}, manifolds {StaticManifolds}",
+                          + "vehicle contacts {VehicleManifolds}, contact pair {ContactA}/{ContactB} ({ContactCount}), "
+                          + "static pairs {StaticPairTests}, manifolds {StaticManifolds}",
                     diagnostics.BotCount, diagnostics.MinimumY, diagnostics.MaximumY, diagnostics.MaximumSpeed,
                     diagnostics.MaximumUpwardSpeed, diagnostics.MaximumSplineHeightError,
                     diagnostics.MaximumSuspensionCompression,
+                    diagnostics.MaximumSlipAngleDegrees, diagnostics.MaximumSteeringAngleDegrees,
                     diagnostics.MinimumUprightDot, diagnostics.OverturnedBots, diagnostics.TotalRecoveries,
                     diagnostics.TotalTrackCorrections, diagnostics.LaunchedBots, diagnostics.BotCount,
                     diagnostics.LaunchStepSpread,
                     maximumLaneOffset, maximumPassSeparation, passCommits, separatedPasses,
                     completedPasses,
                     diagnostics.VehicleManifolds,
+                    contactPair.A, contactPair.B, contactPair.Count,
                     diagnostics.StaticPairTests, diagnostics.StaticManifolds);
                 _lastPhysicsDiagnosticsMilliseconds = now;
             }

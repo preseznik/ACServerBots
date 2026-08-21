@@ -37,6 +37,10 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.IsInRaceLaunchWindow(SessionType.Race,
                 start + RaceBotMath.RaceLaunchGraceMilliseconds, start), Is.False);
             Assert.That(RaceBotMath.IsInRaceLaunchWindow(SessionType.Practice, start, start), Is.False);
+            Assert.That(RaceBotMath.CanTransitionLane(SessionType.Race,
+                start + RaceBotMath.RaceLaneTransitionDelayMilliseconds - 1, start), Is.False);
+            Assert.That(RaceBotMath.CanTransitionLane(SessionType.Race,
+                start + RaceBotMath.RaceLaneTransitionDelayMilliseconds, start), Is.True);
         });
     }
 
@@ -518,6 +522,91 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void RaceLaneTransitionRequiresForwardMotionAndIsSpeedBounded()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 0, 1), Is.Zero,
+                "a held car must not translate into its lane");
+            Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 0.9f, 1), Is.Zero,
+                "near-stationary motion must not advance a lane change");
+            Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 10, 1), Is.EqualTo(0.6f).Within(1e-6f));
+            Assert.That(RaceBotMath.AdvanceLaneOffset(0, 2, 30, 1), Is.EqualTo(0.9f).Within(1e-6f));
+            Assert.That(RaceBotMath.AdvanceLaneOffset(1.9f, 2, 30, 1), Is.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public void RaceSteeringTurnsTowardLaneWithoutInjectingSidewaysDrive()
+    {
+        var steeringDirection = RaceBotPhysicsWorld.CalculateSteeringDirection(Vector3.Zero,
+            new Vector3(2, 0, 0), Vector3.UnitZ, 10);
+        float lookAhead = RaceBotPhysicsWorld.GetSteeringLookAheadMeters(10);
+        float steeringAngle = RaceBotPhysicsWorld.CalculateSteeringAngle(Vector3.UnitZ,
+            steeringDirection, lookAhead, 2.5f);
+        float yawRate = RaceBotPhysicsWorld.CalculateTargetYawRate(10, 2.5f, steeringAngle, 1);
+        var driveDelta = RaceBotPhysicsWorld.CalculateLongitudinalVelocityDelta(Vector3.UnitZ, 5, 0.1f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(steeringDirection.X, Is.GreaterThan(0));
+            Assert.That(steeringAngle, Is.GreaterThan(0));
+            Assert.That(yawRate, Is.GreaterThan(0));
+            Assert.That(RaceBotPhysicsWorld.CalculateTargetYawRate(0, 2.5f, steeringAngle, 1), Is.Zero,
+                "steering a stationary car must not rotate or translate it");
+            Assert.That(RaceBotPhysicsWorld.MoveSteeringAngle(0, 1, 0.1f),
+                Is.EqualTo(0.15f).Within(1e-6f), "steering input must not snap between locks");
+            Assert.That(Vector3.Dot(driveDelta, Vector3.UnitX), Is.Zero.Within(1e-6f),
+                "engine force must stay on the longitudinal axis");
+            Assert.That(Vector3.Dot(driveDelta, Vector3.UnitZ), Is.EqualTo(0.5f).Within(1e-6f));
+            Assert.That(RaceBotPhysicsWorld.CalculateTargetYawRate(20, 2.5f,
+                RaceBotPhysicsWorld.MaximumSteeringAngleRadians, 1), Is.LessThan(9.81f / 20),
+                "yaw control must leave grip available to remove lateral slip");
+            Assert.That(RaceBotPhysicsWorld.CalculateSlipStabilizedYawRate(0.3f, -0.2f, 20, 1),
+                Is.LessThan(0.3f), "stability control must counter yaw away from the velocity vector");
+        });
+    }
+
+    [Test]
+    public void RaceTyreGripRemovesSlipGraduallyAndSteeringTelemetryIsBounded()
+    {
+        var velocity = new Vector3(5, 0, 20);
+        var corrected = RaceBotPhysicsWorld.ApplyLateralGrip(velocity, Vector3.UnitZ, 1, 1f / 60);
+        float removedLateralSpeed = velocity.X - corrected.X;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(removedLateralSpeed, Is.GreaterThan(0));
+            Assert.That(removedLateralSpeed, Is.LessThanOrEqualTo(9.81f / 60 + 1e-6f),
+                "tyre grip must not snap the velocity vector sideways");
+            Assert.That(corrected.Z, Is.EqualTo(velocity.Z).Within(1e-6f));
+            Assert.That(RaceBotPhysicsWorld.CalculateSlipAngleDegrees(Vector3.UnitZ * 20,
+                Vector3.UnitZ), Is.Zero.Within(1e-6f));
+            Assert.That(RaceBotPhysicsWorld.CalculateSlipAngleDegrees(velocity, Vector3.UnitZ),
+                Is.EqualTo(MathF.Atan2(5, 20) * 180 / MathF.PI).Within(1e-5f));
+            Assert.That(RaceBotPhysicsWorld.EncodeSteeringAngle(0), Is.EqualTo(127));
+            Assert.That(RaceBotPhysicsWorld.EncodeSteeringAngle(
+                RaceBotPhysicsWorld.MaximumSteeringAngleRadians), Is.EqualTo(254));
+            Assert.That(RaceBotPhysicsWorld.EncodeSteeringAngle(
+                -RaceBotPhysicsWorld.MaximumSteeringAngleRadians), Is.Zero);
+        });
+    }
+
+    [Test]
+    public void RaceWheelbaseComesFromPreparedFrontAndRearAxles()
+    {
+        RaceWheelCollider[] wheels =
+        [
+            new(new Vector3(-0.8f, 0.32f, 1.4f), 0.32f),
+            new(new Vector3(0.8f, 0.32f, 1.4f), 0.32f),
+            new(new Vector3(-0.8f, 0.32f, -1.2f), 0.32f),
+            new(new Vector3(0.8f, 0.32f, -1.2f), 0.32f)
+        ];
+
+        Assert.That(RaceBotPhysicsWorld.GetWheelbaseMeters(wheels), Is.EqualTo(2.6f).Within(1e-6f));
+    }
+
+    [Test]
     public void RecoveryPosePlacesThePhysicalOriginOnTheTrackTarget()
     {
         var trackTarget = new Vector3(20, 4, -15);
@@ -646,6 +735,8 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 25, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 25, 20, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 2, 0.1f), Is.False);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 7.9f, 0.1f), Is.False);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 8.1f, 0.1f), Is.True);
             Assert.That(RaceBotMath.FollowingDecisionDistance(20, 15, 0.1f),
                 Is.LessThan(RaceBotMath.FollowingDecisionDistance(20, 0, 0.1f)));
             Assert.That(RaceBotMath.PassAttemptDistance(20, 0, 0.1f),

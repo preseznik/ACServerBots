@@ -7,9 +7,13 @@ namespace AssettoServer.Server.Ai;
 public static class RaceBotMath
 {
     public const int RaceLaunchGraceMilliseconds = 500;
+    public const int RaceLaneTransitionDelayMilliseconds = 2_000;
     public const int RacePassStartDelayMilliseconds = 4_000;
     public const float EmergencyObstacleDistanceMeters = 3f;
-    public const float ObstacleCorridorHalfWidthMeters = 2f;
+    public const float MinimumPassCommitClearanceMeters = 8f;
+    public const float PassSeparationEvaluationDistanceMeters = 15f;
+    public const float MaximumPlausiblePassSeparationMeters = 6f;
+    public const float ObstacleCorridorHalfWidthMeters = 3f;
     public const float MinimumPassingSeparationMeters = 2.1f;
     public const float PassCompletionClearanceMeters = 7f;
     public const int PassLaneReleaseMilliseconds = 4_000;
@@ -32,6 +36,11 @@ public static class RaceBotMath
                                        || serverTimeMilliseconds >= startTimeMilliseconds
                                            + RacePassStartDelayMilliseconds;
 
+    public static bool CanTransitionLane(SessionType sessionType, long serverTimeMilliseconds,
+        long startTimeMilliseconds) => sessionType != SessionType.Race
+                                       || serverTimeMilliseconds >= startTimeMilliseconds
+                                           + RaceLaneTransitionDelayMilliseconds;
+
     public static float PaceFactor(float difficulty) => 0.65f + Math.Clamp(difficulty, 0, 1) * 0.35f;
 
     public static float GridPaceFactor(float configuredVariationPercent, int seed)
@@ -39,6 +48,19 @@ public static class RaceBotMath
         float variation = Math.Clamp(configuredVariationPercent, 0, 0.15f);
         float gridStep = Math.Abs(seed % 5) / 4f;
         return 1 - variation + variation * gridStep;
+    }
+
+    public static float AdvanceLaneOffset(float currentOffsetMeters, float targetOffsetMeters,
+        float forwardSpeedMetersPerSecond, float deltaSeconds)
+    {
+        if (forwardSpeedMetersPerSecond < 1 || deltaSeconds <= 0)
+            return currentOffsetMeters;
+
+        float transitionRate = Math.Clamp(forwardSpeedMetersPerSecond * 0.06f, 0.20f, 0.90f);
+        float maximumStep = transitionRate * deltaSeconds;
+        return Math.Abs(targetOffsetMeters - currentOffsetMeters) <= maximumStep
+            ? targetOffsetMeters
+            : currentOffsetMeters + Math.Sign(targetOffsetMeters - currentOffsetMeters) * maximumStep;
     }
 
     public static float CorneringSpeedSquared(float radiusMeters, float corneringFactor, float difficulty)
@@ -76,7 +98,7 @@ public static class RaceBotMath
         : OvertakeTriggerDistance(currentSpeed, aggression);
 
     public static bool ShouldAttemptPass(float currentSpeed, float leadSpeed, float distanceMeters,
-        float aggression) => distanceMeters > EmergencyObstacleDistanceMeters
+        float aggression) => distanceMeters > MinimumPassCommitClearanceMeters
                              && distanceMeters <= PassAttemptDistance(currentSpeed, leadSpeed, aggression)
                              && leadSpeed <= currentSpeed + 1f;
 

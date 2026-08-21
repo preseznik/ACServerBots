@@ -84,7 +84,6 @@ public class AiState : IDisposable
     private float _baseLateralOffsetMeters;
     private long _overtakeUntil;
     private byte? _overtakeTargetSessionId;
-    private float _overtakeObstacleLateralOffsetMeters;
     private bool _currentPassSeparationRecorded;
     private bool _yieldingToPasser;
     private float _yieldSpeedReference;
@@ -93,6 +92,7 @@ public class AiState : IDisposable
     private bool _overtakeExtended;
     private Vector3 _physicsLastPosition;
     private int _physicsRecoveryCount;
+    private float _steeringAngleRadians;
 
     private readonly ACServerConfiguration _configuration;
     private readonly SessionManager _sessionManager;
@@ -106,7 +106,7 @@ public class AiState : IDisposable
         CarStatus Status, float Speed);
 
     private readonly record struct RaceObstacle(RaceParticipantSnapshot Participant, float ClearanceMeters,
-        float LongitudinalMeters, float LateralOffsetMeters);
+        float LongitudinalMeters, float LateralOffsetMeters, float RelativeLateralMeters);
 
     private static readonly List<Color> CarColors =
     [
@@ -251,13 +251,13 @@ public class AiState : IDisposable
         _targetLateralOffsetMeters = _baseLateralOffsetMeters;
         _overtakeUntil = 0;
         _overtakeTargetSessionId = null;
-        _overtakeObstacleLateralOffsetMeters = 0;
         _currentPassSeparationRecorded = false;
         _yieldingToPasser = false;
         _yieldSpeedReference = 0;
         _returnToLineAt = 0;
         _passCooldownUntil = 0;
         _overtakeExtended = false;
+        _steeringAngleRadians = 0;
         PhysicalLateralOffsetMeters = 0;
         MaximumAbsoluteLateralOffsetMeters = 0;
         MaximumPassSeparationMeters = 0;
@@ -271,12 +271,24 @@ public class AiState : IDisposable
             if (_racePhysicsWorld == null || EntryCar.RaceVehicleProfile == null)
                 throw new InvalidOperationException("Race bot rigid-body world or vehicle profile is unavailable");
             var pose = gridPose ?? CreateSplinePose(pointId);
+            var startSample = GetCurrentSplineSample(out _);
+            var startTangent = startSample.Tangent with { Y = 0 };
+            if (startTangent.LengthSquared() > 1e-6f)
+            {
+                var startLateral = Vector3.Normalize(Vector3.Cross(Vector3.UnitY,
+                    Vector3.Normalize(startTangent)));
+                _lateralOffsetMeters = RaceBotMath.ClampLaneOffset(
+                    Vector3.Dot(pose.Position - startSample.Position, startLateral),
+                    spawnPoint.SideLeft, spawnPoint.SideRight);
+                PhysicalLateralOffsetMeters = _lateralOffsetMeters;
+            }
             _racePhysicsWorld.RegisterBot(EntryCar.SessionId, EntryCar.Model, pose,
                 EntryCar.RaceVehicleProfile.MassKg);
             if (!_racePhysicsWorld.TryGetBotState(EntryCar.SessionId, out var physicsState))
                 throw new InvalidOperationException("Race bot rigid body was not registered");
             _physicsLastPosition = physicsState.Position;
             _physicsRecoveryCount = physicsState.RecoveryCount;
+            _steeringAngleRadians = physicsState.SteeringAngleRadians;
             Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
             Status.Position = physicsState.ProtocolPosition;
             Status.Rotation = RacePhysicsMath.ToProtocolRotation(pose.Orientation);
@@ -638,7 +650,7 @@ public class AiState : IDisposable
             float longitudinal = GetRaceLongitudinalDistance(participant, forward);
             if (longitudinal <= 0 || longitudinal > maximumLookahead)
                 continue;
-            float obstacleOffset = participant.AiState?._lateralOffsetMeters
+            float obstacleOffset = participant.AiState?.PhysicalLateralOffsetMeters
                                    ?? Vector3.Dot(participant.Status.Position - sample.Position, lateral);
             var relative = participant.Status.Position - Status.Position;
             relative.Y = 0;
@@ -650,7 +662,7 @@ public class AiState : IDisposable
                                                    - car.VehicleLengthPostMeters);
             if (closest.HasValue && clearance >= closest.Value.ClearanceMeters)
                 continue;
-            closest = new RaceObstacle(participant, clearance, longitudinal, obstacleOffset);
+            closest = new RaceObstacle(participant, clearance, longitudinal, obstacleOffset, relativeLateral);
         }
 
         return closest;
@@ -750,7 +762,6 @@ public class AiState : IDisposable
 
         _targetLateralOffsetMeters = target.Value;
         _overtakeTargetSessionId = obstacle.Participant.Car.SessionId;
-        _overtakeObstacleLateralOffsetMeters = obstacle.LateralOffsetMeters;
         _currentPassSeparationRecorded = false;
         _overtakeExtended = false;
         PassCommitCount++;
@@ -806,8 +817,10 @@ public class AiState : IDisposable
 
     private bool HasCompletedRaceOvertake()
     {
-        var distance = GetOvertakeTargetLongitudinalDistance();
-        return distance.HasValue && distance.Value < -RaceBotMath.PassCompletionClearanceMeters;
+        return TryGetOvertakeTargetWorldRelative(out var relative, out var longitudinal, out var lateral)
+               && relative.LengthSquared() <= 20 * 20
+               && Math.Abs(lateral) <= RaceBotMath.MaximumPlausiblePassSeparationMeters
+               && longitudinal < -RaceBotMath.PassCompletionClearanceMeters;
     }
 
     private float? GetOvertakeTargetLongitudinalDistance()
@@ -818,12 +831,41 @@ public class AiState : IDisposable
             car.SessionId == _overtakeTargetSessionId.Value);
         if (targetCar == null || !TryGetRaceParticipant(targetCar, out var participant))
             return null;
+        if (TryGetOvertakeTargetWorldRelative(out var relative, out var worldLongitudinal, out _)
+            && relative.LengthSquared() <= 20 * 20)
+            return worldLongitudinal;
         var sample = GetCurrentSplineSample(out _);
         var forward = sample.Tangent with { Y = 0 };
         if (forward.LengthSquared() < 1e-6f)
             return null;
         forward = Vector3.Normalize(forward);
         return GetRaceLongitudinalDistance(participant, forward);
+    }
+
+    private bool TryGetOvertakeTargetWorldRelative(out Vector3 relative,
+        out float longitudinal, out float lateral)
+    {
+        relative = Vector3.Zero;
+        longitudinal = 0;
+        lateral = 0;
+        if (!_overtakeTargetSessionId.HasValue)
+            return false;
+        var targetCar = _entryCarManager.EntryCars.FirstOrDefault(car =>
+            car.SessionId == _overtakeTargetSessionId.Value);
+        if (targetCar == null || !TryGetRaceParticipant(targetCar, out var participant))
+            return false;
+
+        var sample = GetCurrentSplineSample(out _);
+        var forward = sample.Tangent with { Y = 0 };
+        if (forward.LengthSquared() < 1e-6f)
+            return false;
+        forward = Vector3.Normalize(forward);
+        var right = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, forward));
+        relative = participant.Status.Position - Status.Position;
+        relative.Y = 0;
+        longitudinal = Vector3.Dot(relative, forward);
+        lateral = Vector3.Dot(relative, right);
+        return true;
     }
 
     private bool IsObstacle(EntryCar playerCar)
@@ -968,8 +1010,7 @@ public class AiState : IDisposable
             }
             else if (committedOvertake && raceObstacle.HasValue)
             {
-                float separation = Math.Abs(_lateralOffsetMeters
-                                            - raceObstacle.Value.LateralOffsetMeters);
+                float separation = Math.Abs(raceObstacle.Value.RelativeLateralMeters);
                 if (separation < RaceBotMath.MinimumPassingSeparationMeters)
                 {
                     targetSpeed = RaceBotMath.FollowingTargetSpeed(CurrentSpeed,
@@ -986,7 +1027,10 @@ public class AiState : IDisposable
             }
             else if (committedOvertake)
             {
-                passingWithSeparation = _currentPassSeparationRecorded;
+                // The committed target is outside the actual world-space collision corridor.
+                // Allow modest route-speed headroom to close the gap; if it re-enters the
+                // corridor, the branch above requires real lateral clearance or brakes.
+                passingWithSeparation = true;
                 float leadSpeed = 0;
                 var targetCar = _entryCarManager.EntryCars.FirstOrDefault(car =>
                     car.SessionId == _overtakeTargetSessionId!.Value);
@@ -1194,10 +1238,10 @@ public class AiState : IDisposable
             SetTargetSpeed(InitialMaxSpeed);
         }
 
-        float lateralStep = Math.Max(0, fixedDeltaSeconds) * 1.5f;
-        _lateralOffsetMeters = Math.Abs(_targetLateralOffsetMeters - _lateralOffsetMeters) <= lateralStep
-            ? _targetLateralOffsetMeters
-            : _lateralOffsetMeters + Math.Sign(_targetLateralOffsetMeters - _lateralOffsetMeters) * lateralStep;
+        if (RaceBotMath.CanTransitionLane(_sessionManager.CurrentSession.Configuration.Type,
+                currentTime, _sessionManager.CurrentSession.StartTimeMilliseconds))
+            _lateralOffsetMeters = RaceBotMath.AdvanceLaneOffset(_lateralOffsetMeters,
+                _targetLateralOffsetMeters, CurrentSpeed, fixedDeltaSeconds);
 
         var sample = GetCurrentSplineSample(out _);
         var tangent = Vector3.Normalize(sample.Tangent);
@@ -1252,15 +1296,21 @@ public class AiState : IDisposable
                     Math.Abs(PhysicalLateralOffsetMeters));
             if (_overtakeTargetSessionId.HasValue)
             {
-                float obstacleOffset = _overtakeObstacleLateralOffsetMeters;
-                var targetCar = _entryCarManager.EntryCars.FirstOrDefault(car =>
-                    car.SessionId == _overtakeTargetSessionId.Value);
-                if (targetCar != null && TryGetRaceParticipant(targetCar, out var targetParticipant)
-                                      && targetParticipant.AiState != null)
-                    obstacleOffset = targetParticipant.AiState.PhysicalLateralOffsetMeters;
-                float separation = Math.Abs(PhysicalLateralOffsetMeters - obstacleOffset);
-                MaximumPassSeparationMeters = Math.Max(MaximumPassSeparationMeters, separation);
+                bool hasWorldRelative = TryGetOvertakeTargetWorldRelative(out var relative,
+                    out var longitudinalGap, out var relativeLateral);
+                float separation = Math.Abs(relativeLateral);
+                bool closeEnoughToEvaluate = hasWorldRelative
+                                             && relative.LengthSquared()
+                                             <= RaceBotMath.PassSeparationEvaluationDistanceMeters
+                                             * RaceBotMath.PassSeparationEvaluationDistanceMeters
+                                             && longitudinalGap
+                                             <= RaceBotMath.PassSeparationEvaluationDistanceMeters
+                                             && separation
+                                             <= RaceBotMath.MaximumPlausiblePassSeparationMeters;
+                if (closeEnoughToEvaluate)
+                    MaximumPassSeparationMeters = Math.Max(MaximumPassSeparationMeters, separation);
                 if (!_currentPassSeparationRecorded
+                    && closeEnoughToEvaluate
                     && separation >= RaceBotMath.MinimumPassingSeparationMeters)
                 {
                     _currentPassSeparationRecorded = true;
@@ -1272,6 +1322,7 @@ public class AiState : IDisposable
         }
         CurrentSpeed = Math.Max(0, physicsState.ForwardSpeed);
         Acceleration = physicsState.LongitudinalAcceleration;
+        _steeringAngleRadians = physicsState.SteeringAngleRadians;
         Status.Timestamp = _sessionManager.ServerTimeMilliseconds;
         Status.Position = physicsState.ProtocolPosition;
         Status.Rotation = RacePhysicsMath.ToProtocolRotation(physicsState.Orientation);
@@ -1290,8 +1341,11 @@ public class AiState : IDisposable
         float tyreAngularSpeed = GetTyreAngularSpeed(CurrentSpeed, EntryCar.TyreDiameterMeters);
         byte encodedTyreAngularSpeed = (byte)(Math.Clamp(
             MathF.Round(MathF.Log10(tyreAngularSpeed + 1f) * 20f) * Math.Sign(tyreAngularSpeed), -100f, 154f) + 100f);
-        Status.SteerAngle = 127;
-        Status.WheelAngle = 127;
+        byte encodedSteering = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            ? RaceBotPhysicsWorld.EncodeSteeringAngle(_steeringAngleRadians)
+            : (byte)127;
+        Status.SteerAngle = encodedSteering;
+        Status.WheelAngle = encodedSteering;
         Status.TyreAngularSpeed[0] = encodedTyreAngularSpeed;
         Status.TyreAngularSpeed[1] = encodedTyreAngularSpeed;
         Status.TyreAngularSpeed[2] = encodedTyreAngularSpeed;

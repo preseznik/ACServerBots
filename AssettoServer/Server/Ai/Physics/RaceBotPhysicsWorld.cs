@@ -19,12 +19,14 @@ using Serilog;
 namespace AssettoServer.Server.Ai.Physics;
 
 public readonly record struct RaceBotPhysicsState(Vector3 Position, Vector3 ProtocolPosition,
-    Quaternion Orientation, Vector3 Velocity, float ForwardSpeed, float LongitudinalAcceleration, int RecoveryCount);
+    Quaternion Orientation, Vector3 Velocity, float ForwardSpeed, float LongitudinalAcceleration,
+    float SteeringAngleRadians, float SlipAngleDegrees, int RecoveryCount);
 
 public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPosition, Vector3 TargetForward,
     float TargetSpeed, float MaximumAcceleration, float MaximumBrakeDeceleration, float LateralGripG);
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
-    float MaximumUpwardSpeed, float MaximumSplineHeightError, float MaximumSuspensionCompression,
+    float MaximumSlipAngleDegrees, float MaximumSteeringAngleDegrees, float MaximumUpwardSpeed,
+    float MaximumSplineHeightError, float MaximumSuspensionCompression,
     float MinimumUprightDot, int OverturnedBots, int TotalRecoveries, int TotalTrackCorrections,
     int LaunchedBots, long LaunchStepSpread, long StaticPairTests, long StaticManifolds,
     long VehicleManifolds);
@@ -40,6 +42,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private const float MaximumAngularSpeed = 2.5f;
     private const float MaximumAngularAcceleration = 16f;
     private const float AttitudeGain = 4f;
+    internal const float MaximumSteeringAngleRadians = 0.55850536f; // 32 degrees
+    private const float MaximumSteeringRateRadiansPerSecond = 1.5f;
     private const float DownforceCoefficient = 0.0035f;
     private const float MaximumDownforceAcceleration = 6f;
     private const float MaximumSubmergedTrackError = 0.90f;
@@ -80,6 +84,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public required BodyInertia UnitInertia { get; init; }
         public required float ProtocolReferenceHeight { get; init; }
         public required float MaximumSuspensionCompression { get; init; }
+        public required float WheelbaseMeters { get; init; }
         public required WheelShape[] Wheels { get; init; }
     }
 
@@ -103,6 +108,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public RaceGridPose HeldPose { get; set; }
         public RaceBotPhysicsControl Control { get; set; }
         public float LastLongitudinalAcceleration { get; set; }
+        public float LastSteeringAngleRadians { get; set; }
+        public float LastSlipAngleDegrees { get; set; }
+        public float MaximumSlipAngleDegrees { get; set; }
+        public float MaximumSteeringAngleDegrees { get; set; }
         public float RecoveryNeededSeconds { get; set; }
         public float MaximumUpwardSpeed { get; set; }
         public float MaximumSplineHeightError { get; set; }
@@ -150,8 +159,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         {
             var collider = CreateVehicleCollider(vertices, _asset.CarWheelColliders[model]);
             _colliders.Add(model, collider);
-            Log.Debug("Race collider {Model}: AC protocol reference height {Height:F3} m", model,
-                collider.ProtocolReferenceHeight);
+            Log.Debug("Race collider {Model}: AC protocol reference height {Height:F3} m, wheelbase {Wheelbase:F2} m",
+                model, collider.ProtocolReferenceHeight, collider.WheelbaseMeters);
         }
 
         Log.Information("Rigid-body race world loaded: {DriveTriangles} drivable and {BarrierTriangles} barrier triangles, "
@@ -294,6 +303,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             state = new RaceBotPhysicsState(supportedOrigin, protocolPosition, body.Pose.Orientation,
                 supportedVelocity,
                 Vector3.Dot(body.Velocity.Linear, forward), record.LastLongitudinalAcceleration,
+                record.LastSteeringAngleRadians, record.LastSlipAngleDegrees,
                 record.RecoveryCount);
             return true;
         }
@@ -307,6 +317,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             float minY = float.PositiveInfinity;
             float maxY = float.NegativeInfinity;
             float maxSpeed = 0;
+            float maxSlipAngle = 0;
+            float maxSteeringAngle = 0;
             float maxUpwardSpeed = 0;
             float maxSplineHeightError = 0;
             float maxSuspensionCompression = 0;
@@ -326,6 +338,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 minY = Math.Min(minY, origin.Y);
                 maxY = Math.Max(maxY, origin.Y);
                 maxSpeed = Math.Max(maxSpeed, body.Velocity.Linear.Length());
+                maxSlipAngle = Math.Max(maxSlipAngle, record.MaximumSlipAngleDegrees);
+                maxSteeringAngle = Math.Max(maxSteeringAngle, record.MaximumSteeringAngleDegrees);
                 maxUpwardSpeed = Math.Max(maxUpwardSpeed, record.MaximumUpwardSpeed);
                 maxSplineHeightError = Math.Max(maxSplineHeightError, record.MaximumSplineHeightError);
                 maxSuspensionCompression = Math.Max(maxSuspensionCompression,
@@ -345,13 +359,19 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             }
             long launchStepSpread = launchedBots > 1 ? lastMovingStep - firstMovingStep : 0;
             return new RacePhysicsDiagnostics(count, count == 0 ? 0 : minY, count == 0 ? 0 : maxY, maxSpeed,
-                maxUpwardSpeed, maxSplineHeightError, maxSuspensionCompression,
+                maxSlipAngle, maxSteeringAngle, maxUpwardSpeed, maxSplineHeightError, maxSuspensionCompression,
                 count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries, totalTrackCorrections,
                 launchedBots, launchStepSpread,
                 Interlocked.Read(ref _contactMetrics.StaticPairTests),
                 Interlocked.Read(ref _contactMetrics.StaticManifolds),
                 Interlocked.Read(ref _contactMetrics.VehicleManifolds));
         }
+    }
+
+    public (byte A, byte B, long Count) GetMostFrequentVehicleContactPair()
+    {
+        lock (_sync)
+            return _contactMetrics.GetMostFrequentVehiclePair();
     }
 
     private void CaptureMaximums(BodyRecord record)
@@ -385,6 +405,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             }
             HoldAtGrid(record);
             record.LastLongitudinalAcceleration = 0;
+            record.LastSteeringAngleRadians = 0;
+            record.LastSlipAngleDegrees = 0;
             return;
         }
 
@@ -416,10 +438,20 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
         var lineError = control.TargetPosition - origin;
         lineError.Y = 0;
-        var guidedForward = Vector3.Normalize(targetForward + Vector3.Clamp(lineError * 0.2f,
-            new Vector3(-0.5f), new Vector3(0.5f)));
-
-        float forwardSpeed = Vector3.Dot(body.Velocity.Linear, guidedForward);
+        var bodyForward = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, orientation));
+        float forwardSpeed = Vector3.Dot(body.Velocity.Linear, bodyForward);
+        float lookAheadMeters = GetSteeringLookAheadMeters(forwardSpeed);
+        var steeringDirection = CalculateSteeringDirection(origin, control.TargetPosition,
+            targetForward, forwardSpeed);
+        float requestedSteeringAngle = CalculateSteeringAngle(bodyForward, steeringDirection,
+            lookAheadMeters, record.Collider.WheelbaseMeters);
+        float steeringAngle = MoveSteeringAngle(record.LastSteeringAngleRadians,
+            requestedSteeringAngle, deltaSeconds);
+        float targetYawRate = CalculateTargetYawRate(forwardSpeed, record.Collider.WheelbaseMeters,
+            steeringAngle, control.LateralGripG);
+        float signedSlipAngle = CalculateSignedSlipAngleRadians(body.Velocity.Linear, bodyForward);
+        targetYawRate = CalculateSlipStabilizedYawRate(targetYawRate, signedSlipAngle,
+            forwardSpeed, control.LateralGripG);
         float uprightDriveScale = GetDriveScale(uprightDot);
         float courseDriveScale = GetCourseDriveScale(lineError.Length(),
             Math.Abs(origin.Y - physicalTarget.Y));
@@ -427,22 +459,24 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         float speedError = control.TargetSpeed * driveScale - forwardSpeed;
         float acceleration = Math.Clamp(speedError / Math.Max(deltaSeconds, 1e-3f),
             -control.MaximumBrakeDeceleration, control.MaximumAcceleration);
-        body.Velocity.Linear += guidedForward * (acceleration * deltaSeconds);
+        // Engine and brake authority is strictly longitudinal. Lane changes are produced by yawing
+        // the chassis and its velocity vector through bounded tyre grip, never by lateral thrust.
+        body.Velocity.Linear += CalculateLongitudinalVelocityDelta(bodyForward, acceleration, deltaSeconds);
         record.LastLongitudinalAcceleration = acceleration;
-
-        var verticalVelocity = Vector3.UnitY * Vector3.Dot(body.Velocity.Linear, Vector3.UnitY);
-        var longitudinalVelocity = guidedForward * Vector3.Dot(body.Velocity.Linear, guidedForward);
-        var lateralVelocity = body.Velocity.Linear - verticalVelocity - longitudinalVelocity;
-        float maximumLateralCorrection = Math.Max(0.4f, control.LateralGripG) * 9.81f * deltaSeconds
-                                         * uprightDriveScale;
-        body.Velocity.Linear -= Vector3.Clamp(lateralVelocity, new Vector3(-maximumLateralCorrection),
-            new Vector3(maximumLateralCorrection));
+        body.Velocity.Linear = ApplyLateralGrip(body.Velocity.Linear, bodyForward,
+            control.LateralGripG * uprightDriveScale, deltaSeconds);
+        record.LastSteeringAngleRadians = steeringAngle;
+        record.LastSlipAngleDegrees = CalculateSlipAngleDegrees(body.Velocity.Linear, bodyForward);
+        record.MaximumSlipAngleDegrees = Math.Max(record.MaximumSlipAngleDegrees,
+            record.LastSlipAngleDegrees);
+        record.MaximumSteeringAngleDegrees = Math.Max(record.MaximumSteeringAngleDegrees,
+            Math.Abs(steeringAngle) * 180 / MathF.PI);
 
         float downforceAcceleration = Math.Min(MaximumDownforceAcceleration,
             Math.Max(0, forwardSpeed) * Math.Max(0, forwardSpeed) * DownforceCoefficient);
         body.Velocity.Linear.Y -= downforceAcceleration * deltaSeconds;
-        body.Velocity.Angular = CalculateStabilizedAngularVelocity(orientation, targetForward,
-            body.Velocity.Angular, deltaSeconds);
+        body.Velocity.Angular = CalculateStabilizedAngularVelocity(orientation, steeringDirection,
+            body.Velocity.Angular, deltaSeconds, targetYawRate);
         body.Awake = true;
     }
 
@@ -532,6 +566,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         PositionWheels(record, recoveryPose, body.Velocity.Linear, dynamic: true);
         body.Awake = true;
         record.LastLongitudinalAcceleration = 0;
+        record.LastSteeringAngleRadians = 0;
+        record.LastSlipAngleDegrees = 0;
         record.RecoveryNeededSeconds = 0;
         record.RecoveryCount++;
         Log.Warning("Recovered overturned/off-track race bot {SessionId} ({Model}) from "
@@ -701,7 +737,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     }
 
     internal static Vector3 CalculateStabilizedAngularVelocity(Quaternion orientation, Vector3 targetForward,
-        Vector3 angularVelocity, float deltaSeconds)
+        Vector3 angularVelocity, float deltaSeconds, float? targetYawRate = null)
     {
         targetForward = Vector3.Normalize(targetForward);
         var targetRight = Vector3.Cross(Vector3.UnitY, targetForward);
@@ -713,6 +749,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var actualUp = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, orientation));
         var desired = (Vector3.Cross(actualForward, targetForward) + Vector3.Cross(actualUp, targetUp))
                       * AttitudeGain;
+        if (targetYawRate.HasValue)
+            desired += targetUp * (targetYawRate.Value - Vector3.Dot(desired, targetUp));
         desired = ClampMagnitude(desired, MaximumAngularSpeed);
         var boundedAngularVelocity = ClampMagnitude(angularVelocity, MaximumAngularSpeed);
         return MoveTowards(boundedAngularVelocity, desired,
@@ -741,6 +779,138 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private static float MoveTowards(float current, float target, float maximumDelta) =>
         current + Math.Clamp(target - current, -maximumDelta, maximumDelta);
 
+    internal static float GetSteeringLookAheadMeters(float forwardSpeedMetersPerSecond) =>
+        Math.Clamp(6 + Math.Max(0, forwardSpeedMetersPerSecond) * 0.45f, 6, 18);
+
+    internal static float MoveSteeringAngle(float currentRadians, float targetRadians, float deltaSeconds) =>
+        MoveTowards(currentRadians, targetRadians,
+            MaximumSteeringRateRadiansPerSecond * Math.Max(0, deltaSeconds));
+
+    internal static Vector3 CalculateSteeringDirection(Vector3 origin, Vector3 targetPosition,
+        Vector3 pathForward, float forwardSpeedMetersPerSecond)
+    {
+        if (pathForward.LengthSquared() < 1e-6f)
+            return Vector3.UnitZ;
+
+        pathForward = Vector3.Normalize(pathForward);
+        var horizontalPathForward = pathForward with { Y = 0 };
+        if (horizontalPathForward.LengthSquared() < 1e-6f)
+            horizontalPathForward = Vector3.UnitZ;
+        else
+            horizontalPathForward = Vector3.Normalize(horizontalPathForward);
+
+        var steeringTarget = targetPosition
+                             + horizontalPathForward * GetSteeringLookAheadMeters(forwardSpeedMetersPerSecond);
+        var horizontalDirection = steeringTarget - origin;
+        horizontalDirection.Y = 0;
+        if (horizontalDirection.LengthSquared() < 1e-6f)
+            horizontalDirection = horizontalPathForward;
+        else
+            horizontalDirection = Vector3.Normalize(horizontalDirection);
+
+        float vertical = Math.Clamp(pathForward.Y, -0.5f, 0.5f);
+        float horizontalScale = MathF.Sqrt(Math.Max(0, 1 - vertical * vertical));
+        return Vector3.Normalize(horizontalDirection * horizontalScale + Vector3.UnitY * vertical);
+    }
+
+    internal static float CalculateSteeringAngle(Vector3 bodyForward, Vector3 steeringDirection,
+        float lookAheadMeters, float wheelbaseMeters)
+    {
+        bodyForward.Y = 0;
+        steeringDirection.Y = 0;
+        if (bodyForward.LengthSquared() < 1e-6f || steeringDirection.LengthSquared() < 1e-6f)
+            return 0;
+        bodyForward = Vector3.Normalize(bodyForward);
+        steeringDirection = Vector3.Normalize(steeringDirection);
+        float signedSin = Vector3.Cross(bodyForward, steeringDirection).Y;
+        float headingError = MathF.Atan2(signedSin, Vector3.Dot(bodyForward, steeringDirection));
+        float curvature = 2 * MathF.Sin(headingError) / Math.Max(1, lookAheadMeters);
+        return Math.Clamp(MathF.Atan(Math.Max(1, wheelbaseMeters) * curvature),
+            -MaximumSteeringAngleRadians, MaximumSteeringAngleRadians);
+    }
+
+    internal static float CalculateTargetYawRate(float forwardSpeedMetersPerSecond, float wheelbaseMeters,
+        float steeringAngleRadians, float lateralGripG)
+    {
+        float speed = Math.Max(0, forwardSpeedMetersPerSecond);
+        if (speed < 0.5f)
+            return 0;
+        float requestedYawRate = speed / Math.Max(1, wheelbaseMeters) * MathF.Tan(steeringAngleRadians);
+        // Keep part of the lateral tyre budget available to remove existing slip instead of
+        // commanding the theoretical cornering limit continuously.
+        float gripYawRate = Math.Max(0.4f, lateralGripG) * 9.81f / Math.Max(2, speed) * 0.7f;
+        float maximumYawRate = Math.Min(MaximumAngularSpeed, gripYawRate);
+        return Math.Clamp(requestedYawRate, -maximumYawRate, maximumYawRate);
+    }
+
+    internal static float CalculateSlipStabilizedYawRate(float requestedYawRate,
+        float signedSlipAngleRadians, float forwardSpeedMetersPerSecond, float lateralGripG)
+    {
+        float speed = Math.Max(0, forwardSpeedMetersPerSecond);
+        if (speed < 2)
+            return requestedYawRate;
+        float gripYawRate = Math.Max(0.4f, lateralGripG) * 9.81f / speed * 0.7f;
+        float stabilityAuthority = Math.Min(1.2f, Math.Abs(signedSlipAngleRadians) * 2);
+        float maximumYawRate = Math.Min(MaximumAngularSpeed, Math.Max(gripYawRate, stabilityAuthority));
+        return Math.Clamp(requestedYawRate + signedSlipAngleRadians * 2,
+            -maximumYawRate, maximumYawRate);
+    }
+
+    internal static Vector3 ApplyLateralGrip(Vector3 velocity, Vector3 bodyForward,
+        float lateralGripG, float deltaSeconds)
+    {
+        var bodyRight = Vector3.Cross(Vector3.UnitY, bodyForward);
+        if (bodyRight.LengthSquared() < 1e-6f || deltaSeconds <= 0)
+            return velocity;
+        bodyRight = Vector3.Normalize(bodyRight);
+        float lateralSpeed = Vector3.Dot(velocity, bodyRight);
+        float correction = Math.Clamp(lateralSpeed,
+            -Math.Max(0, lateralGripG) * 9.81f * deltaSeconds,
+            Math.Max(0, lateralGripG) * 9.81f * deltaSeconds);
+        return velocity - bodyRight * correction;
+    }
+
+    internal static Vector3 CalculateLongitudinalVelocityDelta(Vector3 bodyForward,
+        float accelerationMetersPerSecondSquared, float deltaSeconds)
+    {
+        if (bodyForward.LengthSquared() < 1e-6f || deltaSeconds <= 0)
+            return Vector3.Zero;
+        return Vector3.Normalize(bodyForward) * accelerationMetersPerSecondSquared * deltaSeconds;
+    }
+
+    internal static float CalculateSlipAngleDegrees(Vector3 velocity, Vector3 bodyForward) =>
+        Math.Abs(CalculateSignedSlipAngleRadians(velocity, bodyForward)) * 180 / MathF.PI;
+
+    internal static float CalculateSignedSlipAngleRadians(Vector3 velocity, Vector3 bodyForward)
+    {
+        bodyForward.Y = 0;
+        if (bodyForward.LengthSquared() < 1e-6f)
+            return 0;
+        bodyForward = Vector3.Normalize(bodyForward);
+        var horizontalVelocity = velocity with { Y = 0 };
+        if (horizontalVelocity.LengthSquared() < 0.25f)
+            return 0;
+        horizontalVelocity = Vector3.Normalize(horizontalVelocity);
+        return MathF.Atan2(Vector3.Cross(bodyForward, horizontalVelocity).Y,
+            Vector3.Dot(bodyForward, horizontalVelocity));
+    }
+
+    internal static byte EncodeSteeringAngle(float steeringAngleRadians)
+    {
+        float normalized = Math.Clamp(steeringAngleRadians / MaximumSteeringAngleRadians, -1, 1);
+        return (byte)Math.Clamp(MathF.Round(127 + normalized * 127), 0, 254);
+    }
+
+    internal static float GetWheelbaseMeters(IReadOnlyList<RaceWheelCollider> wheels)
+    {
+        if (wheels.Count < 4)
+            return 2.5f;
+        float frontAxle = (wheels[0].Center.Z + wheels[1].Center.Z) * 0.5f;
+        float rearAxle = (wheels[2].Center.Z + wheels[3].Center.Z) * 0.5f;
+        float wheelbase = Math.Abs(frontAxle - rearAxle);
+        return float.IsFinite(wheelbase) && wheelbase is >= 1 and <= 5 ? wheelbase : 2.5f;
+    }
+
     private ColliderShape CreateVehicleCollider(Vector3[] chassisVertices, RaceWheelCollider[] wheels)
     {
         var hull = new ConvexHull(chassisVertices.AsSpan(), _pool, out var center);
@@ -764,6 +934,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             ProtocolReferenceHeight = GetProtocolReferenceHeight(wheels),
             MaximumSuspensionCompression = wheels.Average(wheel =>
                 GetSuspensionCompressionLimit(wheel.Radius)),
+            WheelbaseMeters = GetWheelbaseMeters(wheels),
             Wheels = wheelShapes
         };
     }
@@ -940,6 +1111,29 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public long StaticPairTests;
         public long StaticManifolds;
         public long VehicleManifolds;
+        public readonly long[] VehiclePairManifolds = new long[1 << 16];
+
+        public void RecordVehiclePair(byte a, byte b)
+        {
+            int low = Math.Min(a, b);
+            int high = Math.Max(a, b);
+            Interlocked.Increment(ref VehiclePairManifolds[(low << 8) | high]);
+        }
+
+        public (byte A, byte B, long Count) GetMostFrequentVehiclePair()
+        {
+            long maximum = 0;
+            int maximumIndex = 0;
+            for (int i = 0; i < VehiclePairManifolds.Length; i++)
+            {
+                long count = Interlocked.Read(ref VehiclePairManifolds[i]);
+                if (count <= maximum)
+                    continue;
+                maximum = count;
+                maximumIndex = i;
+            }
+            return ((byte)(maximumIndex >> 8), (byte)maximumIndex, maximum);
+        }
     }
 
     private sealed class PhysicsCollisionGroups
@@ -955,6 +1149,21 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             if (!_bodies.TryGetValue(a.Value, out var bodyA) || !_bodies.TryGetValue(b.Value, out var bodyB))
                 return true;
             return bodyA.Group != bodyB.Group && !bodyA.IsWheel && !bodyB.IsWheel;
+        }
+
+        public bool TryGetVehiclePair(BodyHandle a, BodyHandle b, out byte groupA, out byte groupB)
+        {
+            if (_bodies.TryGetValue(a.Value, out var bodyA)
+                && _bodies.TryGetValue(b.Value, out var bodyB)
+                && bodyA.Group != bodyB.Group && !bodyA.IsWheel && !bodyB.IsWheel)
+            {
+                groupA = bodyA.Group;
+                groupB = bodyB.Group;
+                return true;
+            }
+            groupA = 0;
+            groupB = 0;
+            return false;
         }
 
         private readonly record struct CollisionBody(byte Group, bool IsWheel);
@@ -991,7 +1200,12 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             if (pair.A.Mobility == CollidableMobility.Static || pair.B.Mobility == CollidableMobility.Static)
                 Interlocked.Increment(ref _metrics.StaticManifolds);
             else
+            {
                 Interlocked.Increment(ref _metrics.VehicleManifolds);
+                if (_collisionGroups.TryGetVehiclePair(pair.A.BodyHandle, pair.B.BodyHandle,
+                        out var groupA, out var groupB))
+                    _metrics.RecordVehiclePair(groupA, groupB);
+            }
             // The convex hull is the chassis, not a tyre. Let the race controller supply longitudinal
             // and lateral tyre forces while retaining friction for car-to-car and car-to-human impacts.
             float contactFriction = pair.A.Mobility == CollidableMobility.Static
