@@ -98,11 +98,15 @@ public class AiUpdater
                 Log.Debug("Race physics: {BotCount} bots, Y {MinimumY:F2}..{MaximumY:F2} m, max speed {MaximumSpeed:F1} m/s, "
                           + "max rise {MaximumUpwardSpeed:F1} m/s, height error {MaximumSplineHeightError:F2} m, "
                           + "suspension {MaximumSuspensionCompression:F2} m, upright {MinimumUprightDot:F2}, "
-                          + "overturned {OverturnedBots}, recoveries {TotalRecoveries}, static pairs {StaticPairTests}, manifolds {StaticManifolds}",
+                          + "overturned {OverturnedBots}, recoveries {TotalRecoveries}, track corrections {TotalTrackCorrections}, "
+                          + "launched {LaunchedBots}/{BotCount}, launch spread {LaunchStepSpread} ticks, "
+                          + "static pairs {StaticPairTests}, manifolds {StaticManifolds}",
                     diagnostics.BotCount, diagnostics.MinimumY, diagnostics.MaximumY, diagnostics.MaximumSpeed,
                     diagnostics.MaximumUpwardSpeed, diagnostics.MaximumSplineHeightError,
                     diagnostics.MaximumSuspensionCompression,
                     diagnostics.MinimumUprightDot, diagnostics.OverturnedBots, diagnostics.TotalRecoveries,
+                    diagnostics.TotalTrackCorrections, diagnostics.LaunchedBots, diagnostics.BotCount,
+                    diagnostics.LaunchStepSpread,
                     diagnostics.StaticPairTests, diagnostics.StaticManifolds);
                 _lastPhysicsDiagnosticsMilliseconds = now;
             }

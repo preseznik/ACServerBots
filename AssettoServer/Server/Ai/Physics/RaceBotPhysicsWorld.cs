@@ -11,6 +11,7 @@ using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.CollisionDetection;
 using BepuPhysics.Constraints;
+using BepuPhysics.Trees;
 using BepuUtilities;
 using BepuUtilities.Memory;
 using Serilog;
@@ -24,7 +25,8 @@ public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPos
     float TargetSpeed, float MaximumAcceleration, float MaximumBrakeDeceleration, float LateralGripG);
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
     float MaximumUpwardSpeed, float MaximumSplineHeightError, float MaximumSuspensionCompression,
-    float MinimumUprightDot, int OverturnedBots, int TotalRecoveries, long StaticPairTests, long StaticManifolds);
+    float MinimumUprightDot, int OverturnedBots, int TotalRecoveries, int TotalTrackCorrections,
+    int LaunchedBots, long LaunchStepSpread, long StaticPairTests, long StaticManifolds);
 
 public sealed class RaceBotPhysicsWorld : IDisposable
 {
@@ -39,6 +41,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private const float AttitudeGain = 4f;
     private const float DownforceCoefficient = 0.0035f;
     private const float MaximumDownforceAcceleration = 6f;
+    private const float MaximumSubmergedTrackError = 0.15f;
+    private const float MaximumAirborneTrackError = 0.35f;
+    private const float TrackRayHeight = 50f;
+    private const float TrackRayLength = 100f;
 
     private readonly BufferPool _pool = new();
     private readonly Simulation _simulation;
@@ -51,6 +57,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private readonly PhysicsContactMetrics _contactMetrics = new();
     private readonly PhysicsCollisionGroups _collisionGroups = new();
     private readonly SpringSettings _suspensionSettings;
+    private readonly StaticHandle _drivableTrackHandle;
+    private long _stepIndex;
     private bool _disposed;
 
     private sealed class WheelShape
@@ -93,9 +101,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public float RecoveryNeededSeconds { get; set; }
         public float MaximumUpwardSpeed { get; set; }
         public float MaximumSplineHeightError { get; set; }
-        public float TrackHeightOffset { get; set; }
-        public bool HasTrackHeightOffset { get; set; }
         public int RecoveryCount { get; set; }
+        public int TrackCorrectionCount { get; set; }
+        public long FirstMovingStep { get; set; }
     }
 
     public int GridCount => _asset.Grid.Count;
@@ -130,7 +138,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         if (physics.Fidelity != RacePhysicsFidelity.Efficient && Environment.ProcessorCount > 2)
             _dispatcher = new ThreadDispatcher(Math.Min(8, Environment.ProcessorCount - 1));
 
-        AddTrackMesh(_asset.TrackTriangles);
+        _drivableTrackHandle = AddTrackMesh(_asset.TrackTriangles)
+                                ?? throw new ConfigurationException("Prepared race physics asset has no drivable track mesh");
         AddTrackMesh(_asset.TrackBarrierTriangles);
         foreach (var (model, vertices) in _asset.CarColliderVertices)
         {
@@ -239,6 +248,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     {
         lock (_sync)
         {
+            _stepIndex++;
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
                 ApplyControl(record, deltaSeconds);
             _simulation.Timestep(deltaSeconds, _dispatcher);
@@ -246,6 +256,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 HoldAtGrid(record);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
                 EnforceSuspensionTravel(record);
+            foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
+                KeepBotNearTrack(record);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
                 RecoverTransientLaunch(record);
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
@@ -266,7 +278,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             var chassisOrigin = GetChassisOrigin(record, body);
             var supportedOrigin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
             var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
-            var protocolPosition = ToProtocolPosition(supportedOrigin, body.Pose.Orientation,
+            var trackTarget = GetTrackContactTarget(record.Control, supportedOrigin);
+            var renderOrigin = GetTrackRenderOrigin(supportedOrigin, trackTarget);
+            var protocolPosition = ToProtocolPosition(renderOrigin, body.Pose.Orientation,
                 record.Collider.ProtocolReferenceHeight);
             var forward = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
             state = new RaceBotPhysicsState(supportedOrigin, protocolPosition, body.Pose.Orientation,
@@ -291,6 +305,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             float minUprightDot = 1;
             int overturnedBots = 0;
             int totalRecoveries = 0;
+            int totalTrackCorrections = 0;
+            int launchedBots = 0;
+            long firstMovingStep = long.MaxValue;
+            long lastMovingStep = long.MinValue;
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
             {
                 var body = _simulation.Bodies[record.Handle];
@@ -308,11 +326,20 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 if (uprightDot < OverturnedUprightDot)
                     overturnedBots++;
                 totalRecoveries += record.RecoveryCount;
+                totalTrackCorrections += record.TrackCorrectionCount;
+                if (record.FirstMovingStep > 0)
+                {
+                    launchedBots++;
+                    firstMovingStep = Math.Min(firstMovingStep, record.FirstMovingStep);
+                    lastMovingStep = Math.Max(lastMovingStep, record.FirstMovingStep);
+                }
                 count++;
             }
+            long launchStepSpread = launchedBots > 1 ? lastMovingStep - firstMovingStep : 0;
             return new RacePhysicsDiagnostics(count, count == 0 ? 0 : minY, count == 0 ? 0 : maxY, maxSpeed,
                 maxUpwardSpeed, maxSplineHeightError, maxSuspensionCompression,
-                count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries,
+                count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries, totalTrackCorrections,
+                launchedBots, launchStepSpread,
                 Interlocked.Read(ref _contactMetrics.StaticPairTests),
                 Interlocked.Read(ref _contactMetrics.StaticManifolds));
         }
@@ -324,11 +351,16 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
         var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
-        UpdateTrackHeightOffset(record, origin, supportedVelocity, body.Pose.Orientation);
-        var physicalTarget = GetTrackContactTarget(record, record.Control, origin);
+        var physicalTarget = GetTrackContactTarget(record.Control, origin);
         record.MaximumUpwardSpeed = Math.Max(record.MaximumUpwardSpeed, supportedVelocity.Y);
         record.MaximumSplineHeightError = Math.Max(record.MaximumSplineHeightError,
             Math.Abs(origin.Y - physicalTarget.Y));
+        if (record.FirstMovingStep == 0)
+        {
+            var forward = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
+            if (Vector3.Dot(body.Velocity.Linear, forward) >= 0.5f)
+                record.FirstMovingStep = _stepIndex;
+        }
     }
 
     private void ApplyControl(BodyRecord record, float deltaSeconds)
@@ -360,7 +392,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, orientation);
         var targetForward = Vector3.Normalize(control.TargetForward);
-        var physicalTarget = GetTrackContactTarget(record, control, origin);
+        var physicalTarget = GetTrackContactTarget(control, origin);
         float uprightDot = GetUprightDot(orientation);
         if (NeedsRecovery(uprightDot, origin, physicalTarget))
             record.RecoveryNeededSeconds += deltaSeconds;
@@ -412,8 +444,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
         var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
-        UpdateTrackHeightOffset(record, origin, supportedVelocity, body.Pose.Orientation);
-        var physicalTarget = GetTrackContactTarget(record, control, origin);
+        var physicalTarget = GetTrackContactTarget(control, origin);
         if (NeedsImmediateRecovery(GetUprightDot(body.Pose.Orientation), origin, physicalTarget,
                 supportedVelocity, control.TargetForward))
             RecoverBot(record, control);
@@ -437,12 +468,37 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         body.Awake = true;
     }
 
+    private void KeepBotNearTrack(BodyRecord record)
+    {
+        var body = _simulation.Bodies[record.Handle];
+        var chassisOrigin = GetChassisOrigin(record, body);
+        var supportedOrigin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
+        var trackTarget = GetTrackContactTarget(record.Control, supportedOrigin);
+        float correction = GetTrackSupportCorrection(trackTarget.Y - supportedOrigin.Y);
+        if (correction == 0)
+            return;
+
+        body.Pose.Position.Y += correction;
+        float targetVerticalSpeed = GetTargetVerticalSpeed(record.Control.TargetForward,
+            body.Velocity.Linear, body.Pose.Orientation);
+        body.Velocity.Linear.Y = targetVerticalSpeed;
+        body.Awake = true;
+        foreach (var wheel in record.Wheels)
+        {
+            var wheelBody = _simulation.Bodies[wheel.Handle];
+            wheelBody.Pose.Position.Y += correction;
+            wheelBody.Velocity.Linear.Y = targetVerticalSpeed;
+            wheelBody.Awake = true;
+        }
+        record.TrackCorrectionCount++;
+    }
+
     private void RecoverBot(BodyRecord record, RaceBotPhysicsControl control)
     {
         var body = _simulation.Bodies[record.Handle];
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
-        var recoveryPose = CreateRecoveryPose(GetTrackContactTarget(record, control, origin),
+        var recoveryPose = CreateRecoveryPose(GetTrackContactTarget(control, origin),
             control.TargetForward);
         body.Pose = ToCenterOfMassPose(recoveryPose, record.Collider.Center);
         body.Velocity.Linear = Vector3.Normalize(control.TargetForward) * Math.Min(Math.Max(0, control.TargetSpeed), 5f);
@@ -501,25 +557,23 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         return chassisVelocity;
     }
 
-    private static Vector3 GetTrackContactTarget(BodyRecord record, RaceBotPhysicsControl control,
-        Vector3 fallbackOrigin)
+    private Vector3 GetTrackContactTarget(RaceBotPhysicsControl control, Vector3 fallbackOrigin)
     {
         var target = control.TargetPosition;
-        target.Y = record.HasTrackHeightOffset
-            ? control.TargetPosition.Y + record.TrackHeightOffset
+        target.Y = TryGetTrackSurfaceHeight(control.TargetPosition, out float surfaceHeight)
+            ? surfaceHeight
             : fallbackOrigin.Y;
         return target;
     }
 
-    private static void UpdateTrackHeightOffset(BodyRecord record, Vector3 supportedOrigin,
-        Vector3 supportedVelocity, Quaternion orientation)
+    private bool TryGetTrackSurfaceHeight(Vector3 splineTarget, out float surfaceHeight)
     {
-        if (record.Control.TargetForward.LengthSquared() < 1e-6f || GetUprightDot(orientation) < 0.9f)
-            return;
-        if (Math.Abs(supportedVelocity.Y) > 1.5f)
-            return;
-        record.TrackHeightOffset = supportedOrigin.Y - record.Control.TargetPosition.Y;
-        record.HasTrackHeightOffset = true;
+        var handler = new TrackRayHitHandler(_drivableTrackHandle, splineTarget.Y,
+            splineTarget.Y + TrackRayHeight);
+        var rayOrigin = new Vector3(splineTarget.X, splineTarget.Y + TrackRayHeight, splineTarget.Z);
+        _simulation.RayCast(rayOrigin, -Vector3.UnitY, TrackRayLength, ref handler);
+        surfaceHeight = handler.Height;
+        return handler.Hit;
     }
 
     internal static Vector3 GetWheelOriginSample(RaceWheelCollider wheel, Vector3 wheelPosition,
@@ -534,6 +588,28 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     {
         var bodyUp = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, orientation));
         return Math.Max(0, Vector3.Dot(supportedOrigin - chassisOrigin, bodyUp));
+    }
+
+    internal static float GetTrackSupportCorrection(float trackHeightError)
+    {
+        if (trackHeightError > MaximumSubmergedTrackError)
+            return trackHeightError;
+        if (trackHeightError < -MaximumAirborneTrackError)
+            return trackHeightError;
+        return 0;
+    }
+
+    internal static Vector3 GetTrackRenderOrigin(Vector3 physicalOrigin, Vector3 trackTarget) =>
+        physicalOrigin with { Y = trackTarget.Y };
+
+    internal static float GetTargetVerticalSpeed(Vector3 targetForward, Vector3 velocity,
+        Quaternion orientation)
+    {
+        if (targetForward.LengthSquared() < 1e-6f)
+            return 0;
+        var forward = Vector3.Transform(Vector3.UnitZ, orientation);
+        float forwardSpeed = Math.Max(0, Vector3.Dot(velocity, forward));
+        return Math.Clamp(Vector3.Normalize(targetForward).Y * forwardSpeed, -3f, 3f);
     }
 
     internal static Vector3 ToProtocolPosition(Vector3 physicalOrigin, Quaternion orientation,
@@ -746,10 +822,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         }
     }
 
-    private void AddTrackMesh(IReadOnlyList<Kn5Triangle> sourceTriangles)
+    private StaticHandle? AddTrackMesh(IReadOnlyList<Kn5Triangle> sourceTriangles)
     {
         if (sourceTriangles.Count == 0)
-            return;
+            return null;
         _pool.Take<Triangle>(sourceTriangles.Count, out var triangles);
         for (int i = 0; i < triangles.Length; i++)
         {
@@ -757,7 +833,45 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             triangles[i] = new Triangle(source.A, source.B, source.C);
         }
         var mesh = new Mesh(triangles, Vector3.One, _pool);
-        _simulation.Statics.Add(new StaticDescription(Vector3.Zero, _simulation.Shapes.Add(mesh)));
+        return _simulation.Statics.Add(new StaticDescription(Vector3.Zero, _simulation.Shapes.Add(mesh)));
+    }
+
+    private struct TrackRayHitHandler : IRayHitHandler
+    {
+        private readonly int _trackHandle;
+        private readonly float _referenceHeight;
+        private readonly float _rayOriginY;
+        private float _bestDistance;
+
+        public bool Hit { get; private set; }
+        public float Height { get; private set; }
+
+        public TrackRayHitHandler(StaticHandle trackHandle, float referenceHeight, float rayOriginY)
+        {
+            _trackHandle = trackHandle.Value;
+            _referenceHeight = referenceHeight;
+            _rayOriginY = rayOriginY;
+            _bestDistance = float.PositiveInfinity;
+            Hit = false;
+            Height = 0;
+        }
+
+        public bool AllowTest(CollidableReference collidable) =>
+            collidable.Mobility == CollidableMobility.Static && collidable.StaticHandle.Value == _trackHandle;
+
+        public bool AllowTest(CollidableReference collidable, int childIndex) => true;
+
+        public void OnRayHit(in RayData ray, ref float maximumT, float t, in Vector3 normal,
+            CollidableReference collidable, int childIndex)
+        {
+            float height = _rayOriginY - t;
+            float distance = Math.Abs(height - _referenceHeight);
+            if (distance >= _bestDistance)
+                return;
+            _bestDistance = distance;
+            Height = height;
+            Hit = true;
+        }
     }
 
     internal static Kn5Triangle ToBepuTrackTriangle(Kn5Triangle source)

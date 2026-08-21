@@ -588,6 +588,18 @@ public class AiState : IDisposable
             SetTargetSpeed(0);
             return;
         }
+
+        if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+            && RaceBotMath.IsInRaceLaunchWindow(_sessionManager.CurrentSession.Configuration.Type,
+                _sessionManager.ServerTimeMilliseconds, _sessionManager.CurrentSession.StartTimeMilliseconds))
+        {
+            // Grid rows are intentionally close. Applying normal stopped-car following logic here
+            // releases the field one row at a time as each preceding row clears its random gap.
+            // Give every participant the same launch window, then resume normal avoidance.
+            _stoppedForObstacle = false;
+            SetTargetSpeed(InitialMaxSpeed);
+            return;
+        }
             
         if (_sessionManager.ServerTimeMilliseconds < _ignoreObstaclesUntil)
         {

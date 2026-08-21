@@ -6,8 +6,15 @@ namespace AssettoServer.Server.Ai;
 
 public static class RaceBotMath
 {
+    public const int RaceLaunchGraceMilliseconds = 2_000;
+
     public static bool ShouldHoldForCountdown(SessionType sessionType, long serverTimeMilliseconds, long startTimeMilliseconds)
         => sessionType == SessionType.Race && serverTimeMilliseconds < startTimeMilliseconds;
+
+    public static bool IsInRaceLaunchWindow(SessionType sessionType, long serverTimeMilliseconds,
+        long startTimeMilliseconds) => sessionType == SessionType.Race
+                                       && serverTimeMilliseconds >= startTimeMilliseconds
+                                       && serverTimeMilliseconds < startTimeMilliseconds + RaceLaunchGraceMilliseconds;
 
     public static float PaceFactor(float difficulty) => 0.65f + Math.Clamp(difficulty, 0, 1) * 0.35f;
 

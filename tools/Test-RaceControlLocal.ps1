@@ -140,6 +140,16 @@ if ($VerifyMovingBots) {
     }
     if ($finalSpeed -lt 1) { throw "Bots did not begin moving after the countdown: final maximum speed was $finalSpeed m/s." }
 
+    $launchSamples = @([regex]::Matches($combinedLog,
+        'launched (?<moving>\d+)/(?<bots>\d+), launch spread (?<spread>\d+) ticks'))
+    $fullFieldLaunch = $launchSamples | Where-Object {
+        [int]$_.Groups['moving'].Value -eq [int]$_.Groups['bots'].Value -and [int]$_.Groups['bots'].Value -gt 0
+    } | Select-Object -First 1
+    if ($null -eq $fullFieldLaunch) { throw 'Not every race bot launched from the grid.' }
+    if ([int]$fullFieldLaunch.Groups['spread'].Value -gt 30) {
+        throw "Race bots launched sequentially: first-motion spread was $($fullFieldLaunch.Groups['spread'].Value) ticks."
+    }
+
     $stabilitySamples = @([regex]::Matches($combinedLog,
         'upright (?<upright>-?\d+(?:\.\d+)?), overturned (?<overturned>\d+), recoveries (?<recoveries>\d+)'))
     if ($stabilitySamples.Count -lt 2) { throw 'Server log did not contain enough rollover diagnostics.' }

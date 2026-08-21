@@ -24,6 +24,23 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void EveryRaceBotSharesTheSameLaunchGraceWindow()
+    {
+        const long start = 10_000;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotMath.IsInRaceLaunchWindow(SessionType.Race, start - 1, start), Is.False);
+            Assert.That(RaceBotMath.IsInRaceLaunchWindow(SessionType.Race, start, start), Is.True);
+            Assert.That(RaceBotMath.IsInRaceLaunchWindow(SessionType.Race,
+                start + RaceBotMath.RaceLaunchGraceMilliseconds - 1, start), Is.True);
+            Assert.That(RaceBotMath.IsInRaceLaunchWindow(SessionType.Race,
+                start + RaceBotMath.RaceLaunchGraceMilliseconds, start), Is.False);
+            Assert.That(RaceBotMath.IsInRaceLaunchWindow(SessionType.Practice, start, start), Is.False);
+        });
+    }
+
+    [Test]
     public void RaceListenerAcceptsPrivateIpv4AndRejectsPublicOrWildcardAddresses()
     {
         Assert.Multiple(() =>
@@ -381,6 +398,46 @@ public class RaceBotsTests
                 new Vector3(0, 0.05f, 0), Quaternion.Identity, 0.08f), Is.Zero);
             Assert.That(RaceBotPhysicsWorld.GetSuspensionCompressionCorrection(chassisOrigin,
                 new Vector3(0, 0.30f, 0), Quaternion.Identity, 0.08f), Is.EqualTo(0.22f).Within(1e-6f));
+        });
+    }
+
+    [Test]
+    public void TrackSupportOnlyCorrectsVisibleSubmersionOrFlight()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(0.14f), Is.Zero);
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(0.30f),
+                Is.EqualTo(0.30f).Within(1e-6f));
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(-0.34f), Is.Zero);
+            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(-1.20f),
+                Is.EqualTo(-1.20f).Within(1e-6f));
+        });
+    }
+
+    [Test]
+    public void NetworkRenderHeightUsesTheAuthoritativeTrackSurfaceWithoutMovingThePhysicalCar()
+    {
+        var physicalOrigin = new Vector3(12, -3, 8);
+        var trackTarget = new Vector3(15, 4.5f, 11);
+
+        var renderOrigin = RaceBotPhysicsWorld.GetTrackRenderOrigin(physicalOrigin, trackTarget);
+
+        Assert.That(renderOrigin, Is.EqualTo(new Vector3(12, 4.5f, 8)));
+    }
+
+    [Test]
+    public void TrackSupportMatchesVerticalSpeedToTheAuthoredSlope()
+    {
+        var slope = Vector3.Normalize(new Vector3(0, 0.1f, 1));
+        var velocity = new Vector3(0, 5, 20);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotPhysicsWorld.GetTargetVerticalSpeed(slope, velocity, Quaternion.Identity),
+                Is.EqualTo(slope.Y * 20).Within(1e-5f));
+            Assert.That(RaceBotPhysicsWorld.GetTargetVerticalSpeed(Vector3.UnitY, velocity, Quaternion.Identity),
+                Is.EqualTo(3).Within(1e-5f));
         });
     }
 
