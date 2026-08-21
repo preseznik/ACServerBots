@@ -346,6 +346,45 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void SuspensionLimitsPreventTheChassisCollapsingOntoTheRoad()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotPhysicsWorld.GetSuspensionCompressionLimit(0.2f), Is.EqualTo(0.06f));
+            Assert.That(RaceBotPhysicsWorld.GetSuspensionCompressionLimit(0.32f), Is.EqualTo(0.08f));
+            Assert.That(RaceBotPhysicsWorld.GetSuspensionCompressionLimit(0.6f), Is.EqualTo(0.10f));
+            Assert.That(RaceBotPhysicsWorld.GetSuspensionExtensionLimit(0.32f), Is.EqualTo(0.04f));
+        });
+    }
+
+    [Test]
+    public void RenderOriginIsReconstructedFromTheSimulatedWheelContact()
+    {
+        var wheel = new RaceWheelCollider(new Vector3(0.8f, 0.32f, 1.2f), 0.32f);
+        var orientation = Quaternion.CreateFromYawPitchRoll(0.3f, -0.08f, 0.04f);
+        var expectedOrigin = new Vector3(12, 4, -8);
+        var wheelPosition = expectedOrigin + Vector3.Transform(wheel.Center, orientation);
+
+        var reconstructed = RaceBotPhysicsWorld.GetWheelOriginSample(wheel, wheelPosition, orientation);
+
+        Assert.That(Vector3.Distance(reconstructed, expectedOrigin), Is.LessThan(1e-5f));
+    }
+
+    [Test]
+    public void SuspensionSafetyClampOnlyCorrectsTravelBeyondTheBumpStop()
+    {
+        var chassisOrigin = Vector3.Zero;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotPhysicsWorld.GetSuspensionCompressionCorrection(chassisOrigin,
+                new Vector3(0, 0.05f, 0), Quaternion.Identity, 0.08f), Is.Zero);
+            Assert.That(RaceBotPhysicsWorld.GetSuspensionCompressionCorrection(chassisOrigin,
+                new Vector3(0, 0.30f, 0), Quaternion.Identity, 0.08f), Is.EqualTo(0.22f).Within(1e-6f));
+        });
+    }
+
+    [Test]
     public void RacePhysicsStabilityCutsDriveAndRequestsRecoveryWhenOverturned()
     {
         var physicalOrigin = new Vector3(10, 2, 20);
@@ -392,19 +431,21 @@ public class RaceBotsTests
     }
 
     [Test]
-    public void RecoveryPoseIsUprightAndRoundTripsToSplineProtocolTarget()
+    public void RecoveryPosePlacesThePhysicalOriginOnTheTrackTarget()
     {
-        var protocolTarget = new Vector3(20, 4, -15);
+        var trackTarget = new Vector3(20, 4, -15);
         var targetForward = Vector3.Normalize(new Vector3(1, 0.12f, 2));
 
-        var pose = RaceBotPhysicsWorld.CreateRecoveryPose(protocolTarget, targetForward, 0.32f);
+        var pose = RaceBotPhysicsWorld.CreateRecoveryPose(trackTarget, targetForward);
         var recoveredProtocolPosition = RaceBotPhysicsWorld.ToProtocolPosition(
             pose.Position, pose.Orientation, 0.32f);
         var recoveredForward = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, pose.Orientation));
 
         Assert.Multiple(() =>
         {
-            Assert.That(Vector3.Distance(recoveredProtocolPosition, protocolTarget), Is.LessThan(1e-5f));
+            Assert.That(Vector3.Distance(pose.Position, trackTarget), Is.LessThan(1e-5f));
+            Assert.That(Vector3.Distance(recoveredProtocolPosition, trackTarget),
+                Is.EqualTo(0.32f).Within(1e-5f));
             Assert.That(Vector3.Dot(recoveredForward, targetForward), Is.GreaterThan(0.999f));
             Assert.That(RaceBotPhysicsWorld.GetUprightDot(pose.Orientation), Is.GreaterThan(0.99f));
         });

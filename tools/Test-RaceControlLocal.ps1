@@ -123,15 +123,21 @@ if ($combinedLog -notmatch 'Using preset race-control') { throw 'Server log did 
 if ($combinedLog -notmatch 'Shutdown requested by control file') { throw 'Server log did not confirm graceful control-file shutdown' }
 if ($VerifyMovingBots) {
     $samples = @([regex]::Matches($combinedLog,
-        'Race physics: \d+ bots, Y (?<min>-?\d+(?:\.\d+)?)\.\.(?<max>-?\d+(?:\.\d+)?) m, max speed (?<speed>\d+(?:\.\d+)?) m/s, max rise (?<rise>\d+(?:\.\d+)?) m/s, height error (?<height>\d+(?:\.\d+)?) m'))
+        'Race physics: \d+ bots, Y (?<min>-?\d+(?:\.\d+)?)\.\.(?<max>-?\d+(?:\.\d+)?) m, max speed (?<speed>\d+(?:\.\d+)?) m/s, max rise (?<rise>\d+(?:\.\d+)?) m/s, height error (?<height>\d+(?:\.\d+)?) m, suspension (?<suspension>\d+(?:\.\d+)?) m'))
     if ($samples.Count -lt 2) { throw 'Server log did not contain enough rigid-body diagnostics.' }
     $finalSpeed = [double]::Parse($samples[-1].Groups['speed'].Value, [Globalization.CultureInfo]::InvariantCulture)
     $maximumRise = ($samples | ForEach-Object {
         [double]::Parse($_.Groups['rise'].Value, [Globalization.CultureInfo]::InvariantCulture)
     } | Measure-Object -Maximum).Maximum
     $finalHeightError = [double]::Parse($samples[-1].Groups['height'].Value, [Globalization.CultureInfo]::InvariantCulture)
+    $maximumSuspensionCompression = ($samples | ForEach-Object {
+        [double]::Parse($_.Groups['suspension'].Value, [Globalization.CultureInfo]::InvariantCulture)
+    } | Measure-Object -Maximum).Maximum
     if ($finalHeightError -gt 2.5) { throw "Bots left the road surface: final spline height error was $finalHeightError m." }
     if ($maximumRise -gt 12) { throw "Bots were launched from the road: maximum upward speed was $maximumRise m/s." }
+    if ($maximumSuspensionCompression -gt 0.12) {
+        throw "Bot suspension collapsed: maximum chassis compression was $maximumSuspensionCompression m."
+    }
     if ($finalSpeed -lt 1) { throw "Bots did not begin moving after the countdown: final maximum speed was $finalSpeed m/s." }
 
     $stabilitySamples = @([regex]::Matches($combinedLog,

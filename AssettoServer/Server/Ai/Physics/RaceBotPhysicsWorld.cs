@@ -23,8 +23,8 @@ public readonly record struct RaceBotPhysicsState(Vector3 Position, Vector3 Prot
 public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPosition, Vector3 TargetForward,
     float TargetSpeed, float MaximumAcceleration, float MaximumBrakeDeceleration, float LateralGripG);
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
-    float MaximumUpwardSpeed, float MaximumSplineHeightError, float MinimumUprightDot, int OverturnedBots,
-    int TotalRecoveries, long StaticPairTests, long StaticManifolds);
+    float MaximumUpwardSpeed, float MaximumSplineHeightError, float MaximumSuspensionCompression,
+    float MinimumUprightDot, int OverturnedBots, int TotalRecoveries, long StaticPairTests, long StaticManifolds);
 
 public sealed class RaceBotPhysicsWorld : IDisposable
 {
@@ -33,7 +33,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private const float MaximumRecoveryHorizontalError = 25f;
     private const float MaximumRecoveryHeightError = 3f;
     private const float ImmediateRecoveryHeightError = 1.25f;
-    private const float ImmediateRecoveryExcessUpwardSpeed = 5f;
+    private const float ImmediateRecoveryExcessUpwardSpeed = 3f;
     private const float MaximumAngularSpeed = 2.5f;
     private const float MaximumAngularAcceleration = 16f;
     private const float AttitudeGain = 4f;
@@ -66,6 +66,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public required Vector3 Center { get; init; }
         public required BodyInertia UnitInertia { get; init; }
         public required float ProtocolReferenceHeight { get; init; }
+        public required float MaximumSuspensionCompression { get; init; }
         public required WheelShape[] Wheels { get; init; }
     }
 
@@ -92,6 +93,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public float RecoveryNeededSeconds { get; set; }
         public float MaximumUpwardSpeed { get; set; }
         public float MaximumSplineHeightError { get; set; }
+        public float TrackHeightOffset { get; set; }
+        public bool HasTrackHeightOffset { get; set; }
         public int RecoveryCount { get; set; }
     }
 
@@ -117,7 +120,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         };
         // Fidelity controls numerical resolution, not the suspension tune. Changing spring frequency
         // with fidelity made light cars harsher and less stable at otherwise higher quality settings.
-        _suspensionSettings = new SpringSettings(3, 1);
+        _suspensionSettings = new SpringSettings(5, 0.8f);
         _botContinuousDetection = physics.Fidelity == RacePhysicsFidelity.High
             ? ContinuousDetection.Continuous(1e-3f, 1e-2f)
             : ContinuousDetection.Passive;
@@ -242,6 +245,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: true }))
                 HoldAtGrid(record);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
+                EnforceSuspensionTravel(record);
+            foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
                 RecoverTransientLaunch(record);
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
                 CaptureMaximums(record);
@@ -258,11 +263,14 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 return false;
             }
             var body = _simulation.Bodies[record.Handle];
-            var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
-            var protocolPosition = ToProtocolPosition(origin, body.Pose.Orientation,
+            var chassisOrigin = GetChassisOrigin(record, body);
+            var supportedOrigin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
+            var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
+            var protocolPosition = ToProtocolPosition(supportedOrigin, body.Pose.Orientation,
                 record.Collider.ProtocolReferenceHeight);
             var forward = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
-            state = new RaceBotPhysicsState(origin, protocolPosition, body.Pose.Orientation, body.Velocity.Linear,
+            state = new RaceBotPhysicsState(supportedOrigin, protocolPosition, body.Pose.Orientation,
+                supportedVelocity,
                 Vector3.Dot(body.Velocity.Linear, forward), record.LastLongitudinalAcceleration,
                 record.RecoveryCount);
             return true;
@@ -279,19 +287,23 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             float maxSpeed = 0;
             float maxUpwardSpeed = 0;
             float maxSplineHeightError = 0;
+            float maxSuspensionCompression = 0;
             float minUprightDot = 1;
             int overturnedBots = 0;
             int totalRecoveries = 0;
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
             {
                 var body = _simulation.Bodies[record.Handle];
-                var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
+                var chassisOrigin = GetChassisOrigin(record, body);
+                var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
                 float uprightDot = GetUprightDot(body.Pose.Orientation);
                 minY = Math.Min(minY, origin.Y);
                 maxY = Math.Max(maxY, origin.Y);
                 maxSpeed = Math.Max(maxSpeed, body.Velocity.Linear.Length());
                 maxUpwardSpeed = Math.Max(maxUpwardSpeed, record.MaximumUpwardSpeed);
                 maxSplineHeightError = Math.Max(maxSplineHeightError, record.MaximumSplineHeightError);
+                maxSuspensionCompression = Math.Max(maxSuspensionCompression,
+                    GetSuspensionCompression(chassisOrigin, origin, body.Pose.Orientation));
                 minUprightDot = Math.Min(minUprightDot, uprightDot);
                 if (uprightDot < OverturnedUprightDot)
                     overturnedBots++;
@@ -299,7 +311,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 count++;
             }
             return new RacePhysicsDiagnostics(count, count == 0 ? 0 : minY, count == 0 ? 0 : maxY, maxSpeed,
-                maxUpwardSpeed, maxSplineHeightError, count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries,
+                maxUpwardSpeed, maxSplineHeightError, maxSuspensionCompression,
+                count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries,
                 Interlocked.Read(ref _contactMetrics.StaticPairTests),
                 Interlocked.Read(ref _contactMetrics.StaticManifolds));
         }
@@ -308,10 +321,12 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private void CaptureMaximums(BodyRecord record)
     {
         var body = _simulation.Bodies[record.Handle];
-        var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
-        var physicalTarget = CreateRecoveryPose(record.Control.TargetPosition, record.Control.TargetForward,
-            record.Collider.ProtocolReferenceHeight).Position;
-        record.MaximumUpwardSpeed = Math.Max(record.MaximumUpwardSpeed, body.Velocity.Linear.Y);
+        var chassisOrigin = GetChassisOrigin(record, body);
+        var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
+        var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
+        UpdateTrackHeightOffset(record, origin, supportedVelocity, body.Pose.Orientation);
+        var physicalTarget = GetTrackContactTarget(record, record.Control, origin);
+        record.MaximumUpwardSpeed = Math.Max(record.MaximumUpwardSpeed, supportedVelocity.Y);
         record.MaximumSplineHeightError = Math.Max(record.MaximumSplineHeightError,
             Math.Abs(origin.Y - physicalTarget.Y));
     }
@@ -342,10 +357,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         }
 
         var orientation = body.Pose.Orientation;
-        var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, orientation);
+        var chassisOrigin = GetChassisOrigin(record, body);
+        var origin = GetWheelSupportedOrigin(record, chassisOrigin, orientation);
         var targetForward = Vector3.Normalize(control.TargetForward);
-        var physicalTarget = CreateRecoveryPose(control.TargetPosition, targetForward,
-            record.Collider.ProtocolReferenceHeight).Position;
+        var physicalTarget = GetTrackContactTarget(record, control, origin);
         float uprightDot = GetUprightDot(orientation);
         if (NeedsRecovery(uprightDot, origin, physicalTarget))
             record.RecoveryNeededSeconds += deltaSeconds;
@@ -394,20 +409,41 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     {
         var body = _simulation.Bodies[record.Handle];
         var control = record.Control;
-        var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
-        var physicalTarget = CreateRecoveryPose(control.TargetPosition, control.TargetForward,
-            record.Collider.ProtocolReferenceHeight).Position;
+        var chassisOrigin = GetChassisOrigin(record, body);
+        var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
+        var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
+        UpdateTrackHeightOffset(record, origin, supportedVelocity, body.Pose.Orientation);
+        var physicalTarget = GetTrackContactTarget(record, control, origin);
         if (NeedsImmediateRecovery(GetUprightDot(body.Pose.Orientation), origin, physicalTarget,
-                body.Velocity.Linear, control.TargetForward))
+                supportedVelocity, control.TargetForward))
             RecoverBot(record, control);
+    }
+
+    private void EnforceSuspensionTravel(BodyRecord record)
+    {
+        var body = _simulation.Bodies[record.Handle];
+        var chassisOrigin = GetChassisOrigin(record, body);
+        var supportedOrigin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
+        float correction = GetSuspensionCompressionCorrection(chassisOrigin, supportedOrigin,
+            body.Pose.Orientation, record.Collider.MaximumSuspensionCompression);
+        if (correction <= 0)
+            return;
+        var bodyUp = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, body.Pose.Orientation));
+        body.Pose.Position += bodyUp * correction;
+        var supportedVelocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
+        float closingSpeed = Vector3.Dot(supportedVelocity - body.Velocity.Linear, bodyUp);
+        if (closingSpeed > 0)
+            body.Velocity.Linear += bodyUp * closingSpeed;
+        body.Awake = true;
     }
 
     private void RecoverBot(BodyRecord record, RaceBotPhysicsControl control)
     {
         var body = _simulation.Bodies[record.Handle];
-        var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
-        var recoveryPose = CreateRecoveryPose(control.TargetPosition, control.TargetForward,
-            record.Collider.ProtocolReferenceHeight);
+        var chassisOrigin = GetChassisOrigin(record, body);
+        var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
+        var recoveryPose = CreateRecoveryPose(GetTrackContactTarget(record, control, origin),
+            control.TargetForward);
         body.Pose = ToCenterOfMassPose(recoveryPose, record.Collider.Center);
         body.Velocity.Linear = Vector3.Normalize(control.TargetForward) * Math.Min(Math.Max(0, control.TargetSpeed), 5f);
         body.Velocity.Angular = Vector3.Zero;
@@ -438,6 +474,67 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
     private static RigidPose ToCenterOfMassPose(RaceGridPose originPose, Vector3 localCenter) =>
         new(originPose.Position + Vector3.Transform(localCenter, originPose.Orientation), originPose.Orientation);
+
+    private static Vector3 GetChassisOrigin(BodyRecord record, BodyReference body) =>
+        body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
+
+    private Vector3 GetWheelSupportedOrigin(BodyRecord record, Vector3 chassisOrigin, Quaternion orientation)
+    {
+        if (record.Wheels.Length == 0)
+            return chassisOrigin;
+        float supportedHeight = 0;
+        foreach (var wheel in record.Wheels)
+            supportedHeight += GetWheelOriginSample(wheel.Geometry,
+                _simulation.Bodies[wheel.Handle].Pose.Position, orientation).Y;
+        chassisOrigin.Y = supportedHeight / record.Wheels.Length;
+        return chassisOrigin;
+    }
+
+    private Vector3 GetWheelSupportedVelocity(BodyRecord record, Vector3 chassisVelocity)
+    {
+        if (record.Wheels.Length == 0)
+            return chassisVelocity;
+        float supportedVerticalVelocity = 0;
+        foreach (var wheel in record.Wheels)
+            supportedVerticalVelocity += _simulation.Bodies[wheel.Handle].Velocity.Linear.Y;
+        chassisVelocity.Y = supportedVerticalVelocity / record.Wheels.Length;
+        return chassisVelocity;
+    }
+
+    private static Vector3 GetTrackContactTarget(BodyRecord record, RaceBotPhysicsControl control,
+        Vector3 fallbackOrigin)
+    {
+        var target = control.TargetPosition;
+        target.Y = record.HasTrackHeightOffset
+            ? control.TargetPosition.Y + record.TrackHeightOffset
+            : fallbackOrigin.Y;
+        return target;
+    }
+
+    private static void UpdateTrackHeightOffset(BodyRecord record, Vector3 supportedOrigin,
+        Vector3 supportedVelocity, Quaternion orientation)
+    {
+        if (record.Control.TargetForward.LengthSquared() < 1e-6f || GetUprightDot(orientation) < 0.9f)
+            return;
+        if (Math.Abs(supportedVelocity.Y) > 1.5f)
+            return;
+        record.TrackHeightOffset = supportedOrigin.Y - record.Control.TargetPosition.Y;
+        record.HasTrackHeightOffset = true;
+    }
+
+    internal static Vector3 GetWheelOriginSample(RaceWheelCollider wheel, Vector3 wheelPosition,
+        Quaternion orientation) => wheelPosition - Vector3.Transform(wheel.Center, orientation);
+
+    internal static float GetSuspensionCompressionCorrection(Vector3 chassisOrigin, Vector3 supportedOrigin,
+        Quaternion orientation, float maximumCompression)
+        => Math.Max(0, GetSuspensionCompression(chassisOrigin, supportedOrigin, orientation) - maximumCompression);
+
+    internal static float GetSuspensionCompression(Vector3 chassisOrigin, Vector3 supportedOrigin,
+        Quaternion orientation)
+    {
+        var bodyUp = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, orientation));
+        return Math.Max(0, Vector3.Dot(supportedOrigin - chassisOrigin, bodyUp));
+    }
 
     internal static Vector3 ToProtocolPosition(Vector3 physicalOrigin, Quaternion orientation,
         float protocolReferenceHeight) =>
@@ -503,12 +600,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             MaximumAngularAcceleration * Math.Max(0, deltaSeconds));
     }
 
-    internal static RaceGridPose CreateRecoveryPose(Vector3 protocolTargetPosition, Vector3 targetForward,
-        float protocolReferenceHeight)
+    internal static RaceGridPose CreateRecoveryPose(Vector3 trackTargetPosition, Vector3 targetForward)
     {
         var orientation = RacePhysicsMath.FromForward(targetForward);
-        var physicalOrigin = FromProtocolPosition(protocolTargetPosition, orientation, protocolReferenceHeight);
-        return new RaceGridPose(physicalOrigin, orientation);
+        return new RaceGridPose(trackTargetPosition, orientation);
     }
 
     private static Vector3 ClampMagnitude(Vector3 value, float maximum)
@@ -545,6 +640,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             Center = center,
             UnitInertia = unitInertia,
             ProtocolReferenceHeight = GetProtocolReferenceHeight(wheels),
+            MaximumSuspensionCompression = wheels.Average(wheel =>
+                GetSuspensionCompressionLimit(wheel.Radius)),
             Wheels = wheelShapes
         };
     }
@@ -579,6 +676,17 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 ServoSettings = ServoSettings.Default,
                 SpringSettings = _suspensionSettings
             });
+            float compressionLimit = GetSuspensionCompressionLimit(wheel.Geometry.Radius);
+            float extensionLimit = GetSuspensionExtensionLimit(wheel.Geometry.Radius);
+            _simulation.Solver.Add(chassisHandle, wheelHandle, new LinearAxisLimit
+            {
+                LocalAxis = suspensionDirection,
+                LocalOffsetA = suspensionAnchor,
+                LocalOffsetB = default,
+                MinimumOffset = suspensionLength - compressionLimit,
+                MaximumOffset = suspensionLength + extensionLimit,
+                SpringSettings = new SpringSettings(30, 1)
+            });
             _simulation.Solver.Add(chassisHandle, wheelHandle, new PointOnLineServo
             {
                 LocalDirection = suspensionDirection,
@@ -612,6 +720,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     }
 
     internal static float GetSuspensionLength(float wheelRadius) => Math.Clamp(wheelRadius * 0.5f, 0.12f, 0.22f);
+    internal static float GetSuspensionCompressionLimit(float wheelRadius) =>
+        Math.Clamp(wheelRadius * 0.25f, 0.06f, 0.10f);
+    internal static float GetSuspensionExtensionLimit(float wheelRadius) =>
+        GetSuspensionCompressionLimit(wheelRadius) * 0.5f;
 
     private static BodyInertia ScaleInertia(BodyInertia unitInertia, float massKg)
     {
