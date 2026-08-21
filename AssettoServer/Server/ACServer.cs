@@ -7,7 +7,9 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Ai.Splines;
+using AssettoServer.Server.Ai;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Runtime;
 using AssettoServer.Server.Blacklist;
 using AssettoServer.Server.GeoParams;
 using AssettoServer.Server.Whitelist;
@@ -27,6 +29,8 @@ public class ACServer : BackgroundService, IHostedLifecycleService
     private readonly GeoParamsManager _geoParamsManager;
     private readonly ChecksumManager _checksumManager;
     private readonly IHostApplicationLifetime _applicationLifetime;
+    private readonly ServerRuntimeOptions _runtimeOptions;
+    private readonly Lazy<AiBehavior>? _aiBehavior;
 
     /// <summary>
     /// Fires on each server tick in the main loop. Don't do resource intensive / long running stuff in here!
@@ -44,6 +48,8 @@ public class ACServer : BackgroundService, IHostedLifecycleService
         CSPFeatureManager cspFeatureManager,
         CSPServerScriptProvider cspServerScriptProvider,
         IHostApplicationLifetime applicationLifetime,
+        ServerRuntimeOptions runtimeOptions,
+        Lazy<AiBehavior>? aiBehavior = null,
         AiSpline? aiSpline = null)
     {
         Log.Information("Starting server");
@@ -54,6 +60,8 @@ public class ACServer : BackgroundService, IHostedLifecycleService
         _geoParamsManager = geoParamsManager;
         _checksumManager = checksumManager;
         _applicationLifetime = applicationLifetime;
+        _runtimeOptions = runtimeOptions;
+        _aiBehavior = aiBehavior;
 
         blacklistService.Changed += OnBlacklistChanged;
         whitelistService.Changed += OnWhitelistChanged;
@@ -103,7 +111,10 @@ public class ACServer : BackgroundService, IHostedLifecycleService
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        Log.Information("Starting HTTP server on port {HttpPort}", _configuration.Server.HttpPort);
+        if (_runtimeOptions.IsRaceSimulation)
+            Log.Information("Starting network-free simulation driver");
+        else
+            Log.Information("Starting HTTP server on port {HttpPort}", _configuration.Server.HttpPort);
         
         var mainThread = new Thread(() => MainLoop(stoppingToken))
         {
@@ -147,6 +158,12 @@ public class ACServer : BackgroundService, IHostedLifecycleService
 
     private void MainLoop(CancellationToken stoppingToken)
     {
+        if (_runtimeOptions.IsRaceSimulation)
+        {
+            SimulationMainLoop(stoppingToken);
+            return;
+        }
+
         int failedUpdateLoops = 0;
         int sleepMs = 1000 / _configuration.Server.RefreshRateHz;
         long nextTick = _sessionManager.ServerTimeMilliseconds;
@@ -293,6 +310,47 @@ public class ACServer : BackgroundService, IHostedLifecycleService
         }
     }
 
+    private void SimulationMainLoop(CancellationToken stoppingToken)
+    {
+        if (_runtimeOptions.Clock is not ManualServerClock clock)
+            throw new InvalidOperationException("Race simulation requires a manual server clock");
+        if (_configuration.Extra.AiParams.Behavior != AiBehaviorMode.Race || _aiBehavior == null)
+            throw new ConfigurationException("Race simulation requires enabled race AI");
+
+        int updateHz = _configuration.Extra.AiParams.Race.UpdateHz;
+        long nextServiceTick = 0;
+        Log.Information("Starting deterministic race simulation at {UpdateHz} Hz with seed {Seed}",
+            updateHz, _runtimeOptions.SimulationSeed);
+
+        try
+        {
+            _runtimeOptions.SimulationReady.Wait(stoppingToken);
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                clock.AdvanceFixedStep(updateHz);
+                long now = clock.ElapsedMilliseconds;
+                if (now >= nextServiceTick)
+                {
+                    _sessionManager.SimulationTick();
+                    _aiBehavior.Value.SimulationTick();
+                    nextServiceTick = now + 100;
+                }
+                Update?.Invoke(this, EventArgs.Empty);
+                if (_runtimeOptions.SimulationStopRequested)
+                    break;
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Environment.ExitCode = 1;
+            Log.Fatal(ex, "Race simulation failed");
+            _applicationLifetime.StopApplication();
+        }
+    }
+
     public Task StartedAsync(CancellationToken cancellationToken)
     {
         if (_configuration.Server.RegisterToLobby && !string.IsNullOrEmpty(_geoParamsManager.GeoParams.Ip))
@@ -308,6 +366,8 @@ public class ACServer : BackgroundService, IHostedLifecycleService
     public async Task StartingAsync(CancellationToken cancellationToken)
     {
         _entryCarManager.Initialize();
+        if (_runtimeOptions.IsRaceSimulation)
+            return;
         _checksumManager.Initialize();
         await _geoParamsManager.InitializeAsync();
     }

@@ -20,6 +20,8 @@ using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Serialization;
 using AssettoServer.Server.GeoParams;
 using AssettoServer.Server.OpenSlotFilters;
+using AssettoServer.Server.Runtime;
+using AssettoServer.Server.RaceSimulation;
 using AssettoServer.Server.Plugin;
 using AssettoServer.Server.Steam;
 using AssettoServer.Server.TrackParams;
@@ -43,11 +45,14 @@ public class Startup
 {
     private readonly ACServerConfiguration _configuration;
     private readonly ACPluginLoader _loader;
+    private readonly ServerRuntimeOptions _runtimeOptions;
 
-    public Startup(ACServerConfiguration configuration)
+    public Startup(ACServerConfiguration configuration, ServerRuntimeOptions? runtimeOptions = null)
     {
         _configuration = configuration;
-        _loader = new ACPluginLoader(configuration.LoadPluginsFromWorkdir);
+        _runtimeOptions = runtimeOptions ?? new ServerRuntimeOptions();
+        _loader = new ACPluginLoader(configuration.LoadPluginsFromWorkdir,
+            scanApplicationDirectory: !_runtimeOptions.IsRaceSimulation);
     }
 
     [UsedImplicitly]
@@ -55,30 +60,47 @@ public class Startup
     {
         builder.RegisterInstance(_configuration);
         builder.RegisterInstance(_loader);
+        builder.RegisterInstance(_runtimeOptions);
+        builder.RegisterInstance(_runtimeOptions.Clock).As<IServerClock>();
+        builder.RegisterType<RaceRandomSource>().As<IRaceRandomSource>().SingleInstance();
         
         // Registration order == order in which hosted services are started
         builder.RegisterType<ACServer>().AsSelf().As<IHostedService>().SingleInstance();
         builder.RegisterType<SessionManager>().AsSelf().As<IHostedService>().SingleInstance();
-        builder.RegisterType<ACTcpServer>().AsSelf().As<IHostedService>().SingleInstance();
-        builder.RegisterType<ACUdpServer>().AsSelf().As<IHostedService>().SingleInstance();
+        if (!_runtimeOptions.IsRaceSimulation)
+        {
+            builder.RegisterType<ACTcpServer>().AsSelf().As<IHostedService>().SingleInstance();
+            builder.RegisterType<ACUdpServer>().AsSelf().As<IHostedService>().SingleInstance();
+        }
         builder.RegisterModule(new WeatherModule(_configuration));
         builder.RegisterModule(new AiModule(_configuration));
         builder.RegisterType<FileBasedUserGroupProvider>().AsSelf().As<IUserGroupProvider>().As<IHostedService>().SingleInstance();
-        builder.RegisterType<SignalHandler>().AsSelf().As<IHostedService>().SingleInstance();
+        if (_runtimeOptions.IsRaceSimulation)
+            builder.RegisterType<SignalHandler>().AsSelf().SingleInstance();
+        else
+            builder.RegisterType<SignalHandler>().AsSelf().As<IHostedService>().SingleInstance();
         builder.RegisterType<HttpInfoCache>().AsSelf().As<IHostedService>().SingleInstance();
-        RegisterLegacyPluginInterface();
-        RegisterSteam();
-        RegisterRcon();
-        
-        foreach (var plugin in _loader.LoadedPlugins)
+        if (_runtimeOptions.IsRaceSimulation)
+            builder.RegisterType<RaceSimulationTelemetry>().AsSelf().As<IHostedService>().SingleInstance();
+        if (!_runtimeOptions.IsRaceSimulation)
         {
-            if (plugin.ConfigurationType != null) builder.RegisterType(plugin.ConfigurationType).AsSelf();
-            builder.RegisterModule(plugin.Instance);
+            RegisterLegacyPluginInterface();
+            RegisterSteam();
+            RegisterRcon();
+
+            foreach (var plugin in _loader.LoadedPlugins)
+            {
+                if (plugin.ConfigurationType != null) builder.RegisterType(plugin.ConfigurationType).AsSelf();
+                builder.RegisterModule(plugin.Instance);
+            }
         }
         
         // Do this last so we don't register before a plugin fails to start
-        builder.RegisterType<UpnpService>().AsSelf().As<IHostedService>().SingleInstance();
-        builder.RegisterType<KunosLobbyRegistration>().AsSelf().As<IHostedService>().SingleInstance();
+        if (!_runtimeOptions.IsRaceSimulation)
+        {
+            builder.RegisterType<UpnpService>().AsSelf().As<IHostedService>().SingleInstance();
+            builder.RegisterType<KunosLobbyRegistration>().AsSelf().As<IHostedService>().SingleInstance();
+        }
         
         // No hosted services below this line
         
@@ -113,14 +135,15 @@ public class Startup
         builder.RegisterType<DefaultCMContentProvider>().As<ICMContentProvider>().SingleInstance();
         builder.RegisterType<CommandService>().AsSelf().SingleInstance();
 
-        if (_configuration.GeneratePluginConfigs)
+        if (!_runtimeOptions.IsRaceSimulation && _configuration.GeneratePluginConfigs)
         {
             var loader = new ACPluginLoader(_configuration.LoadPluginsFromWorkdir);
             loader.LoadPlugins(loader.AvailablePlugins.Select(p => p.Key).ToList());
             _configuration.LoadPluginConfiguration(loader, null);
         }
 
-        _configuration.LoadPluginConfiguration(_loader, builder);
+        if (!_runtimeOptions.IsRaceSimulation)
+            _configuration.LoadPluginConfiguration(_loader, builder);
         return;
         
         void RegisterLegacyPluginInterface()

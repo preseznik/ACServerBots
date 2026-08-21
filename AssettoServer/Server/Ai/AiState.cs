@@ -7,6 +7,7 @@ using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Runtime;
 using AssettoServer.Server.Weather;
 using AssettoServer.Shared.Model;
 using AssettoServer.Shared.Network.Packets.Incoming;
@@ -53,6 +54,11 @@ public class AiState : IDisposable
     public int PassCommitCount { get; private set; }
     public int SeparatedPassCount { get; private set; }
     public int CompletedPassCount { get; private set; }
+    public float SteeringAngleRadians => _steeringAngleRadians;
+    public byte? OvertakeTargetSessionId => _overtakeTargetSessionId;
+    public bool IsOvertaking => _overtakeTargetSessionId.HasValue;
+    public bool PassingLeft => _passingLeft;
+    public bool IsStoppedForObstacle => _stoppedForObstacle;
     public EntryCar EntryCar { get; }
 
     private const float WalkingSpeed = 10 / 3.6f;
@@ -115,6 +121,7 @@ public class AiState : IDisposable
     private readonly AiSpline _spline;
     private readonly JunctionEvaluator _junctionEvaluator;
     private readonly RaceBotPhysicsWorld? _racePhysicsWorld;
+    private readonly IRaceRandomSource _random;
 
     private readonly record struct RaceParticipantSnapshot(EntryCar Car, AiState? AiState,
         CarStatus Status, float Speed);
@@ -146,6 +153,7 @@ public class AiState : IDisposable
 
     public AiState(EntryCar entryCar, SessionManager sessionManager, WeatherManager weatherManager,
         ACServerConfiguration configuration, EntryCarManager entryCarManager, AiSpline spline,
+        IRaceRandomSource random,
         RaceBotPhysicsWorld? racePhysicsWorld = null)
     {
         EntryCar = entryCar;
@@ -154,7 +162,8 @@ public class AiState : IDisposable
         _configuration = configuration;
         _entryCarManager = entryCarManager;
         _spline = spline;
-        _junctionEvaluator = new JunctionEvaluator(spline);
+        _random = random;
+        _junctionEvaluator = new JunctionEvaluator(spline, random: random);
         _racePhysicsWorld = racePhysicsWorld;
 
         _lastTick = _sessionManager.ServerTimeMilliseconds;
@@ -196,7 +205,7 @@ public class AiState : IDisposable
         InitialMaxSpeed = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
             ? configuredMaxSpeed * RaceBotMath.GridPaceFactor(
                 _configuration.Extra.AiParams.MaxSpeedVariationPercent, EntryCar.SessionId)
-            : configuredMaxSpeed + fastLaneOffset - (variation / 2) + (float)Random.Shared.NextDouble() * variation;
+            : configuredMaxSpeed + fastLaneOffset - (variation / 2) + (float)_random.NextDouble() * variation;
         if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
         {
             InitialMaxSpeed *= RaceBotMath.PaceFactor(_configuration.Extra.AiParams.Race.Difficulty);
@@ -208,7 +217,7 @@ public class AiState : IDisposable
 
     private void SetRandomColor()
     {
-        Color = CarColors[Random.Shared.Next(CarColors.Count)];
+        Color = CarColors[_random.Next(CarColors.Count)];
     }
 
     public void Teleport(int pointId, RaceGridPose? gridPose = null)
@@ -238,20 +247,20 @@ public class AiState : IDisposable
         if (EntryCar.MaxAiSafetyDistanceMetersSquared.HasValue)
             maxDist = EntryCar.MaxAiSafetyDistanceMetersSquared.Value;
 
-        SpawnProtectionEnds = _sessionManager.ServerTimeMilliseconds + Random.Shared.Next(EntryCar.AiMinSpawnProtectionTimeMilliseconds, EntryCar.AiMaxSpawnProtectionTimeMilliseconds);
-        SafetyDistanceSquared = Random.Shared.Next((int)Math.Round(minDist * (1.0f / _configuration.Extra.AiParams.TrafficDensity)),
+        SpawnProtectionEnds = _sessionManager.ServerTimeMilliseconds + _random.Next(EntryCar.AiMinSpawnProtectionTimeMilliseconds, EntryCar.AiMaxSpawnProtectionTimeMilliseconds);
+        SafetyDistanceSquared = _random.Next((int)Math.Round(minDist * (1.0f / _configuration.Extra.AiParams.TrafficDensity)),
             (int)Math.Round(maxDist * (1.0f / _configuration.Extra.AiParams.TrafficDensity)));
         _stoppedForCollisionUntil = 0;
         _ignoreObstaclesUntil = 0;
         _obstacleHonkEnd = 0;
         _obstacleHonkStart = 0;
         _indicator = 0;
-        _randomTwilight = Random.Shared.NextSingle(0, 12) * Math.PI / 180.0;
+        _randomTwilight = _random.NextSingle(0, 12) * Math.PI / 180.0;
         _nextJunctionId = -1;
         _junctionPassed = false;
         _endIndicatorDistance = 0;
         _lastTick = _sessionManager.ServerTimeMilliseconds;
-        _minObstacleDistance = Random.Shared.Next(8, 13);
+        _minObstacleDistance = _random.Next(8, 13);
         _raceLapTracker = _raceLayout == null
             ? null
             : new RaceLapTracker(_configuration.Extra.AiParams.Race.StartSplinePointId, _raceLayout.LengthMeters);
@@ -1315,8 +1324,8 @@ public class AiState : IDisposable
         {
             _stoppedForObstacle = true;
             _stoppedForObstacleSince = _sessionManager.ServerTimeMilliseconds;
-            _obstacleHonkStart = _stoppedForObstacleSince + Random.Shared.Next(3000, 7000);
-            _obstacleHonkEnd = _obstacleHonkStart + Random.Shared.Next(500, 1500);
+            _obstacleHonkStart = _stoppedForObstacleSince + _random.Next(3000, 7000);
+            _obstacleHonkEnd = _obstacleHonkStart + _random.Next(500, 1500);
             Log.Verbose("AI {SessionId} stopped for obstacle", EntryCar.SessionId);
         }
         else if (CurrentSpeed > 0 && _stoppedForObstacle)
@@ -1351,7 +1360,7 @@ public class AiState : IDisposable
                 ? RaceBotMath.CollisionRecoveryMilliseconds(EntryCar.AiMinCollisionStopTimeMilliseconds,
                     EntryCar.AiMaxCollisionStopTimeMilliseconds, _configuration.Extra.AiParams.Race.Aggression,
                     EntryCar.SessionId + (int)_sessionManager.ServerTimeMilliseconds)
-                : Random.Shared.Next(EntryCar.AiMinCollisionStopTimeMilliseconds, EntryCar.AiMaxCollisionStopTimeMilliseconds);
+                : _random.Next(EntryCar.AiMinCollisionStopTimeMilliseconds, EntryCar.AiMaxCollisionStopTimeMilliseconds);
             _stoppedForCollisionUntil = _sessionManager.ServerTimeMilliseconds + duration;
         }
     }

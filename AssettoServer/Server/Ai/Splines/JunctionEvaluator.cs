@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using AssettoServer.Server.Runtime;
 
 namespace AssettoServer.Server.Ai.Splines;
 
@@ -7,10 +8,12 @@ public class JunctionEvaluator
 {
     private readonly ConcurrentDictionary<int, bool>? _evaluated;
     private readonly AiSpline _spline;
+    private readonly IRaceRandomSource? _random;
 
-    public JunctionEvaluator(AiSpline spline, bool savesState = true)
+    public JunctionEvaluator(AiSpline spline, bool savesState = true, IRaceRandomSource? random = null)
     {
         _spline = spline;
+        _random = random;
         
         if (savesState)
             _evaluated = new ConcurrentDictionary<int, bool>();
@@ -24,7 +27,7 @@ public class JunctionEvaluator
     public bool WillTakeJunction(int junctionId)
     {
         ref readonly var junction = ref _spline.Junctions[junctionId]; 
-        bool result = Random.Shared.NextDouble() < junction.Probability;
+        bool result = NextDouble() < junction.Probability;
         return _evaluated?.GetOrAdd(junctionId, result) ?? result;
     }
 
@@ -83,7 +86,7 @@ public class JunctionEvaluator
                 }
                 else if (point.PreviousId < 0)
                 {
-                    result = Random.Shared.NextDouble() < junction.Probability;
+                    result = NextDouble() < junction.Probability;
                     _evaluated?.TryAdd(junctionId, result);
                 }
                     
@@ -103,4 +106,6 @@ public class JunctionEvaluator
         nextPointId = Previous(pointId, count);
         return nextPointId >= 0;
     }
+
+    private double NextDouble() => _random?.NextDouble() ?? Random.Shared.NextDouble();
 }

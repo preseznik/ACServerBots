@@ -14,7 +14,7 @@ public class ACPluginLoader
     public Dictionary<string, AvailablePlugin> AvailablePlugins { get; } = new();
     public List<LoadedPlugin> LoadedPlugins { get; } = [];
 
-    public ACPluginLoader(bool loadFromWorkdir)
+    public ACPluginLoader(bool loadFromWorkdir, bool scanApplicationDirectory = true)
     {
         if (loadFromWorkdir)
         {
@@ -29,8 +29,11 @@ public class ACPluginLoader
             }
         }
         
-        string pluginsDir = Path.Combine(AppContext.BaseDirectory, "plugins");
-        ScanDirectory(pluginsDir);
+        if (scanApplicationDirectory)
+        {
+            string pluginsDir = Path.Combine(AppContext.BaseDirectory, "plugins");
+            ScanDirectory(pluginsDir);
+        }
     }
 
     private void ScanDirectory(string path)

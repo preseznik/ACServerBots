@@ -93,6 +93,30 @@ dotnet test AssettoServer.slnx --configuration Release
 dotnet publish AssettoServer\AssettoServer.csproj --configuration Release --runtime win-x64 --self-contained true
 ```
 
+### Accelerated bot-only simulation
+
+`--simulate-race` runs the configured bot race without TCP, UDP, HTTP, Steam, lobby, or UPnP listeners. A manual server clock advances at the configured race `UpdateHz`; the fixed physics step is unchanged, but the update loop executes as quickly as the CPU permits. Simulation mode disables the parallel Bepu dispatcher and seeds race AI decisions so a track/seed/configuration combination is reproducible. It does not increase vehicle speed.
+
+Each run writes `events.jsonl`, `samples.jsonl`, and `summary.json`. Samples include each bot's lap, spline point, position, velocity, target speed, line offset, obstacle distance, steering, slip, road-height error, suspension compression, upright state, recoveries, pass state, and pass counters. Events record laps, pass phases, recoveries, stop reason, and bounded anomaly detections. The summary records classification, physics maxima, contacts, anomalies, simulated/wall duration, and achieved real-time factor.
+
+Run a staged preset directly:
+
+```powershell
+AssettoServer.exe --preset race-control --simulate-race `
+  --simulation-output .\simulation-red-bull-seed-7 `
+  --simulation-seed 7 `
+  --simulation-max-minutes 45 `
+  --simulation-max-wall-seconds 300
+```
+
+The installed-content matrix runner stages bot-only events and repeats deterministic seeds across representative tracks:
+
+```powershell
+.\tools\Test-RaceBotsMatrix.ps1 -Slots 8 -Seeds 1,2,3
+```
+
+By default it prefers Magione, Red Bull Ring GP, Nordschleife, and one additional usable installed layout. Use `-TrackKeys magione,ks_red_bull_ring/layout_gp` for an explicit set and `-FailOnAnomaly` for CI-style failure. Per-run artifacts live under `.artifacts\race-bot-matrix\runs`; `matrix-report.md` and `matrix-summary.json` provide the aggregate result. Accelerated runs validate authoritative AI, physics, laps, results, and recovery behavior. Real-time LAN clients remain necessary for handshake, interpolation, rendered ride height, wheel animation, and human/bot contact acceptance.
+
 ### One-click Content Manager workflow
 
 Configure and save the event in Content Manager, then double-click:

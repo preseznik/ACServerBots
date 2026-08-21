@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +8,7 @@ using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Kunos;
 using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Server.Weather;
+using AssettoServer.Server.Runtime;
 using AssettoServer.Shared.Model;
 using AssettoServer.Shared.Network.Packets.Incoming;
 using AssettoServer.Shared.Network.Packets.Outgoing;
@@ -21,7 +21,8 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 {
     private readonly ACServerConfiguration _configuration;
     private readonly Func<SessionConfiguration, SessionState> _sessionStateFactory;
-    private readonly Stopwatch _timeSource = new();
+    private readonly IServerClock _timeSource;
+    private readonly ServerRuntimeOptions _runtimeOptions;
     private readonly EntryCarManager _entryCarManager;
     private readonly Lazy<WeatherManager> _weatherManager;
     private readonly IHostApplicationLifetime _applicationLifetime;
@@ -70,13 +71,17 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         Func<SessionConfiguration, SessionState> sessionStateFactory,
         EntryCarManager entryCarManager,
         Lazy<WeatherManager> weatherManager,
-        IHostApplicationLifetime applicationLifetime)
+        IHostApplicationLifetime applicationLifetime,
+        IServerClock timeSource,
+        ServerRuntimeOptions runtimeOptions)
     {
         _configuration = configuration;
         _sessionStateFactory = sessionStateFactory;
         _entryCarManager = entryCarManager;
         _weatherManager = weatherManager;
         _applicationLifetime = applicationLifetime;
+        _timeSource = timeSource;
+        _runtimeOptions = runtimeOptions;
 
         _entryCarManager.ClientConnected += OnClientConnected;
         _entryCarManager.ClientDisconnected += OnClientDisconnected;
@@ -84,62 +89,68 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
     protected override async Task ExecuteAsync(CancellationToken token)
     {
+        if (_runtimeOptions.IsRaceSimulation)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return;
+        }
+
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
 
         while (await timer.WaitForNextTickAsync(token))
         {
-            try
+            Tick();
+        }
+    }
+
+    internal void SimulationTick() => Tick();
+
+    private void Tick()
+    {
+        try
+        {
+            if (IsSessionOver())
+                NextSession();
+
+            switch (CurrentSession.Configuration.Type)
             {
-                if (IsSessionOver())
-                {
-                    NextSession();
-                }
-
-                switch (CurrentSession.Configuration.Type)
-                {
-                    case SessionType.Qualifying or SessionType.Practice:
+                case SessionType.Qualifying or SessionType.Practice:
+                    if (CurrentSession is { SessionOverFlag: true, HasSentRaceOverPacket: false })
                     {
-                        if (CurrentSession is { SessionOverFlag: true, HasSentRaceOverPacket: false })
-                        {
-                            CalcOverTime();
-                            CurrentSession.EndTimeMilliseconds = 60_000 * CurrentSession.Configuration.Time + CurrentSession.StartTimeMilliseconds;
-                            if (ServerTimeMilliseconds - CurrentSession.EndTimeMilliseconds > CurrentSession.OverTimeMilliseconds)
-                                SendSessionOver();
-                        }
-
-                        if (CurrentSession.HasSentRaceOverPacket
-                            && ServerTimeMilliseconds > _configuration.Server.ResultScreenTime * 1000L + CurrentSession.OverTimeMilliseconds)
-                        {
-                            NextSession();
-                        }
-
-                        break;
+                        CalcOverTime();
+                        CurrentSession.EndTimeMilliseconds = 60_000 * CurrentSession.Configuration.Time
+                                                             + CurrentSession.StartTimeMilliseconds;
+                        if (ServerTimeMilliseconds - CurrentSession.EndTimeMilliseconds
+                            > CurrentSession.OverTimeMilliseconds)
+                            SendSessionOver();
                     }
-                    case SessionType.Race:
+
+                    if (CurrentSession.HasSentRaceOverPacket
+                        && ServerTimeMilliseconds > _configuration.Server.ResultScreenTime * 1000L
+                        + CurrentSession.OverTimeMilliseconds)
+                        NextSession();
+                    break;
+                case SessionType.Race:
+                    if (CurrentSession is { EndTimeMilliseconds: not 0L, HasSentRaceOverPacket: false })
                     {
-                        if (CurrentSession is { EndTimeMilliseconds: not 0L, HasSentRaceOverPacket: false })
-                        {
-                            CalcOverTime();
-                            if (ServerTimeMilliseconds - CurrentSession.EndTimeMilliseconds > CurrentSession.OverTimeMilliseconds)
-                                SendSessionOver();
-                        }
-
-                        if (CurrentSession.HasSentRaceOverPacket
-                            && ServerTimeMilliseconds > _configuration.Server.ResultScreenTime * 1000L + CurrentSession.OverTimeMilliseconds)
-                        {
-                            NextSession();
-                        }
-
-                        break;
+                        CalcOverTime();
+                        if (ServerTimeMilliseconds - CurrentSession.EndTimeMilliseconds
+                            > CurrentSession.OverTimeMilliseconds)
+                            SendSessionOver();
                     }
-                }
 
-                SendSessionStart();
+                    if (CurrentSession.HasSentRaceOverPacket
+                        && ServerTimeMilliseconds > _configuration.Server.ResultScreenTime * 1000L
+                        + CurrentSession.OverTimeMilliseconds)
+                        NextSession();
+                    break;
             }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Error in session service update");
-            }
+
+            SendSessionStart();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Error in session service update");
         }
     }
 

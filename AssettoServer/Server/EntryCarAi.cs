@@ -22,6 +22,11 @@ public enum AiMode
 public readonly record struct RaceAiDiagnostics(float MaximumAbsoluteLateralOffsetMeters,
     float MaximumPassSeparationMeters, int PassCommitCount, int SeparatedPassCount,
     int CompletedPassCount);
+public readonly record struct RaceAiStateSnapshot(int SplinePointId, Vector3 Position, Vector3 Velocity,
+    float CurrentSpeed, float TargetSpeed, float LateralOffsetMeters,
+    float MaximumLateralOffsetMeters, float ClosestObstacleMeters, float SteeringAngleRadians,
+    bool IsStoppedForObstacle, bool IsOvertaking, byte? OvertakeTargetSessionId, bool PassingLeft,
+    int PassCommitCount, int SeparatedPassCount, int CompletedPassCount);
 
 public partial class EntryCar
 {
@@ -423,6 +428,30 @@ public partial class EntryCar
                 completed += state.CompletedPassCount;
             }
             return new RaceAiDiagnostics(maximumOffset, maximumSeparation, commits, separated, completed);
+        }
+    }
+
+    public RaceAiStateSnapshot? GetRaceAiStateSnapshot()
+    {
+        lock (_aiControlLock)
+        {
+            AiState? state = null;
+            foreach (var candidate in AiStatesSpan)
+            {
+                if (candidate is not { Initialized: true })
+                    continue;
+                state = candidate;
+                break;
+            }
+            if (state == null)
+                return null;
+            return new RaceAiStateSnapshot(state.CurrentSplinePointId, state.Status.Position,
+                state.Status.Velocity, state.CurrentSpeed, state.TargetSpeed,
+                state.PhysicalLateralOffsetMeters, state.MaximumAbsoluteLateralOffsetMeters,
+                state.ClosestAiObstacleDistance, state.SteeringAngleRadians,
+                state.IsStoppedForObstacle, state.IsOvertaking, state.OvertakeTargetSessionId,
+                state.PassingLeft, state.PassCommitCount, state.SeparatedPassCount,
+                state.CompletedPassCount);
         }
     }
 

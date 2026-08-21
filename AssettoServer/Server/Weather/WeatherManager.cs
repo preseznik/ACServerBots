@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.TrackParams;
+using AssettoServer.Server.Runtime;
 using AssettoServer.Server.Weather.Implementation;
 using AssettoServer.Shared.Weather;
 using Microsoft.Extensions.Hosting;
@@ -24,6 +25,7 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
     private readonly SessionManager _timeSource;
     private readonly RainHelper _rainHelper;
     private readonly CSPServerExtraOptions _cspServerExtraOptions;
+    private readonly ServerRuntimeOptions _runtimeOptions;
 
     public WeatherManager(IWeatherImplementation weatherImplementation, 
         IWeatherTypeProvider weatherTypeProvider, 
@@ -31,7 +33,8 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
         ACServerConfiguration configuration, 
         SessionManager timeSource, 
         RainHelper rainHelper,
-        CSPServerExtraOptions cspServerExtraOptions)
+        CSPServerExtraOptions cspServerExtraOptions,
+        ServerRuntimeOptions runtimeOptions)
     {
         _weatherImplementation = weatherImplementation;
         _weatherTypeProvider = weatherTypeProvider;
@@ -40,6 +43,7 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
         _timeSource = timeSource;
         _rainHelper = rainHelper;
         _cspServerExtraOptions = cspServerExtraOptions;
+        _runtimeOptions = runtimeOptions;
     }
 
     public TrackParams.TrackParams? TrackParams { get; private set; }
@@ -146,6 +150,12 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
 
     protected override async Task ExecuteAsync(CancellationToken token)
     {
+        if (_runtimeOptions.IsRaceSimulation)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return;
+        }
+
         var lastTimeUpdate = _timeSource.ServerTimeMilliseconds;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         

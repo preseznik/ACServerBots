@@ -64,6 +64,14 @@ For a local installed-content smoke test using two bots at Magione:
 
 The smoke test scans the installed catalog, stages an isolated two-slot instance, prepares its rigid-body inputs, starts it on loopback-only acceptance ports, requests graceful shutdown, and retains the logs under `.artifacts\race-control-local-acceptance`.
 
+For repeated bot-only regression races across installed tracks, use:
+
+```powershell
+.\tools\Test-RaceBotsMatrix.ps1 -Slots 8 -Seeds 1,2,3
+```
+
+The runner uses the bundled server's network-free virtual-time mode, preserves structured per-run telemetry, and writes an aggregate report under `.artifacts\race-bot-matrix`. It never edits installed Assetto Corsa content.
+
 ## Current limits
 
 - Race Control is a portable build, not yet an MSIX/MSI installer.

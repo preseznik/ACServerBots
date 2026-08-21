@@ -11,6 +11,7 @@ using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Runtime;
 using AssettoServer.Shared.Model;
 using AssettoServer.Shared.Network.Packets.Outgoing;
 using AssettoServer.Utils;
@@ -29,6 +30,8 @@ public class AiBehavior : BackgroundService
     private readonly HttpInfoCache _httpInfoCache;
     private readonly RaceSplineLayout? _raceLayout;
     private readonly RaceBotPhysicsWorld? _racePhysicsWorld;
+    private readonly ServerRuntimeOptions _runtimeOptions;
+    private readonly IRaceRandomSource _random;
     private readonly HashSet<byte> _frozenBotSessionIds = [];
     private bool _raceRosterFrozen;
 
@@ -48,6 +51,8 @@ public class AiBehavior : BackgroundService
         CSPServerScriptProvider serverScriptProvider, 
         AiSpline spline,
         HttpInfoCache httpInfoCache,
+        ServerRuntimeOptions runtimeOptions,
+        IRaceRandomSource random,
         RaceBotPhysicsWorld? racePhysicsWorld = null)
     {
         _sessionManager = sessionManager;
@@ -56,7 +61,9 @@ public class AiBehavior : BackgroundService
         _spline = spline;
         _httpInfoCache = httpInfoCache;
         _racePhysicsWorld = racePhysicsWorld;
-        _junctionEvaluator = new JunctionEvaluator(spline, false);
+        _runtimeOptions = runtimeOptions;
+        _random = random;
+        _junctionEvaluator = new JunctionEvaluator(spline, false, random);
 
         if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
         {
@@ -83,14 +90,14 @@ public class AiBehavior : BackgroundService
         _sessionManager.SessionChanged += OnSessionChanged;
     }
 
-    private static void OnCollision(ACTcpClient sender, CollisionEventArgs args)
+    private void OnCollision(ACTcpClient sender, CollisionEventArgs args)
     {
         if (args.TargetCar?.AiControlled == true)
         {
             var targetAiState = args.TargetCar.GetClosestAiState(sender.EntryCar.Status.Position);
             if (targetAiState.AiState != null && targetAiState.DistanceSquared < 25 * 25)
             {
-                Task.Delay(Random.Shared.Next(100, 500)).ContinueWith(_ => targetAiState.AiState.StopForCollision());
+                Task.Delay(_random.Next(100, 500)).ContinueWith(_ => targetAiState.AiState.StopForCollision());
             }
         }
     }
@@ -109,27 +116,26 @@ public class AiBehavior : BackgroundService
         {
             try
             {
-                using var context = _obstacleDetectionDurationTimer.NewTimer();
-
-                for (int i = 0; i < _entryCarManager.EntryCars.Length; i++)
-                {
-                    var entryCar = _entryCarManager.EntryCars[i];
-                    if (entryCar.AiControlled)
-                    {
-                        entryCar.AiObstacleDetection();
-                    }
-                }
-
-                if (_configuration.Extra.AiParams.Debug)
-                {
-                    SendDebugPackets();
-                }
+                DetectObstacles();
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "Error in AI obstacle detection");
             }
         }
+    }
+
+    private void DetectObstacles()
+    {
+        using var context = _obstacleDetectionDurationTimer.NewTimer();
+        foreach (var entryCar in _entryCarManager.EntryCars)
+        {
+            if (entryCar.AiControlled)
+                entryCar.AiObstacleDetection();
+        }
+
+        if (_configuration.Extra.AiParams.Debug)
+            SendDebugPackets();
     }
 
     private void SendDebugPackets()
@@ -408,7 +414,7 @@ public class AiBehavior : BackgroundService
         // 3    1/10
             
         int maxRand = max * (max + 1) / 2;
-        int rand = Random.Shared.Next(maxRand);
+        int rand = _random.Next(maxRand);
         int target = 0;
         for (int i = max; i < maxRand; i += (i - 1))
         {
@@ -457,7 +463,7 @@ public class AiBehavior : BackgroundService
             return -1;
         }
         
-        int spawnDistance = Random.Shared.Next(_configuration.Extra.AiParams.MinSpawnDistancePoints, _configuration.Extra.AiParams.MaxSpawnDistancePoints);
+        int spawnDistance = _random.Next(_configuration.Extra.AiParams.MinSpawnDistancePoints, _configuration.Extra.AiParams.MaxSpawnDistancePoints);
         var spawnPointId = _junctionEvaluator.Traverse(result.PointId, spawnDistance * direction);
 
         if (spawnPointId >= 0)
@@ -578,6 +584,16 @@ public class AiBehavior : BackgroundService
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         SetHttpDetailsExtensions();
+        if (_runtimeOptions.IsRaceSimulation)
+            return Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
         return Task.WhenAll(UpdateAsync(stoppingToken), ObstacleDetectionAsync(stoppingToken));
+    }
+
+    internal void SimulationTick()
+    {
+        if (!_runtimeOptions.IsRaceSimulation)
+            throw new InvalidOperationException("Manual AI ticks are only available in race simulation mode");
+        Update();
+        DetectObstacles();
     }
 }

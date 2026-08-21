@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Runtime;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.CollisionDetection;
@@ -21,6 +22,9 @@ namespace AssettoServer.Server.Ai.Physics;
 public readonly record struct RaceBotPhysicsState(Vector3 Position, Vector3 ProtocolPosition,
     Quaternion Orientation, Vector3 Velocity, float ForwardSpeed, float LongitudinalAcceleration,
     float SteeringAngleRadians, float SlipAngleDegrees, int RecoveryCount);
+public readonly record struct RaceBotPhysicsTelemetry(float HeightErrorMeters,
+    float SuspensionCompressionMeters, float UprightDot, float UpwardSpeedMetersPerSecond,
+    int TrackCorrectionCount);
 
 public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPosition, Vector3 TargetForward,
     float TargetSpeed, float MaximumAcceleration, float MaximumBrakeDeceleration, float LateralGripG);
@@ -122,7 +126,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
     public int GridCount => _asset.Grid.Count;
 
-    public RaceBotPhysicsWorld(ACServerConfiguration configuration)
+    public RaceBotPhysicsWorld(ACServerConfiguration configuration, ServerRuntimeOptions runtimeOptions)
     {
         var physics = configuration.Extra.AiParams.Race.Physics;
         string assetPath = Path.GetFullPath(Path.Combine(configuration.BaseFolder, physics.AssetFile));
@@ -149,7 +153,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         _simulation = Simulation.Create(_pool,
             new NarrowPhaseCallbacks(physics.Friction, _contactMetrics, _collisionGroups),
             new PoseIntegratorCallbacks(new Vector3(0, -9.81f, 0)), solver);
-        if (physics.Fidelity != RacePhysicsFidelity.Efficient && Environment.ProcessorCount > 2)
+        // The parallel solver is useful for live servers but can change contact ordering between runs.
+        if (!runtimeOptions.IsRaceSimulation
+            && physics.Fidelity != RacePhysicsFidelity.Efficient && Environment.ProcessorCount > 2)
             _dispatcher = new ThreadDispatcher(Math.Min(8, Environment.ProcessorCount - 1));
 
         _drivableTrackHandle = AddTrackMesh(_asset.TrackTriangles)
@@ -305,6 +311,31 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 Vector3.Dot(body.Velocity.Linear, forward), record.LastLongitudinalAcceleration,
                 record.LastSteeringAngleRadians, record.LastSlipAngleDegrees,
                 record.RecoveryCount);
+            return true;
+        }
+    }
+
+    public bool TryGetBotTelemetry(byte sessionId, out RaceBotPhysicsTelemetry telemetry)
+    {
+        lock (_sync)
+        {
+            if (!_bodies.TryGetValue(sessionId, out var record) || !record.IsBot)
+            {
+                telemetry = default;
+                return false;
+            }
+
+            var body = _simulation.Bodies[record.Handle];
+            var chassisOrigin = GetChassisOrigin(record, body);
+            var origin = GetWheelSupportedOrigin(record, chassisOrigin, body.Pose.Orientation);
+            var velocity = GetWheelSupportedVelocity(record, body.Velocity.Linear);
+            var trackTarget = GetTrackSupportTarget(record.Control, origin);
+            telemetry = new RaceBotPhysicsTelemetry(
+                Math.Abs(origin.Y - trackTarget.Y),
+                GetSuspensionCompression(chassisOrigin, origin, body.Pose.Orientation),
+                GetUprightDot(body.Pose.Orientation),
+                velocity.Y,
+                record.TrackCorrectionCount);
             return true;
         }
     }

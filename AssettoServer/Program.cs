@@ -8,7 +8,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Ai.Physics;
+using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Runtime;
 using AssettoServer.Utils;
+using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using CommandLine;
 using DotNext.Collections.Generic;
@@ -76,6 +79,24 @@ public static class Program
 
         [Option("shutdown-file", Required = false, SetName = "AssettoServer", HelpText = "Gracefully stop when this file is created")]
         public string ShutdownFile { get; set; } = "";
+
+        [Option("simulate-race", Required = false, SetName = "AssettoServer", HelpText = "Run a bot-only race using deterministic virtual time and no network listeners")]
+        public bool SimulateRace { get; set; }
+
+        [Option("simulation-output", Required = false, HelpText = "Directory for race simulation JSONL telemetry and summary")]
+        public string SimulationOutput { get; set; } = "simulation";
+
+        [Option("simulation-seed", Required = false, HelpText = "Deterministic race bot random seed")]
+        public int SimulationSeed { get; set; } = 1;
+
+        [Option("simulation-max-minutes", Required = false, HelpText = "Maximum simulated time before stopping")]
+        public int SimulationMaximumMinutes { get; set; } = 30;
+
+        [Option("simulation-max-wall-seconds", Required = false, HelpText = "Maximum wall-clock runtime before stopping")]
+        public int SimulationMaximumWallSeconds { get; set; } = 300;
+
+        [Option("simulation-sample-ms", Required = false, HelpText = "Structured telemetry sample interval in simulated milliseconds")]
+        public int SimulationSampleMilliseconds { get; set; } = 500;
     }
 
     private class StartOptions
@@ -149,6 +170,13 @@ public static class Program
             ServerCfgPath = options.ServerCfgPath,
             EntryListPath = options.EntryListPath
         };
+
+        if (options.SimulateRace)
+        {
+            await RunRaceSimulationAsync(startOptions.Preset, startOptions.ServerCfgPath,
+                startOptions.EntryListPath, options, CancellationToken.None);
+            return;
+        }
         
         while (true)
         {
@@ -272,6 +300,52 @@ public static class Program
         catch (Exception ex)
         {
             CrashReportHelper.HandleFatalException(ex);
+        }
+    }
+
+    private static async Task RunRaceSimulationAsync(string? preset, string? serverCfgPath,
+        string? entryListPath, Options options, CancellationToken token)
+    {
+        ConfigurationLocations = ConfigurationLocations.FromOptions(preset, serverCfgPath, entryListPath);
+        try
+        {
+            var config = new ACServerConfiguration(preset, ConfigurationLocations,
+                _loadPluginsFromWorkdir, _generatePluginConfigs, null);
+            if (!config.Extra.EnableAi || config.Extra.AiParams.Behavior != AiBehaviorMode.Race)
+                throw new ConfigurationException("--simulate-race requires EnableAi: true and AiParams Behavior: Race");
+            if (!config.Sessions.Any(session => session.Type == Shared.Model.SessionType.Race))
+                throw new ConfigurationException("--simulate-race requires a race session");
+            if (config.EntryList.Cars.Count(car => car.AiMode != Server.AiMode.None) < 2)
+                throw new ConfigurationException("--simulate-race requires at least two bot-capable entries");
+
+            var runtimeOptions = ServerRuntimeOptions.CreateSimulation(options.SimulationOutput,
+                options.SimulationSeed, options.SimulationMaximumMinutes,
+                options.SimulationMaximumWallSeconds, options.SimulationSampleMilliseconds);
+            string logPrefix = string.IsNullOrEmpty(preset) ? "simulation" : $"{preset}-simulation";
+            Logging.CreateLogger(logPrefix, false, preset, options.UseVerboseLogging,
+                config.Extra.RedactIpAddresses, config.Extra.LokiSettings);
+            Log.Information("Running network-free race simulation for preset {Preset}", preset);
+
+            var startup = new Startup(config, runtimeOptions);
+            using var host = Host.CreateDefaultBuilder()
+                .UseServiceProviderFactory(new AutofacServiceProviderFactory())
+                .UseSerilog()
+                .ConfigureAppConfiguration(builder => builder.Sources.Clear())
+                .ConfigureServices(services => services.Configure<HostOptions>(hostOptions =>
+                {
+                    hostOptions.ShutdownTimeout = TimeSpan.FromSeconds(15);
+                    hostOptions.ServicesStartConcurrently = false;
+                    hostOptions.ServicesStopConcurrently = false;
+                }))
+                .ConfigureContainer<ContainerBuilder>(startup.ConfigureContainer)
+                .Build();
+            await host.RunAsync(token);
+        }
+        catch (Exception ex)
+        {
+            Environment.ExitCode = 1;
+            Log.Fatal(ex, "Race simulation failed to start");
+            Console.Error.WriteLine(ex);
         }
     }
     
