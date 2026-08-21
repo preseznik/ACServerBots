@@ -15,12 +15,15 @@ internal enum Kn5NodeClass
 
 internal readonly record struct Kn5Triangle(Vector3 A, Vector3 B, Vector3 C);
 internal readonly record struct Kn5NamedTransform(string Name, Matrix4x4 Transform);
+internal readonly record struct Kn5CollisionMeshRange(string Name, int TriangleStart, int TriangleCount,
+    Vector3 BoundsMin, Vector3 BoundsMax);
 
 internal sealed class Kn5CollisionData
 {
     public List<Kn5Triangle> Triangles { get; } = [];
     public List<Vector3> Vertices { get; } = [];
     public List<Kn5NamedTransform> NamedTransforms { get; } = [];
+    public List<Kn5CollisionMeshRange> MeshRanges { get; } = [];
     public HashSet<string> MeshNames { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
@@ -145,6 +148,7 @@ internal static class Kn5CollisionReader
         result.Vertices.AddRange(vertices);
         if (!includeTriangles)
             return;
+        int triangleStart = result.Triangles.Count;
         for (int i = 0; i + 2 < indices.Length; i += 3)
         {
             int a = indices[i];
@@ -155,6 +159,18 @@ internal static class Kn5CollisionReader
             var triangle = new Kn5Triangle(vertices[a], vertices[b], vertices[c]);
             if (Vector3.Cross(triangle.B - triangle.A, triangle.C - triangle.A).LengthSquared() > 1e-10f)
                 result.Triangles.Add(triangle);
+        }
+        if (result.Triangles.Count > triangleStart)
+        {
+            var boundsMin = new Vector3(float.PositiveInfinity);
+            var boundsMax = new Vector3(float.NegativeInfinity);
+            foreach (var vertex in vertices)
+            {
+                boundsMin = Vector3.Min(boundsMin, vertex);
+                boundsMax = Vector3.Max(boundsMax, vertex);
+            }
+            result.MeshRanges.Add(new Kn5CollisionMeshRange(name, triangleStart,
+                result.Triangles.Count - triangleStart, boundsMin, boundsMax));
         }
     }
 

@@ -23,8 +23,8 @@ public readonly record struct RaceBotPhysicsState(Vector3 Position, Vector3 Prot
 public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPosition, Vector3 TargetForward,
     float TargetSpeed, float MaximumAcceleration, float MaximumBrakeDeceleration, float LateralGripG);
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
-    float MaximumSplineHeightError, float MinimumUprightDot, int OverturnedBots, int TotalRecoveries,
-    long StaticPairTests, long StaticManifolds);
+    float MaximumUpwardSpeed, float MaximumSplineHeightError, float MinimumUprightDot, int OverturnedBots,
+    int TotalRecoveries, long StaticPairTests, long StaticManifolds);
 
 public sealed class RaceBotPhysicsWorld : IDisposable
 {
@@ -32,6 +32,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private const float RecoveryDelaySeconds = 1f;
     private const float MaximumRecoveryHorizontalError = 25f;
     private const float MaximumRecoveryHeightError = 3f;
+    private const float ImmediateRecoveryHeightError = 1.25f;
+    private const float ImmediateRecoveryExcessUpwardSpeed = 5f;
     private const float MaximumAngularSpeed = 2.5f;
     private const float MaximumAngularAcceleration = 16f;
     private const float AttitudeGain = 4f;
@@ -47,7 +49,16 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private readonly object _sync = new();
     private readonly ContinuousDetection _botContinuousDetection;
     private readonly PhysicsContactMetrics _contactMetrics = new();
+    private readonly PhysicsCollisionGroups _collisionGroups = new();
+    private readonly SpringSettings _suspensionSettings;
     private bool _disposed;
+
+    private sealed class WheelShape
+    {
+        public required RaceWheelCollider Geometry { get; init; }
+        public required TypedIndex ShapeIndex { get; init; }
+        public required BodyInertia UnitInertia { get; init; }
+    }
 
     private sealed class ColliderShape
     {
@@ -55,6 +66,14 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public required Vector3 Center { get; init; }
         public required BodyInertia UnitInertia { get; init; }
         public required float ProtocolReferenceHeight { get; init; }
+        public required WheelShape[] Wheels { get; init; }
+    }
+
+    private sealed class WheelBody
+    {
+        public required RaceWheelCollider Geometry { get; init; }
+        public required BodyHandle Handle { get; init; }
+        public required BodyInertia DynamicInertia { get; init; }
     }
 
     private sealed class BodyRecord
@@ -64,12 +83,15 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public required BodyHandle Handle { get; init; }
         public required ColliderShape Collider { get; init; }
         public required BodyInertia DynamicInertia { get; init; }
+        public required WheelBody[] Wheels { get; init; }
         public bool IsBot { get; set; }
         public bool IsHeld { get; set; }
         public RaceGridPose HeldPose { get; set; }
         public RaceBotPhysicsControl Control { get; set; }
         public float LastLongitudinalAcceleration { get; set; }
         public float RecoveryNeededSeconds { get; set; }
+        public float MaximumUpwardSpeed { get; set; }
+        public float MaximumSplineHeightError { get; set; }
         public int RecoveryCount { get; set; }
     }
 
@@ -93,15 +115,20 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             RacePhysicsFidelity.High => new SolveDescription(12, 4),
             _ => throw new ArgumentOutOfRangeException(nameof(physics.Fidelity))
         };
+        // Fidelity controls numerical resolution, not the suspension tune. Changing spring frequency
+        // with fidelity made light cars harsher and less stable at otherwise higher quality settings.
+        _suspensionSettings = new SpringSettings(3, 1);
         _botContinuousDetection = physics.Fidelity == RacePhysicsFidelity.High
             ? ContinuousDetection.Continuous(1e-3f, 1e-2f)
             : ContinuousDetection.Passive;
-        _simulation = Simulation.Create(_pool, new NarrowPhaseCallbacks(physics.Friction, _contactMetrics),
+        _simulation = Simulation.Create(_pool,
+            new NarrowPhaseCallbacks(physics.Friction, _contactMetrics, _collisionGroups),
             new PoseIntegratorCallbacks(new Vector3(0, -9.81f, 0)), solver);
         if (physics.Fidelity != RacePhysicsFidelity.Efficient && Environment.ProcessorCount > 2)
             _dispatcher = new ThreadDispatcher(Math.Min(8, Environment.ProcessorCount - 1));
 
-        AddTrackMesh();
+        AddTrackMesh(_asset.TrackTriangles);
+        AddTrackMesh(_asset.TrackBarrierTriangles);
         foreach (var (model, vertices) in _asset.CarColliderVertices)
         {
             var collider = CreateVehicleCollider(vertices, _asset.CarWheelColliders[model]);
@@ -110,9 +137,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 collider.ProtocolReferenceHeight);
         }
 
-        Log.Information("Rigid-body race world loaded: {Triangles} track triangles, {GridSlots} grid slots, "
-                        + "{Colliders} car colliders, fidelity {Fidelity}", _asset.TrackTriangles.Count,
-            _asset.Grid.Count, _colliders.Count, physics.Fidelity);
+        Log.Information("Rigid-body race world loaded: {DriveTriangles} drivable and {BarrierTriangles} barrier triangles, "
+                        + "{GridSlots} grid slots, {Colliders} car colliders, fidelity {Fidelity}",
+            _asset.TrackTriangles.Count, _asset.TrackBarrierTriangles.Count, _asset.Grid.Count,
+            _colliders.Count, physics.Fidelity);
     }
 
     public RaceGridPose GetGridPose(int gridIndex)
@@ -128,11 +156,14 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         {
             RemoveBodyUnsafe(sessionId);
             var collider = GetCollider(model);
-            var inertia = ScaleInertia(collider.UnitInertia, massKg);
+            float wheelMass = Math.Max(5, massKg * 0.015f);
+            var inertia = ScaleInertia(collider.UnitInertia, Math.Max(1, massKg - wheelMass * collider.Wheels.Length));
             var bodyPose = ToCenterOfMassPose(pose, collider.Center);
             var collidable = new CollidableDescription(collider.ShapeIndex, 0.25f, _botContinuousDetection);
             var handle = _simulation.Bodies.Add(BodyDescription.CreateDynamic(bodyPose, inertia, collidable,
                 new BodyActivityDescription(0.01f)));
+            _collisionGroups.Assign(handle, sessionId, isWheel: false);
+            var wheels = CreateSuspendedWheels(sessionId, pose, handle, collider, wheelMass);
             _bodies.Add(sessionId, new BodyRecord
             {
                 SessionId = sessionId,
@@ -140,6 +171,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 Handle = handle,
                 Collider = collider,
                 DynamicInertia = inertia,
+                Wheels = wheels,
                 IsBot = true,
                 HeldPose = pose
             });
@@ -177,8 +209,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                     Handle = handle,
                     Collider = collider,
                     DynamicInertia = default,
+                    Wheels = [],
                     IsBot = false
                 };
+                _collisionGroups.Assign(handle, sessionId, isWheel: false);
                 _bodies.Add(sessionId, record);
             }
 
@@ -207,6 +241,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             _simulation.Timestep(deltaSeconds, _dispatcher);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: true }))
                 HoldAtGrid(record);
+            foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
+                RecoverTransientLaunch(record);
+            foreach (var record in _bodies.Values.Where(x => x.IsBot))
+                CaptureMaximums(record);
         }
     }
 
@@ -239,6 +277,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             float minY = float.PositiveInfinity;
             float maxY = float.NegativeInfinity;
             float maxSpeed = 0;
+            float maxUpwardSpeed = 0;
             float maxSplineHeightError = 0;
             float minUprightDot = 1;
             int overturnedBots = 0;
@@ -251,8 +290,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 minY = Math.Min(minY, origin.Y);
                 maxY = Math.Max(maxY, origin.Y);
                 maxSpeed = Math.Max(maxSpeed, body.Velocity.Linear.Length());
-                maxSplineHeightError = Math.Max(maxSplineHeightError,
-                    Math.Abs(origin.Y - record.Control.TargetPosition.Y));
+                maxUpwardSpeed = Math.Max(maxUpwardSpeed, record.MaximumUpwardSpeed);
+                maxSplineHeightError = Math.Max(maxSplineHeightError, record.MaximumSplineHeightError);
                 minUprightDot = Math.Min(minUprightDot, uprightDot);
                 if (uprightDot < OverturnedUprightDot)
                     overturnedBots++;
@@ -260,10 +299,21 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 count++;
             }
             return new RacePhysicsDiagnostics(count, count == 0 ? 0 : minY, count == 0 ? 0 : maxY, maxSpeed,
-                maxSplineHeightError, count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries,
+                maxUpwardSpeed, maxSplineHeightError, count == 0 ? 1 : minUprightDot, overturnedBots, totalRecoveries,
                 Interlocked.Read(ref _contactMetrics.StaticPairTests),
                 Interlocked.Read(ref _contactMetrics.StaticManifolds));
         }
+    }
+
+    private void CaptureMaximums(BodyRecord record)
+    {
+        var body = _simulation.Bodies[record.Handle];
+        var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
+        var physicalTarget = CreateRecoveryPose(record.Control.TargetPosition, record.Control.TargetForward,
+            record.Collider.ProtocolReferenceHeight).Position;
+        record.MaximumUpwardSpeed = Math.Max(record.MaximumUpwardSpeed, body.Velocity.Linear.Y);
+        record.MaximumSplineHeightError = Math.Max(record.MaximumSplineHeightError,
+            Math.Abs(origin.Y - physicalTarget.Y));
     }
 
     private void ApplyControl(BodyRecord record, float deltaSeconds)
@@ -286,14 +336,18 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         {
             record.IsHeld = false;
             body.SetLocalInertia(record.DynamicInertia);
+            foreach (var wheel in record.Wheels)
+                _simulation.Bodies[wheel.Handle].SetLocalInertia(wheel.DynamicInertia);
             body.Awake = true;
         }
 
         var orientation = body.Pose.Orientation;
         var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, orientation);
         var targetForward = Vector3.Normalize(control.TargetForward);
+        var physicalTarget = CreateRecoveryPose(control.TargetPosition, targetForward,
+            record.Collider.ProtocolReferenceHeight).Position;
         float uprightDot = GetUprightDot(orientation);
-        if (NeedsRecovery(uprightDot, origin, control.TargetPosition))
+        if (NeedsRecovery(uprightDot, origin, physicalTarget))
             record.RecoveryNeededSeconds += deltaSeconds;
         else
             record.RecoveryNeededSeconds = 0;
@@ -312,7 +366,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         float forwardSpeed = Vector3.Dot(body.Velocity.Linear, guidedForward);
         float uprightDriveScale = GetDriveScale(uprightDot);
         float courseDriveScale = GetCourseDriveScale(lineError.Length(),
-            Math.Abs(origin.Y - control.TargetPosition.Y));
+            Math.Abs(origin.Y - physicalTarget.Y));
         float driveScale = uprightDriveScale * courseDriveScale;
         float speedError = control.TargetSpeed * driveScale - forwardSpeed;
         float acceleration = Math.Clamp(speedError / Math.Max(deltaSeconds, 1e-3f),
@@ -336,20 +390,36 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         body.Awake = true;
     }
 
+    private void RecoverTransientLaunch(BodyRecord record)
+    {
+        var body = _simulation.Bodies[record.Handle];
+        var control = record.Control;
+        var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
+        var physicalTarget = CreateRecoveryPose(control.TargetPosition, control.TargetForward,
+            record.Collider.ProtocolReferenceHeight).Position;
+        if (NeedsImmediateRecovery(GetUprightDot(body.Pose.Orientation), origin, physicalTarget,
+                body.Velocity.Linear, control.TargetForward))
+            RecoverBot(record, control);
+    }
+
     private void RecoverBot(BodyRecord record, RaceBotPhysicsControl control)
     {
         var body = _simulation.Bodies[record.Handle];
+        var origin = body.Pose.Position - Vector3.Transform(record.Collider.Center, body.Pose.Orientation);
         var recoveryPose = CreateRecoveryPose(control.TargetPosition, control.TargetForward,
             record.Collider.ProtocolReferenceHeight);
         body.Pose = ToCenterOfMassPose(recoveryPose, record.Collider.Center);
         body.Velocity.Linear = Vector3.Normalize(control.TargetForward) * Math.Min(Math.Max(0, control.TargetSpeed), 5f);
         body.Velocity.Angular = Vector3.Zero;
+        PositionWheels(record, recoveryPose, body.Velocity.Linear, dynamic: true);
         body.Awake = true;
         record.LastLongitudinalAcceleration = 0;
         record.RecoveryNeededSeconds = 0;
         record.RecoveryCount++;
-        Log.Warning("Recovered overturned/off-track race bot {SessionId} ({Model}) at spline target; recovery {RecoveryCount}",
-            record.SessionId, record.Model, record.RecoveryCount);
+        Log.Warning("Recovered overturned/off-track race bot {SessionId} ({Model}) from "
+                    + "({OriginX:F1}, {OriginY:F1}, {OriginZ:F1}) to ({TargetX:F1}, {TargetY:F1}, {TargetZ:F1}); recovery {RecoveryCount}",
+            record.SessionId, record.Model, origin.X, origin.Y, origin.Z,
+            recoveryPose.Position.X, recoveryPose.Position.Y, recoveryPose.Position.Z, record.RecoveryCount);
     }
 
     private void HoldAtGrid(BodyRecord record)
@@ -358,6 +428,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         body.Pose = ToCenterOfMassPose(record.HeldPose, record.Collider.Center);
         body.Velocity.Linear = Vector3.Zero;
         body.Velocity.Angular = Vector3.Zero;
+        PositionWheels(record, record.HeldPose, Vector3.Zero, dynamic: false);
         body.Awake = true;
     }
 
@@ -399,6 +470,18 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         return uprightDot < OverturnedUprightDot
                || horizontalError.LengthSquared() > MaximumRecoveryHorizontalError * MaximumRecoveryHorizontalError
                || Math.Abs(physicalOrigin.Y - targetPosition.Y) > MaximumRecoveryHeightError;
+    }
+
+    internal static bool NeedsImmediateRecovery(float uprightDot, Vector3 physicalOrigin, Vector3 physicalTarget,
+        Vector3 velocity, Vector3 targetForward)
+    {
+        if (uprightDot < 0 || Math.Abs(physicalOrigin.Y - physicalTarget.Y) > ImmediateRecoveryHeightError)
+            return true;
+        if (targetForward.LengthSquared() < 1e-6f)
+            return false;
+        targetForward = Vector3.Normalize(targetForward);
+        float expectedVerticalSpeed = targetForward.Y * Math.Max(0, Vector3.Dot(velocity, targetForward));
+        return velocity.Y - expectedVerticalSpeed > ImmediateRecoveryExcessUpwardSpeed;
     }
 
     internal static Vector3 CalculateStabilizedAngularVelocity(Quaternion orientation, Vector3 targetForward,
@@ -445,32 +528,90 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     {
         var hull = new ConvexHull(chassisVertices.AsSpan(), _pool, out var center);
         var unitInertia = hull.ComputeInertia(1);
-        var chassisShapeIndex = _simulation.Shapes.Add(hull);
-
-        _pool.Take<CompoundChild>(wheels.Length + 1, out var children);
-        children[0] = new CompoundChild
+        var wheelShapes = wheels.Select(wheel =>
         {
-            ShapeIndex = chassisShapeIndex,
-            LocalPose = new RigidPose(Vector3.Zero, Quaternion.Identity)
-        };
-        for (int i = 0; i < wheels.Length; i++)
-        {
-            var wheel = wheels[i];
-            children[i + 1] = new CompoundChild
+            var sphere = new BepuPhysics.Collidables.Sphere(wheel.Radius);
+            return new WheelShape
             {
-                ShapeIndex = _simulation.Shapes.Add(new BepuPhysics.Collidables.Sphere(wheel.Radius)),
-                LocalPose = new RigidPose(wheel.Center - center, Quaternion.Identity)
+                Geometry = wheel,
+                ShapeIndex = _simulation.Shapes.Add(sphere),
+                UnitInertia = sphere.ComputeInertia(1)
             };
-        }
+        }).ToArray();
 
         return new ColliderShape
         {
-            ShapeIndex = _simulation.Shapes.Add(new Compound(children)),
+            ShapeIndex = _simulation.Shapes.Add(hull),
             Center = center,
             UnitInertia = unitInertia,
-            ProtocolReferenceHeight = GetProtocolReferenceHeight(wheels)
+            ProtocolReferenceHeight = GetProtocolReferenceHeight(wheels),
+            Wheels = wheelShapes
         };
     }
+
+    private WheelBody[] CreateSuspendedWheels(byte sessionId, RaceGridPose pose, BodyHandle chassisHandle,
+        ColliderShape collider, float wheelMass)
+    {
+        var wheels = new WheelBody[collider.Wheels.Length];
+        for (int i = 0; i < collider.Wheels.Length; i++)
+        {
+            var wheel = collider.Wheels[i];
+            float suspensionLength = GetSuspensionLength(wheel.Geometry.Radius);
+            var worldCenter = pose.Position + Vector3.Transform(wheel.Geometry.Center, pose.Orientation);
+            var wheelInertia = ScaleInertia(wheel.UnitInertia, wheelMass);
+            var wheelHandle = _simulation.Bodies.Add(BodyDescription.CreateDynamic(
+                new RigidPose(worldCenter, pose.Orientation), wheelInertia,
+                // Wheels are small enough to cross more than their radius in one 60 Hz step.
+                // Always sweep them against the one-sided track mesh; chassis CCD still scales with fidelity.
+                new CollidableDescription(wheel.ShapeIndex, 0.15f,
+                    ContinuousDetection.Continuous(1e-3f, 1e-2f)),
+                new BodyActivityDescription(0.01f)));
+            _collisionGroups.Assign(wheelHandle, sessionId, isWheel: true);
+
+            var suspensionDirection = -Vector3.UnitY;
+            var suspensionAnchor = wheel.Geometry.Center + Vector3.UnitY * suspensionLength - collider.Center;
+            _simulation.Solver.Add(chassisHandle, wheelHandle, new LinearAxisServo
+            {
+                LocalPlaneNormal = suspensionDirection,
+                TargetOffset = suspensionLength,
+                LocalOffsetA = suspensionAnchor,
+                LocalOffsetB = default,
+                ServoSettings = ServoSettings.Default,
+                SpringSettings = _suspensionSettings
+            });
+            _simulation.Solver.Add(chassisHandle, wheelHandle, new PointOnLineServo
+            {
+                LocalDirection = suspensionDirection,
+                LocalOffsetA = suspensionAnchor,
+                LocalOffsetB = default,
+                ServoSettings = ServoSettings.Default,
+                SpringSettings = new SpringSettings(30, 1)
+            });
+            wheels[i] = new WheelBody
+            {
+                Geometry = wheel.Geometry,
+                Handle = wheelHandle,
+                DynamicInertia = wheelInertia
+            };
+        }
+        return wheels;
+    }
+
+    private void PositionWheels(BodyRecord record, RaceGridPose pose, Vector3 velocity, bool dynamic)
+    {
+        foreach (var wheel in record.Wheels)
+        {
+            var body = _simulation.Bodies[wheel.Handle];
+            body.SetLocalInertia(dynamic ? wheel.DynamicInertia : default);
+            body.Pose = new RigidPose(
+                pose.Position + Vector3.Transform(wheel.Geometry.Center, pose.Orientation), pose.Orientation);
+            body.Velocity.Linear = velocity;
+            body.Velocity.Angular = Vector3.Zero;
+            body.Awake = true;
+        }
+    }
+
+    internal static float GetSuspensionLength(float wheelRadius) => Math.Clamp(wheelRadius * 0.5f, 0.12f, 0.22f);
 
     private static BodyInertia ScaleInertia(BodyInertia unitInertia, float massKg)
     {
@@ -480,16 +621,27 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
     private void RemoveBodyUnsafe(byte sessionId)
     {
-        if (_bodies.Remove(sessionId, out var record) && _simulation.Bodies.BodyExists(record.Handle))
+        if (!_bodies.Remove(sessionId, out var record))
+            return;
+        _collisionGroups.Remove(record.Handle);
+        if (_simulation.Bodies.BodyExists(record.Handle))
             _simulation.Bodies.Remove(record.Handle);
+        foreach (var wheel in record.Wheels)
+        {
+            _collisionGroups.Remove(wheel.Handle);
+            if (_simulation.Bodies.BodyExists(wheel.Handle))
+                _simulation.Bodies.Remove(wheel.Handle);
+        }
     }
 
-    private void AddTrackMesh()
+    private void AddTrackMesh(IReadOnlyList<Kn5Triangle> sourceTriangles)
     {
-        _pool.Take<Triangle>(_asset.TrackTriangles.Count, out var triangles);
+        if (sourceTriangles.Count == 0)
+            return;
+        _pool.Take<Triangle>(sourceTriangles.Count, out var triangles);
         for (int i = 0; i < triangles.Length; i++)
         {
-            var source = ToBepuTrackTriangle(_asset.TrackTriangles[i]);
+            var source = ToBepuTrackTriangle(sourceTriangles[i]);
             triangles[i] = new Triangle(source.A, source.B, source.C);
         }
         var mesh = new Mesh(triangles, Vector3.One, _pool);
@@ -517,10 +669,30 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public long StaticManifolds;
     }
 
-    private readonly struct NarrowPhaseCallbacks(float friction, PhysicsContactMetrics metrics) : INarrowPhaseCallbacks
+    private sealed class PhysicsCollisionGroups
+    {
+        private readonly Dictionary<int, CollisionBody> _bodies = [];
+
+        public void Assign(BodyHandle handle, byte group, bool isWheel) =>
+            _bodies[handle.Value] = new CollisionBody(group, isWheel);
+        public void Remove(BodyHandle handle) => _bodies.Remove(handle.Value);
+
+        public bool AllowVehicleContact(BodyHandle a, BodyHandle b)
+        {
+            if (!_bodies.TryGetValue(a.Value, out var bodyA) || !_bodies.TryGetValue(b.Value, out var bodyB))
+                return true;
+            return bodyA.Group != bodyB.Group && !bodyA.IsWheel && !bodyB.IsWheel;
+        }
+
+        private readonly record struct CollisionBody(byte Group, bool IsWheel);
+    }
+
+    private readonly struct NarrowPhaseCallbacks(float friction, PhysicsContactMetrics metrics,
+        PhysicsCollisionGroups collisionGroups) : INarrowPhaseCallbacks
     {
         private readonly float _friction = friction;
         private readonly PhysicsContactMetrics _metrics = metrics;
+        private readonly PhysicsCollisionGroups _collisionGroups = collisionGroups;
         public void Initialize(Simulation simulation) { }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -529,6 +701,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         {
             if (a.Mobility == CollidableMobility.Static || b.Mobility == CollidableMobility.Static)
                 Interlocked.Increment(ref _metrics.StaticPairTests);
+            if (a.Mobility != CollidableMobility.Static && b.Mobility != CollidableMobility.Static
+                && !_collisionGroups.AllowVehicleContact(a.BodyHandle, b.BodyHandle))
+                return false;
             return a.Mobility == CollidableMobility.Dynamic || b.Mobility == CollidableMobility.Dynamic;
         }
 
@@ -548,7 +723,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                                     || pair.B.Mobility == CollidableMobility.Static
                 ? 0.02f
                 : _friction;
-            pairMaterial = new PairMaterialProperties(contactFriction, 3, new SpringSettings(30, 1));
+            pairMaterial = new PairMaterialProperties(contactFriction, 2, new SpringSettings(30, 1));
             return true;
         }
 

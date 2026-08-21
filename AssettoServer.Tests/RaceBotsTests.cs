@@ -149,6 +149,7 @@ public class RaceBotsTests
             {
                 Grid = [new RaceGridPose(new Vector3(1, 2, 3), Quaternion.Identity)],
                 TrackTriangles = [new Kn5Triangle(Vector3.Zero, Vector3.UnitX, Vector3.UnitZ)],
+                TrackBarrierTriangles = [new Kn5Triangle(Vector3.UnitY, Vector3.UnitX, Vector3.UnitZ)],
                 CarColliderVertices = new Dictionary<string, Vector3[]>
                 {
                     ["test_car"] = [Vector3.Zero, Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ]
@@ -174,6 +175,7 @@ public class RaceBotsTests
                 Assert.That(loaded.Grid[0].Position, Is.EqualTo(new Vector3(1, 2, 3)));
                 Assert.That(loaded.TrackTriangles, Has.Count.EqualTo(1));
                 Assert.That(loaded.TrackTriangles[0].C, Is.EqualTo(Vector3.UnitZ));
+                Assert.That(loaded.TrackBarrierTriangles, Has.Count.EqualTo(1));
                 Assert.That(loaded.CarColliderVertices["TEST_CAR"], Has.Length.EqualTo(4));
                 Assert.That(loaded.CarWheelColliders["TEST_CAR"], Has.Length.EqualTo(4));
                 Assert.That(loaded.CarWheelColliders["TEST_CAR"][0].Radius, Is.EqualTo(0.3f));
@@ -215,15 +217,32 @@ public class RaceBotsTests
     [Test]
     public void PhysicalTrackMeshSelectionUsesAcSurfaceConventions()
     {
-        IReadOnlySet<string> surfaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ROAD", "GRASS" };
-
         Assert.Multiple(() =>
         {
-            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("1ROAD", surfaces), Is.True);
-            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("ROAD_SUB0", surfaces), Is.True);
-            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("WALL_OUTER", surfaces), Is.True);
-            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("grandstand", surfaces), Is.False);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("1ROAD"), Is.True);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("ROAD_SUB0"), Is.False);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("curb_graph"), Is.False);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("crb-grph15"), Is.False);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("WALL_OUTER"), Is.True);
+            Assert.That(RacePhysicsAssetBuilder.IsPhysicalTrackMesh("grandstand"), Is.False);
+            Assert.That(RacePhysicsAssetBuilder.IsBarrierTrackMesh("12WALL001"), Is.True);
+            Assert.That(RacePhysicsAssetBuilder.IsBarrierTrackMesh("22TRM-NRM004"), Is.False);
         });
+    }
+
+    [Test]
+    public void TrackTriangleDeduplicationIgnoresVertexOrderAndSubMillimetreNoise()
+    {
+        var first = new Kn5Triangle(Vector3.Zero, Vector3.UnitX, Vector3.UnitZ);
+        var reversed = new Kn5Triangle(
+            Vector3.UnitZ + new Vector3(0.00001f),
+            Vector3.UnitX,
+            Vector3.Zero);
+        var distinct = new Kn5Triangle(Vector3.UnitY, Vector3.UnitX, Vector3.UnitZ);
+
+        var result = RacePhysicsAssetBuilder.DeduplicateTriangles([first, reversed, distinct]);
+
+        Assert.That(result, Is.EqualTo(new[] { first, distinct }));
     }
 
     [Test]
@@ -318,6 +337,14 @@ public class RaceBotsTests
         });
     }
 
+    [TestCase(0.2f, 0.12f)]
+    [TestCase(0.32f, 0.16f)]
+    [TestCase(0.6f, 0.22f)]
+    public void SuspensionTravelScalesWithWheelRadiusWithinStableBounds(float radius, float expected)
+    {
+        Assert.That(RaceBotPhysicsWorld.GetSuspensionLength(radius), Is.EqualTo(expected).Within(1e-6f));
+    }
+
     [Test]
     public void RacePhysicsStabilityCutsDriveAndRequestsRecoveryWhenOverturned()
     {
@@ -335,6 +362,12 @@ public class RaceBotsTests
                 physicalOrigin + new Vector3(26, 0, 0)), Is.True);
             Assert.That(RaceBotPhysicsWorld.NeedsRecovery(1, physicalOrigin,
                 physicalOrigin + new Vector3(5, 0.3f, 0)), Is.False);
+            Assert.That(RaceBotPhysicsWorld.NeedsImmediateRecovery(1, physicalOrigin,
+                physicalOrigin + new Vector3(0, 1.5f, 0), Vector3.Zero, Vector3.UnitZ), Is.True);
+            Assert.That(RaceBotPhysicsWorld.NeedsImmediateRecovery(1, physicalOrigin, physicalOrigin,
+                new Vector3(0, 7, 20), Vector3.UnitZ), Is.True);
+            Assert.That(RaceBotPhysicsWorld.NeedsImmediateRecovery(1, physicalOrigin, physicalOrigin,
+                new Vector3(0, 4, 20), Vector3.Normalize(new Vector3(0, 0.2f, 1))), Is.False);
         });
     }
 
@@ -459,6 +492,9 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.ChooseOvertakeOffset(4, 1, 0.8f, 0), Is.LessThan(0));
             Assert.That(RaceBotMath.ChooseOvertakeOffset(1, 1, 0.8f, 0), Is.Zero);
             Assert.That(RaceBotMath.CollisionRecoveryMilliseconds(1000, 3000, 0.5f, 7), Is.InRange(1000, 3000));
+            Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 1), Is.EqualTo(20).Within(1e-6f));
+            Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 0), Is.EqualTo(13).Within(1e-6f));
+            Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(0, 1), Is.EqualTo(float.PositiveInfinity));
         });
     }
 

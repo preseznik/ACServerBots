@@ -14,7 +14,7 @@ namespace AssettoServer.Server.Ai.Splines;
 
 public class AiSpline : IDisposable
 {
-    public const int SupportedVersion = 2;
+    public const int SupportedVersion = 3;
     
     private readonly MemoryMappedFile _file;
     private readonly IMappedMemory _fileAccessor;

@@ -8,6 +8,7 @@ public struct SplinePoint
 {
     public int Id;
     public Vector3 Position;
+    public float Speed;
     public float Radius;
     public float Camber;
     public float Length;

@@ -476,16 +476,20 @@ public class AiState : IDisposable
                 ? RaceBotMath.CorneringSpeedSquared(point.Radius, EntryCar.AiCorneringSpeedFactor,
                     _configuration.Extra.AiParams.Race.Difficulty)
                 : PhysicsUtils.CalculateMaxCorneringSpeedSquared(point.Radius, EntryCar.AiCorneringSpeedFactor);
-            if (maxCorneringSpeedSquared < currentSpeedSquared)
+            float pointSpeedLimit = MathF.Sqrt(maxCorneringSpeedSquared);
+            if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+                pointSpeedLimit = Math.Min(pointSpeedLimit,
+                    RaceBotMath.AuthoredSplineSpeedLimit(point.Speed,
+                        _configuration.Extra.AiParams.Race.Difficulty));
+            if (pointSpeedLimit * pointSpeedLimit < currentSpeedSquared)
             {
-                float maxCorneringSpeed = MathF.Sqrt(maxCorneringSpeedSquared);
-                float brakingDistance = PhysicsUtils.CalculateBrakingDistance(CurrentSpeed - maxCorneringSpeed,
+                float brakingDistance = PhysicsUtils.CalculateBrakingDistance(CurrentSpeed - pointSpeedLimit,
                                             EntryCar.AiDeceleration * EntryCar.AiCorneringBrakeForceFactor)
                                         * EntryCar.AiCorneringBrakeDistanceFactor;
 
                 if (brakingDistance > distanceTravelled)
                 {
-                    maxSpeed = Math.Min(maxCorneringSpeed, maxSpeed);
+                    maxSpeed = Math.Min(pointSpeedLimit, maxSpeed);
                 }
             }
         }

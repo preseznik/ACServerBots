@@ -15,6 +15,9 @@ public static class RaceBotMath
         => PhysicsUtils.CalculateMaxCorneringSpeedSquared(radiusMeters, corneringFactor)
            * PaceFactor(difficulty) * PaceFactor(difficulty);
 
+    public static float AuthoredSplineSpeedLimit(float speedMetersPerSecond, float difficulty) =>
+        speedMetersPerSecond > 0 ? speedMetersPerSecond * PaceFactor(difficulty) : float.PositiveInfinity;
+
     public static float FollowingGapMeters(float speedMetersPerSecond, float aggression)
         => 5 + Math.Max(0, speedMetersPerSecond) * (1.6f - Math.Clamp(aggression, 0, 1) * 0.8f);
 

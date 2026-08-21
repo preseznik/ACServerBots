@@ -25,10 +25,11 @@ internal readonly record struct RaceWheelCollider(Vector3 Center, float Radius);
 internal sealed class RacePhysicsAsset
 {
     private const string Magic = "ASRPHY01";
-    private const int Version = 3;
+    private const int Version = 5;
 
     public required IReadOnlyList<RaceGridPose> Grid { get; init; }
     public required IReadOnlyList<Kn5Triangle> TrackTriangles { get; init; }
+    public required IReadOnlyList<Kn5Triangle> TrackBarrierTriangles { get; init; }
     public required IReadOnlyDictionary<string, Vector3[]> CarColliderVertices { get; init; }
     public required IReadOnlyDictionary<string, RaceWheelCollider[]> CarWheelColliders { get; init; }
 
@@ -49,6 +50,9 @@ internal sealed class RacePhysicsAsset
         var triangles = new Kn5Triangle[ReadCount(reader, 20_000_000, "track triangle")];
         for (int i = 0; i < triangles.Length; i++)
             triangles[i] = new Kn5Triangle(ReadVector3(reader), ReadVector3(reader), ReadVector3(reader));
+        var barrierTriangles = new Kn5Triangle[ReadCount(reader, 20_000_000, "track barrier triangle")];
+        for (int i = 0; i < barrierTriangles.Length; i++)
+            barrierTriangles[i] = new Kn5Triangle(ReadVector3(reader), ReadVector3(reader), ReadVector3(reader));
 
         var cars = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
         var wheelColliders = new Dictionary<string, RaceWheelCollider[]>(StringComparer.OrdinalIgnoreCase);
@@ -70,6 +74,7 @@ internal sealed class RacePhysicsAsset
         {
             Grid = grid,
             TrackTriangles = triangles,
+            TrackBarrierTriangles = barrierTriangles,
             CarColliderVertices = cars,
             CarWheelColliders = wheelColliders
         };
@@ -91,6 +96,13 @@ internal sealed class RacePhysicsAsset
         }
         writer.Write(TrackTriangles.Count);
         foreach (var triangle in TrackTriangles)
+        {
+            Write(writer, triangle.A);
+            Write(writer, triangle.B);
+            Write(writer, triangle.C);
+        }
+        writer.Write(TrackBarrierTriangles.Count);
+        foreach (var triangle in TrackBarrierTriangles)
         {
             Write(writer, triangle.A);
             Write(writer, triangle.B);
@@ -160,18 +172,20 @@ internal static partial class RacePhysicsAssetBuilder
             ? Path.Combine(trackRoot, "models.ini")
             : Path.Combine(trackRoot, $"models_{trackConfig}.ini");
         var modelFiles = ReadModelFiles(modelsIni, trackRoot, track);
-        var surfaceKeys = ReadSurfaceKeys(trackRoot, trackConfig);
         var trackTriangles = new List<Kn5Triangle>();
+        var trackBarrierTriangles = new List<Kn5Triangle>();
         var gridTransforms = new SortedDictionary<int, RaceGridPose>();
         var includedMeshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (string modelFile in modelFiles)
         {
-            bool wallFile = Path.GetFileNameWithoutExtension(modelFile)
-                .Contains("wall", StringComparison.OrdinalIgnoreCase);
-            bool IncludeTrackMesh(string name) => wallFile || IsPhysicalTrackMesh(name, surfaceKeys);
-            var data = Kn5CollisionReader.Read(modelFile, IncludeTrackMesh);
-            trackTriangles.AddRange(data.Triangles);
+            var data = Kn5CollisionReader.Read(modelFile, IsPhysicalTrackMesh);
+            foreach (var mesh in data.MeshRanges)
+            {
+                var target = IsBarrierTrackMesh(mesh.Name) ? trackBarrierTriangles : trackTriangles;
+                for (int i = mesh.TriangleStart; i < mesh.TriangleStart + mesh.TriangleCount; i++)
+                    target.Add(data.Triangles[i]);
+            }
             includedMeshes.UnionWith(data.MeshNames);
             foreach (var node in data.NamedTransforms)
             {
@@ -182,6 +196,8 @@ internal static partial class RacePhysicsAssetBuilder
             }
         }
 
+        trackTriangles = DeduplicateTriangles(trackTriangles);
+        trackBarrierTriangles = DeduplicateTriangles(trackBarrierTriangles);
         if (trackTriangles.Count == 0)
             throw new InvalidDataException($"No physical track meshes were found in {modelsIni}");
         if (gridTransforms.Count == 0 || gridTransforms.Keys.First() != 0 ||
@@ -215,11 +231,13 @@ internal static partial class RacePhysicsAssetBuilder
         {
             Grid = groundedGrid,
             TrackTriangles = trackTriangles,
+            TrackBarrierTriangles = trackBarrierTriangles,
             CarColliderVertices = colliders,
             CarWheelColliders = wheelColliders
         };
         asset.Save(outputPath);
-        return new RacePhysicsBuildResult(asset.Grid.Count, asset.TrackTriangles.Count, colliders.Count,
+        return new RacePhysicsBuildResult(asset.Grid.Count,
+            asset.TrackTriangles.Count + asset.TrackBarrierTriangles.Count, colliders.Count,
             includedMeshes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
@@ -253,39 +271,71 @@ internal static partial class RacePhysicsAssetBuilder
         return files;
     }
 
-    private static HashSet<string> ReadSurfaceKeys(string trackRoot, string? trackConfig)
+    internal static bool IsPhysicalTrackMesh(string meshName)
     {
-        string layoutRoot = string.IsNullOrWhiteSpace(trackConfig) ? trackRoot : Path.Combine(trackRoot, trackConfig);
-        string surfacesPath = Path.Combine(layoutRoot, "data", "surfaces.ini");
-        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!File.Exists(surfacesPath))
-            return keys;
-        foreach (string rawLine in File.ReadLines(surfacesPath))
-        {
-            string line = rawLine.Trim();
-            if (line.StartsWith("KEY=", StringComparison.OrdinalIgnoreCase) && line.Length > 4)
-                keys.Add(line[4..].Trim());
-        }
-        return keys;
+        if (meshName.Length > 0 && char.IsDigit(meshName[0]))
+            return true; // AC's numbered mesh convention marks physical surfaces.
+
+        // Some mod tracks use explicit, unnumbered collision names. Do not infer collision from a
+        // surfaces.ini key: visual meshes such as curb_graph and crb-grph share those prefixes and
+        // can overlap the real road badly enough to launch rigid bodies.
+        return meshName.StartsWith("WALL", StringComparison.OrdinalIgnoreCase)
+               || meshName.Contains("COLLIDER", StringComparison.OrdinalIgnoreCase)
+               || meshName.Contains("COLLISION", StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static bool IsPhysicalTrackMesh(string meshName, IReadOnlySet<string> surfaceKeys)
+    internal static bool IsBarrierTrackMesh(string meshName)
     {
-        string normalized = meshName;
-        int digitCount = 0;
-        while (digitCount < normalized.Length && char.IsDigit(normalized[digitCount]))
-            digitCount++;
-        if (digitCount > 0)
-            return true; // AC's numbered mesh convention marks physical surfaces.
-        normalized = normalized[digitCount..];
-        int subIndex = normalized.IndexOf("_SUB", StringComparison.OrdinalIgnoreCase);
-        if (subIndex >= 0)
-            normalized = normalized[..subIndex];
-        if (surfaceKeys.Any(key => normalized.StartsWith(key, StringComparison.OrdinalIgnoreCase)))
-            return true;
+        int prefixLength = 0;
+        while (prefixLength < meshName.Length && char.IsDigit(meshName[prefixLength]))
+            prefixLength++;
+        string normalized = meshName[prefixLength..];
         return normalized.StartsWith("WALL", StringComparison.OrdinalIgnoreCase)
                || normalized.Contains("COLLIDER", StringComparison.OrdinalIgnoreCase)
                || normalized.Contains("COLLISION", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static List<Kn5Triangle> DeduplicateTriangles(IEnumerable<Kn5Triangle> triangles)
+    {
+        var seen = new HashSet<TriangleKey>();
+        var result = new List<Kn5Triangle>();
+        foreach (var triangle in triangles)
+        {
+            if (seen.Add(TriangleKey.FromTriangle(triangle)))
+                result.Add(triangle);
+        }
+        return result;
+    }
+
+    private readonly record struct QuantizedVertex(long X, long Y, long Z) : IComparable<QuantizedVertex>
+    {
+        public int CompareTo(QuantizedVertex other)
+        {
+            int x = X.CompareTo(other.X);
+            if (x != 0) return x;
+            int y = Y.CompareTo(other.Y);
+            return y != 0 ? y : Z.CompareTo(other.Z);
+        }
+
+        public static QuantizedVertex FromVector(Vector3 value) => new(
+            (long)MathF.Round(value.X * 10_000),
+            (long)MathF.Round(value.Y * 10_000),
+            (long)MathF.Round(value.Z * 10_000));
+    }
+
+    private readonly record struct TriangleKey(QuantizedVertex A, QuantizedVertex B, QuantizedVertex C)
+    {
+        public static TriangleKey FromTriangle(Kn5Triangle triangle)
+        {
+            var vertices = new[]
+            {
+                QuantizedVertex.FromVector(triangle.A),
+                QuantizedVertex.FromVector(triangle.B),
+                QuantizedVertex.FromVector(triangle.C)
+            };
+            Array.Sort(vertices);
+            return new TriangleKey(vertices[0], vertices[1], vertices[2]);
+        }
     }
 
     private static Vector3[] Deduplicate(IEnumerable<Vector3> vertices)

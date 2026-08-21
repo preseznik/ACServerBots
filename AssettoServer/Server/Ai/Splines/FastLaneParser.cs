@@ -154,7 +154,7 @@ public class FastLaneParser
 
         for (var i = 0; i < detailCount; i++)
         {
-            /*points[i].Speed*/ _ = reader.ReadSingle();
+            points[i].Speed = reader.ReadSingle();
             /*points[i].Gas*/ _ = reader.ReadSingle();
             /*points[i].Brake*/ _ = reader.ReadSingle();
             /*points[i].ObsoleteLatG*/ _ = reader.ReadSingle();
