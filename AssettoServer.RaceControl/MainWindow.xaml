@@ -712,7 +712,7 @@
                                     </StackPanel.Style>
                                     <TextBlock Text="Simulation progress" Style="{StaticResource FieldLabel}" />
                                     <ProgressBar Minimum="0" Maximum="100" Height="9"
-                                                 Value="{Binding SimulationProgressValue}"
+                                                 Value="{Binding SimulationProgressValue, Mode=OneWay}"
                                                  ToolTip="Progress toward the first stopping condition: every active competitor finishing the configured laps, or the maximum virtual-time limit." />
                                     <TextBlock Text="{Binding SimulationProgressText}" Margin="0,5,0,0"
                                                Foreground="{DynamicResource MutedTextBrush}" FontSize="11" />
