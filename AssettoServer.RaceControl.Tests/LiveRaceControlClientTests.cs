@@ -36,6 +36,8 @@ public sealed class LiveRaceControlClientTests
           "isSimulation": false,
           "session": { "name": "Race", "type": "Race", "phase": "racing" },
           "cars": [{ "sessionId": 2, "name": "Bot 3", "model": "bmw_m3_e30", "isBot": true, "isActive": true,
+            "x": 10, "y": 3.5, "z": 20, "orientationY": 0.707, "orientationW": 0.707,
+            "forwardX": 1, "forwardY": 0, "forwardZ": 0,
             "stoppedObstaclePassCommits": 2, "stoppedObstaclePassesCompleted": 1 }]
         }
         """);
@@ -53,6 +55,9 @@ public sealed class LiveRaceControlClientTests
             Assert.That(snapshot.Cars.Single().DisplayName, Does.Contain("Bot 3"));
             Assert.That(snapshot.Cars.Single().StoppedObstaclePassCommits, Is.EqualTo(2));
             Assert.That(snapshot.Cars.Single().StoppedObstaclePassesCompleted, Is.EqualTo(1));
+            Assert.That(snapshot.Cars.Single().Y, Is.EqualTo(3.5f));
+            Assert.That(snapshot.Cars.Single().OrientationW, Is.EqualTo(0.707f));
+            Assert.That(snapshot.Cars.Single().ForwardX, Is.EqualTo(1));
             Assert.That(command.RootElement.GetProperty("id").GetGuid(), Is.EqualTo(commandId));
             Assert.That(command.RootElement.GetProperty("command").GetString(), Is.EqualTo("restart"));
             Assert.That(Directory.GetFiles(client.CommandsDirectory, "*.tmp"), Is.Empty);
@@ -150,13 +155,21 @@ public sealed class LiveRaceControlClientTests
         Directory.CreateDirectory(Path.GetDirectoryName(client.SimulationSummaryPath)!);
         File.WriteAllText(client.SimulationSummaryPath, """
         {
-          "schemaVersion": 2,
+          "schemaVersion": 3,
           "completedAt": "2026-08-22T12:00:00Z",
           "status": "completed",
           "track": "magione",
           "simulatedMilliseconds": 185000,
           "realTimeFactor": 10.0,
           "anomalyCount": 0,
+          "stoppedObstaclePassCommits": 4,
+          "stoppedObstaclePassesCompleted": 3,
+          "stoppedObstacleEpisodes": [{
+            "sessionId": 0, "startedAt": 40000, "endedAt": 50000,
+            "durationMilliseconds": 10000, "sessionGeneration": 1,
+            "endReason": "bot_go", "passCommits": 4, "passesCompleted": 3,
+            "contactManifolds": 2
+          }],
           "physics": { "vehicleManifolds": 12 },
           "results": [{
             "sessionId": 0, "name": "Bot 1", "model": "bmw_m3_e30",
@@ -174,6 +187,8 @@ public sealed class LiveRaceControlClientTests
             Assert.That(summary, Is.Not.Null);
             Assert.That(summary!.Outcome, Is.EqualTo("RACE COMPLETE"));
             Assert.That(summary.Overview, Does.Contain("12 contact frames"));
+            Assert.That(summary.Overview, Does.Contain("3/4 passes completed"));
+            Assert.That(summary.StoppedObstacleEpisodes.Single().EndReason, Is.EqualTo("bot_go"));
             Assert.That(summary.Results.Single().Position, Is.EqualTo(1));
             Assert.That(summary.Results.Single().BestLapTime, Is.EqualTo("1:01.234"));
             Assert.That(summary.Results.Single().CrashCount, Is.EqualTo(1));

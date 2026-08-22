@@ -32,8 +32,10 @@ public sealed class RaceSimulationTelemetry : IHostedService
         WriteIndented = false,
     };
     private readonly Dictionary<byte, BotCounters> _previous = [];
+    private readonly Dictionary<byte, BotCounters> _totals = [];
     private readonly Dictionary<byte, long> _lastMovingAt = [];
     private readonly Dictionary<byte, RaceSimulationBotStatistics> _botStatistics = [];
+    private readonly List<StoppedObstacleEpisodeResult> _stoppedObstacleEpisodes = [];
     private readonly HashSet<string> _reportedAnomalies = [];
     private readonly Dictionary<string, int> _anomalyCounts = new(StringComparer.Ordinal);
     private StreamWriter? _events;
@@ -43,10 +45,23 @@ public sealed class RaceSimulationTelemetry : IHostedService
     private bool _started;
     private bool _stopping;
     private string _completionReason = "cancelled";
+    private int _sessionGeneration;
+    private object[]? _lastCompletedRaceResults;
+    private string? _lastCompletedRaceName;
+    private RacePhysicsDiagnostics? _runDiagnostics;
+    private StoppedObstacleEpisode? _activeStoppedObstacleEpisode;
 
     private readonly record struct BotCounters(uint Laps, int Recoveries, int PassCommits,
         int SeparatedPasses, int CompletedPasses, int StoppedObstaclePassCommits,
         int StoppedObstaclePassesCompleted);
+
+    private sealed record StoppedObstacleEpisode(int SessionId, long StartedAt,
+        int SessionGeneration, int BaselineCommits, int BaselineCompleted,
+        long BaselineContacts);
+
+    private sealed record StoppedObstacleEpisodeResult(int SessionId, long StartedAt,
+        long EndedAt, long DurationMilliseconds, int SessionGeneration, string EndReason,
+        int PassCommits, int PassesCompleted, long ContactManifolds);
 
     public RaceSimulationTelemetry(ACServerConfiguration configuration,
         ServerRuntimeOptions runtimeOptions,
@@ -64,6 +79,7 @@ public sealed class RaceSimulationTelemetry : IHostedService
         _server = server;
         _applicationLifetime = applicationLifetime;
         _server.Update += OnServerUpdate;
+        _sessionManager.SessionChanged += OnSessionChanged;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -99,6 +115,8 @@ public sealed class RaceSimulationTelemetry : IHostedService
                 return Task.CompletedTask;
             _stopping = true;
             _server.Update -= OnServerUpdate;
+            _sessionManager.SessionChanged -= OnSessionChanged;
+            CompleteStoppedObstacleEpisode("simulation_ended");
             CaptureSample(force: true);
             WriteEvent("run_stopped", new { reason = _completionReason });
             WriteSummary();
@@ -109,6 +127,108 @@ public sealed class RaceSimulationTelemetry : IHostedService
             _started = false;
         }
         return Task.CompletedTask;
+    }
+
+    private void OnSessionChanged(SessionManager sender, SessionChangedEventArgs args)
+    {
+        lock (_sync)
+        {
+            if (args.PreviousSession?.Configuration.Type == SessionType.Race)
+            {
+                _lastCompletedRaceResults = BuildResults(args.PreviousSession, _botStatistics);
+                _lastCompletedRaceName = args.PreviousSession.Configuration.Name;
+            }
+            CompleteStoppedObstacleEpisode("session_changed");
+            _sessionGeneration++;
+            _previous.Clear();
+            _lastMovingAt.Clear();
+            _botStatistics.Clear();
+            if (_started)
+            {
+                WriteEvent("session_changed", new
+                {
+                    generation = _sessionGeneration,
+                    previous = args.PreviousSession?.Configuration.Name,
+                    next = args.NextSession.Configuration.Name,
+                    type = args.NextSession.Configuration.Type.ToString(),
+                });
+            }
+        }
+    }
+
+    public void RecordControlCommand(Guid id, string command, string status,
+        int? sessionId, double? timeScale, DateTimeOffset requestedAt, string? message)
+    {
+        lock (_sync)
+        {
+            if (!_started || _stopping)
+                return;
+            WriteEvent("control_command", new
+            {
+                id,
+                command,
+                status,
+                sessionId,
+                timeScale,
+                requestedAt,
+                message,
+                sessionGeneration = _sessionGeneration,
+                session = _sessionManager.CurrentSession.Configuration.Name,
+            });
+            if (!string.Equals(status, "accepted", StringComparison.OrdinalIgnoreCase)
+                || !sessionId.HasValue)
+                return;
+            if (string.Equals(command, "bot_stop", StringComparison.OrdinalIgnoreCase))
+                StartStoppedObstacleEpisode(sessionId.Value);
+            else if (string.Equals(command, "bot_go", StringComparison.OrdinalIgnoreCase))
+                CompleteStoppedObstacleEpisode("bot_go");
+        }
+    }
+
+    private void StartStoppedObstacleEpisode(int sessionId)
+    {
+        CompleteStoppedObstacleEpisode("replaced_by_new_stop");
+        int commits = _totals.Values.Sum(value => value.StoppedObstaclePassCommits);
+        int completed = _totals.Values.Sum(value => value.StoppedObstaclePassesCompleted);
+        long contacts = GetContactManifoldsFor(sessionId);
+        _activeStoppedObstacleEpisode = new StoppedObstacleEpisode(sessionId,
+            _sessionManager.ServerTimeMilliseconds, _sessionGeneration,
+            commits, completed, contacts);
+    }
+
+    private void CompleteStoppedObstacleEpisode(string reason)
+    {
+        if (_activeStoppedObstacleEpisode == null)
+            return;
+        var episode = _activeStoppedObstacleEpisode;
+        _activeStoppedObstacleEpisode = null;
+        long endedAt = _sessionManager.ServerTimeMilliseconds;
+        var result = new StoppedObstacleEpisodeResult(episode.SessionId,
+            episode.StartedAt, endedAt, Math.Max(0, endedAt - episode.StartedAt),
+            episode.SessionGeneration, reason,
+            Math.Max(0, _totals.Values.Sum(value => value.StoppedObstaclePassCommits)
+                        - episode.BaselineCommits),
+            Math.Max(0, _totals.Values.Sum(value => value.StoppedObstaclePassesCompleted)
+                        - episode.BaselineCompleted),
+            Math.Max(0, GetContactManifoldsFor(episode.SessionId) - episode.BaselineContacts));
+        _stoppedObstacleEpisodes.Add(result);
+        if (_started)
+            WriteEvent("stopped_obstacle_episode_completed", result);
+    }
+
+    private long GetContactManifoldsFor(int sessionId)
+    {
+        if (sessionId is < 0 or > byte.MaxValue)
+            return 0;
+        long total = 0;
+        foreach (var car in _entryCarManager.EntryCars)
+        {
+            if (car.SessionId == sessionId)
+                continue;
+            total += _physicsWorld.GetVehicleContactManifoldCount((byte)sessionId,
+                car.SessionId);
+        }
+        return total;
     }
 
     private StreamWriter CreateWriter(string filename) => new(
@@ -181,6 +301,9 @@ public sealed class RaceSimulationTelemetry : IHostedService
                 ai.Value.StoppedObstaclePassCompletedCount);
             _previous.TryGetValue(car.SessionId, out var previous);
 
+            _totals.TryGetValue(car.SessionId, out var total);
+            _totals[car.SessionId] = Add(total, PositiveDelta(previous, current));
+
             WriteCounterEvents(car, "lap_completed", previous.Laps, current.Laps);
             WriteCounterEvents(car, "recovery", previous.Recoveries, current.Recoveries);
             if (current.Recoveries > previous.Recoveries)
@@ -195,6 +318,32 @@ public sealed class RaceSimulationTelemetry : IHostedService
             _previous[car.SessionId] = current;
         }
     }
+
+    private static BotCounters PositiveDelta(BotCounters previous, BotCounters current) => new(
+        current.Laps >= previous.Laps ? current.Laps - previous.Laps : current.Laps,
+        current.Recoveries >= previous.Recoveries
+            ? current.Recoveries - previous.Recoveries : current.Recoveries,
+        current.PassCommits >= previous.PassCommits
+            ? current.PassCommits - previous.PassCommits : current.PassCommits,
+        current.SeparatedPasses >= previous.SeparatedPasses
+            ? current.SeparatedPasses - previous.SeparatedPasses : current.SeparatedPasses,
+        current.CompletedPasses >= previous.CompletedPasses
+            ? current.CompletedPasses - previous.CompletedPasses : current.CompletedPasses,
+        current.StoppedObstaclePassCommits >= previous.StoppedObstaclePassCommits
+            ? current.StoppedObstaclePassCommits - previous.StoppedObstaclePassCommits
+            : current.StoppedObstaclePassCommits,
+        current.StoppedObstaclePassesCompleted >= previous.StoppedObstaclePassesCompleted
+            ? current.StoppedObstaclePassesCompleted - previous.StoppedObstaclePassesCompleted
+            : current.StoppedObstaclePassesCompleted);
+
+    private static BotCounters Add(BotCounters first, BotCounters second) => new(
+        first.Laps + second.Laps,
+        first.Recoveries + second.Recoveries,
+        first.PassCommits + second.PassCommits,
+        first.SeparatedPasses + second.SeparatedPasses,
+        first.CompletedPasses + second.CompletedPasses,
+        first.StoppedObstaclePassCommits + second.StoppedObstaclePassCommits,
+        first.StoppedObstaclePassesCompleted + second.StoppedObstaclePassesCompleted);
 
     private void WriteCounterEvents(EntryCar car, string type, long previous, long current)
     {
@@ -228,7 +377,8 @@ public sealed class RaceSimulationTelemetry : IHostedService
             {
                 if (!_botStatistics.TryGetValue(car.SessionId, out var statistics))
                     _botStatistics[car.SessionId] = statistics = new RaceSimulationBotStatistics();
-                statistics.Observe(now, ai.Value.CurrentSpeed, physics.RecoveryCount);
+                statistics.Observe(now, ai.Value.CurrentSpeed, physics.RecoveryCount,
+                    GetContactManifoldsFor(car.SessionId));
             }
             bots.Add(new
             {
@@ -266,16 +416,47 @@ public sealed class RaceSimulationTelemetry : IHostedService
         }
 
         var diagnostics = _physicsWorld.GetDiagnostics();
+        AccumulateDiagnostics(diagnostics);
         TrackAggregateAnomalies(diagnostics);
         WriteJsonLine(_samples, new
         {
             simulatedMilliseconds = now,
+            sessionGeneration = _sessionGeneration,
             session = _sessionManager.CurrentSession.Configuration.Name,
             sessionType = _sessionManager.CurrentSession.Configuration.Type.ToString(),
             raceStarted = now >= _sessionManager.CurrentSession.StartTimeMilliseconds,
             bots,
             physics = diagnostics,
         });
+    }
+
+    private void AccumulateDiagnostics(RacePhysicsDiagnostics current)
+    {
+        if (_runDiagnostics == null)
+        {
+            _runDiagnostics = current;
+            return;
+        }
+        var previous = _runDiagnostics.Value;
+        _runDiagnostics = new RacePhysicsDiagnostics(
+            Math.Max(previous.BotCount, current.BotCount),
+            Math.Min(previous.MinimumY, current.MinimumY),
+            Math.Max(previous.MaximumY, current.MaximumY),
+            Math.Max(previous.MaximumSpeed, current.MaximumSpeed),
+            Math.Max(previous.MaximumSlipAngleDegrees, current.MaximumSlipAngleDegrees),
+            Math.Max(previous.MaximumSteeringAngleDegrees, current.MaximumSteeringAngleDegrees),
+            Math.Max(previous.MaximumUpwardSpeed, current.MaximumUpwardSpeed),
+            Math.Max(previous.MaximumSplineHeightError, current.MaximumSplineHeightError),
+            Math.Max(previous.MaximumSuspensionCompression, current.MaximumSuspensionCompression),
+            Math.Min(previous.MinimumUprightDot, current.MinimumUprightDot),
+            Math.Max(previous.OverturnedBots, current.OverturnedBots),
+            Math.Max(previous.TotalRecoveries, current.TotalRecoveries),
+            Math.Max(previous.TotalTrackCorrections, current.TotalTrackCorrections),
+            Math.Max(previous.LaunchedBots, current.LaunchedBots),
+            Math.Max(previous.LaunchStepSpread, current.LaunchStepSpread),
+            Math.Max(previous.StaticPairTests, current.StaticPairTests),
+            Math.Max(previous.StaticManifolds, current.StaticManifolds),
+            Math.Max(previous.VehicleManifolds, current.VehicleManifolds));
     }
 
     private void TrackAggregateAnomalies(RacePhysicsDiagnostics diagnostics)
@@ -317,7 +498,7 @@ public sealed class RaceSimulationTelemetry : IHostedService
 
     private void ReportAnomaly(EntryCar car, string code, object details)
     {
-        string key = $"{car.SessionId}:{code}";
+        string key = $"{_sessionGeneration}:{car.SessionId}:{code}";
         if (!_reportedAnomalies.Add(key))
             return;
         _anomalyCounts[code] = _anomalyCounts.GetValueOrDefault(code) + 1;
@@ -326,7 +507,7 @@ public sealed class RaceSimulationTelemetry : IHostedService
 
     private void ReportGlobalAnomaly(string code, object details)
     {
-        if (!_reportedAnomalies.Add($"global:{code}"))
+        if (!_reportedAnomalies.Add($"{_sessionGeneration}:global:{code}"))
             return;
         _anomalyCounts[code] = _anomalyCounts.GetValueOrDefault(code) + 1;
         WriteEvent("anomaly", new { code, details });
@@ -334,34 +515,23 @@ public sealed class RaceSimulationTelemetry : IHostedService
 
     private void WriteSummary()
     {
-        var diagnostics = _physicsWorld.GetDiagnostics();
+        var diagnostics = _runDiagnostics ?? _physicsWorld.GetDiagnostics();
+        diagnostics = diagnostics with
+        {
+            TotalRecoveries = _totals.Values.Sum(value => value.Recoveries),
+        };
         var contactPair = _physicsWorld.GetMostFrequentVehicleContactPair();
-        var cars = _entryCarManager.EntryCars.ToDictionary(car => car.SessionId);
-        var results = _sessionManager.CurrentSession.Results?
-            .OrderBy(pair => pair.Value.RacePos)
-            .Select(pair => new
-            {
-                sessionId = pair.Key,
-                pair.Value.Name,
-                model = cars.GetValueOrDefault(pair.Key)?.Model ?? string.Empty,
-                pair.Value.RacePos,
-                pair.Value.NumLaps,
-                pair.Value.LastLap,
-                pair.Value.BestLap,
-                pair.Value.TotalTime,
-                pair.Value.HasCompletedLastLap,
-                pair.Value.IsDnf,
-                elapsedMilliseconds = _botStatistics.GetValueOrDefault(pair.Key)?.ObservedMilliseconds ?? 0,
-                averageSpeedKmh = _botStatistics.GetValueOrDefault(pair.Key)?.AverageSpeedKilometersPerHour ?? 0,
-                topSpeedKmh = _botStatistics.GetValueOrDefault(pair.Key)?.TopSpeedKilometersPerHour ?? 0,
-                crashCount = _botStatistics.GetValueOrDefault(pair.Key)?.RecoveryCount ?? 0,
-                fullStopCount = _botStatistics.GetValueOrDefault(pair.Key)?.FullStopCount ?? 0,
-                fullyStoppedMilliseconds = _botStatistics.GetValueOrDefault(pair.Key)?.FullyStoppedMilliseconds ?? 0,
-            }).ToArray() ?? [];
+        bool currentRace = _sessionManager.CurrentSession.Configuration.Type == SessionType.Race;
+        object[] results = currentRace
+            ? BuildResults(_sessionManager.CurrentSession, _botStatistics)
+            : _lastCompletedRaceResults ?? [];
+        string? resultsSession = currentRace
+            ? _sessionManager.CurrentSession.Configuration.Name
+            : _lastCompletedRaceName;
         double wallMilliseconds = Math.Max(1, _wallClock.Elapsed.TotalMilliseconds);
         var summary = new
         {
-            schemaVersion = 2,
+            schemaVersion = 3,
             completedAt = DateTimeOffset.UtcNow,
             status = _completionReason,
             version = ThisAssembly.AssemblyInformationalVersion,
@@ -379,15 +549,17 @@ public sealed class RaceSimulationTelemetry : IHostedService
             sampleCount = _sampleCount,
             anomalyCount = _anomalyCounts.Values.Sum(),
             anomalies = _anomalyCounts,
-            passCommits = _previous.Values.Sum(value => value.PassCommits),
-            separatedPasses = _previous.Values.Sum(value => value.SeparatedPasses),
-            completedPasses = _previous.Values.Sum(value => value.CompletedPasses),
-            stoppedObstaclePassCommits = _previous.Values.Sum(value =>
+            passCommits = _totals.Values.Sum(value => value.PassCommits),
+            separatedPasses = _totals.Values.Sum(value => value.SeparatedPasses),
+            completedPasses = _totals.Values.Sum(value => value.CompletedPasses),
+            stoppedObstaclePassCommits = _totals.Values.Sum(value =>
                 value.StoppedObstaclePassCommits),
-            stoppedObstaclePassesCompleted = _previous.Values.Sum(value =>
+            stoppedObstaclePassesCompleted = _totals.Values.Sum(value =>
                 value.StoppedObstaclePassesCompleted),
+            stoppedObstacleEpisodes = _stoppedObstacleEpisodes,
             physics = diagnostics,
             mostFrequentContactPair = new { contactPair.A, contactPair.B, contactPair.Count },
+            resultsSession,
             results,
         };
         File.WriteAllText(Path.Combine(_runtimeOptions.SimulationOutputDirectory, "summary.json"),
@@ -396,6 +568,39 @@ public sealed class RaceSimulationTelemetry : IHostedService
         Log.Information("Race simulation {Status}: {SimulatedSeconds:F1} simulated seconds in {WallSeconds:F1} wall seconds ({Factor:F1}x), {Anomalies} anomalies",
             _completionReason, _sessionManager.ServerTimeMilliseconds / 1000d, _wallClock.Elapsed.TotalSeconds,
             _sessionManager.ServerTimeMilliseconds / wallMilliseconds, _anomalyCounts.Values.Sum());
+    }
+
+    private object[] BuildResults(SessionState session,
+        IReadOnlyDictionary<byte, RaceSimulationBotStatistics> statistics)
+    {
+        var cars = _entryCarManager.EntryCars.ToDictionary(car => car.SessionId);
+        return session.Results?
+            .OrderBy(pair => pair.Value.RacePos)
+            .Select(pair =>
+            {
+                var botStatistics = statistics.GetValueOrDefault(pair.Key);
+                return (object)new
+                {
+                    sessionId = pair.Key,
+                    pair.Value.Name,
+                    model = cars.GetValueOrDefault(pair.Key)?.Model ?? string.Empty,
+                    pair.Value.RacePos,
+                    pair.Value.NumLaps,
+                    pair.Value.LastLap,
+                    pair.Value.BestLap,
+                    pair.Value.TotalTime,
+                    pair.Value.HasCompletedLastLap,
+                    pair.Value.IsDnf,
+                    elapsedMilliseconds = botStatistics?.ObservedMilliseconds ?? 0,
+                    averageSpeedKmh = botStatistics?.AverageSpeedKilometersPerHour ?? 0,
+                    topSpeedKmh = botStatistics?.TopSpeedKilometersPerHour ?? 0,
+                    crashCount = botStatistics?.ContactEpisodeCount ?? 0,
+                    contactManifolds = botStatistics?.ContactManifolds ?? 0,
+                    recoveryCount = botStatistics?.RecoveryCount ?? 0,
+                    fullStopCount = botStatistics?.FullStopCount ?? 0,
+                    fullyStoppedMilliseconds = botStatistics?.FullyStoppedMilliseconds ?? 0,
+                };
+            }).ToArray() ?? [];
     }
 
     private void WriteEvent(string type, object data) => WriteJsonLine(_events, new

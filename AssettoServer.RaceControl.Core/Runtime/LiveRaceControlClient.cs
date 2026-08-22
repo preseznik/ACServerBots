@@ -221,10 +221,19 @@ public sealed class LiveRaceCar
     public bool IsConnected { get; set; }
     public bool IsActive { get; set; }
     public float X { get; set; }
+    public float Y { get; set; }
     public float Z { get; set; }
     public float VelocityX { get; set; }
+    public float VelocityY { get; set; }
     public float VelocityZ { get; set; }
     public float HeadingRadians { get; set; }
+    public float OrientationX { get; set; }
+    public float OrientationY { get; set; }
+    public float OrientationZ { get; set; }
+    public float OrientationW { get; set; } = 1;
+    public float ForwardX { get; set; }
+    public float ForwardY { get; set; }
+    public float ForwardZ { get; set; } = 1;
     public double SpeedKmh { get; set; }
     public float NormalizedPosition { get; set; }
     public uint Lap { get; set; }
@@ -255,6 +264,7 @@ public sealed class LiveTrackMap
 public sealed class LiveTrackPoint
 {
     public float X { get; set; }
+    public float Y { get; set; }
     public float Z { get; set; }
     public float LeftWidth { get; set; }
     public float RightWidth { get; set; }
@@ -273,7 +283,10 @@ public sealed class SimulationRaceSummary
     public double RealTimeFactor { get; set; }
     public double TargetRealTimeFactor { get; set; }
     public int AnomalyCount { get; set; }
+    public int StoppedObstaclePassCommits { get; set; }
+    public int StoppedObstaclePassesCompleted { get; set; }
     public SimulationPhysicsSummary Physics { get; set; } = new();
+    public List<SimulationStoppedObstacleEpisode> StoppedObstacleEpisodes { get; set; } = [];
     public List<SimulationRaceResult> Results { get; set; } = [];
 
     public string Outcome => Status switch
@@ -287,7 +300,10 @@ public sealed class SimulationRaceSummary
     public string Overview =>
         $"{Results.Count} cars  •  {FormatDuration(SimulatedMilliseconds)} virtual  •  "
         + $"{RealTimeFactor:F1}× achieved  •  {Physics.VehicleManifolds} contact frames  •  "
-        + $"{AnomalyCount} anomalies";
+        + $"{AnomalyCount} anomalies"
+        + (StoppedObstacleEpisodes.Count == 0 ? string.Empty
+            : $"  •  stopped-car tests {StoppedObstacleEpisodes.Count}: "
+              + $"{StoppedObstaclePassesCompleted}/{StoppedObstaclePassCommits} passes completed");
 
     internal static string FormatDuration(long milliseconds)
     {
@@ -303,6 +319,19 @@ public sealed class SimulationRaceSummary
 public sealed class SimulationPhysicsSummary
 {
     public long VehicleManifolds { get; set; }
+}
+
+public sealed class SimulationStoppedObstacleEpisode
+{
+    public int SessionId { get; set; }
+    public long StartedAt { get; set; }
+    public long EndedAt { get; set; }
+    public long DurationMilliseconds { get; set; }
+    public int SessionGeneration { get; set; }
+    public string EndReason { get; set; } = string.Empty;
+    public int PassCommits { get; set; }
+    public int PassesCompleted { get; set; }
+    public long ContactManifolds { get; set; }
 }
 
 public sealed class SimulationRaceResult
@@ -321,6 +350,8 @@ public sealed class SimulationRaceResult
     public double AverageSpeedKmh { get; set; }
     public double TopSpeedKmh { get; set; }
     public int CrashCount { get; set; }
+    public long ContactManifolds { get; set; }
+    public int RecoveryCount { get; set; }
     public int FullStopCount { get; set; }
     public long FullyStoppedMilliseconds { get; set; }
 

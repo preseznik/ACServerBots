@@ -733,8 +733,33 @@
                                                            SelectedSessionId="{Binding SelectedLiveCarSessionId, Mode=TwoWay}"
                                                            FullTrack="{Binding FullTrackView, Mode=TwoWay}"
                                                            ZoomMeters="{Binding LiveZoomMeters, Mode=TwoWay}"
-                                                           ChaseView="{Binding IsBotTakeoverActive}"
-                                                           ToolTip="Click a car marker to select it. Use the mouse wheel to zoom in or out; the camera, slider, and selected-car details stay synchronized." />
+                                                           ToolTip="Click a car marker to select it. Use the mouse wheel to zoom in or out; the camera, slider, and selected-car details stay synchronized.">
+                                    <controls:LiveRaceViewport.Style>
+                                        <Style TargetType="controls:LiveRaceViewport">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsBotTakeoverActive}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </controls:LiveRaceViewport.Style>
+                                </controls:LiveRaceViewport>
+                                <controls:LiveRace3DViewport Snapshot="{Binding LiveSnapshot}"
+                                                             Track="{Binding LiveTrack}"
+                                                             SelectedSessionId="{Binding SelectedLiveCarSessionId}"
+                                                             ToolTip="Live 3D chase camera. The road elevation and every vehicle pose come from authoritative server telemetry; use the mouse wheel to change camera distance.">
+                                    <controls:LiveRace3DViewport.Style>
+                                        <Style TargetType="controls:LiveRace3DViewport">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsBotTakeoverActive}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </controls:LiveRace3DViewport.Style>
+                                </controls:LiveRace3DViewport>
                                 <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="14"
                                         Padding="10,7" Background="{DynamicResource PanelBrush}"
                                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
@@ -831,7 +856,7 @@
                                             </DataGrid.Columns>
                                         </DataGrid>
                                         <TextBlock Grid.Row="3" Margin="0,12,0,0" Foreground="{DynamicResource MutedTextBrush}"
-                                                   Text="* Crash count is the number of server recoveries/resets after the car became overturned or materially left the track. Full stops exclude the starting grid hold." />
+                                                   Text="* Crash count is a contact episode, not every physics contact frame. STOP commands are retained as deliberate obstacle tests, and the overview reports how many committed stopped-car passes completed. Full stops exclude the starting grid hold." />
                                     </Grid>
                                 </Border>
                             </Grid>

@@ -10,6 +10,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\AssettoServer.RaceControl.Core\AssettoServer.RaceControl.Core.csproj" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <PackageReference Include="Vortice.Wpf" Version="3.8.3" />
   </ItemGroup>
   <Target Name="KeepSatelliteResourcesExternal"
           AfterTargets="ComputeResolvedFilesToPublishList"

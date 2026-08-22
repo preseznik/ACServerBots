@@ -29,7 +29,7 @@ public readonly record struct RaceBotPhysicsTelemetry(float HeightErrorMeters,
 public readonly record struct RaceBotPhysicsControl(bool Hold, bool Stop, Vector3 TargetPosition,
     Vector3 TargetForward, float TargetSpeed, float MaximumAcceleration,
     float MaximumBrakeDeceleration, float LateralGripG, float? ManualSteering = null,
-    float? ManualAcceleration = null);
+    float? ManualAcceleration = null, bool ReverseRecovery = false);
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
     float MaximumSlipAngleDegrees, float MaximumSteeringAngleDegrees, float MaximumUpwardSpeed,
     float MaximumSplineHeightError, float MaximumSuspensionCompression,
@@ -433,6 +433,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             return _contactMetrics.GetMostFrequentVehiclePair();
     }
 
+    public long GetVehicleContactManifoldCount(byte firstSessionId, byte secondSessionId) =>
+        _contactMetrics.GetVehiclePairCount(firstSessionId, secondSessionId);
+
     private void CaptureMaximums(BodyRecord record)
     {
         var body = _simulation.Bodies[record.Handle];
@@ -531,7 +534,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 -control.MaximumBrakeDeceleration, control.MaximumAcceleration)
             : Math.Clamp(speedError / Math.Max(deltaSeconds, 1e-3f),
                 -control.MaximumBrakeDeceleration, control.MaximumAcceleration);
-        if (manual && acceleration < 0 && forwardSpeed <= 0)
+        if (manual && acceleration < 0 && forwardSpeed <= 0 && !control.ReverseRecovery)
+            acceleration = 0;
+        if (control.ReverseRecovery && forwardSpeed <= -2.5f)
             acceleration = 0;
         // Engine and brake authority is strictly longitudinal. Lane changes are produced by yawing
         // the chassis and its velocity vector through bounded tyre grip, never by lateral thrust.
@@ -1237,6 +1242,13 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 maximumIndex = i;
             }
             return ((byte)(maximumIndex >> 8), (byte)maximumIndex, maximum);
+        }
+
+        public long GetVehiclePairCount(byte a, byte b)
+        {
+            int low = Math.Min(a, b);
+            int high = Math.Max(a, b);
+            return Interlocked.Read(ref VehiclePairManifolds[(low << 8) | high]);
         }
     }
 

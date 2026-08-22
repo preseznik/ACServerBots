@@ -113,10 +113,10 @@ public class RaceSimulationTests
         var statistics = new RaceSimulationBotStatistics();
 
         statistics.Observe(0, 10, 0);
-        statistics.Observe(500, 10, 0);
-        statistics.Observe(1000, 0, 0);
-        statistics.Observe(1500, 0, 2);
-        statistics.Observe(2000, 5, 2);
+        statistics.Observe(500, 10, 0, 3);
+        statistics.Observe(1000, 0, 0, 8);
+        statistics.Observe(1500, 0, 2, 8);
+        statistics.Observe(2000, 5, 2, 12);
 
         Assert.Multiple(() =>
         {
@@ -125,6 +125,8 @@ public class RaceSimulationTests
             Assert.That(statistics.FullStopCount, Is.EqualTo(1));
             Assert.That(statistics.FullyStoppedMilliseconds, Is.EqualTo(1000));
             Assert.That(statistics.RecoveryCount, Is.EqualTo(2));
+            Assert.That(statistics.ContactEpisodeCount, Is.EqualTo(2));
+            Assert.That(statistics.ContactManifolds, Is.EqualTo(12));
         });
     }
 

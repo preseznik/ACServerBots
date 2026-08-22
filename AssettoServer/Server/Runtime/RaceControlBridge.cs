@@ -7,7 +7,9 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Ai.Splines;
+using AssettoServer.Server.RaceSimulation;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Shared.Model;
 using Microsoft.Extensions.Hosting;
@@ -26,6 +28,7 @@ public sealed class RaceControlBridge : IHostedService
     private readonly SessionManager _sessionManager;
     private readonly EntryCarManager _entryCarManager;
     private readonly AiSpline? _spline;
+    private readonly RaceSimulationTelemetry? _simulationTelemetry;
     private readonly Stopwatch _wallClock = new();
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private string _controlDirectory = null!;
@@ -52,7 +55,8 @@ public sealed class RaceControlBridge : IHostedService
         ACServer server,
         SessionManager sessionManager,
         EntryCarManager entryCarManager,
-        AiSpline? spline = null)
+        AiSpline? spline = null,
+        RaceSimulationTelemetry? simulationTelemetry = null)
     {
         _configuration = configuration;
         _runtimeOptions = runtimeOptions;
@@ -60,6 +64,7 @@ public sealed class RaceControlBridge : IHostedService
         _sessionManager = sessionManager;
         _entryCarManager = entryCarManager;
         _spline = spline;
+        _simulationTelemetry = simulationTelemetry;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -140,6 +145,9 @@ public sealed class RaceControlBridge : IHostedService
                 };
                 _lastCommandStatus = accepted ? "accepted" : "rejected";
                 _lastCommandMessage = GetCommandMessage(command, accepted);
+                _simulationTelemetry?.RecordControlCommand(command.Id, command.Command,
+                    _lastCommandStatus, command.SessionId, command.TimeScale,
+                    command.RequestedAt, _lastCommandMessage);
                 Log.Information("Race Control command {Command} ({CommandId}) was {Status}",
                     command.Command, command.Id, _lastCommandStatus);
             }
@@ -275,6 +283,7 @@ public sealed class RaceControlBridge : IHostedService
             sampled[target++] = new
             {
                 x = point.Position.X,
+                y = point.Position.Y,
                 z = point.Position.Z,
                 leftWidth = Math.Max(0, point.SideLeft),
                 rightWidth = Math.Max(0, point.SideRight),
@@ -307,6 +316,8 @@ public sealed class RaceControlBridge : IHostedService
             var ai = car.AiControlled ? car.GetRaceAiStateSnapshot() : null;
             Vector3 position = ai?.Position ?? car.Status.Position;
             Vector3 velocity = ai?.Velocity ?? car.Status.Velocity;
+            Quaternion orientation = RacePhysicsMath.FromProtocolRotation(car.Status.Rotation);
+            Vector3 forward = Vector3.Transform(Vector3.UnitZ, orientation);
             double normalizedPosition = ai != null && _spline is { Points.Length: > 1 }
                 ? ai.Value.SplinePointId / (double)(_spline.Points.Length - 1)
                 : car.Status.NormalizedPosition;
@@ -321,10 +332,19 @@ public sealed class RaceControlBridge : IHostedService
                 isConnected = car.Client?.HasSentFirstUpdate == true,
                 isActive = car.AiControlled || car.Client?.HasSentFirstUpdate == true,
                 x = position.X,
+                y = position.Y,
                 z = position.Z,
                 velocityX = velocity.X,
+                velocityY = velocity.Y,
                 velocityZ = velocity.Z,
-                headingRadians = car.Status.Rotation.X,
+                headingRadians = MathF.Atan2(forward.Z, -forward.X),
+                orientationX = orientation.X,
+                orientationY = orientation.Y,
+                orientationZ = orientation.Z,
+                orientationW = orientation.W,
+                forwardX = forward.X,
+                forwardY = forward.Y,
+                forwardZ = forward.Z,
                 speedKmh = Math.Sqrt(velocity.X * velocity.X + velocity.Z * velocity.Z) * 3.6,
                 normalizedPosition,
                 lap = result?.NumLaps ?? 0,
