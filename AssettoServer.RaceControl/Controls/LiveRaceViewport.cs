@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using AssettoServer.RaceControl.Core.Runtime;
 
@@ -15,13 +16,16 @@ public sealed class LiveRaceViewport : FrameworkElement
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
     public static readonly DependencyProperty SelectedSessionIdProperty = DependencyProperty.Register(
         nameof(SelectedSessionId), typeof(int), typeof(LiveRaceViewport),
-        new FrameworkPropertyMetadata(-1, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(-1,
+            FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault));
     public static readonly DependencyProperty FullTrackProperty = DependencyProperty.Register(
         nameof(FullTrack), typeof(bool), typeof(LiveRaceViewport),
         new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender));
     public static readonly DependencyProperty ZoomMetersProperty = DependencyProperty.Register(
         nameof(ZoomMeters), typeof(double), typeof(LiveRaceViewport),
         new FrameworkPropertyMetadata(180d, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    private readonly List<CarHitTarget> _carHitTargets = [];
 
     public LiveRaceSnapshot? Snapshot
     {
@@ -56,6 +60,7 @@ public sealed class LiveRaceViewport : FrameworkElement
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
+        _carHitTargets.Clear();
         var background = Brush("PreviewBrush", Brushes.Black);
         var border = Brush("BorderBrush", Brushes.DimGray);
         drawingContext.DrawRectangle(background, new Pen(border, 1), new Rect(RenderSize));
@@ -74,7 +79,7 @@ public sealed class LiveRaceViewport : FrameworkElement
             (ActualHeight - padding * 2) / Math.Max(1, bounds.Height));
         Point Map(float x, float z) => new(
             ActualWidth * 0.5 + (x - bounds.CenterX) * scale,
-            ActualHeight * 0.5 - (z - bounds.CenterZ) * scale);
+            ActualHeight * 0.5 + (z - bounds.CenterZ) * scale);
 
         DrawTrack(drawingContext, Map, scale);
         foreach (var car in activeCars.Where(car => car.SessionId != SelectedSessionId))
@@ -82,6 +87,22 @@ public sealed class LiveRaceViewport : FrameworkElement
         var selected = activeCars.FirstOrDefault(car => car.SessionId == SelectedSessionId);
         if (selected != null)
             DrawCar(drawingContext, selected, Map, selected: true);
+    }
+
+    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs eventArgs)
+    {
+        base.OnMouseLeftButtonDown(eventArgs);
+        Point click = eventArgs.GetPosition(this);
+        var hit = _carHitTargets
+            .Select(target => (Target: target, DistanceSquared: (target.Center - click).LengthSquared))
+            .Where(candidate => candidate.DistanceSquared <= 24 * 24)
+            .OrderBy(candidate => candidate.DistanceSquared)
+            .FirstOrDefault();
+        if (hit.Target == default)
+            return;
+
+        SetCurrentValue(SelectedSessionIdProperty, hit.Target.SessionId);
+        eventArgs.Handled = true;
     }
 
     private bool TryGetWorldBounds(IReadOnlyList<LiveRaceCar> cars, out WorldBounds bounds)
@@ -151,7 +172,7 @@ public sealed class LiveRaceViewport : FrameworkElement
             directionX = -Math.Cos(car.HeadingRadians);
             directionZ = Math.Sin(car.HeadingRadians);
         }
-        var screenDirection = new Vector(directionX, -directionZ);
+        var screenDirection = new Vector(directionX, directionZ);
         var side = new Vector(-screenDirection.Y, screenDirection.X);
         Point nose = center + screenDirection * length;
         Point rearLeft = center - screenDirection * (length * 0.65) + side * width;
@@ -168,6 +189,7 @@ public sealed class LiveRaceViewport : FrameworkElement
             : car.IsBot ? Brush("AccentBrush", Brushes.Red)
             : Brush("InfoBrush", Brushes.DeepSkyBlue);
         drawingContext.DrawGeometry(fill, new Pen(Brush("TextBrush", Brushes.White), selected ? 2 : 1), geometry);
+        _carHitTargets.Add(new CarHitTarget(car.SessionId, center));
 
         if (selected || !FullTrack)
         {
@@ -192,6 +214,8 @@ public sealed class LiveRaceViewport : FrameworkElement
         new Typeface("Segoe UI"), size, brush, VisualTreeHelper.GetDpi(this).PixelsPerDip);
 
     private Brush Brush(string resourceKey, Brush fallback) => TryFindResource(resourceKey) as Brush ?? fallback;
+
+    private readonly record struct CarHitTarget(int SessionId, Point Center);
 
     private readonly record struct WorldBounds(float MinimumX, float MaximumX, float MinimumZ, float MaximumZ)
     {

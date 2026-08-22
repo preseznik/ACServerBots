@@ -211,7 +211,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public int SelectedLiveCarSessionId => SelectedLiveCar?.SessionId ?? -1;
+    public int SelectedLiveCarSessionId
+    {
+        get => SelectedLiveCar?.SessionId ?? -1;
+        set
+        {
+            var car = LiveCars.FirstOrDefault(candidate => candidate.SessionId == value);
+            if (car != null)
+                SelectedLiveCar = car;
+        }
+    }
 
     public bool FullTrackView
     {
