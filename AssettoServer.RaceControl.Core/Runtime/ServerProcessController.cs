@@ -139,7 +139,10 @@ public sealed class ServerProcessController : IDisposable
             startInfo.ArgumentList.Add("--simulate-race");
             Add("--simulation-output", simulation.OutputDirectory);
             Add("--simulation-seed", simulation.Seed.ToString());
-            Add("--simulation-max-minutes", simulation.MaximumSimulatedMinutes.ToString());
+            if (simulation.MaximumSimulatedLaps > 0)
+                Add("--simulation-max-laps", simulation.MaximumSimulatedLaps.ToString());
+            else
+                Add("--simulation-max-minutes", simulation.MaximumSimulatedMinutes.ToString());
             Add("--simulation-max-wall-seconds", simulation.MaximumWallSeconds.ToString());
             Add("--simulation-sample-ms", simulation.SampleIntervalMilliseconds.ToString());
             Add("--simulation-time-scale", simulation.TimeScale.ToString(CultureInfo.InvariantCulture));
@@ -304,7 +307,8 @@ public sealed record RaceSimulationLaunchOptions(
     int MaximumSimulatedMinutes = 45,
     int MaximumWallSeconds = 300,
     int SampleIntervalMilliseconds = 500,
-    double TimeScale = 0);
+    double TimeScale = 0,
+    int MaximumSimulatedLaps = 0);
 
 public enum ServerProcessState
 {

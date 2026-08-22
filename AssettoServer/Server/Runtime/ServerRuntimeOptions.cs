@@ -57,6 +57,7 @@ public sealed class ServerRuntimeOptions
     public int SimulationSeed { get; init; } = 1;
     public string SimulationOutputDirectory { get; init; } = "simulation";
     public long MaximumSimulatedMilliseconds { get; init; } = 30 * 60_000;
+    public int MaximumSimulatedLaps { get; init; }
     public int MaximumWallTimeSeconds { get; init; } = 300;
     public int SampleIntervalMilliseconds { get; init; } = 500;
     public double TargetRealTimeFactor => Volatile.Read(ref _targetRealTimeFactor);
@@ -83,12 +84,20 @@ public sealed class ServerRuntimeOptions
 
     public static ServerRuntimeOptions CreateSimulation(string outputDirectory, int seed,
         int maximumSimulatedMinutes, int maximumWallTimeSeconds, int sampleIntervalMilliseconds,
-        string? raceControlDirectory = null, double targetRealTimeFactor = 0)
+        string? raceControlDirectory = null, double targetRealTimeFactor = 0,
+        int maximumSimulatedLaps = 0)
     {
         if (string.IsNullOrWhiteSpace(outputDirectory))
             throw new ArgumentException("Simulation output directory is required", nameof(outputDirectory));
-        if (maximumSimulatedMinutes is < 1 or > 1440)
+        if (maximumSimulatedMinutes is < 0 or > 1440)
             throw new ArgumentOutOfRangeException(nameof(maximumSimulatedMinutes));
+        if (maximumSimulatedLaps is < 0 or > 999)
+            throw new ArgumentOutOfRangeException(nameof(maximumSimulatedLaps));
+        if (maximumSimulatedMinutes == 0 && maximumSimulatedLaps == 0)
+            throw new ArgumentOutOfRangeException(nameof(maximumSimulatedMinutes),
+                "A simulated minutes or laps limit is required");
+        if (maximumSimulatedMinutes > 0 && maximumSimulatedLaps > 0)
+            throw new ArgumentException("Use either a simulated minutes or laps limit, not both");
         if (maximumWallTimeSeconds is < 1 or > 86_400)
             throw new ArgumentOutOfRangeException(nameof(maximumWallTimeSeconds));
         if (sampleIntervalMilliseconds is < 50 or > 60_000)
@@ -102,6 +111,7 @@ public sealed class ServerRuntimeOptions
             SimulationSeed = seed,
             SimulationOutputDirectory = System.IO.Path.GetFullPath(outputDirectory),
             MaximumSimulatedMilliseconds = maximumSimulatedMinutes * 60_000L,
+            MaximumSimulatedLaps = maximumSimulatedLaps,
             MaximumWallTimeSeconds = maximumWallTimeSeconds,
             SampleIntervalMilliseconds = sampleIntervalMilliseconds,
             _targetRealTimeFactor = targetRealTimeFactor,

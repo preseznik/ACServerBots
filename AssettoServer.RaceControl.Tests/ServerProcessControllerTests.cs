@@ -48,4 +48,23 @@ public sealed class ServerProcessControllerTests
             Assert.That(arguments, Does.Contain("12.5"));
         });
     }
+
+    [Test]
+    public void LapLimitedSimulationLaunchUsesLapArgumentInsteadOfMinutes()
+    {
+        var simulation = new RaceSimulationLaunchOptions(@"C:\instance\simulation",
+            MaximumSimulatedMinutes: 0, MaximumSimulatedLaps: 4);
+
+        var info = ServerProcessController.CreateStartInfo(
+            @"C:\instance\AssettoServer.exe", @"C:\instance", "race-control",
+            @"C:\instance\shutdown.signal", @"C:\instance\race-control-live", simulation);
+        var arguments = info.ArgumentList.ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(arguments, Does.Contain("--simulation-max-laps"));
+            Assert.That(arguments, Does.Contain("4"));
+            Assert.That(arguments, Does.Not.Contain("--simulation-max-minutes"));
+        });
+    }
 }

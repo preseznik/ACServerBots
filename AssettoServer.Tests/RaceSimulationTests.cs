@@ -64,6 +64,27 @@ public class RaceSimulationTests
                 wallSeconds, sampleMilliseconds));
     }
 
+    [Test]
+    public void SimulationCanUseLapLimitInsteadOfTimeLimit()
+    {
+        var options = ServerRuntimeOptions.CreateSimulation(Path.GetTempPath(), 1, 0,
+            300, 500, maximumSimulatedLaps: 3);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(options.MaximumSimulatedMilliseconds, Is.Zero);
+            Assert.That(options.MaximumSimulatedLaps, Is.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public void SimulationRejectsSimultaneousTimeAndLapLimits()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            ServerRuntimeOptions.CreateSimulation(Path.GetTempPath(), 1, 30,
+                300, 500, maximumSimulatedLaps: 3));
+    }
+
     [TestCase(0, 0)]
     [TestCase(1000, 150)]
     public void SimulationPacingDoesNotDelayUnlimitedOrBehindSchedule(long simulatedMilliseconds,

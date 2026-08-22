@@ -679,9 +679,15 @@
                                         <TextBox Text="{Binding SimulationSeed}" ToolTip="Deterministic seed used for bot decisions." />
                                     </StackPanel>
                                     <StackPanel Width="88" Margin="0,0,7,0">
-                                        <TextBlock Text="Max minutes" Style="{StaticResource FieldLabel}" />
-                                        <TextBox Text="{Binding SimulationMaximumMinutes}"
-                                                 ToolTip="Maximum virtual race time before an unfinished simulation is stopped." />
+                                        <TextBlock Text="Limit by" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox ItemsSource="{Binding SimulationLimitModes}"
+                                                  SelectedItem="{Binding SimulationLimitMode}"
+                                                  ToolTip="Choose whether the simulation stops after virtual minutes or after the leading car reaches a number of laps." />
+                                    </StackPanel>
+                                    <StackPanel Width="74" Margin="0,0,7,0">
+                                        <TextBlock Text="{Binding SimulationLimitValueLabel}" Style="{StaticResource FieldLabel}" />
+                                        <TextBox Text="{Binding SimulationLimitValue}"
+                                                 ToolTip="Simulation duration. In Laps mode, progress follows the leading active car; normal configured race completion can still end it earlier." />
                                     </StackPanel>
                                     <Button Content="SIMULATE RACE" Command="{Binding SimulateRaceCommand}" Style="{StaticResource PrimaryButton}"
                                             VerticalAlignment="Bottom"

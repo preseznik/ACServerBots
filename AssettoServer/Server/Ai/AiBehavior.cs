@@ -97,7 +97,19 @@ public class AiBehavior : BackgroundService
             var targetAiState = args.TargetCar.GetClosestAiState(sender.EntryCar.Status.Position);
             if (targetAiState.AiState != null && targetAiState.DistanceSquared < 25 * 25)
             {
-                Task.Delay(_random.Next(100, 500)).ContinueWith(_ => targetAiState.AiState.StopForCollision());
+                // Client collision packets are advisory. Traffic AI pauses after an impact;
+                // race AI keeps its throttle and uses the contact as an immediate pass trigger.
+                // Bots-only simulations do not receive client packets, so stopping here caused
+                // a live-only pace penalty whenever a human joined the race.
+                if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
+                {
+                    Log.Debug("Race bot {BotSessionId} continuing after reported contact with {DriverSessionId}",
+                        args.TargetCar.SessionId, sender.EntryCar.SessionId);
+                    targetAiState.AiState.ContinueAfterCollision(sender.EntryCar.SessionId);
+                }
+                else
+                    Task.Delay(_random.Next(100, 500))
+                        .ContinueWith(_ => targetAiState.AiState.StopForCollision());
             }
         }
     }

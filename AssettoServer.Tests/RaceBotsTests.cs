@@ -5,6 +5,7 @@ using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Runtime;
 using AssettoServer.Shared.Model;
 
 namespace AssettoServer.Tests;
@@ -300,6 +301,19 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void RaceControlTelemetryUsesAuthoritativeBotOrientation()
+    {
+        Quaternion botOrientation = RacePhysicsMath.FromForward(Vector3.UnitX);
+        var ai = default(RaceAiStateSnapshot) with { Orientation = botOrientation };
+
+        Quaternion resolved = RaceControlBridge.ResolveTelemetryOrientation(ai, Vector3.Zero);
+        Vector3 forward = Vector3.Transform(Vector3.UnitZ, resolved);
+
+        Assert.That(Vector3.Dot(forward, Vector3.UnitX), Is.GreaterThan(0.999f),
+            "an empty slot-level client status must not replace the bot's physical heading");
+    }
+
+    [Test]
     public void AcStartPoseIsGroundedOnPhysicalTrackSurface()
     {
         var triangles = new[]
@@ -383,81 +397,69 @@ public class RaceBotsTests
     }
 
     [Test]
-    public void RenderOriginIsReconstructedFromTheSimulatedWheelContact()
+    public void RaycastSurfaceHeightTracksAuthoredSlopeWithoutLag()
     {
-        var wheel = new RaceWheelCollider(new Vector3(0.8f, 0.32f, 1.2f), 0.32f);
-        var orientation = Quaternion.CreateFromYawPitchRoll(0.3f, -0.08f, 0.04f);
-        var expectedOrigin = new Vector3(12, 4, -8);
-        var wheelPosition = expectedOrigin + Vector3.Transform(wheel.Center, orientation);
-
-        var reconstructed = RaceBotPhysicsWorld.GetWheelOriginSample(wheel, wheelPosition, orientation);
-
-        Assert.That(Vector3.Distance(reconstructed, expectedOrigin), Is.LessThan(1e-5f));
-    }
-
-    [Test]
-    public void SuspensionSafetyClampOnlyCorrectsTravelBeyondTheBumpStop()
-    {
-        var chassisOrigin = Vector3.Zero;
+        float height = RaceBotPhysicsWorld.StabilizeSurfaceHeight(10, 10.08f,
+            0.08f, true, 0.04f, out bool limited);
 
         Assert.Multiple(() =>
         {
-            Assert.That(RaceBotPhysicsWorld.GetSuspensionCompressionCorrection(chassisOrigin,
-                new Vector3(0, 0.05f, 0), Quaternion.Identity, 0.08f), Is.Zero);
-            Assert.That(RaceBotPhysicsWorld.GetSuspensionCompressionCorrection(chassisOrigin,
-                new Vector3(0, 0.30f, 0), Quaternion.Identity, 0.08f), Is.EqualTo(0.22f).Within(1e-6f));
+            Assert.That(height, Is.EqualTo(10.08f).Within(1e-6f));
+            Assert.That(limited, Is.False);
         });
     }
 
     [Test]
-    public void TrackSupportOnlyCorrectsEmergencySubmersionOrFlight()
+    public void RaycastSurfaceHeightBoundsAnUnexpectedTriangleStep()
     {
+        float upward = RaceBotPhysicsWorld.StabilizeSurfaceHeight(10, 10.50f,
+            0.02f, true, 0.04f, out bool upwardLimited);
+        float downward = RaceBotPhysicsWorld.StabilizeSurfaceHeight(10, 9.50f,
+            -0.02f, true, 0.04f, out bool downwardLimited);
+
         Assert.Multiple(() =>
         {
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(0.89f), Is.Zero);
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(1.10f),
-                Is.EqualTo(1.10f).Within(1e-6f));
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(-0.99f), Is.Zero);
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportCorrection(-1.20f),
-                Is.EqualTo(-1.20f).Within(1e-6f));
+            Assert.That(upward, Is.EqualTo(10.06f).Within(1e-6f));
+            Assert.That(downward, Is.EqualTo(9.94f).Within(1e-6f));
+            Assert.That(upwardLimited, Is.True);
+            Assert.That(downwardLimited, Is.True);
         });
     }
 
     [Test]
-    public void TrackSupportLiftsSubmergedBotsWithoutAPositionSnap()
+    public void FirstRaycastSurfaceSampleUsesThePhysicalHeightDirectly()
     {
+        float height = RaceBotPhysicsWorld.StabilizeSurfaceHeight(0, 14.25f,
+            0, false, 0.04f, out bool limited);
+
+        Assert.That(height, Is.EqualTo(14.25f));
+        Assert.That(limited, Is.False);
+    }
+
+    [Test]
+    public void RaycastSurfaceNormalsBlendAcrossTriangleBoundaries()
+    {
+        var previous = Vector3.UnitY;
+        var banked = Vector3.Normalize(new Vector3(0.4f, 1, 0));
+        var smoothed = RaceBotPhysicsWorld.SmoothSurfaceNormal(previous, banked, 0.25f);
+
         Assert.Multiple(() =>
         {
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportVerticalSpeed(0.10f, 0.5f),
-                Is.EqualTo(0.9f).Within(1e-6f));
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportVerticalSpeed(1f, 0.5f),
-                Is.EqualTo(2.5f).Within(1e-6f));
-            Assert.That(RaceBotPhysicsWorld.GetTrackSupportVerticalSpeed(-0.25f, 0.5f),
-                Is.EqualTo(0.5f).Within(1e-6f));
+            Assert.That(smoothed.Length(), Is.EqualTo(1).Within(1e-6f));
+            Assert.That(smoothed.X, Is.GreaterThan(0));
+            Assert.That(smoothed.X, Is.LessThan(banked.X));
+            Assert.That(smoothed.Y, Is.GreaterThan(0.98f));
         });
     }
 
     [Test]
-    public void NetworkRenderHeightUsesTheAuthoritativeTrackSurfaceWithoutMovingThePhysicalCar()
-    {
-        var physicalOrigin = new Vector3(12, -3, 8);
-        var trackTarget = new Vector3(15, 4.5f, 11);
-
-        var renderOrigin = RaceBotPhysicsWorld.GetTrackRenderOrigin(physicalOrigin, trackTarget);
-
-        Assert.That(renderOrigin, Is.EqualTo(new Vector3(12, 4.5f, 8)));
-    }
-
-    [Test]
-    public void NetworkRideHeightAddsSmallModelScaledClearance()
+    public void NetworkRideHeightIsOnlyAModelScaledOffset()
     {
         Assert.Multiple(() =>
         {
-            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.20f), Is.EqualTo(0.03f));
-            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.32f), Is.EqualTo(0.04f));
-            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.60f), Is.EqualTo(0.05f));
-            Assert.That(RaceBotPhysicsWorld.GetTrackRenderOrigin(Vector3.Zero,
-                new Vector3(0, 4, 0), 0.04f).Y, Is.EqualTo(4.04f));
+            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.20f), Is.EqualTo(0.05f));
+            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.32f), Is.EqualTo(0.064f).Within(1e-6f));
+            Assert.That(RaceBotPhysicsWorld.GetNetworkRideHeightClearance(0.60f), Is.EqualTo(0.08f));
         });
     }
 
@@ -472,7 +474,24 @@ public class RaceBotsTests
             Assert.That(RaceBotPhysicsWorld.GetTargetVerticalSpeed(slope, velocity, Quaternion.Identity),
                 Is.EqualTo(slope.Y * 20).Within(1e-5f));
             Assert.That(RaceBotPhysicsWorld.GetTargetVerticalSpeed(Vector3.UnitY, velocity, Quaternion.Identity),
-                Is.EqualTo(3).Within(1e-5f));
+                Is.EqualTo(5).Within(1e-5f));
+        });
+    }
+
+    [Test]
+    public void ExcessUpwardSpeedIgnoresMotionExpectedFromTheAuthoredSlope()
+    {
+        var uphill = Vector3.Normalize(new Vector3(0, 0.2f, 1));
+        float expectedVerticalSpeed = uphill.Y * 30;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotPhysicsWorld.GetExcessUpwardSpeed(uphill,
+                uphill * 30), Is.Zero.Within(1e-5f));
+            Assert.That(RaceBotPhysicsWorld.GetExcessUpwardSpeed(uphill,
+                uphill * 30 + Vector3.UnitY * 3), Is.EqualTo(3).Within(1e-5f));
+            Assert.That(RaceBotPhysicsWorld.GetExcessUpwardSpeed(Vector3.Zero,
+                Vector3.UnitY * 2), Is.EqualTo(2).Within(1e-5f));
         });
     }
 
@@ -483,16 +502,24 @@ public class RaceBotsTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(RaceBotPhysicsWorld.GetRecoveryAssessmentTarget(
+                    new Vector3(20, 100, 30), new Vector3(5, 4, 6)),
+                Is.EqualTo(new Vector3(20, 4, 30)),
+                "course recovery needs the planned X/Z and the locally sampled road height");
             Assert.That(RaceBotPhysicsWorld.GetDriveScale(1), Is.EqualTo(1));
             Assert.That(RaceBotPhysicsWorld.GetDriveScale(0.2f), Is.Zero);
             Assert.That(RaceBotPhysicsWorld.GetCourseDriveScale(2, 0.5f), Is.EqualTo(1));
             Assert.That(RaceBotPhysicsWorld.GetCourseDriveScale(10, 0.5f), Is.EqualTo(0.5f));
             Assert.That(RaceBotPhysicsWorld.GetCourseDriveScale(2, 4), Is.Zero);
-            Assert.That(RaceBotPhysicsWorld.NeedsRecovery(-0.9f, physicalOrigin, physicalOrigin), Is.True);
+            Assert.That(RaceBotPhysicsWorld.NeedsRecovery(-0.9f, physicalOrigin, physicalOrigin, 20), Is.True);
             Assert.That(RaceBotPhysicsWorld.NeedsRecovery(1, physicalOrigin,
-                physicalOrigin + new Vector3(26, 0, 0)), Is.True);
+                physicalOrigin + new Vector3(11, 0, 0), 1), Is.True);
             Assert.That(RaceBotPhysicsWorld.NeedsRecovery(1, physicalOrigin,
-                physicalOrigin + new Vector3(5, 0.3f, 0)), Is.False);
+                physicalOrigin + new Vector3(11, 0.3f, 0), 5), Is.False,
+                "a moving car should be allowed to steer back from a moderate course error");
+            Assert.That(RaceBotPhysicsWorld.NeedsRecovery(1, physicalOrigin,
+                physicalOrigin + new Vector3(26, 0.3f, 0), 20), Is.True,
+                "an extreme departure should recover even while the car is moving");
             Assert.That(RaceBotPhysicsWorld.NeedsImmediateRecovery(1, physicalOrigin,
                 physicalOrigin + new Vector3(0, 1.5f, 0), Vector3.Zero, Vector3.UnitZ), Is.True);
             Assert.That(RaceBotPhysicsWorld.NeedsImmediateRecovery(1, physicalOrigin, physicalOrigin,
@@ -593,6 +620,9 @@ public class RaceBotsTests
             Assert.That(Vector3.Dot(mergedForward, splineForward), Is.GreaterThan(0.999f));
             Assert.That(Vector3.Dot(steeringDirection, gridForward), Is.GreaterThan(0.999f),
                 "a grid/spline heading mismatch must not produce immediate steering");
+            Assert.That(RaceBotPhysicsWorld.CalculateSteeringDirectionToTarget(Vector3.Zero,
+                    new Vector3(4, 0, 10), Vector3.UnitZ).X,
+                Is.GreaterThan(0), "an authored look-ahead point must steer into the upcoming curve");
             Assert.That(RaceBotMath.AdvanceGridPathBlend(0, 20, 1), Is.EqualTo(0.5f));
             Assert.That(RaceBotMath.PlanarHeadingDifferenceDegrees(gridForward, splineForward),
                 Is.EqualTo(90).Within(1e-4f));
@@ -605,6 +635,7 @@ public class RaceBotsTests
         var steeringDirection = RaceBotPhysicsWorld.CalculateSteeringDirection(Vector3.Zero,
             new Vector3(2, 0, 0), Vector3.UnitZ, 10);
         float lookAhead = RaceBotPhysicsWorld.GetSteeringLookAheadMeters(10);
+        float recoveryLookAhead = RaceBotPhysicsWorld.GetSteeringLookAheadMeters(10, 5);
         float steeringAngle = RaceBotPhysicsWorld.CalculateSteeringAngle(Vector3.UnitZ,
             steeringDirection, lookAhead, 2.5f);
         float yawRate = RaceBotPhysicsWorld.CalculateTargetYawRate(10, 2.5f, steeringAngle, 1);
@@ -613,6 +644,8 @@ public class RaceBotsTests
         Assert.Multiple(() =>
         {
             Assert.That(steeringDirection.X, Is.GreaterThan(0));
+            Assert.That(recoveryLookAhead, Is.GreaterThan(lookAhead),
+                "course recovery should use a gentler intercept than ordinary line following");
             Assert.That(steeringAngle, Is.GreaterThan(0));
             Assert.That(yawRate, Is.GreaterThan(0));
             Assert.That(RaceBotPhysicsWorld.CalculateTargetYawRate(0, 2.5f, steeringAngle, 1), Is.Zero,
@@ -813,7 +846,15 @@ public class RaceBotsTests
         Assert.Multiple(() =>
         {
             Assert.That(slowCorner, Is.LessThan(fastCorner));
-            Assert.That(RaceBotMath.FollowingTargetSpeed(30, 10, 3, 0.5f), Is.Zero);
+            Assert.That(RaceBotMath.FollowingTargetSpeed(30, 10, 3, 0.5f), Is.EqualTo(10));
+            Assert.That(RaceBotMath.FollowingTargetSpeed(30, 10, 18, 0.5f), Is.GreaterThan(10));
+            Assert.That(RaceBotMath.CornerBrakingDistance(30, 15, 8.5f),
+                Is.EqualTo(53.7197f).Within(0.001f));
+            float cornerLimit = 15;
+            float approachLimit = RaceBotMath.CornerApproachSpeedLimit(cornerLimit, 50, 8.5f);
+            Assert.That(approachLimit, Is.GreaterThan(cornerLimit));
+            Assert.That(RaceBotMath.CornerBrakingDistance(approachLimit, cornerLimit, 8.5f),
+                Is.EqualTo(50).Within(0.001f));
             Assert.That(RaceBotMath.ChooseOvertakeOffset(5, 1, 0.8f, 0), Is.LessThan(0));
             Assert.That(RaceBotMath.ChooseOvertakeOffset(1, 1, 0.8f, 0), Is.Zero);
             Assert.That(RaceBotMath.ChooseOvertakeOffset(5, 1, 0.1f, 0), Is.LessThan(-1.4f));
@@ -840,6 +881,9 @@ public class RaceBotsTests
                 Is.EqualTo(-2.6f).Within(1e-6f));
             Assert.That(RaceBotMath.CommittedPassTarget(1.2f, false, 6, 6),
                 Is.EqualTo(4.75f), "a committed lane must remain inside the car-safe track bound");
+            Assert.That(RaceBotMath.LimitPassCorridorWidth(20, 1), Is.EqualTo(6.75f),
+                "bad or permissive spline widths must not send a racer far off the usable road");
+            Assert.That(RaceBotMath.LimitPassCorridorWidth(4, 1), Is.EqualTo(4));
             Assert.That(RaceBotMath.IsPracticalPassTarget(0, 6.5f, 10), Is.True);
             Assert.That(RaceBotMath.IsPracticalPassTarget(0, 6.6f, 10), Is.False,
                 "a moving pass should wait for a usable corridor instead of crossing the track");
@@ -855,12 +899,13 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.PassingTargetSpeed(20, 30, 20, 0.5f), Is.EqualTo(25f));
             Assert.That(RaceBotMath.PassingTargetSpeed(20, 21, 20, 1), Is.EqualTo(23.52f).Within(1e-5f));
             Assert.That(RaceBotMath.YieldingTargetSpeed(30, 20, 12, 0),
-                Is.EqualTo(9.84f).Within(1e-5f));
+                Is.EqualTo(19.6f).Within(1e-5f));
             Assert.That(RaceBotMath.YieldingTargetSpeed(30, 20, 12, 1),
-                Is.EqualTo(10.56f).Within(1e-5f));
+                Is.EqualTo(20).Within(1e-5f));
             Assert.That(RaceBotMath.YieldingTargetSpeed(9, 20, 20, 0), Is.EqualTo(9));
-            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 2, 2, 0), Is.EqualTo(6));
-            Assert.That(RaceBotMath.PassingCornerSpeedLimit(20, 30, 0), Is.EqualTo(23f));
+            Assert.That(RaceBotMath.YieldingTargetSpeed(30, 2, 2, 0), Is.EqualTo(1.96f).Within(1e-5f));
+            Assert.That(RaceBotMath.PassingCornerSpeedLimit(20, 30, 0), Is.EqualTo(20f));
+            Assert.That(RaceBotMath.PassingCornerSpeedLimit(20, 30, 1), Is.EqualTo(20.4f).Within(0.001f));
             Assert.That(RaceBotMath.PassingCornerSpeedLimit(4, 30, 0), Is.EqualTo(10));
             Assert.That(RaceBotMath.PassingCornerSpeedLimit(float.PositiveInfinity, 30, 0), Is.EqualTo(30f));
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 12, 0.1f), Is.True);
@@ -882,7 +927,7 @@ public class RaceBotsTests
             Assert.That(stoppedClearance, Is.EqualTo(2.1f).Within(1e-6f),
                 "a stopped-car pass should use collider widths instead of a fixed four-metre lane");
             Assert.That(RaceBotMath.RequiredPassSeparation(1.5f, 1.5f,
-                stoppedObstacle: true), Is.EqualTo(3.35f).Within(1e-6f),
+                stoppedObstacle: true), Is.EqualTo(3.1f).Within(1e-6f),
                 "wide cars must not have their required clearance capped");
             Assert.That(RaceBotMath.ChoosePassTarget(0, 1.32f, 3, 3,
                     false, false, 0, stoppedClearance), Is.EqualTo(-1.75f).Within(1e-6f),
@@ -895,9 +940,16 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.PassLaneRearReservationDistance(0, 0), Is.EqualTo(4),
                 "a stationary queue more than one car behind must not reserve the escape lane");
             Assert.That(RaceBotMath.PassLaneRearReservationDistance(0, 10), Is.EqualTo(15));
-            Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 3), Is.EqualTo(2));
-            Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 4), Is.EqualTo(2.45f));
-            Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 23), Is.EqualTo(10));
+            Assert.That(RaceBotMath.IsInsidePassLaneReservation(-1, 4, 12,
+                stoppedObstacle: true), Is.False,
+                "the nearest racer owns the stopped-car escape corridor ahead of trailing cars");
+            Assert.That(RaceBotMath.IsInsidePassLaneReservation(-1, 4, 12,
+                stoppedObstacle: false), Is.True);
+            Assert.That(RaceBotMath.IsInsidePassLaneReservation(13, 4, 12,
+                stoppedObstacle: true), Is.True);
+            Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 3), Is.EqualTo(4));
+            Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 4), Is.EqualTo(4.55f).Within(1e-6f));
+            Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 23), Is.EqualTo(14));
             Assert.That(RaceBotMath.CommittedPassApproachSpeed(8, 7), Is.EqualTo(8));
             Assert.That(RaceBotMath.HasPassAccelerationClearance(3.99f), Is.False);
             Assert.That(RaceBotMath.HasPassAccelerationClearance(4.0f), Is.True);
@@ -916,16 +968,20 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.CanAttemptPass(SessionType.Practice, 4_000, 0), Is.True);
             var stoppedQueueTargets = RaceBotMath.ChooseStoppedObstaclePassTargets(0,
                 -1, 1, 5, 5, 1, false, false, 0);
-            Assert.That(stoppedQueueTargets.Primary, Is.EqualTo(-2.85f).Within(1e-6f));
-            Assert.That(stoppedQueueTargets.Alternate, Is.EqualTo(2.85f).Within(1e-6f));
+            Assert.That(stoppedQueueTargets.Primary, Is.EqualTo(-2.6f).Within(1e-6f));
+            Assert.That(stoppedQueueTargets.Alternate, Is.EqualTo(2.6f).Within(1e-6f));
             var constrainedQueueTargets = RaceBotMath.ChooseStoppedObstaclePassTargets(0,
                 -1, 1, 3.9f, 3.9f, 1, false, false, 0);
-            Assert.That(constrainedQueueTargets.Primary, Is.EqualTo(-2.75f).Within(1e-6f),
-                "a narrow but usable corridor should spend all spare width on collision clearance");
+            Assert.That(constrainedQueueTargets.Primary, Is.EqualTo(-2.6f).Within(1e-6f),
+                "a narrow but usable corridor should retain a bounded collision buffer");
             var narrowQueueTargets = RaceBotMath.ChooseStoppedObstaclePassTargets(0,
                 -1.2f, 1.2f, 3, 3, 1.4f, false, false, 0);
             Assert.That(narrowQueueTargets.Primary, Is.Null,
                 "a queue envelope that fills a narrow road must not produce an off-track pass");
+            var offRoadQueueTargets = RaceBotMath.ChooseStoppedObstaclePassTargets(0,
+                10, 13, 1.5f, 6.75f, 1, false, false, 0);
+            Assert.That(offRoadQueueTargets.Primary, Is.Null,
+                "an off-road obstacle must not pull its pursuer beyond the usable corridor");
             Assert.That(RaceBotMath.AdvanceStoppedPassLaneOffset(0, 2, 0, 1),
                 Is.GreaterThan(0), "the planned path must still move aside after a bot has braked");
             Assert.That(RaceBotMath.CanAttemptPassPair(2, 2, 89_999, 90_000), Is.False);
@@ -952,10 +1008,9 @@ public class RaceBotsTests
                 "a stopped-car pass must not time out merely because the target is now over 20 m behind");
             Assert.That(RaceBotMath.HasCompletedStoppedPass(false, -20.1f, 2.3f, 2.4f), Is.True);
             Assert.That(RaceBotMath.HasCompletedStoppedPass(false, -20.1f, 1.5f, 2.4f), Is.False);
-            Assert.That(RaceBotMath.CollisionRecoveryMilliseconds(1000, 3000, 0.5f, 7), Is.InRange(1000, 3000));
-            Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 1), Is.EqualTo(20).Within(1e-6f));
-            Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(20, 0), Is.EqualTo(13).Within(1e-6f));
-            Assert.That(RaceBotMath.AuthoredSplineSpeedLimit(0, 1), Is.EqualTo(float.PositiveInfinity));
+            Assert.That(RaceBotMath.ShouldStopAfterReportedCollision(AiBehaviorMode.Traffic), Is.True);
+            Assert.That(RaceBotMath.ShouldStopAfterReportedCollision(AiBehaviorMode.Race), Is.False,
+                "a human collision packet must not stop a race bot");
         });
     }
 

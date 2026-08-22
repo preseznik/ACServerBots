@@ -46,7 +46,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool _fullTrackView = true;
     private double _liveZoomMeters = 180;
     private int _simulationSeed = 1;
-    private int _simulationMaximumMinutes = 45;
+    private string _simulationLimitMode = "Minutes";
+    private int _simulationLimitValue = 45;
     private double _simulationTimeScale = 10;
     private CancellationTokenSource? _simulationTimeScaleUpdateCancellation;
     private SimulationRaceSummary? _simulationResults;
@@ -265,11 +266,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set => SetProperty(ref _simulationSeed, Math.Max(1, value));
     }
 
-    public int SimulationMaximumMinutes
+    public IReadOnlyList<string> SimulationLimitModes { get; } = ["Minutes", "Laps"];
+
+    public string SimulationLimitMode
     {
-        get => _simulationMaximumMinutes;
-        set => SetProperty(ref _simulationMaximumMinutes, Math.Clamp(value, 1, 1440));
+        get => _simulationLimitMode;
+        set
+        {
+            string normalized = string.Equals(value, "Laps", StringComparison.OrdinalIgnoreCase)
+                ? "Laps"
+                : "Minutes";
+            if (!SetProperty(ref _simulationLimitMode, normalized))
+                return;
+            SimulationLimitValue = _simulationLimitValue;
+            OnPropertyChanged(nameof(SimulationLimitValueLabel));
+        }
     }
+
+    public int SimulationLimitValue
+    {
+        get => _simulationLimitValue;
+        set => SetProperty(ref _simulationLimitValue,
+            Math.Clamp(value, 1, SimulationLimitMode == "Laps" ? 999 : 1440));
+    }
+
+    public string SimulationLimitValueLabel => SimulationLimitMode == "Laps" ? "Laps" : "Minutes";
 
     public double SimulationTimeScale
     {
@@ -388,14 +409,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (LiveSnapshot is not { IsSimulation: true } snapshot)
                 return string.Empty;
-            string elapsed = FormatCompactDuration(snapshot.SimulatedMilliseconds);
-            string maximum = FormatCompactDuration(snapshot.MaximumSimulatedMilliseconds);
+            string progress = snapshot.MaximumSimulatedLaps > 0
+                ? $"{snapshot.LeadingLapProgress:F1} / {snapshot.MaximumSimulatedLaps} leader laps"
+                : $"{FormatCompactDuration(snapshot.SimulatedMilliseconds)} / "
+                  + $"{FormatCompactDuration(snapshot.MaximumSimulatedMilliseconds)} virtual";
             double factor = snapshot.TargetRealTimeFactor > 0
                 ? snapshot.TargetRealTimeFactor
                 : Math.Max(1, snapshot.RealTimeFactor);
             long remainingWallMilliseconds = (long)(snapshot.EstimatedRemainingSimulatedMilliseconds / factor);
-            return $"{elapsed} / {maximum} virtual  •  {snapshot.SimulationProgressPercent:F0}%"
-                   + $"  •  about {FormatCompactDuration(remainingWallMilliseconds)} wall time left";
+            string estimate = remainingWallMilliseconds > 0
+                ? $"about {FormatCompactDuration(remainingWallMilliseconds)} wall time left"
+                : "estimating remaining wall time";
+            return $"{progress}  •  {snapshot.SimulationProgressPercent:F0}%  •  {estimate}";
         }
     }
     public string SelectedTrackDetails => SelectedTrack is null
@@ -962,7 +987,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
                 _lastInstance.PresetName, _lastInstance.ShutdownFilePath,
                 liveClient.ControlDirectory, CreateSimulationLaunchOptions(_lastInstance.RootPath));
-            StatusText = $"Accelerated race simulation started with seed {SimulationSeed}.";
+            StatusText = $"Accelerated race simulation started with seed {SimulationSeed} "
+                         + $"for {SimulationLimitValue} {SimulationLimitMode.ToLowerInvariant()}.";
             LiveControlStatus = "Waiting for simulation telemetry…";
             SelectedPageIndex = 6;
         }
@@ -977,12 +1003,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     private RaceSimulationLaunchOptions CreateSimulationLaunchOptions(string instanceRoot) => new(
-        LiveRaceControlClient.GetSimulationOutputDirectory(instanceRoot),
-        SimulationSeed,
-        SimulationMaximumMinutes,
+        OutputDirectory: LiveRaceControlClient.GetSimulationOutputDirectory(instanceRoot),
+        Seed: SimulationSeed,
+        MaximumSimulatedMinutes: SimulationLimitMode == "Laps" ? 0 : SimulationLimitValue,
         MaximumWallSeconds: 300,
         SampleIntervalMilliseconds: 500,
-        TimeScale: SimulationTimeScale);
+        TimeScale: SimulationTimeScale,
+        MaximumSimulatedLaps: SimulationLimitMode == "Laps" ? SimulationLimitValue : 0);
 
     private bool CanControlLiveRace() =>
         _lastInstance is not null && _processController.State == ServerProcessState.Running;

@@ -92,6 +92,9 @@ public static class Program
         [Option("simulation-max-minutes", Required = false, HelpText = "Maximum simulated time before stopping")]
         public int SimulationMaximumMinutes { get; set; } = 30;
 
+        [Option("simulation-max-laps", Required = false, HelpText = "Maximum leader laps before stopping; overrides --simulation-max-minutes")]
+        public int SimulationMaximumLaps { get; set; }
+
         [Option("simulation-max-wall-seconds", Required = false, HelpText = "Maximum wall-clock runtime before stopping")]
         public int SimulationMaximumWallSeconds { get; set; } = 300;
 
@@ -341,10 +344,14 @@ public static class Program
             if (config.EntryList.Cars.Count(car => car.AiMode != Server.AiMode.None) < 2)
                 throw new ConfigurationException("--simulate-race requires at least two bot-capable entries");
 
+            int maximumMinutes = options.SimulationMaximumLaps > 0
+                ? 0
+                : options.SimulationMaximumMinutes;
             var runtimeOptions = ServerRuntimeOptions.CreateSimulation(options.SimulationOutput,
-                options.SimulationSeed, options.SimulationMaximumMinutes,
+                options.SimulationSeed, maximumMinutes,
                 options.SimulationMaximumWallSeconds, options.SimulationSampleMilliseconds,
-                options.RaceControlDirectory, options.SimulationTimeScale);
+                options.RaceControlDirectory, options.SimulationTimeScale,
+                options.SimulationMaximumLaps);
             string logPrefix = string.IsNullOrEmpty(preset) ? "simulation" : $"{preset}-simulation";
             Logging.CreateLogger(logPrefix, false, preset, options.UseVerboseLogging,
                 config.Extra.RedactIpAddresses, config.Extra.LokiSettings);

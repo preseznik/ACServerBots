@@ -118,9 +118,11 @@ public class AiUpdater
                 }
                 Log.Debug("Race physics: {BotCount} bots, Y {MinimumY:F2}..{MaximumY:F2} m, max speed {MaximumSpeed:F1} m/s, "
                           + "max rise {MaximumUpwardSpeed:F1} m/s, height error {MaximumSplineHeightError:F2} m, "
+                          + "excess rise {MaximumExcessUpwardSpeed:F1} m/s, grounded {MinimumGroundedWheels}/4, "
                           + "suspension {MaximumSuspensionCompression:F2} m, slip {MaximumSlipAngleDegrees:F1} deg, "
                           + "steer {MaximumSteeringAngleDegrees:F1} deg, upright {MinimumUprightDot:F2}, "
                           + "overturned {OverturnedBots}, recoveries {TotalRecoveries}, track corrections {TotalTrackCorrections}, "
+                          + "surface discontinuities {TotalSurfaceDiscontinuities}, "
                           + "launched {LaunchedBots}/{BotCount}, launch spread {LaunchStepSpread} ticks, "
                           + "lane offset {MaximumLaneOffset:F2} m, pass separation {MaximumPassSeparation:F2} m, "
                           + "passes {PassCommits}/{SeparatedPasses}/{CompletedPasses} committed/separated/completed, "
@@ -129,10 +131,12 @@ public class AiUpdater
                           + "static pairs {StaticPairTests}, manifolds {StaticManifolds}",
                     diagnostics.BotCount, diagnostics.MinimumY, diagnostics.MaximumY, diagnostics.MaximumSpeed,
                     diagnostics.MaximumUpwardSpeed, diagnostics.MaximumSplineHeightError,
+                    diagnostics.MaximumExcessUpwardSpeed, diagnostics.MinimumGroundedWheelCount,
                     diagnostics.MaximumSuspensionCompression,
                     diagnostics.MaximumSlipAngleDegrees, diagnostics.MaximumSteeringAngleDegrees,
                     diagnostics.MinimumUprightDot, diagnostics.OverturnedBots, diagnostics.TotalRecoveries,
-                    diagnostics.TotalTrackCorrections, diagnostics.LaunchedBots, diagnostics.BotCount,
+                    diagnostics.TotalTrackCorrections, diagnostics.TotalSurfaceDiscontinuities,
+                    diagnostics.LaunchedBots, diagnostics.BotCount,
                     diagnostics.LaunchStepSpread,
                     maximumLaneOffset, maximumPassSeparation, passCommits, separatedPasses,
                     completedPasses, stoppedPassCommits, stoppedPassesCompleted,

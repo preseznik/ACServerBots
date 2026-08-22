@@ -316,7 +316,10 @@ public sealed class RaceControlBridge : IHostedService
             var ai = car.AiControlled ? car.GetRaceAiStateSnapshot() : null;
             Vector3 position = ai?.Position ?? car.Status.Position;
             Vector3 velocity = ai?.Velocity ?? car.Status.Velocity;
-            Quaternion orientation = RacePhysicsMath.FromProtocolRotation(car.Status.Rotation);
+            // Bot position, velocity and orientation must come from the same authoritative AI
+            // state. EntryCar.Status belongs to a connected client and remains identity for an
+            // unclaimed bot slot, which previously left every chase-view car facing world +Z.
+            Quaternion orientation = ResolveTelemetryOrientation(ai, car.Status.Rotation);
             Vector3 forward = Vector3.Transform(Vector3.UnitZ, orientation);
             double normalizedPosition = ai != null && _spline is { Points.Length: > 1 }
                 ? ai.Value.SplinePointId / (double)(_spline.Points.Length - 1)
@@ -372,6 +375,7 @@ public sealed class RaceControlBridge : IHostedService
             simulatedMilliseconds = now,
             realTimeFactor,
             maximumSimulatedMilliseconds = _runtimeOptions.MaximumSimulatedMilliseconds,
+            maximumSimulatedLaps = _runtimeOptions.MaximumSimulatedLaps,
             targetRealTimeFactor = _runtimeOptions.TargetRealTimeFactor,
             session = new
             {
@@ -394,6 +398,10 @@ public sealed class RaceControlBridge : IHostedService
             cars,
         });
     }
+
+    internal static Quaternion ResolveTelemetryOrientation(RaceAiStateSnapshot? ai,
+        Vector3 clientRotation) => ai?.Orientation
+                                   ?? RacePhysicsMath.FromProtocolRotation(clientRotation);
 
     private void AtomicWrite(string path, object value)
     {

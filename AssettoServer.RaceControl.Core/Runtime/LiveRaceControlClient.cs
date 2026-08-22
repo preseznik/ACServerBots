@@ -143,6 +143,7 @@ public sealed class LiveRaceSnapshot
     public long SimulatedMilliseconds { get; set; }
     public double RealTimeFactor { get; set; }
     public long MaximumSimulatedMilliseconds { get; set; }
+    public int MaximumSimulatedLaps { get; set; }
     public double TargetRealTimeFactor { get; set; }
     public LiveRaceSession Session { get; set; } = new();
     public LiveRaceCommandResult? LastCommand { get; set; }
@@ -157,7 +158,11 @@ public sealed class LiveRaceSnapshot
             double timeLimitProgress = MaximumSimulatedMilliseconds <= 0
                 ? 0
                 : SimulatedMilliseconds / (double)MaximumSimulatedMilliseconds;
-            return Math.Clamp(Math.Max(timeLimitProgress, GetRaceCompletionRatio()) * 100, 0, 100);
+            double lapLimitProgress = MaximumSimulatedLaps <= 0
+                ? 0
+                : LeadingLapProgress / MaximumSimulatedLaps;
+            return Math.Clamp(Math.Max(Math.Max(timeLimitProgress, lapLimitProgress),
+                GetRaceCompletionRatio()) * 100, 0, 100);
         }
     }
 
@@ -170,13 +175,25 @@ public sealed class LiveRaceSnapshot
             double remaining = MaximumSimulatedMilliseconds <= 0
                 ? double.PositiveInfinity
                 : Math.Max(0, MaximumSimulatedMilliseconds - SimulatedMilliseconds);
+            double lapLimitProgress = MaximumSimulatedLaps <= 0
+                ? 0
+                : Math.Clamp(LeadingLapProgress / MaximumSimulatedLaps, 0, 1);
             double raceProgress = GetRaceCompletionRatio();
             long raceElapsed = Math.Max(0, SimulatedMilliseconds - Session.StartTimeMilliseconds);
+            if (lapLimitProgress > 0 && raceElapsed > 0)
+                remaining = Math.Min(remaining,
+                    raceElapsed * (1 - lapLimitProgress) / lapLimitProgress);
             if (raceProgress > 0 && raceElapsed > 0)
                 remaining = Math.Min(remaining, raceElapsed * (1 - raceProgress) / raceProgress);
             return double.IsFinite(remaining) ? (long)Math.Max(0, remaining) : 0;
         }
     }
+
+    public double LeadingLapProgress => Cars
+        .Where(car => car.IsActive && !car.IsDnf)
+        .Select(car => car.Lap + Math.Clamp(car.NormalizedPosition, 0, 1))
+        .DefaultIfEmpty(0)
+        .Max();
 
     private double GetRaceCompletionRatio()
     {
@@ -293,6 +310,7 @@ public sealed class SimulationRaceSummary
     {
         "completed" => "RACE COMPLETE",
         "maximum_simulated_time" => "SIMULATION TIME LIMIT REACHED",
+        "maximum_simulated_laps" => "SIMULATION LAP LIMIT REACHED",
         "maximum_wall_time" => "WALL-CLOCK LIMIT REACHED",
         _ => "SIMULATION STOPPED",
     };

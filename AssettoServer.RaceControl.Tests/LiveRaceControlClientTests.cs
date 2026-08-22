@@ -149,6 +149,36 @@ public sealed class LiveRaceControlClientTests
     }
 
     [Test]
+    public void LapLimitedSimulationProgressTracksTheLeader()
+    {
+        var snapshot = new LiveRaceSnapshot
+        {
+            IsSimulation = true,
+            SimulatedMilliseconds = 120_000,
+            MaximumSimulatedLaps = 4,
+            Session = new LiveRaceSession
+            {
+                Type = "Race",
+                Phase = "racing",
+                Laps = 10,
+                StartTimeMilliseconds = 20_000,
+            },
+            Cars =
+            [
+                new LiveRaceCar { IsActive = true, Lap = 1, NormalizedPosition = 0.5f },
+                new LiveRaceCar { IsActive = true, Lap = 2, NormalizedPosition = 0.25f },
+            ],
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(snapshot.LeadingLapProgress, Is.EqualTo(2.25).Within(0.001));
+            Assert.That(snapshot.SimulationProgressPercent, Is.EqualTo(56.25).Within(0.01));
+            Assert.That(snapshot.EstimatedRemainingSimulatedMilliseconds, Is.EqualTo(77_777).Within(1));
+        });
+    }
+
+    [Test]
     public void ReadsStructuredSimulationResults()
     {
         var client = new LiveRaceControlClient(_root);

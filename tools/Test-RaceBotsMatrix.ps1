@@ -13,6 +13,8 @@ param(
     [string] $PhysicsFidelity = 'Efficient',
     [ValidateRange(0, 1)]
     [double] $BotAggression = 0.5,
+    [ValidateRange(0, 1)]
+    [double] $BotDifficulty = 0.75,
     [ValidateRange(1, 1440)]
     [int] $MaximumSimulatedMinutes = 45,
     [ValidateRange(10, 86400)]
@@ -129,6 +131,7 @@ foreach ($track in $tracks) {
         $preset.Sessions.RaceLaps = $RaceLaps
         $preset.Bots.Enabled = $true
         $preset.Bots.Aggression = $BotAggression
+        $preset.Bots.Difficulty = $BotDifficulty
         $preset.Bots.PhysicsFidelity = $fidelity
         $preset.Bots.AllowMidRaceTakeover = $false
         $preset.Bots.RestartWhenFirstHumanConnects = $false

@@ -272,11 +272,24 @@ public sealed partial class AcContentScanner
             try
             {
                 var text = File.ReadAllText(path);
-                return JsonDocument.Parse(text, new JsonDocumentOptions
+                var options = new JsonDocumentOptions
                 {
                     AllowTrailingCommas = true,
                     CommentHandling = JsonCommentHandling.Skip,
-                });
+                };
+                try
+                {
+                    return JsonDocument.Parse(text, options);
+                }
+                catch (JsonException) when (text.Contains("\"specs\"",
+                                                StringComparison.OrdinalIgnoreCase))
+                {
+                    // A number of stock Kunos ui_car.json files contain literal newlines in
+                    // their long description string. Keep rejecting arbitrary broken mod JSON,
+                    // but recover stock-style files with a specs block so their mass, power and
+                    // top speed do not silently collapse to the generic vehicle profile.
+                    return JsonDocument.Parse(EscapeStringControlCharacters(text), options);
+                }
             }
             catch (JsonException)
             {
@@ -286,6 +299,51 @@ public sealed partial class AcContentScanner
             {
                 return null;
             }
+        }
+
+        private static string EscapeStringControlCharacters(string text)
+        {
+            var builder = new System.Text.StringBuilder(text.Length + 32);
+            bool inString = false;
+            bool escaped = false;
+            foreach (char character in text)
+            {
+                if (!inString)
+                {
+                    builder.Append(character);
+                    if (character == '"')
+                        inString = true;
+                    continue;
+                }
+
+                if (escaped)
+                {
+                    builder.Append(character);
+                    escaped = false;
+                    continue;
+                }
+                if (character == '\\')
+                {
+                    builder.Append(character);
+                    escaped = true;
+                    continue;
+                }
+                if (character == '"')
+                {
+                    builder.Append(character);
+                    inString = false;
+                    continue;
+                }
+
+                builder.Append(character switch
+                {
+                    '\r' => "\\r",
+                    '\n' => "\\n",
+                    '\t' => "\\t",
+                    _ => character.ToString(),
+                });
+            }
+            return builder.ToString();
         }
 
         public static string? String(JsonElement? root, string name)

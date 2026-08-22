@@ -34,7 +34,7 @@ public readonly record struct RaceAiDiagnostics(float MaximumAbsoluteLateralOffs
     int CompletedPassCount, int StoppedObstaclePassCommitCount,
     int StoppedObstaclePassCompletedCount);
 public readonly record struct RaceAiStateSnapshot(int SplinePointId, Vector3 Position, Vector3 Velocity,
-    float CurrentSpeed, float TargetSpeed, float LateralOffsetMeters,
+    Quaternion Orientation, float CurrentSpeed, float TargetSpeed, float LateralOffsetMeters,
     float MaximumLateralOffsetMeters, float ClosestObstacleMeters, float SteeringAngleRadians,
     bool IsStoppedForObstacle, bool IsOvertaking, byte? OvertakeTargetSessionId, bool PassingLeft,
     int PassCommitCount, int SeparatedPassCount, int CompletedPassCount,
@@ -117,7 +117,11 @@ public partial class EntryCar
             AiMaxEngineRpm = RaceVehicleProfile.EngineMaxRpm;
             AiAcceleration = 100 / 3.6f / RaceVehicleProfile.ZeroToHundredSeconds;
             AiDeceleration = RaceVehicleProfile.MaxBrakeDeceleration;
-            AiCorneringSpeedFactor *= RaceVehicleProfile.LateralGripG;
+            // Traffic tuning is deliberately conservative and must not reduce a race car's
+            // extracted lateral grip or make it brake several corners in advance.
+            AiCorneringSpeedFactor = RaceVehicleProfile.LateralGripG;
+            AiCorneringBrakeDistanceFactor = RaceBotMath.RaceCornerBrakeDistanceFactor;
+            AiCorneringBrakeForceFactor = RaceBotMath.RaceCornerBrakeForceFactor;
             TyreDiameterMeters = RaceVehicleProfile.TyreDiameterMeters;
             AiSplineHeightOffsetMeters = RaceVehicleProfile.SplineHeightOffsetMeters;
             Logger.Debug("Using {Source} race vehicle profile: {MassKg} kg, {PowerKw} kW, {TopSpeedKph} km/h",
@@ -465,7 +469,8 @@ public partial class EntryCar
             if (state == null)
                 return null;
             return new RaceAiStateSnapshot(state.CurrentSplinePointId, state.Status.Position,
-                state.Status.Velocity, state.CurrentSpeed, state.TargetSpeed,
+                state.Status.Velocity, RacePhysicsMath.FromProtocolRotation(state.Status.Rotation),
+                state.CurrentSpeed, state.TargetSpeed,
                 state.PhysicalLateralOffsetMeters, state.MaximumAbsoluteLateralOffsetMeters,
                 state.ClosestAiObstacleDistance, state.SteeringAngleRadians,
                 state.IsStoppedForObstacle, state.IsOvertaking, state.OvertakeTargetSessionId,

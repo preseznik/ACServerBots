@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Shared.Model;
 using AssettoServer.Utils;
 
@@ -20,7 +21,7 @@ public static class RaceBotMath
     public const float MinimumStoppedPassCommitClearanceMeters = 1f;
     public const float StoppedObstacleSpeedMetersPerSecond = 1.5f;
     public const float StoppedObstaclePassPlanningDistanceMeters = 30f;
-    public const float StoppedObstacleSafetyMarginMeters = 0.35f;
+    public const float StoppedObstacleSafetyMarginMeters = 0.10f;
     public const float StoppedObstacleTargetBufferMeters = 0.5f;
     public const float PassSeparationEvaluationDistanceMeters = 15f;
     public const float MaximumPlausiblePassSeparationMeters = 6f;
@@ -30,6 +31,7 @@ public static class RaceBotMath
     public const int PassAccelerationClearanceHoldMilliseconds = 2_000;
     public const float MinimumPassTargetSeparationMeters = MinimumPassingSeparationMeters;
     public const float MaximumMovingPassLaneChangeMeters = 6.5f;
+    public const float MaximumRacePassCenterOffsetMeters = 5.5f;
     public const float ObstacleCorridorHalfWidthMeters = MinimumPassingSeparationMeters;
     public const float PassCompletionClearanceMeters = 16f;
     public const float PassCompletionEvaluationDistanceMeters = 20f;
@@ -47,12 +49,20 @@ public static class RaceBotMath
     public const float StoppedPassMinimumPlanningSpeedMetersPerSecond = 2.5f;
     public const int BlockedPassContactDelayMilliseconds = 750;
     public const int BlockedPassReverseMilliseconds = 1_200;
+    public const long RecentVehicleContactStepWindow = 12;
+    public const int RaceContactPersistenceMilliseconds = 2_000;
     public const int StoppedPassCompletionHoldMilliseconds = 500;
+    public const float RaceCornerBrakeDistanceFactor = 1.15f;
+    public const float RaceCornerBrakeForceFactor = 0.85f;
+    public const float RaceCornerStabilitySpeedFactor = 0.95f;
     private const float CarHalfWidthWithMarginMeters = 1.25f;
     private const float PreferredPassingSeparationMeters = 3.8f;
 
     public static bool IsStoppedObstacle(float speedMetersPerSecond) =>
         Math.Max(0, speedMetersPerSecond) < StoppedObstacleSpeedMetersPerSecond;
+
+    public static bool ShouldStopAfterReportedCollision(AiBehaviorMode behavior) =>
+        behavior != AiBehaviorMode.Race;
 
     public static float RequiredPassSeparation(float ownHalfWidthMeters,
         float obstacleHalfWidthMeters, bool stoppedObstacle)
@@ -202,11 +212,30 @@ public static class RaceBotMath
         deltaSeconds, transitionMultiplier);
 
     public static float CorneringSpeedSquared(float radiusMeters, float corneringFactor, float difficulty)
-        => PhysicsUtils.CalculateMaxCorneringSpeedSquared(radiusMeters, corneringFactor)
-           * PaceFactor(difficulty) * PaceFactor(difficulty);
+    {
+        float speedFactor = PaceFactor(difficulty) * RaceCornerStabilitySpeedFactor;
+        return PhysicsUtils.CalculateMaxCorneringSpeedSquared(radiusMeters, corneringFactor)
+               * speedFactor * speedFactor;
+    }
 
-    public static float AuthoredSplineSpeedLimit(float speedMetersPerSecond, float difficulty) =>
-        speedMetersPerSecond > 0 ? speedMetersPerSecond * PaceFactor(difficulty) : float.PositiveInfinity;
+    public static float CornerApproachSpeedLimit(float cornerSpeedMetersPerSecond,
+        float distanceMeters, float maximumBrakeDeceleration)
+    {
+        float cornerSpeed = Math.Max(0, cornerSpeedMetersPerSecond);
+        float deceleration = Math.Max(0.1f, maximumBrakeDeceleration * RaceCornerBrakeForceFactor);
+        float usableDistance = Math.Max(0, distanceMeters) / RaceCornerBrakeDistanceFactor;
+        return MathF.Sqrt(cornerSpeed * cornerSpeed + 2 * deceleration * usableDistance);
+    }
+
+    public static float CornerBrakingDistance(float currentSpeedMetersPerSecond,
+        float cornerSpeedMetersPerSecond, float maximumBrakeDeceleration)
+    {
+        float currentSpeed = Math.Max(0, currentSpeedMetersPerSecond);
+        float cornerSpeed = Math.Clamp(cornerSpeedMetersPerSecond, 0, currentSpeed);
+        float deceleration = Math.Max(0.1f, maximumBrakeDeceleration * RaceCornerBrakeForceFactor);
+        return Math.Max(0, (currentSpeed * currentSpeed - cornerSpeed * cornerSpeed)
+                           / (2 * deceleration)) * RaceCornerBrakeDistanceFactor;
+    }
 
     public static float FollowingGapMeters(float speedMetersPerSecond, float aggression)
         => 5 + Math.Max(0, speedMetersPerSecond) * (1.6f - Math.Clamp(aggression, 0, 1) * 0.8f);
@@ -216,9 +245,10 @@ public static class RaceBotMath
         var gap = FollowingGapMeters(currentSpeed, aggression);
         if (distanceMeters >= gap * 1.5f)
             return currentSpeed;
-        if (distanceMeters <= gap * 0.5f)
-            return 0;
-        return Math.Min(currentSpeed, Math.Max(0, leadSpeed));
+        float normalizedGap = Math.Clamp((distanceMeters - EmergencyObstacleDistanceMeters)
+                                         / Math.Max(1, gap * 1.5f - EmergencyObstacleDistanceMeters), 0, 1);
+        float closingAllowance = normalizedGap * (1f + Math.Clamp(aggression, 0, 1) * 2f);
+        return Math.Min(Math.Max(0, currentSpeed), Math.Max(0, leadSpeed) + closingAllowance);
     }
 
     public static float OvertakeTriggerDistance(float speedMetersPerSecond, float aggression) =>
@@ -249,9 +279,9 @@ public static class RaceBotMath
     {
         if (leadSpeed >= 1.5f)
             return leadSpeed;
-        return Math.Clamp(2f + Math.Max(0,
-                clearanceMeters - EmergencyObstacleDistanceMeters) * 0.45f,
-            2f, 10f);
+        return Math.Clamp(4f + Math.Max(0,
+                clearanceMeters - EmergencyObstacleDistanceMeters) * 0.55f,
+            4f, 14f);
     }
 
     public static bool HasPassAccelerationClearance(float lateralSeparationMeters) =>
@@ -286,6 +316,11 @@ public static class RaceBotMath
         float trailingSpeedMetersPerSecond) => Math.Clamp(4
             + Math.Max(0, trailingSpeedMetersPerSecond - ownSpeedMetersPerSecond) * 1.5f,
         4, PassLaneRearReservationMeters);
+
+    public static bool IsInsidePassLaneReservation(float longitudinalMeters,
+        float rearReservationMeters, float obstacleLongitudinalMeters, bool stoppedObstacle) =>
+        longitudinalMeters >= (stoppedObstacle ? 0 : -Math.Max(0, rearReservationMeters))
+        && longitudinalMeters <= obstacleLongitudinalMeters + 10;
 
     public static int OvertakeCommitMilliseconds(float aggression, float clearanceMeters = 0) =>
         20_000 - (int)(Math.Clamp(aggression, 0, 1) * 5_000)
@@ -345,6 +380,15 @@ public static class RaceBotMath
         return Math.Clamp(offsetMeters,
             -Math.Max(0, sideLeftMeters - edgeMargin),
             Math.Max(0, sideRightMeters - edgeMargin));
+    }
+
+    public static float LimitPassCorridorWidth(float sideWidthMeters,
+        float vehicleHalfWidthMeters)
+    {
+        float edgeMargin = Math.Max(CarHalfWidthWithMarginMeters,
+            Math.Max(0.5f, vehicleHalfWidthMeters) + 0.15f);
+        return Math.Min(Math.Max(0, sideWidthMeters),
+            MaximumRacePassCenterOffsetMeters + edgeMargin);
     }
 
     public static float CommittedPassTarget(float obstacleOffsetMeters, bool passingLeft,
@@ -408,8 +452,12 @@ public static class RaceBotMath
         float maximumCenter = Math.Max(0, sideRightMeters - ownHalfWidth - 0.15f);
         float minimumLeftTarget = envelopeMinimumEdgeMeters - edgeMargin;
         float minimumRightTarget = envelopeMaximumEdgeMeters + edgeMargin;
-        bool leftAvailable = !leftBlocked && minimumLeftTarget >= minimumCenter;
-        bool rightAvailable = !rightBlocked && minimumRightTarget <= maximumCenter;
+        bool leftAvailable = !leftBlocked
+                             && minimumLeftTarget >= minimumCenter
+                             && minimumLeftTarget <= maximumCenter;
+        bool rightAvailable = !rightBlocked
+                              && minimumRightTarget >= minimumCenter
+                              && minimumRightTarget <= maximumCenter;
         float leftTarget = Math.Max(minimumCenter,
             minimumLeftTarget - StoppedObstacleTargetBufferMeters);
         float rightTarget = Math.Min(maximumCenter,
@@ -457,11 +505,10 @@ public static class RaceBotMath
     public static float YieldingTargetSpeed(float normalTargetSpeed, float speedAtYieldStart,
         float passerSpeed, float aggression)
     {
-        float retainedSpeed = Math.Max(8, Math.Max(0, speedAtYieldStart)
-                                          * (0.90f + Math.Clamp(aggression, 0, 1) * 0.06f));
-        float passConversionSpeed = Math.Max(6, Math.Max(0, passerSpeed)
-                                                * (0.82f + Math.Clamp(aggression, 0, 1) * 0.06f));
-        return Math.Min(Math.Max(0, normalTargetSpeed), Math.Min(retainedSpeed, passConversionSpeed));
+        _ = passerSpeed;
+        float retainedSpeed = Math.Max(0, speedAtYieldStart)
+                              * (0.98f + Math.Clamp(aggression, 0, 1) * 0.02f);
+        return Math.Min(Math.Max(0, normalTargetSpeed), retainedSpeed);
     }
 
     public static float PassingCornerSpeedLimit(float normalLimit, float absoluteMaxSpeed,
@@ -470,7 +517,7 @@ public static class RaceBotMath
         if (float.IsPositiveInfinity(normalLimit))
             return Math.Max(0, absoluteMaxSpeed);
         float passingLimit = Math.Max(Math.Max(0, normalLimit)
-                                          * (1.15f + Math.Clamp(aggression, 0, 1) * 0.05f),
+                                          * (1f + Math.Clamp(aggression, 0, 1) * 0.02f),
             Math.Min(10, Math.Max(0, absoluteMaxSpeed)));
         return Math.Min(Math.Max(0, absoluteMaxSpeed) * 1.12f, passingLimit);
     }
@@ -482,12 +529,4 @@ public static class RaceBotMath
         return target ?? 0;
     }
 
-    public static int CollisionRecoveryMilliseconds(int minimum, int maximum, float aggression, int seed)
-    {
-        if (maximum <= minimum)
-            return Math.Max(0, minimum);
-        var normalized = Math.Clamp(1 - aggression, 0, 1);
-        var deterministicNoise = (uint)seed % 101 / 100f;
-        return minimum + (int)((maximum - minimum) * Math.Clamp(normalized * 0.75f + deterministicNoise * 0.25f, 0, 1));
-    }
 }

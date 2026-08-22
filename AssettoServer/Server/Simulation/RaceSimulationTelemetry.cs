@@ -100,6 +100,7 @@ public sealed class RaceSimulationTelemetry : IHostedService
             updateHz = _configuration.Extra.AiParams.Race.UpdateHz,
             fidelity = _configuration.Extra.AiParams.Race.Physics.Fidelity.ToString(),
             maximumSimulatedMilliseconds = _runtimeOptions.MaximumSimulatedMilliseconds,
+            maximumSimulatedLaps = _runtimeOptions.MaximumSimulatedLaps,
             maximumWallTimeSeconds = _runtimeOptions.MaximumWallTimeSeconds,
             targetRealTimeFactor = _runtimeOptions.TargetRealTimeFactor,
         });
@@ -245,9 +246,20 @@ public sealed class RaceSimulationTelemetry : IHostedService
             CaptureEvents();
             CaptureSample(force: false);
 
-            if (_sessionManager.ServerTimeMilliseconds >= _runtimeOptions.MaximumSimulatedMilliseconds)
+            if (HasCompletedRace())
+            {
+                RequestStop("completed");
+                return;
+            }
+            if (_runtimeOptions.MaximumSimulatedMilliseconds > 0
+                && _sessionManager.ServerTimeMilliseconds >= _runtimeOptions.MaximumSimulatedMilliseconds)
             {
                 RequestStop("maximum_simulated_time");
+                return;
+            }
+            if (HasReachedLapLimit())
+            {
+                RequestStop("maximum_simulated_laps");
                 return;
             }
             if (_wallClock.Elapsed.TotalSeconds >= _runtimeOptions.MaximumWallTimeSeconds)
@@ -255,9 +267,21 @@ public sealed class RaceSimulationTelemetry : IHostedService
                 RequestStop("maximum_wall_time");
                 return;
             }
-            if (HasCompletedRace())
-                RequestStop("completed");
         }
+    }
+
+    private bool HasReachedLapLimit()
+    {
+        if (_runtimeOptions.MaximumSimulatedLaps <= 0)
+            return false;
+        var session = _sessionManager.CurrentSession;
+        if (session.Configuration.Type != SessionType.Race
+            || _sessionManager.ServerTimeMilliseconds <= session.StartTimeMilliseconds
+            || session.Results == null)
+            return false;
+        return _entryCarManager.EntryCars.Where(car => car.AiControlled)
+            .Any(car => session.Results.TryGetValue(car.SessionId, out var result)
+                        && result.NumLaps >= (uint)_runtimeOptions.MaximumSimulatedLaps);
     }
 
     private bool HasCompletedRace()
@@ -401,6 +425,9 @@ public sealed class RaceSimulationTelemetry : IHostedService
                 suspensionCompressionMeters = physicsTelemetry.SuspensionCompressionMeters,
                 uprightDot = physicsTelemetry.UprightDot,
                 upwardSpeedMetersPerSecond = physicsTelemetry.UpwardSpeedMetersPerSecond,
+                excessUpwardSpeedMetersPerSecond = physicsTelemetry.ExcessUpwardSpeedMetersPerSecond,
+                groundedWheels = physicsTelemetry.GroundedWheelCount,
+                surfaceDiscontinuities = physicsTelemetry.SurfaceDiscontinuityCount,
                 recoveries = physics.RecoveryCount,
                 trackCorrections = physicsTelemetry.TrackCorrectionCount,
                 stoppedForObstacle = ai.Value.IsStoppedForObstacle,
@@ -446,12 +473,15 @@ public sealed class RaceSimulationTelemetry : IHostedService
             Math.Max(previous.MaximumSlipAngleDegrees, current.MaximumSlipAngleDegrees),
             Math.Max(previous.MaximumSteeringAngleDegrees, current.MaximumSteeringAngleDegrees),
             Math.Max(previous.MaximumUpwardSpeed, current.MaximumUpwardSpeed),
+            Math.Max(previous.MaximumExcessUpwardSpeed, current.MaximumExcessUpwardSpeed),
             Math.Max(previous.MaximumSplineHeightError, current.MaximumSplineHeightError),
             Math.Max(previous.MaximumSuspensionCompression, current.MaximumSuspensionCompression),
             Math.Min(previous.MinimumUprightDot, current.MinimumUprightDot),
             Math.Max(previous.OverturnedBots, current.OverturnedBots),
             Math.Max(previous.TotalRecoveries, current.TotalRecoveries),
             Math.Max(previous.TotalTrackCorrections, current.TotalTrackCorrections),
+            Math.Min(previous.MinimumGroundedWheelCount, current.MinimumGroundedWheelCount),
+            Math.Max(previous.TotalSurfaceDiscontinuities, current.TotalSurfaceDiscontinuities),
             Math.Max(previous.LaunchedBots, current.LaunchedBots),
             Math.Max(previous.LaunchStepSpread, current.LaunchStepSpread),
             Math.Max(previous.StaticPairTests, current.StaticPairTests),
@@ -469,6 +499,8 @@ public sealed class RaceSimulationTelemetry : IHostedService
             ReportGlobalAnomaly("overturned", new { diagnostics.MinimumUprightDot, diagnostics.OverturnedBots });
         if (diagnostics.MaximumUpwardSpeed > 12f)
             ReportGlobalAnomaly("vertical_launch", new { diagnostics.MaximumUpwardSpeed });
+        if (diagnostics.MaximumExcessUpwardSpeed > 4f)
+            ReportGlobalAnomaly("unexpected_vertical_launch", new { diagnostics.MaximumExcessUpwardSpeed });
         if (diagnostics.MaximumSlipAngleDegrees > 45f)
             ReportGlobalAnomaly("excessive_slip", new { diagnostics.MaximumSlipAngleDegrees });
     }
@@ -492,6 +524,9 @@ public sealed class RaceSimulationTelemetry : IHostedService
             ReportAnomaly(car, "overturned", new { telemetry.UprightDot });
         if (telemetry.UpwardSpeedMetersPerSecond > 12f)
             ReportAnomaly(car, "vertical_launch", new { telemetry.UpwardSpeedMetersPerSecond });
+        if (telemetry.ExcessUpwardSpeedMetersPerSecond > 4f)
+            ReportAnomaly(car, "unexpected_vertical_launch",
+                new { telemetry.ExcessUpwardSpeedMetersPerSecond, telemetry.GroundedWheelCount });
         if (physics.SlipAngleDegrees > 45f && ai.CurrentSpeed > 5f)
             ReportAnomaly(car, "excessive_slip", new { physics.SlipAngleDegrees });
     }

@@ -43,4 +43,34 @@ public sealed class AcContentScannerTests
         Assert.That(car.Id, Is.EqualTo("car_one"));
         Assert.That(car.Name, Is.EqualTo("Car One"));
     }
+
+    [Test]
+    public void Scan_StockMultilineDescriptionStillProvidesVehicleSpecs()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation();
+        var uiPath = Path.Combine(factory.AcRoot, "content", "cars", "car_one", "ui", "ui_car.json");
+        File.WriteAllText(uiPath, """
+        {
+          "name": "GT3 Test",
+          "description": "First line
+        second line",
+          "specs": {
+            "bhp": "530bhp",
+            "weight": "1265kg",
+            "topspeed": "280+km/h"
+          }
+        }
+        """);
+
+        var car = factory.Scan().Cars.Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(car.Name, Is.EqualTo("GT3 Test"));
+            Assert.That(car.MassKg, Is.EqualTo(1265));
+            Assert.That(car.PowerHp, Is.EqualTo(530));
+            Assert.That(car.TopSpeedKmh, Is.EqualTo(280));
+        });
+    }
 }
