@@ -103,6 +103,7 @@ $stdout = Join-Path $instance.RootPath 'acceptance-stdout.log'
 $stderr = Join-Path $instance.RootPath 'acceptance-stderr.log'
 $arguments = @('--preset', $instance.PresetName, '--shutdown-file', $instance.ShutdownFilePath)
 $liveClient = $null
+$expectedSimulationTimeScale = $SimulationTimeScale
 if ($VerifyLiveControl) {
     $liveClient = [AssettoServer.RaceControl.Core.Runtime.LiveRaceControlClient]::new($instance.RootPath)
     $arguments += @('--race-control-directory', $liveClient.ControlDirectory)
@@ -150,6 +151,22 @@ try {
                     $_.SpeedKmh -gt 1 -and ([Math]::Abs($_.X) -gt 1 -or [Math]::Abs($_.Z) -gt 1)
                 }).Count -gt 0
             } 'moving car coordinates'
+            if ($movingState.MaximumSimulatedMilliseconds -ne 30 * 60 * 1000 -or
+                $movingState.SimulationProgressPercent -le 0 -or
+                $movingState.EstimatedRemainingSimulatedMilliseconds -le 0) {
+                throw 'Live simulation progress did not expose a usable duration and remaining-time estimate.'
+            }
+
+            $expectedSimulationTimeScale = if ($SimulationTimeScale -ge 100) { 50 } else {
+                [Math]::Min(100, $SimulationTimeScale * 2)
+            }
+            $timeScaleId = $liveClient.SendSimulationTimeScaleAsync(
+                $expectedSimulationTimeScale).GetAwaiter().GetResult()
+            $scaledState = Wait-LiveState { param($state)
+                $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $timeScaleId -and
+                $state.LastCommand.Status -eq 'accepted' -and
+                [Math]::Abs($state.TargetRealTimeFactor - $expectedSimulationTimeScale) -lt 0.001
+            } 'live simulation time-scale acknowledgement'
         }
 
         if (-not $SimulateRace) {
@@ -186,8 +203,8 @@ try {
         if ($null -eq $simulationState -or $simulationState.RealTimeFactor -le 1) {
             throw 'Accelerated live simulation did not advance faster than real time.'
         }
-        if ($simulationState.RealTimeFactor -gt ($SimulationTimeScale * 1.25)) {
-            throw "Live simulation exceeded its $SimulationTimeScale`x target: $($simulationState.RealTimeFactor)x."
+        if ($simulationState.RealTimeFactor -gt ($expectedSimulationTimeScale * 1.25)) {
+            throw "Live simulation exceeded its $expectedSimulationTimeScale`x target: $($simulationState.RealTimeFactor)x."
         }
     }
 
@@ -215,7 +232,7 @@ if ($SimulateRace) {
     if ($summary.schemaVersion -lt 2 -or $summary.results.Count -ne $Slots) {
         throw 'Simulation summary is missing its versioned per-car classification.'
     }
-    if ([Math]::Abs([double]$summary.targetRealTimeFactor - $SimulationTimeScale) -gt 0.001) {
+    if ([Math]::Abs([double]$summary.targetRealTimeFactor - $expectedSimulationTimeScale) -gt 0.001) {
         throw "Simulation summary reported the wrong time target: $($summary.targetRealTimeFactor)x."
     }
     $requiredResultFields = @('averageSpeedKmh', 'topSpeedKmh', 'crashCount', 'fullStopCount',

@@ -43,18 +43,30 @@ public sealed class LiveRaceControlClient
 
     public async Task<Guid> SendCommandAsync(LiveRaceCommand command,
         CancellationToken cancellationToken = default)
+        => await SendCommandAsync(command.ToString().ToLowerInvariant(), null, cancellationToken);
+
+    public async Task<Guid> SendSimulationTimeScaleAsync(double timeScale,
+        CancellationToken cancellationToken = default)
+    {
+        if (!double.IsFinite(timeScale) || timeScale is < 1 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(timeScale));
+        return await SendCommandAsync("simulation_time_scale", timeScale, cancellationToken);
+    }
+
+    private async Task<Guid> SendCommandAsync(string command, double? timeScale,
+        CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(CommandsDirectory);
         var id = Guid.NewGuid();
-        string commandName = command.ToString().ToLowerInvariant();
         string filename = $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfffffff}-{id:N}.json";
         string destination = Path.Combine(CommandsDirectory, filename);
         string temporary = destination + ".tmp";
         string json = JsonSerializer.Serialize(new
         {
             id,
-            command = commandName,
+            command,
             requestedAt = DateTimeOffset.UtcNow,
+            timeScale,
         }, _jsonOptions);
         await File.WriteAllTextAsync(temporary, json, new UTF8Encoding(false), cancellationToken);
         File.Move(temporary, destination);
@@ -89,9 +101,53 @@ public sealed class LiveRaceSnapshot
     public bool IsSimulation { get; set; }
     public long SimulatedMilliseconds { get; set; }
     public double RealTimeFactor { get; set; }
+    public long MaximumSimulatedMilliseconds { get; set; }
+    public double TargetRealTimeFactor { get; set; }
     public LiveRaceSession Session { get; set; } = new();
     public LiveRaceCommandResult? LastCommand { get; set; }
     public List<LiveRaceCar> Cars { get; set; } = [];
+
+    public double SimulationProgressPercent
+    {
+        get
+        {
+            if (!IsSimulation)
+                return 0;
+            double timeLimitProgress = MaximumSimulatedMilliseconds <= 0
+                ? 0
+                : SimulatedMilliseconds / (double)MaximumSimulatedMilliseconds;
+            return Math.Clamp(Math.Max(timeLimitProgress, GetRaceCompletionRatio()) * 100, 0, 100);
+        }
+    }
+
+    public long EstimatedRemainingSimulatedMilliseconds
+    {
+        get
+        {
+            if (!IsSimulation)
+                return 0;
+            double remaining = MaximumSimulatedMilliseconds <= 0
+                ? double.PositiveInfinity
+                : Math.Max(0, MaximumSimulatedMilliseconds - SimulatedMilliseconds);
+            double raceProgress = GetRaceCompletionRatio();
+            long raceElapsed = Math.Max(0, SimulatedMilliseconds - Session.StartTimeMilliseconds);
+            if (raceProgress > 0 && raceElapsed > 0)
+                remaining = Math.Min(remaining, raceElapsed * (1 - raceProgress) / raceProgress);
+            return double.IsFinite(remaining) ? (long)Math.Max(0, remaining) : 0;
+        }
+    }
+
+    private double GetRaceCompletionRatio()
+    {
+        if (!Session.Type.Equals("Race", StringComparison.OrdinalIgnoreCase) || Session.Laps <= 0)
+            return 0;
+        var competitors = Cars.Where(car => car.IsActive && !car.IsDnf).ToArray();
+        if (competitors.Length == 0)
+            return Cars.Any(car => car.IsActive) ? 1 : 0;
+        return competitors.Min(car => car.HasFinished
+            ? 1
+            : Math.Clamp(car.Lap / (double)Session.Laps, 0, 1));
+    }
 }
 
 public sealed class LiveRaceSession

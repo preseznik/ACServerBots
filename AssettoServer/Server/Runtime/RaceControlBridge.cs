@@ -39,7 +39,8 @@ public sealed class RaceControlBridge : IHostedService
     private string? _lastCommandStatus;
     private string? _lastCommandMessage;
 
-    private sealed record CommandEnvelope(Guid Id, string Command, DateTimeOffset RequestedAt);
+    private sealed record CommandEnvelope(Guid Id, string Command, DateTimeOffset RequestedAt,
+        double? TimeScale = null);
 
     public RaceControlBridge(ACServerConfiguration configuration,
         ServerRuntimeOptions runtimeOptions,
@@ -117,14 +118,21 @@ public sealed class RaceControlBridge : IHostedService
                     "start" => _sessionManager.StartRaceFromControl(),
                     "stop" => _sessionManager.StopRaceFromControl(),
                     "restart" => _sessionManager.RestartRaceFromControl(),
+                    "simulation_time_scale" => command.TimeScale.HasValue
+                                               && _runtimeOptions.TrySetTargetRealTimeFactor(command.TimeScale.Value),
                     _ => throw new InvalidDataException($"Unknown race command '{command.Command}'"),
                 };
                 _lastCommandStatus = accepted ? "accepted" : "rejected";
-                _lastCommandMessage = accepted
-                    ? $"Race {command.Command} command accepted."
+                _lastCommandMessage = accepted && command.Command.Equals("simulation_time_scale",
+                        StringComparison.OrdinalIgnoreCase)
+                    ? $"Simulation time acceleration set to {_runtimeOptions.TargetRealTimeFactor:F0}x."
+                    : accepted
+                        ? $"Race {command.Command} command accepted."
                     : command.Command.Equals("stop", StringComparison.OrdinalIgnoreCase)
                         ? "There is no active race to stop."
-                        : "No race session is configured.";
+                        : command.Command.Equals("simulation_time_scale", StringComparison.OrdinalIgnoreCase)
+                            ? "Time acceleration can only be changed during a simulation and must be 1x to 100x."
+                            : "No race session is configured.";
                 Log.Information("Race Control command {Command} ({CommandId}) was {Status}",
                     command.Command, command.Id, _lastCommandStatus);
             }
@@ -243,6 +251,8 @@ public sealed class RaceControlBridge : IHostedService
             isSimulation = _runtimeOptions.IsRaceSimulation,
             simulatedMilliseconds = now,
             realTimeFactor,
+            maximumSimulatedMilliseconds = _runtimeOptions.MaximumSimulatedMilliseconds,
+            targetRealTimeFactor = _runtimeOptions.TargetRealTimeFactor,
             session = new
             {
                 index = _sessionManager.CurrentSessionIndex,

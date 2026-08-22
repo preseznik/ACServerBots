@@ -327,6 +327,9 @@ public class ACServer : BackgroundService, IHostedLifecycleService
         {
             _runtimeOptions.SimulationReady.Wait(stoppingToken);
             var paceClock = Stopwatch.StartNew();
+            double paceTarget = _runtimeOptions.TargetRealTimeFactor;
+            long paceSimulationAnchor = clock.ElapsedMilliseconds;
+            double paceWallAnchor = paceClock.Elapsed.TotalMilliseconds;
             while (!stoppingToken.IsCancellationRequested)
             {
                 clock.AdvanceFixedStep(updateHz);
@@ -342,8 +345,16 @@ public class ACServer : BackgroundService, IHostedLifecycleService
                     break;
                 while (!stoppingToken.IsCancellationRequested)
                 {
-                    int delay = CalculateSimulationPacingDelayMilliseconds(clock.ElapsedMilliseconds,
-                        paceClock.Elapsed.TotalMilliseconds, _runtimeOptions.TargetRealTimeFactor);
+                    double currentTarget = _runtimeOptions.TargetRealTimeFactor;
+                    if (currentTarget != paceTarget)
+                    {
+                        paceTarget = currentTarget;
+                        paceSimulationAnchor = clock.ElapsedMilliseconds;
+                        paceWallAnchor = paceClock.Elapsed.TotalMilliseconds;
+                    }
+                    int delay = CalculateSimulationPacingDelayMilliseconds(
+                        clock.ElapsedMilliseconds - paceSimulationAnchor,
+                        paceClock.Elapsed.TotalMilliseconds - paceWallAnchor, paceTarget);
                     if (delay <= 0 || stoppingToken.WaitHandle.WaitOne(delay))
                         break;
                 }

@@ -67,6 +67,56 @@ public sealed class LiveRaceControlClientTests
     }
 
     [Test]
+    public async Task WritesValidatedLiveSimulationTimeScaleCommand()
+    {
+        var client = new LiveRaceControlClient(_root);
+
+        var commandId = await client.SendSimulationTimeScaleAsync(25);
+        string commandPath = Directory.GetFiles(client.CommandsDirectory, "*.json").Single();
+        using var command = JsonDocument.Parse(await File.ReadAllTextAsync(commandPath));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(command.RootElement.GetProperty("id").GetGuid(), Is.EqualTo(commandId));
+            Assert.That(command.RootElement.GetProperty("command").GetString(),
+                Is.EqualTo("simulation_time_scale"));
+            Assert.That(command.RootElement.GetProperty("timeScale").GetDouble(), Is.EqualTo(25));
+            Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+                await client.SendSimulationTimeScaleAsync(101));
+        });
+    }
+
+    [Test]
+    public void SimulationProgressUsesCloserRaceOrTimeLimit()
+    {
+        var snapshot = new LiveRaceSnapshot
+        {
+            IsSimulation = true,
+            SimulatedMilliseconds = 100_000,
+            MaximumSimulatedMilliseconds = 600_000,
+            Session = new LiveRaceSession
+            {
+                Type = "Race",
+                Phase = "racing",
+                Laps = 3,
+                StartTimeMilliseconds = 10_000,
+            },
+            Cars =
+            [
+                new LiveRaceCar { IsActive = true, Lap = 1 },
+                new LiveRaceCar { IsActive = true, Lap = 2 },
+                new LiveRaceCar { IsActive = true, IsDnf = true },
+            ],
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(snapshot.SimulationProgressPercent, Is.EqualTo(100d / 3).Within(0.01));
+            Assert.That(snapshot.EstimatedRemainingSimulatedMilliseconds, Is.EqualTo(180_000));
+        });
+    }
+
+    [Test]
     public void ReadsStructuredSimulationResults()
     {
         var client = new LiveRaceControlClient(_root);

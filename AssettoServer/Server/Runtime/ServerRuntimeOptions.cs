@@ -52,13 +52,14 @@ public sealed class ManualServerClock : IServerClock
 public sealed class ServerRuntimeOptions
 {
     private int _simulationStopRequested;
+    private double _targetRealTimeFactor;
     public bool IsRaceSimulation { get; init; }
     public int SimulationSeed { get; init; } = 1;
     public string SimulationOutputDirectory { get; init; } = "simulation";
     public long MaximumSimulatedMilliseconds { get; init; } = 30 * 60_000;
     public int MaximumWallTimeSeconds { get; init; } = 300;
     public int SampleIntervalMilliseconds { get; init; } = 500;
-    public double TargetRealTimeFactor { get; init; }
+    public double TargetRealTimeFactor => Volatile.Read(ref _targetRealTimeFactor);
     public IServerClock Clock { get; init; } = new RealTimeServerClock();
     public string? RaceControlDirectory { get; init; }
     public string? SimulationCompletionReason { get; set; }
@@ -69,6 +70,15 @@ public sealed class ServerRuntimeOptions
     {
         SimulationCompletionReason = reason;
         Interlocked.Exchange(ref _simulationStopRequested, 1);
+    }
+
+    public bool TrySetTargetRealTimeFactor(double targetRealTimeFactor)
+    {
+        if (!IsRaceSimulation || targetRealTimeFactor is < 1 or > 100
+                              || !double.IsFinite(targetRealTimeFactor))
+            return false;
+        Volatile.Write(ref _targetRealTimeFactor, targetRealTimeFactor);
+        return true;
     }
 
     public static ServerRuntimeOptions CreateSimulation(string outputDirectory, int seed,
@@ -94,7 +104,7 @@ public sealed class ServerRuntimeOptions
             MaximumSimulatedMilliseconds = maximumSimulatedMinutes * 60_000L,
             MaximumWallTimeSeconds = maximumWallTimeSeconds,
             SampleIntervalMilliseconds = sampleIntervalMilliseconds,
-            TargetRealTimeFactor = targetRealTimeFactor,
+            _targetRealTimeFactor = targetRealTimeFactor,
             Clock = new ManualServerClock(),
             RaceControlDirectory = NormalizeOptionalDirectory(raceControlDirectory),
         };

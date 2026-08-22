@@ -92,6 +92,22 @@ public class RaceSimulationTests
     }
 
     [Test]
+    public void RunningSimulationAcceptsSafeTimeScaleChangesOnly()
+    {
+        var options = ServerRuntimeOptions.CreateSimulation(Path.GetTempPath(), 1, 30, 300, 500,
+            targetRealTimeFactor: 10);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(options.TrySetTargetRealTimeFactor(25), Is.True);
+            Assert.That(options.TargetRealTimeFactor, Is.EqualTo(25));
+            Assert.That(options.TrySetTargetRealTimeFactor(0), Is.False);
+            Assert.That(options.TargetRealTimeFactor, Is.EqualTo(25));
+            Assert.That(ServerRuntimeOptions.CreateLiveServer(null).TrySetTargetRealTimeFactor(10), Is.False);
+        });
+    }
+
+    [Test]
     public void BotStatisticsTrackSpeedStopsAndRecoveriesAfterMovement()
     {
         var statistics = new RaceSimulationBotStatistics();

@@ -48,6 +48,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private int _simulationSeed = 1;
     private int _simulationMaximumMinutes = 45;
     private double _simulationTimeScale = 10;
+    private CancellationTokenSource? _simulationTimeScaleUpdateCancellation;
     private SimulationRaceSummary? _simulationResults;
     private bool _showSimulationResults;
     private Guid? _pendingLiveCommandId;
@@ -197,7 +198,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public LiveRaceSnapshot? LiveSnapshot
     {
         get => _liveSnapshot;
-        private set => SetProperty(ref _liveSnapshot, value);
+        private set
+        {
+            if (!SetProperty(ref _liveSnapshot, value))
+                return;
+            OnPropertyChanged(nameof(LiveSessionSummary));
+            OnPropertyChanged(nameof(LiveTimingSummary));
+            OnPropertyChanged(nameof(IsSimulationProgressVisible));
+            OnPropertyChanged(nameof(SimulationProgressValue));
+            OnPropertyChanged(nameof(SimulationProgressText));
+        }
     }
 
     public LiveTrackMap? LiveTrack
@@ -254,7 +264,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public double SimulationTimeScale
     {
         get => _simulationTimeScale;
-        set => SetProperty(ref _simulationTimeScale, Math.Clamp(value, 1, 100));
+        set
+        {
+            if (SetProperty(ref _simulationTimeScale, Math.Clamp(value, 1, 100)))
+                ScheduleSimulationTimeScaleUpdate();
+        }
     }
 
     public string LiveControlStatus
@@ -340,8 +354,27 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         : LiveSnapshot.Session.Phase == "countdown"
             ? $"Race starts in {TimeSpan.FromMilliseconds(LiveSnapshot.Session.CountdownMilliseconds):mm\\:ss}"
             : LiveSnapshot.IsSimulation
-                ? $"Accelerated simulation  •  {LiveSnapshot.RealTimeFactor:F1}× real time"
+                ? $"Accelerated simulation  •  {LiveSnapshot.RealTimeFactor:F1}× achieved"
+                  + $" / {LiveSnapshot.TargetRealTimeFactor:F0}× target"
                 : $"Server time {TimeSpan.FromMilliseconds(LiveSnapshot.SimulatedMilliseconds):hh\\:mm\\:ss}";
+    public bool IsSimulationProgressVisible => LiveSnapshot?.IsSimulation == true;
+    public double SimulationProgressValue => LiveSnapshot?.SimulationProgressPercent ?? 0;
+    public string SimulationProgressText
+    {
+        get
+        {
+            if (LiveSnapshot is not { IsSimulation: true } snapshot)
+                return string.Empty;
+            string elapsed = FormatCompactDuration(snapshot.SimulatedMilliseconds);
+            string maximum = FormatCompactDuration(snapshot.MaximumSimulatedMilliseconds);
+            double factor = snapshot.TargetRealTimeFactor > 0
+                ? snapshot.TargetRealTimeFactor
+                : Math.Max(1, snapshot.RealTimeFactor);
+            long remainingWallMilliseconds = (long)(snapshot.EstimatedRemainingSimulatedMilliseconds / factor);
+            return $"{elapsed} / {maximum} virtual  •  {snapshot.SimulationProgressPercent:F0}%"
+                   + $"  •  about {FormatCompactDuration(remainingWallMilliseconds)} wall time left";
+        }
+    }
     public string SelectedTrackDetails => SelectedTrack is null
         ? "No track selected"
         : $"{SelectedTrack.Country}  •  {SelectedTrack.PitBoxes} pit boxes  •  {(SelectedTrack.HasFastLane ? "AI line ready" : "no AI line")}";
@@ -944,6 +977,46 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void ScheduleSimulationTimeScaleUpdate()
+    {
+        _simulationTimeScaleUpdateCancellation?.Cancel();
+        _simulationTimeScaleUpdateCancellation?.Dispose();
+        _simulationTimeScaleUpdateCancellation = null;
+        if (_lastInstance is null || !_processController.IsSimulation
+                                  || _processController.State != ServerProcessState.Running)
+            return;
+
+        var cancellation = new CancellationTokenSource();
+        _simulationTimeScaleUpdateCancellation = cancellation;
+        _ = SendSimulationTimeScaleAfterDelayAsync(SimulationTimeScale, cancellation.Token);
+    }
+
+    private async Task SendSimulationTimeScaleAfterDelayAsync(double timeScale,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(150, cancellationToken);
+            if (_lastInstance is null || !_processController.IsSimulation
+                                      || _processController.State != ServerProcessState.Running)
+                return;
+            var client = new LiveRaceControlClient(_lastInstance.RootPath);
+            _pendingLiveCommandId = await client.SendSimulationTimeScaleAsync(timeScale, cancellationToken);
+            LiveControlStatus = $"Changing simulation time acceleration to {timeScale:F0}×…";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            RunOnUi(() =>
+            {
+                LiveControlStatus = $"Could not change simulation speed: {exception.Message}";
+                AppendLog($"[Live] {LiveControlStatus}");
+            });
+        }
+    }
+
     private async Task MonitorLiveRaceAsync(CancellationToken cancellationToken)
     {
         string? observedInstance = null;
@@ -1050,6 +1123,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
         }
+    }
+
+    private static string FormatCompactDuration(long milliseconds)
+    {
+        var duration = TimeSpan.FromMilliseconds(Math.Max(0, milliseconds));
+        return duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}"
+            : $"{duration.Minutes}:{duration.Seconds:00}";
     }
 
     private void OpenContentManager()
@@ -1174,6 +1255,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _simulationTimeScaleUpdateCancellation?.Cancel();
+        _simulationTimeScaleUpdateCancellation?.Dispose();
         _liveMonitorCancellation.Cancel();
         _liveMonitorCancellation.Dispose();
         _processController.Dispose();
