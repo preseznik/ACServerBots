@@ -20,10 +20,12 @@ public sealed class LiveRaceViewport : FrameworkElement
             FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault));
     public static readonly DependencyProperty FullTrackProperty = DependencyProperty.Register(
         nameof(FullTrack), typeof(bool), typeof(LiveRaceViewport),
-        new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(true,
+            FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault));
     public static readonly DependencyProperty ZoomMetersProperty = DependencyProperty.Register(
         nameof(ZoomMeters), typeof(double), typeof(LiveRaceViewport),
-        new FrameworkPropertyMetadata(180d, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(180d,
+            FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault));
 
     private readonly List<CarHitTarget> _carHitTargets = [];
 
@@ -110,6 +112,43 @@ public sealed class LiveRaceViewport : FrameworkElement
             return;
 
         SetCurrentValue(SelectedSessionIdProperty, hit.Target.SessionId);
+        eventArgs.Handled = true;
+    }
+
+    protected override void OnMouseWheel(MouseWheelEventArgs eventArgs)
+    {
+        base.OnMouseWheel(eventArgs);
+        if (eventArgs.Delta == 0)
+            return;
+
+        const double minimumWidth = 50;
+        const double maximumWidth = 600;
+        double notches = Math.Max(1, Math.Abs(eventArgs.Delta) / 120d);
+        if (FullTrack)
+        {
+            if (eventArgs.Delta < 0)
+            {
+                eventArgs.Handled = true;
+                return;
+            }
+
+            var activeCars = Snapshot?.Cars.Where(car => car.IsActive).ToArray() ?? [];
+            double fittedWidth = TryGetWorldBounds(activeCars, out var bounds)
+                ? Math.Max(bounds.Width, bounds.Height)
+                : ZoomMeters;
+            SetCurrentValue(FullTrackProperty, false);
+            SetCurrentValue(ZoomMetersProperty,
+                Math.Clamp(fittedWidth * Math.Pow(0.85, notches), minimumWidth, maximumWidth));
+            eventArgs.Handled = true;
+            return;
+        }
+
+        double factor = Math.Pow(0.85, notches);
+        double nextWidth = eventArgs.Delta > 0 ? ZoomMeters * factor : ZoomMeters / factor;
+        if (eventArgs.Delta < 0 && ZoomMeters >= maximumWidth - 0.5)
+            SetCurrentValue(FullTrackProperty, true);
+        else
+            SetCurrentValue(ZoomMetersProperty, Math.Clamp(nextWidth, minimumWidth, maximumWidth));
         eventArgs.Handled = true;
     }
 

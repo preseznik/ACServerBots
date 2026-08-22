@@ -28,7 +28,7 @@ Settings also control compact grid rows, loading the most recent saved race at s
 
 ## Live Race view
 
-`LIVE RACE` provides a server-authoritative top-down view of every active bot and connected human. Click a car marker or use the car list to select it, then clear **Full track view** to follow it. Adjust the follow-view width or enable the full-track camera to see the complete staged AI centerline.
+`LIVE RACE` provides a server-authoritative top-down view of every active bot and connected human. Click a car marker or use the car list to select it, then clear **Full track view** to follow it. Adjust the follow-view width with its slider or the mouse wheel. Scrolling inward from the full-track camera enters the selected-car view; scrolling outward past the maximum returns to fit-to-track.
 
 The controls deliberately distinguish the process from the session:
 

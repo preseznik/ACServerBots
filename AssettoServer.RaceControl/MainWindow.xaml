@@ -700,9 +700,9 @@
                                 <controls:LiveRaceViewport Snapshot="{Binding LiveSnapshot}"
                                                            Track="{Binding LiveTrack}"
                                                            SelectedSessionId="{Binding SelectedLiveCarSessionId, Mode=TwoWay}"
-                                                           FullTrack="{Binding FullTrackView}"
-                                                           ZoomMeters="{Binding LiveZoomMeters}"
-                                                           ToolTip="Click a car marker to select it. The camera and selected-car details follow the same selection." />
+                                                           FullTrack="{Binding FullTrackView, Mode=TwoWay}"
+                                                           ZoomMeters="{Binding LiveZoomMeters, Mode=TwoWay}"
+                                                           ToolTip="Click a car marker to select it. Use the mouse wheel to zoom in or out; the camera, slider, and selected-car details stay synchronized." />
                                 <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="14"
                                         Padding="10,7" Background="{DynamicResource PanelBrush}"
                                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
