@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.ComponentModel;
+using System.Globalization;
 
 namespace AssettoServer.RaceControl.Core.Runtime;
 
@@ -31,6 +32,8 @@ public sealed class ServerProcessController : IDisposable
         }
         if (!string.IsNullOrWhiteSpace(raceControlDirectory))
             PrepareRaceControlDirectory(raceControlDirectory);
+        if (simulation != null)
+            PrepareSimulationOutputDirectory(simulation.OutputDirectory);
 
         var startInfo = CreateStartInfo(executablePath, workingDirectory, presetName,
             shutdownFilePath, raceControlDirectory, simulation);
@@ -139,6 +142,7 @@ public sealed class ServerProcessController : IDisposable
             Add("--simulation-max-minutes", simulation.MaximumSimulatedMinutes.ToString());
             Add("--simulation-max-wall-seconds", simulation.MaximumWallSeconds.ToString());
             Add("--simulation-sample-ms", simulation.SampleIntervalMilliseconds.ToString());
+            Add("--simulation-time-scale", simulation.TimeScale.ToString(CultureInfo.InvariantCulture));
         }
         return startInfo;
 
@@ -159,6 +163,17 @@ public sealed class ServerProcessController : IDisposable
         foreach (string liveFile in new[] { "state.json", "track.json" })
         {
             string path = Path.Combine(directory, liveFile);
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
+
+    private static void PrepareSimulationOutputDirectory(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        foreach (string filename in new[] { "events.jsonl", "samples.jsonl", "summary.json" })
+        {
+            string path = Path.Combine(directory, filename);
             if (File.Exists(path))
                 File.Delete(path);
         }
@@ -288,7 +303,8 @@ public sealed record RaceSimulationLaunchOptions(
     int Seed = 1,
     int MaximumSimulatedMinutes = 45,
     int MaximumWallSeconds = 300,
-    int SampleIntervalMilliseconds = 500);
+    int SampleIntervalMilliseconds = 500,
+    double TimeScale = 0);
 
 public enum ServerProcessState
 {

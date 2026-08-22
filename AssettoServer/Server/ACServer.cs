@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using AssettoServer.Server.Configuration;
@@ -325,6 +326,7 @@ public class ACServer : BackgroundService, IHostedLifecycleService
         try
         {
             _runtimeOptions.SimulationReady.Wait(stoppingToken);
+            var paceClock = Stopwatch.StartNew();
             while (!stoppingToken.IsCancellationRequested)
             {
                 clock.AdvanceFixedStep(updateHz);
@@ -338,6 +340,13 @@ public class ACServer : BackgroundService, IHostedLifecycleService
                 Update?.Invoke(this, EventArgs.Empty);
                 if (_runtimeOptions.SimulationStopRequested)
                     break;
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    int delay = CalculateSimulationPacingDelayMilliseconds(clock.ElapsedMilliseconds,
+                        paceClock.Elapsed.TotalMilliseconds, _runtimeOptions.TargetRealTimeFactor);
+                    if (delay <= 0 || stoppingToken.WaitHandle.WaitOne(delay))
+                        break;
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -349,6 +358,15 @@ public class ACServer : BackgroundService, IHostedLifecycleService
             Log.Fatal(ex, "Race simulation failed");
             _applicationLifetime.StopApplication();
         }
+    }
+
+    internal static int CalculateSimulationPacingDelayMilliseconds(long simulatedMilliseconds,
+        double wallMilliseconds, double targetRealTimeFactor)
+    {
+        if (targetRealTimeFactor <= 0)
+            return 0;
+        double delay = simulatedMilliseconds / targetRealTimeFactor - wallMilliseconds;
+        return delay <= 0 ? 0 : (int)Math.Clamp(Math.Ceiling(delay), 1, 20);
     }
 
     public Task StartedAsync(CancellationToken cancellationToken)

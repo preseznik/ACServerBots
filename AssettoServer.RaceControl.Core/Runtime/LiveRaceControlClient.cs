@@ -22,6 +22,8 @@ public sealed class LiveRaceControlClient
     public string CommandsDirectory => Path.Combine(ControlDirectory, "commands");
     public string SnapshotPath => Path.Combine(ControlDirectory, "state.json");
     public string TrackPath => Path.Combine(ControlDirectory, "track.json");
+    public string SimulationSummaryPath => Path.Combine(GetSimulationOutputDirectory(
+        Path.GetDirectoryName(ControlDirectory)!), "summary.json");
 
     public LiveRaceControlClient(string instanceRoot)
     {
@@ -36,6 +38,8 @@ public sealed class LiveRaceControlClient
 
     public LiveRaceSnapshot? TryReadSnapshot() => TryRead<LiveRaceSnapshot>(SnapshotPath);
     public LiveTrackMap? TryReadTrack() => TryRead<LiveTrackMap>(TrackPath);
+    public SimulationRaceSummary? TryReadSimulationSummary() =>
+        TryRead<SimulationRaceSummary>(SimulationSummaryPath);
 
     public async Task<Guid> SendCommandAsync(LiveRaceCommand command,
         CancellationToken cancellationToken = default)
@@ -149,4 +153,81 @@ public sealed class LiveTrackPoint
     public float Z { get; set; }
     public float LeftWidth { get; set; }
     public float RightWidth { get; set; }
+}
+
+public sealed class SimulationRaceSummary
+{
+    public int SchemaVersion { get; set; }
+    public DateTimeOffset CompletedAt { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string Track { get; set; } = string.Empty;
+    public string Layout { get; set; } = string.Empty;
+    public int Seed { get; set; }
+    public long SimulatedMilliseconds { get; set; }
+    public double WallMilliseconds { get; set; }
+    public double RealTimeFactor { get; set; }
+    public double TargetRealTimeFactor { get; set; }
+    public int AnomalyCount { get; set; }
+    public SimulationPhysicsSummary Physics { get; set; } = new();
+    public List<SimulationRaceResult> Results { get; set; } = [];
+
+    public string Outcome => Status switch
+    {
+        "completed" => "RACE COMPLETE",
+        "maximum_simulated_time" => "SIMULATION TIME LIMIT REACHED",
+        "maximum_wall_time" => "WALL-CLOCK LIMIT REACHED",
+        _ => "SIMULATION STOPPED",
+    };
+
+    public string Overview =>
+        $"{Results.Count} cars  •  {FormatDuration(SimulatedMilliseconds)} virtual  •  "
+        + $"{RealTimeFactor:F1}× achieved  •  {Physics.VehicleManifolds} contact frames  •  "
+        + $"{AnomalyCount} anomalies";
+
+    internal static string FormatDuration(long milliseconds)
+    {
+        if (milliseconds <= 0)
+            return "—";
+        var duration = TimeSpan.FromMilliseconds(milliseconds);
+        return duration.TotalHours >= 1
+            ? duration.ToString(@"h\:mm\:ss\.fff")
+            : duration.ToString(@"m\:ss\.fff");
+    }
+}
+
+public sealed class SimulationPhysicsSummary
+{
+    public long VehicleManifolds { get; set; }
+}
+
+public sealed class SimulationRaceResult
+{
+    public int SessionId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public uint RacePos { get; set; }
+    public uint NumLaps { get; set; }
+    public uint LastLap { get; set; }
+    public uint BestLap { get; set; }
+    public uint TotalTime { get; set; }
+    public bool HasCompletedLastLap { get; set; }
+    public bool IsDnf { get; set; }
+    public long ElapsedMilliseconds { get; set; }
+    public double AverageSpeedKmh { get; set; }
+    public double TopSpeedKmh { get; set; }
+    public int CrashCount { get; set; }
+    public int FullStopCount { get; set; }
+    public long FullyStoppedMilliseconds { get; set; }
+
+    public int Position => (int)RacePos + 1;
+    public string Driver => string.IsNullOrWhiteSpace(Model) ? Name : $"{Name}  •  {Model}";
+    public string Time => SimulationRaceSummary.FormatDuration(
+        HasCompletedLastLap && TotalTime > 0 ? TotalTime : ElapsedMilliseconds);
+    public string BestLapTime => BestLap >= 999_999_999
+        ? "—"
+        : SimulationRaceSummary.FormatDuration(BestLap);
+    public string AverageSpeed => $"{AverageSpeedKmh:F1}";
+    public string TopSpeed => $"{TopSpeedKmh:F1}";
+    public string FullyStoppedTime => SimulationRaceSummary.FormatDuration(FullyStoppedMilliseconds);
+    public string Outcome => IsDnf ? "DNF" : HasCompletedLastLap ? "FINISHED" : "INCOMPLETE";
 }

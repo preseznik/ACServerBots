@@ -17,7 +17,9 @@ param(
     [switch] $VerifyMovingBots,
     [switch] $VerifyPassing,
     [switch] $VerifyLiveControl,
-    [switch] $SimulateRace
+    [switch] $SimulateRace,
+    [ValidateRange(1, 100)]
+    [double] $SimulationTimeScale = 10
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,7 +111,8 @@ if ($SimulateRace) {
     $simulationOutput = Join-Path $instance.RootPath 'simulation-live-acceptance'
     $arguments += @('--simulate-race', '--simulation-output', $simulationOutput,
         '--simulation-seed', '23', '--simulation-max-minutes', '30',
-        '--simulation-max-wall-seconds', '60')
+        '--simulation-max-wall-seconds', '60', '--simulation-time-scale',
+        $SimulationTimeScale.ToString([Globalization.CultureInfo]::InvariantCulture))
 }
 $serverProcess = Start-Process -FilePath $instance.ExecutablePath -WorkingDirectory $instance.RootPath `
     -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
@@ -183,6 +186,9 @@ try {
         if ($null -eq $simulationState -or $simulationState.RealTimeFactor -le 1) {
             throw 'Accelerated live simulation did not advance faster than real time.'
         }
+        if ($simulationState.RealTimeFactor -gt ($SimulationTimeScale * 1.25)) {
+            throw "Live simulation exceeded its $SimulationTimeScale`x target: $($simulationState.RealTimeFactor)x."
+        }
     }
 
     [IO.File]::WriteAllText($instance.ShutdownFilePath, 'stop')
@@ -198,6 +204,28 @@ try {
 } finally {
     $serverProcess.Refresh()
     if (-not $serverProcess.HasExited) { Stop-Process -Id $serverProcess.Id }
+}
+
+if ($SimulateRace) {
+    $summaryPath = Join-Path $simulationOutput 'summary.json'
+    if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) {
+        throw "Simulation did not write a result summary: $summaryPath"
+    }
+    $summary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+    if ($summary.schemaVersion -lt 2 -or $summary.results.Count -ne $Slots) {
+        throw 'Simulation summary is missing its versioned per-car classification.'
+    }
+    if ([Math]::Abs([double]$summary.targetRealTimeFactor - $SimulationTimeScale) -gt 0.001) {
+        throw "Simulation summary reported the wrong time target: $($summary.targetRealTimeFactor)x."
+    }
+    $requiredResultFields = @('averageSpeedKmh', 'topSpeedKmh', 'crashCount', 'fullStopCount',
+        'fullyStoppedMilliseconds')
+    foreach ($result in $summary.results) {
+        $missingFields = @($requiredResultFields | Where-Object { $_ -notin $result.PSObject.Properties.Name })
+        if ($missingFields.Count -gt 0) {
+            throw "Simulation result for $($result.name) is missing: $($missingFields -join ', ')."
+        }
+    }
 }
 
 $combinedLog = (Get-Content -Raw -LiteralPath $stdout -ErrorAction SilentlyContinue) + [Environment]::NewLine + `

@@ -33,6 +33,7 @@ public sealed class RaceSimulationTelemetry : IHostedService
     };
     private readonly Dictionary<byte, BotCounters> _previous = [];
     private readonly Dictionary<byte, long> _lastMovingAt = [];
+    private readonly Dictionary<byte, RaceSimulationBotStatistics> _botStatistics = [];
     private readonly HashSet<string> _reportedAnomalies = [];
     private readonly Dictionary<string, int> _anomalyCounts = new(StringComparer.Ordinal);
     private StreamWriter? _events;
@@ -83,6 +84,7 @@ public sealed class RaceSimulationTelemetry : IHostedService
             fidelity = _configuration.Extra.AiParams.Race.Physics.Fidelity.ToString(),
             maximumSimulatedMilliseconds = _runtimeOptions.MaximumSimulatedMilliseconds,
             maximumWallTimeSeconds = _runtimeOptions.MaximumWallTimeSeconds,
+            targetRealTimeFactor = _runtimeOptions.TargetRealTimeFactor,
         });
         _runtimeOptions.SimulationReady.Set();
         return Task.CompletedTask;
@@ -214,6 +216,13 @@ public sealed class RaceSimulationTelemetry : IHostedService
             results?.TryGetValue(car.SessionId, out result);
 
             TrackAnomalies(car, ai.Value, physics, physicsTelemetry, now);
+            if (_sessionManager.CurrentSession.Configuration.Type == SessionType.Race
+                && now >= _sessionManager.CurrentSession.StartTimeMilliseconds)
+            {
+                if (!_botStatistics.TryGetValue(car.SessionId, out var statistics))
+                    _botStatistics[car.SessionId] = statistics = new RaceSimulationBotStatistics();
+                statistics.Observe(now, ai.Value.CurrentSpeed, physics.RecoveryCount);
+            }
             bots.Add(new
             {
                 sessionId = car.SessionId,
@@ -318,12 +327,14 @@ public sealed class RaceSimulationTelemetry : IHostedService
     {
         var diagnostics = _physicsWorld.GetDiagnostics();
         var contactPair = _physicsWorld.GetMostFrequentVehicleContactPair();
+        var cars = _entryCarManager.EntryCars.ToDictionary(car => car.SessionId);
         var results = _sessionManager.CurrentSession.Results?
             .OrderBy(pair => pair.Value.RacePos)
             .Select(pair => new
             {
                 sessionId = pair.Key,
                 pair.Value.Name,
+                model = cars.GetValueOrDefault(pair.Key)?.Model ?? string.Empty,
                 pair.Value.RacePos,
                 pair.Value.NumLaps,
                 pair.Value.LastLap,
@@ -331,11 +342,18 @@ public sealed class RaceSimulationTelemetry : IHostedService
                 pair.Value.TotalTime,
                 pair.Value.HasCompletedLastLap,
                 pair.Value.IsDnf,
+                elapsedMilliseconds = _botStatistics.GetValueOrDefault(pair.Key)?.ObservedMilliseconds ?? 0,
+                averageSpeedKmh = _botStatistics.GetValueOrDefault(pair.Key)?.AverageSpeedKilometersPerHour ?? 0,
+                topSpeedKmh = _botStatistics.GetValueOrDefault(pair.Key)?.TopSpeedKilometersPerHour ?? 0,
+                crashCount = _botStatistics.GetValueOrDefault(pair.Key)?.RecoveryCount ?? 0,
+                fullStopCount = _botStatistics.GetValueOrDefault(pair.Key)?.FullStopCount ?? 0,
+                fullyStoppedMilliseconds = _botStatistics.GetValueOrDefault(pair.Key)?.FullyStoppedMilliseconds ?? 0,
             }).ToArray() ?? [];
         double wallMilliseconds = Math.Max(1, _wallClock.Elapsed.TotalMilliseconds);
         var summary = new
         {
-            schemaVersion = 1,
+            schemaVersion = 2,
+            completedAt = DateTimeOffset.UtcNow,
             status = _completionReason,
             version = ThisAssembly.AssemblyInformationalVersion,
             buildId = typeof(RaceSimulationTelemetry).Assembly.ManifestModule.ModuleVersionId,
@@ -348,6 +366,7 @@ public sealed class RaceSimulationTelemetry : IHostedService
             simulatedMilliseconds = _sessionManager.ServerTimeMilliseconds,
             wallMilliseconds,
             realTimeFactor = _sessionManager.ServerTimeMilliseconds / wallMilliseconds,
+            targetRealTimeFactor = _runtimeOptions.TargetRealTimeFactor,
             sampleCount = _sampleCount,
             anomalyCount = _anomalyCounts.Values.Sum(),
             anomalies = _anomalyCounts,

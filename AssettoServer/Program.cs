@@ -98,6 +98,9 @@ public static class Program
         [Option("simulation-sample-ms", Required = false, HelpText = "Structured telemetry sample interval in simulated milliseconds")]
         public int SimulationSampleMilliseconds { get; set; } = 500;
 
+        [Option("simulation-time-scale", Required = false, HelpText = "Target simulated seconds per wall-clock second; 0 runs as fast as possible")]
+        public double SimulationTimeScale { get; set; }
+
         [Option("race-control-directory", Required = false, HelpText = "Local Race Control snapshot and command directory")]
         public string? RaceControlDirectory { get; set; }
     }
@@ -341,7 +344,7 @@ public static class Program
             var runtimeOptions = ServerRuntimeOptions.CreateSimulation(options.SimulationOutput,
                 options.SimulationSeed, options.SimulationMaximumMinutes,
                 options.SimulationMaximumWallSeconds, options.SimulationSampleMilliseconds,
-                options.RaceControlDirectory);
+                options.RaceControlDirectory, options.SimulationTimeScale);
             string logPrefix = string.IsNullOrEmpty(preset) ? "simulation" : $"{preset}-simulation";
             Logging.CreateLogger(logPrefix, false, preset, options.UseVerboseLogging,
                 config.Extra.RedactIpAddresses, config.Extra.LokiSettings);

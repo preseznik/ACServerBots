@@ -65,4 +65,42 @@ public sealed class LiveRaceControlClientTests
 
         Assert.That(client.TryReadSnapshot(), Is.Null);
     }
+
+    [Test]
+    public void ReadsStructuredSimulationResults()
+    {
+        var client = new LiveRaceControlClient(_root);
+        Directory.CreateDirectory(Path.GetDirectoryName(client.SimulationSummaryPath)!);
+        File.WriteAllText(client.SimulationSummaryPath, """
+        {
+          "schemaVersion": 2,
+          "completedAt": "2026-08-22T12:00:00Z",
+          "status": "completed",
+          "track": "magione",
+          "simulatedMilliseconds": 185000,
+          "realTimeFactor": 10.0,
+          "anomalyCount": 0,
+          "physics": { "vehicleManifolds": 12 },
+          "results": [{
+            "sessionId": 0, "name": "Bot 1", "model": "bmw_m3_e30",
+            "racePos": 0, "numLaps": 3, "bestLap": 61234, "totalTime": 184500,
+            "hasCompletedLastLap": true, "averageSpeedKmh": 93.2, "topSpeedKmh": 171.4,
+            "crashCount": 1, "fullStopCount": 2, "fullyStoppedMilliseconds": 1500
+          }]
+        }
+        """);
+
+        var summary = client.TryReadSimulationSummary();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Is.Not.Null);
+            Assert.That(summary!.Outcome, Is.EqualTo("RACE COMPLETE"));
+            Assert.That(summary.Overview, Does.Contain("12 contact frames"));
+            Assert.That(summary.Results.Single().Position, Is.EqualTo(1));
+            Assert.That(summary.Results.Single().BestLapTime, Is.EqualTo("1:01.234"));
+            Assert.That(summary.Results.Single().CrashCount, Is.EqualTo(1));
+            Assert.That(summary.Results.Single().FullStopCount, Is.EqualTo(2));
+        });
+    }
 }

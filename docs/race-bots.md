@@ -95,9 +95,9 @@ dotnet publish AssettoServer\AssettoServer.csproj --configuration Release --runt
 
 ### Accelerated bot-only simulation
 
-`--simulate-race` runs the configured bot race without TCP, UDP, HTTP, Steam, lobby, or UPnP listeners. A manual server clock advances at the configured race `UpdateHz`; the fixed physics step is unchanged, but the update loop executes as quickly as the CPU permits. Simulation mode disables the parallel Bepu dispatcher and seeds race AI decisions so a track/seed/configuration combination is reproducible. It does not increase vehicle speed.
+`--simulate-race` runs the configured bot race without TCP, UDP, HTTP, Steam, lobby, or UPnP listeners. A manual server clock advances at the configured race `UpdateHz`; the fixed physics step is unchanged. By default the update loop executes as quickly as the CPU permits. `--simulation-time-scale 10` instead applies a wall-clock target from 1x to 100x, sleeping between fixed ticks when the machine is ahead; the achieved factor can be lower when physics cannot keep up. Simulation mode disables the parallel Bepu dispatcher and seeds race AI decisions so a track/seed/configuration combination is reproducible. It does not increase vehicle speed.
 
-Each run writes `events.jsonl`, `samples.jsonl`, and `summary.json`. Samples include each bot's lap, spline point, position, velocity, target speed, line offset, obstacle distance, steering, slip, road-height error, suspension compression, upright state, recoveries, pass state, and pass counters. Events record laps, pass phases, recoveries, stop reason, and bounded anomaly detections. The summary records classification, physics maxima, contacts, anomalies, simulated/wall duration, and achieved real-time factor.
+Each run writes `events.jsonl`, `samples.jsonl`, and `summary.json`. Samples include each bot's lap, spline point, position, velocity, target speed, line offset, obstacle distance, steering, slip, road-height error, suspension compression, upright state, recoveries, pass state, and pass counters. Events record laps, pass phases, recoveries, stop reason, and bounded anomaly detections. The versioned summary records classification, physics maxima, contacts, anomalies, simulated/wall duration, target and achieved real-time factors, and per-car elapsed time, average speed, top speed, recovery count, post-launch full-stop count, and stopped duration. A recovery is the server's bounded reset after an overturned or materially off-track bot; it is the defensible crash metric available from authoritative simulation and is kept distinct from ordinary contact frames.
 
 When launched by Race Control, the accelerated run also publishes a wall-clock-throttled live snapshot for the `LIVE RACE` viewport. This does not slow or alter fixed-step simulation; the display samples authoritative state while the simulation continues as fast as the CPU permits.
 
@@ -107,6 +107,7 @@ Run a staged preset directly:
 AssettoServer.exe --preset race-control --simulate-race `
   --simulation-output .\simulation-red-bull-seed-7 `
   --simulation-seed 7 `
+  --simulation-time-scale 10 `
   --simulation-max-minutes 45 `
   --simulation-max-wall-seconds 300
 ```

@@ -28,7 +28,7 @@ public sealed class ServerProcessControllerTests
     [Test]
     public void SimulationLaunchIncludesLiveControlAndBoundedSimulationArguments()
     {
-        var simulation = new RaceSimulationLaunchOptions(@"C:\instance\simulation", 17, 90, 240, 250);
+        var simulation = new RaceSimulationLaunchOptions(@"C:\instance\simulation", 17, 90, 240, 250, 12.5);
 
         var info = ServerProcessController.CreateStartInfo(
             @"C:\instance\AssettoServer.exe", @"C:\instance", "race-control",
@@ -44,6 +44,8 @@ public sealed class ServerProcessControllerTests
             Assert.That(arguments, Does.Contain("90"));
             Assert.That(arguments, Does.Contain("240"));
             Assert.That(arguments, Does.Contain("250"));
+            Assert.That(arguments, Does.Contain("--simulation-time-scale"));
+            Assert.That(arguments, Does.Contain("12.5"));
         });
     }
 }

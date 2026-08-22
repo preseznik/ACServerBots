@@ -684,8 +684,20 @@
                                     </StackPanel>
                                     <Button Content="SIMULATE RACE" Command="{Binding SimulateRaceCommand}" Style="{StaticResource PrimaryButton}"
                                             VerticalAlignment="Bottom"
-                                            ToolTip="Stage and run a deterministic bot-only race without network listeners. Physics time stays fixed-step while virtual time advances as fast as the CPU permits." />
+                                            ToolTip="Stage and run a deterministic bot-only race without network listeners. Physics time stays fixed-step and is throttled to the selected target acceleration." />
                                 </StackPanel>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Time acceleration" Style="{StaticResource FieldLabel}" />
+                                        <Slider Minimum="1" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                                Value="{Binding SimulationTimeScale}"
+                                                ToolTip="Target virtual-time acceleration. 1× is real time; higher values run faster when the CPU can keep up." />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding SimulationTimeScale, StringFormat={}{0:F0}×}"
+                                               HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8,0,0,2"
+                                               FontWeight="SemiBold" />
+                                </Grid>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -710,6 +722,54 @@
                                         <TextBlock Text="{Binding LiveSessionSummary}" FontWeight="SemiBold" />
                                         <TextBlock Text="{Binding LiveTimingSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,3,0,0" />
                                     </StackPanel>
+                                </Border>
+                                <Border Margin="24" Padding="20" Background="{DynamicResource PanelBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSimulationResultsVisible}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding SimulationResultsTitle}" FontSize="22" FontWeight="Bold" />
+                                            <Button Grid.Column="1" Content="Back to map" Command="{Binding DismissSimulationResultsCommand}"
+                                                    ToolTip="Hide these results and return to the final live-map frame." />
+                                        </Grid>
+                                        <TextBlock Grid.Row="1" Text="{Binding SimulationResultsOverview}"
+                                                   Foreground="{DynamicResource MutedTextBrush}" Margin="0,5,0,14" />
+                                        <DataGrid Grid.Row="2" ItemsSource="{Binding SimulationResults.Results}"
+                                                  AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                                                  SelectionMode="Single" HorizontalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="POS" Binding="{Binding Position}" Width="48" />
+                                                <DataGridTextColumn Header="DRIVER / CAR" Binding="{Binding Driver}" Width="2*" />
+                                                <DataGridTextColumn Header="LAPS" Binding="{Binding NumLaps}" Width="55" />
+                                                <DataGridTextColumn Header="TIME" Binding="{Binding Time}" Width="88" />
+                                                <DataGridTextColumn Header="BEST LAP" Binding="{Binding BestLapTime}" Width="88" />
+                                                <DataGridTextColumn Header="AVG KM/H" Binding="{Binding AverageSpeed}" Width="80" />
+                                                <DataGridTextColumn Header="TOP KM/H" Binding="{Binding TopSpeed}" Width="80" />
+                                                <DataGridTextColumn Header="CRASHES*" Binding="{Binding CrashCount}" Width="72" />
+                                                <DataGridTextColumn Header="FULL STOPS" Binding="{Binding FullStopCount}" Width="78" />
+                                                <DataGridTextColumn Header="STOPPED" Binding="{Binding FullyStoppedTime}" Width="82" />
+                                                <DataGridTextColumn Header="RESULT" Binding="{Binding Outcome}" Width="86" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <TextBlock Grid.Row="3" Margin="0,12,0,0" Foreground="{DynamicResource MutedTextBrush}"
+                                                   Text="* Crash count is the number of server recoveries/resets after the car became overturned or materially left the track. Full stops exclude the starting grid hold." />
+                                    </Grid>
                                 </Border>
                             </Grid>
                         </Border>

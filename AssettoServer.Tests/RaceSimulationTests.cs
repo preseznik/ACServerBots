@@ -1,4 +1,6 @@
+using AssettoServer.Server;
 using AssettoServer.Server.Runtime;
+using AssettoServer.Server.RaceSimulation;
 
 namespace AssettoServer.Tests;
 
@@ -60,6 +62,54 @@ public class RaceSimulationTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             ServerRuntimeOptions.CreateSimulation(Path.GetTempPath(), 1, minutes,
                 wallSeconds, sampleMilliseconds));
+    }
+
+    [TestCase(0, 0)]
+    [TestCase(1000, 150)]
+    public void SimulationPacingDoesNotDelayUnlimitedOrBehindSchedule(long simulatedMilliseconds,
+        double wallMilliseconds)
+    {
+        double targetFactor = simulatedMilliseconds == 0 ? 0 : 10;
+
+        Assert.That(ACServer.CalculateSimulationPacingDelayMilliseconds(
+            simulatedMilliseconds, wallMilliseconds, targetFactor), Is.EqualTo(0));
+    }
+
+    [Test]
+    public void SimulationPacingBoundsSleepWhileAheadOfTarget()
+    {
+        Assert.That(ACServer.CalculateSimulationPacingDelayMilliseconds(1000, 50, 10), Is.EqualTo(20));
+        Assert.That(ACServer.CalculateSimulationPacingDelayMilliseconds(1000, 99.5, 10), Is.EqualTo(1));
+    }
+
+    [TestCase(0.5)]
+    [TestCase(101)]
+    public void SimulationOptionsRejectUnsafeTimeScale(double factor)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ServerRuntimeOptions.CreateSimulation(Path.GetTempPath(), 1, 30, 300, 500,
+                targetRealTimeFactor: factor));
+    }
+
+    [Test]
+    public void BotStatisticsTrackSpeedStopsAndRecoveriesAfterMovement()
+    {
+        var statistics = new RaceSimulationBotStatistics();
+
+        statistics.Observe(0, 10, 0);
+        statistics.Observe(500, 10, 0);
+        statistics.Observe(1000, 0, 0);
+        statistics.Observe(1500, 0, 2);
+        statistics.Observe(2000, 5, 2);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(statistics.AverageSpeedKilometersPerHour, Is.EqualTo(18).Within(0.01));
+            Assert.That(statistics.TopSpeedKilometersPerHour, Is.EqualTo(36).Within(0.01));
+            Assert.That(statistics.FullStopCount, Is.EqualTo(1));
+            Assert.That(statistics.FullyStoppedMilliseconds, Is.EqualTo(1000));
+            Assert.That(statistics.RecoveryCount, Is.EqualTo(2));
+        });
     }
 
     private static ServerRuntimeOptions CreateOptions(int seed) =>

@@ -58,6 +58,7 @@ public sealed class ServerRuntimeOptions
     public long MaximumSimulatedMilliseconds { get; init; } = 30 * 60_000;
     public int MaximumWallTimeSeconds { get; init; } = 300;
     public int SampleIntervalMilliseconds { get; init; } = 500;
+    public double TargetRealTimeFactor { get; init; }
     public IServerClock Clock { get; init; } = new RealTimeServerClock();
     public string? RaceControlDirectory { get; init; }
     public string? SimulationCompletionReason { get; set; }
@@ -72,7 +73,7 @@ public sealed class ServerRuntimeOptions
 
     public static ServerRuntimeOptions CreateSimulation(string outputDirectory, int seed,
         int maximumSimulatedMinutes, int maximumWallTimeSeconds, int sampleIntervalMilliseconds,
-        string? raceControlDirectory = null)
+        string? raceControlDirectory = null, double targetRealTimeFactor = 0)
     {
         if (string.IsNullOrWhiteSpace(outputDirectory))
             throw new ArgumentException("Simulation output directory is required", nameof(outputDirectory));
@@ -82,6 +83,8 @@ public sealed class ServerRuntimeOptions
             throw new ArgumentOutOfRangeException(nameof(maximumWallTimeSeconds));
         if (sampleIntervalMilliseconds is < 50 or > 60_000)
             throw new ArgumentOutOfRangeException(nameof(sampleIntervalMilliseconds));
+        if (targetRealTimeFactor != 0 && targetRealTimeFactor is < 1 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(targetRealTimeFactor));
 
         return new ServerRuntimeOptions
         {
@@ -91,6 +94,7 @@ public sealed class ServerRuntimeOptions
             MaximumSimulatedMilliseconds = maximumSimulatedMinutes * 60_000L,
             MaximumWallTimeSeconds = maximumWallTimeSeconds,
             SampleIntervalMilliseconds = sampleIntervalMilliseconds,
+            TargetRealTimeFactor = targetRealTimeFactor,
             Clock = new ManualServerClock(),
             RaceControlDirectory = NormalizeOptionalDirectory(raceControlDirectory),
         };

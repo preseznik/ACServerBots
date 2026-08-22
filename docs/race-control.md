@@ -36,7 +36,9 @@ The controls deliberately distinguish the process from the session:
 - **Start race** selects the configured race and begins its normal grid countdown even with zero humans.
 - **Stop race** broadcasts race-over, classifies unfinished participants as DNF, holds the bots, and leaves the server online.
 - **Restart race** rebuilds the race state and starts a fresh countdown regardless of connected-player count.
-- **Simulate race** stages the current setup and runs its bots with deterministic virtual time and no network listeners. Seed and maximum simulated time are set beside the button.
+- **Simulate race** stages the current setup and runs its bots with deterministic virtual time and no network listeners. Seed and maximum simulated time are set beside the button. The **Time acceleration** slider sets a 1x-100x target; simulation remains fixed-step and can run slower than the target when the CPU cannot keep up.
+
+When a simulation completes, reaches its limit, or is stopped, the map is covered by its final classification. The table shows rank, driver and car, laps, total and best-lap time, average and top speed, server recoveries, full-stop count and stopped duration, and completed/DNF status. A crash is counted only when the server performs a bounded recovery/reset after a car is overturned or materially off track; ordinary contact frames are reported in the summary but are not mislabeled as crashes. Starting-grid time is excluded from full stops. **Back to map** dismisses the panel without discarding the result.
 
 Live control is local-only. Race Control passes a private directory inside the staged instance; AssettoServer writes `state.json` and `track.json` there and consumes single-use command files from `commands`. No unauthenticated control API is exposed on the LAN HTTP port.
 
@@ -84,7 +86,7 @@ For repeated bot-only regression races across installed tracks, use:
 .\tools\Test-RaceBotsMatrix.ps1 -Slots 8 -Seeds 1,2,3
 ```
 
-The runner uses the bundled server's network-free virtual-time mode, preserves structured per-run telemetry, and writes an aggregate report under `.artifacts\race-bot-matrix`. It never edits installed Assetto Corsa content.
+The runner uses the bundled server's network-free virtual-time mode, preserves structured per-run telemetry, and writes an aggregate report under `.artifacts\race-bot-matrix`. It never edits installed Assetto Corsa content. The local acceptance runner also supports `-SimulateRace -SimulationTimeScale 10` to verify paced live telemetry and the versioned per-car result fields.
 
 ## Current limits
 

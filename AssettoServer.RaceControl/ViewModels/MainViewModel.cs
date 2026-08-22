@@ -47,6 +47,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private double _liveZoomMeters = 180;
     private int _simulationSeed = 1;
     private int _simulationMaximumMinutes = 45;
+    private double _simulationTimeScale = 10;
+    private SimulationRaceSummary? _simulationResults;
+    private bool _showSimulationResults;
     private Guid? _pendingLiveCommandId;
     private readonly Task _liveMonitorTask;
 
@@ -74,6 +77,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Start), CanControlLiveRace);
         StopRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Stop), CanControlLiveRace);
         RestartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Restart), CanControlLiveRace);
+        DismissSimulationResultsCommand = new RelayCommand(() => ShowSimulationResults = false,
+            () => SimulationResults is not null && ShowSimulationResults);
         OpenInstanceCommand = new RelayCommand(OpenInstance, () => _lastInstance is not null || SelectedRecentInstance is not null);
         OpenContentManagerCommand = new RelayCommand(OpenContentManager);
         ClearLogCommand = new RelayCommand(() => LogText = string.Empty);
@@ -246,11 +251,47 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set => SetProperty(ref _simulationMaximumMinutes, Math.Clamp(value, 1, 1440));
     }
 
+    public double SimulationTimeScale
+    {
+        get => _simulationTimeScale;
+        set => SetProperty(ref _simulationTimeScale, Math.Clamp(value, 1, 100));
+    }
+
     public string LiveControlStatus
     {
         get => _liveControlStatus;
         private set => SetProperty(ref _liveControlStatus, value);
     }
+
+    public SimulationRaceSummary? SimulationResults
+    {
+        get => _simulationResults;
+        private set
+        {
+            if (!SetProperty(ref _simulationResults, value))
+                return;
+            ShowSimulationResults = value is not null;
+            OnPropertyChanged(nameof(SimulationResultsTitle));
+            OnPropertyChanged(nameof(SimulationResultsOverview));
+            DismissSimulationResultsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool ShowSimulationResults
+    {
+        get => _showSimulationResults;
+        private set
+        {
+            if (!SetProperty(ref _showSimulationResults, value))
+                return;
+            OnPropertyChanged(nameof(IsSimulationResultsVisible));
+            DismissSimulationResultsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool IsSimulationResultsVisible => SimulationResults is not null && ShowSimulationResults;
+    public string SimulationResultsTitle => SimulationResults?.Outcome ?? "SIMULATION RESULTS";
+    public string SimulationResultsOverview => SimulationResults?.Overview ?? string.Empty;
 
     public int SelectedPageIndex
     {
@@ -332,6 +373,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand StartRaceCommand { get; }
     public AsyncRelayCommand StopRaceCommand { get; }
     public AsyncRelayCommand RestartRaceCommand { get; }
+    public RelayCommand DismissSimulationResultsCommand { get; }
     public RelayCommand OpenInstanceCommand { get; }
     public RelayCommand OpenContentManagerCommand { get; }
     public RelayCommand ClearLogCommand { get; }
@@ -738,6 +780,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the new race…";
             _lastInstance = await StageAsync();
+            SimulationResults = null;
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
                 _lastInstance.PresetName, _lastInstance.ShutdownFilePath,
@@ -819,6 +862,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             bool restartSimulation = _processController.IsSimulation;
+            if (restartSimulation)
+                SimulationResults = null;
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             await _processController.RestartAsync(
                 _lastInstance.ExecutablePath,
@@ -853,6 +898,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the simulation…";
             _lastInstance = await StageAsync();
+            SimulationResults = null;
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
                 _lastInstance.PresetName, _lastInstance.ShutdownFilePath,
@@ -876,7 +922,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SimulationSeed,
         SimulationMaximumMinutes,
         MaximumWallSeconds: 300,
-        SampleIntervalMilliseconds: 500);
+        SampleIntervalMilliseconds: 500,
+        TimeScale: SimulationTimeScale);
 
     private bool CanControlLiveRace() =>
         _lastInstance is not null && _processController.State == ServerProcessState.Running;
@@ -901,6 +948,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         string? observedInstance = null;
         bool trackLoaded = false;
+        DateTimeOffset? observedResultsAt = null;
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -912,12 +960,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     {
                         observedInstance = instance.RootPath;
                         trackLoaded = false;
+                        observedResultsAt = null;
                         RunOnUi(() =>
                         {
                             LiveSnapshot = null;
                             LiveTrack = null;
                             LiveCars.Clear();
                             SelectedLiveCar = null;
+                            SimulationResults = null;
                             OnPropertyChanged(nameof(LiveSessionSummary));
                             OnPropertyChanged(nameof(LiveTimingSummary));
                         });
@@ -931,8 +981,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                         track = client.TryReadTrack();
                         trackLoaded = track != null;
                     }
-                    if (snapshot != null || track != null)
-                        RunOnUi(() => ApplyLiveUpdate(snapshot, track));
+                    SimulationRaceSummary? results = null;
+                    if (snapshot is { IsSimulation: true, ServerRunning: false })
+                    {
+                        var candidate = client.TryReadSimulationSummary();
+                        if (candidate != null && candidate.CompletedAt != observedResultsAt)
+                        {
+                            observedResultsAt = candidate.CompletedAt;
+                            results = candidate;
+                        }
+                    }
+                    if (snapshot != null || track != null || results != null)
+                        RunOnUi(() =>
+                        {
+                            ApplyLiveUpdate(snapshot, track);
+                            if (results != null)
+                                SimulationResults = results;
+                        });
                 }
 
                 await Task.Delay(100, cancellationToken);
