@@ -30,6 +30,14 @@ Settings also control compact grid rows, loading the most recent saved race at s
 
 `LIVE RACE` provides a server-authoritative top-down view of every active bot and connected human. Click a car marker or use the car list to select it, then clear **Full track view** to follow it. Adjust the follow-view width with its slider or the mouse wheel. Scrolling inward from the full-track camera enters the selected-car view; scrolling outward past the maximum returns to fit-to-track.
 
+Selecting an active server bot opens a compact control panel in the map's upper-right corner:
+
+- **STOP** removes its horizontal and angular velocity every physics tick, stopping it at its current location; the button becomes green **GO**, which returns the bot to autonomous AI.
+- **TELEPORT P1** relocates it about 12 metres ahead of the current physical leader on the racing spline. Teleported distance is not added to its lap tracker, so this does not award a skipped lap.
+- **TAKE OVER** switches the map to a chase-style 2.5D projection and routes arrow-key or Xbox-controller input to that bot's existing rigid-body controller. Left/right or the left stick steer, Up or the right trigger accelerates, and Down/Space or the left trigger brakes. **RELEASE CONTROL** or Escape returns it to AI.
+
+Manual input is local-only, bounded, and fails safe: if fresh input stops arriving for 750 ms, throttle is removed and full braking is applied. Takeover controls only server-owned bots; unmodified Assetto Corsa human clients remain authoritative for their own cars. The 2.5D view is a Race Control visualization of server telemetry, not the Assetto Corsa renderer.
+
 The controls deliberately distinguish the process from the session:
 
 - **Start live server**, **Stop server**, and **Restart server** manage the AssettoServer process.

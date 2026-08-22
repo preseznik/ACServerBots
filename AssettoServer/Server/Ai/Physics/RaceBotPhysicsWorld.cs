@@ -26,8 +26,10 @@ public readonly record struct RaceBotPhysicsTelemetry(float HeightErrorMeters,
     float SuspensionCompressionMeters, float UprightDot, float UpwardSpeedMetersPerSecond,
     int TrackCorrectionCount);
 
-public readonly record struct RaceBotPhysicsControl(bool Hold, Vector3 TargetPosition, Vector3 TargetForward,
-    float TargetSpeed, float MaximumAcceleration, float MaximumBrakeDeceleration, float LateralGripG);
+public readonly record struct RaceBotPhysicsControl(bool Hold, bool Stop, Vector3 TargetPosition,
+    Vector3 TargetForward, float TargetSpeed, float MaximumAcceleration,
+    float MaximumBrakeDeceleration, float LateralGripG, float? ManualSteering = null,
+    float? ManualAcceleration = null);
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
     float MaximumSlipAngleDegrees, float MaximumSteeringAngleDegrees, float MaximumUpwardSpeed,
     float MaximumSplineHeightError, float MaximumSuspensionCompression,
@@ -220,6 +222,26 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         }
     }
 
+    public void TeleportBot(byte sessionId, RaceGridPose pose)
+    {
+        lock (_sync)
+        {
+            if (!_bodies.TryGetValue(sessionId, out var record) || !record.IsBot)
+                return;
+            var body = _simulation.Bodies[record.Handle];
+            body.Pose = ToCenterOfMassPose(pose, record.Collider.Center);
+            body.Velocity.Linear = Vector3.Zero;
+            body.Velocity.Angular = Vector3.Zero;
+            PositionWheels(record, pose, Vector3.Zero, dynamic: true);
+            body.Awake = true;
+            record.HeldPose = pose;
+            record.LastLongitudinalAcceleration = 0;
+            record.LastSteeringAngleRadians = 0;
+            record.LastSlipAngleDegrees = 0;
+            record.RecoveryNeededSeconds = 0;
+        }
+    }
+
     public void SynchronizeHuman(byte sessionId, string model, Vector3 position, Vector3 rotation, Vector3 velocity)
     {
         lock (_sync)
@@ -274,6 +296,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             _simulation.Timestep(deltaSeconds, _dispatcher);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: true }))
                 HoldAtGrid(record);
+            foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, Control.Stop: true }))
+                StopBot(record);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
                 EnforceSuspensionTravel(record);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
@@ -450,6 +474,12 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             body.Awake = true;
         }
 
+        if (control.Stop)
+        {
+            StopBot(record);
+            return;
+        }
+
         var orientation = body.Pose.Orientation;
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = GetWheelSupportedOrigin(record, chassisOrigin, orientation);
@@ -472,10 +502,14 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var bodyForward = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, orientation));
         float forwardSpeed = Vector3.Dot(body.Velocity.Linear, bodyForward);
         float lookAheadMeters = GetSteeringLookAheadMeters(forwardSpeed);
-        var steeringDirection = CalculateSteeringDirection(origin, control.TargetPosition,
-            targetForward, forwardSpeed);
-        float requestedSteeringAngle = CalculateSteeringAngle(bodyForward, steeringDirection,
-            lookAheadMeters, record.Collider.WheelbaseMeters);
+        bool manual = control.ManualSteering.HasValue;
+        var steeringDirection = manual
+            ? bodyForward
+            : CalculateSteeringDirection(origin, control.TargetPosition, targetForward, forwardSpeed);
+        float requestedSteeringAngle = manual
+            ? Math.Clamp(control.ManualSteering!.Value, -1, 1) * MaximumSteeringAngleRadians
+            : CalculateSteeringAngle(bodyForward, steeringDirection,
+                lookAheadMeters, record.Collider.WheelbaseMeters);
         float steeringAngle = MoveSteeringAngle(record.LastSteeringAngleRadians,
             requestedSteeringAngle, deltaSeconds);
         float targetYawRate = CalculateTargetYawRate(forwardSpeed, record.Collider.WheelbaseMeters,
@@ -488,8 +522,13 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             Math.Abs(origin.Y - physicalTarget.Y));
         float driveScale = uprightDriveScale * courseDriveScale;
         float speedError = control.TargetSpeed * driveScale - forwardSpeed;
-        float acceleration = Math.Clamp(speedError / Math.Max(deltaSeconds, 1e-3f),
-            -control.MaximumBrakeDeceleration, control.MaximumAcceleration);
+        float acceleration = control.ManualAcceleration.HasValue
+            ? Math.Clamp(control.ManualAcceleration.Value * uprightDriveScale,
+                -control.MaximumBrakeDeceleration, control.MaximumAcceleration)
+            : Math.Clamp(speedError / Math.Max(deltaSeconds, 1e-3f),
+                -control.MaximumBrakeDeceleration, control.MaximumAcceleration);
+        if (manual && acceleration < 0 && forwardSpeed <= 0)
+            acceleration = 0;
         // Engine and brake authority is strictly longitudinal. Lane changes are produced by yawing
         // the chassis and its velocity vector through bounded tyre grip, never by lateral thrust.
         body.Velocity.Linear += CalculateLongitudinalVelocityDelta(bodyForward, acceleration, deltaSeconds);
@@ -615,6 +654,24 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         body.Velocity.Angular = Vector3.Zero;
         PositionWheels(record, record.HeldPose, Vector3.Zero, dynamic: false);
         body.Awake = true;
+    }
+
+    private void StopBot(BodyRecord record)
+    {
+        var body = _simulation.Bodies[record.Handle];
+        body.Velocity.Linear = Vector3.Zero;
+        body.Velocity.Angular = Vector3.Zero;
+        foreach (var wheel in record.Wheels)
+        {
+            var wheelBody = _simulation.Bodies[wheel.Handle];
+            wheelBody.Velocity.Linear = Vector3.Zero;
+            wheelBody.Velocity.Angular = Vector3.Zero;
+            wheelBody.Awake = true;
+        }
+        body.Awake = true;
+        record.LastLongitudinalAcceleration = 0;
+        record.LastSteeringAngleRadians = 0;
+        record.LastSlipAngleDegrees = 0;
     }
 
     private ColliderShape GetCollider(string model) => _colliders.TryGetValue(model, out var collider)

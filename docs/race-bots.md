@@ -101,6 +101,8 @@ Each run writes `events.jsonl`, `samples.jsonl`, and `summary.json`. Samples inc
 
 When launched by Race Control, the accelerated run also publishes a wall-clock-throttled live snapshot for the `LIVE RACE` viewport. This does not slow or alter fixed-step simulation; the display samples authoritative state while the simulation continues as fast as the CPU permits.
 
+Race Control may temporarily stop, relocate, or manually drive an active server bot through its private per-instance command directory. Manual steering and longitudinal input feed the same bounded rigid-body controller used by AI, while AI planning continues in the background for a clean hand-back. A 750 ms stale-input timeout brakes the car. These administrative controls are not exposed through the LAN HTTP listener and cannot take authority from an unmodified human client.
+
 Run a staged preset directly:
 
 ```powershell

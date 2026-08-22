@@ -52,6 +52,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private SimulationRaceSummary? _simulationResults;
     private bool _showSimulationResults;
     private Guid? _pendingLiveCommandId;
+    private int? _takeoverSessionId;
+    private int _manualInputWriteInProgress;
     private readonly Task _liveMonitorTask;
 
     public MainViewModel()
@@ -78,6 +80,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Start), CanControlLiveRace);
         StopRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Stop), CanControlLiveRace);
         RestartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Restart), CanControlLiveRace);
+        StopGoSelectedBotCommand = new AsyncRelayCommand(StopGoSelectedBotAsync, CanControlSelectedBot);
+        TeleportSelectedBotCommand = new AsyncRelayCommand(TeleportSelectedBotAsync, CanControlSelectedBot);
+        TakeOverSelectedBotCommand = new AsyncRelayCommand(ToggleSelectedBotTakeoverAsync, CanToggleTakeover);
         DismissSimulationResultsCommand = new RelayCommand(() => ShowSimulationResults = false,
             () => SimulationResults is not null && ShowSimulationResults);
         OpenInstanceCommand = new RelayCommand(OpenInstance, () => _lastInstance is not null || SelectedRecentInstance is not null);
@@ -221,8 +226,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         get => _selectedLiveCar;
         set
         {
+            if (_takeoverSessionId.HasValue && value?.SessionId != _takeoverSessionId.Value)
+                return;
             if (SetProperty(ref _selectedLiveCar, value))
+            {
                 OnPropertyChanged(nameof(SelectedLiveCarSessionId));
+                NotifySelectedBotControlChanged();
+            }
         }
     }
 
@@ -306,6 +316,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsSimulationResultsVisible => SimulationResults is not null && ShowSimulationResults;
     public string SimulationResultsTitle => SimulationResults?.Outcome ?? "SIMULATION RESULTS";
     public string SimulationResultsOverview => SimulationResults?.Overview ?? string.Empty;
+    public bool IsSelectedBotControllable => IsServerRunning && SelectedLiveCar is { IsBot: true, IsActive: true };
+    public bool SelectedBotIsStopped => SelectedLiveCar?.IsStoppedByRaceControl == true;
+    public string StopGoSelectedBotText => SelectedBotIsStopped ? "GO" : "STOP";
+    public bool IsBotTakeoverActive => _takeoverSessionId.HasValue;
+    public string TakeOverSelectedBotText => IsBotTakeoverActive ? "RELEASE CONTROL" : "TAKE OVER";
+    public string BotControlStatus => IsBotTakeoverActive
+        ? "Arrow keys or Xbox controller: steer, throttle and brake"
+        : SelectedLiveCar?.ControlMode switch
+        {
+            "stopped" => "Stopped by Race Control",
+            "manual" => "Manual control active",
+            _ => "AI control active",
+        };
 
     public int SelectedPageIndex
     {
@@ -406,6 +429,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand StartRaceCommand { get; }
     public AsyncRelayCommand StopRaceCommand { get; }
     public AsyncRelayCommand RestartRaceCommand { get; }
+    public AsyncRelayCommand StopGoSelectedBotCommand { get; }
+    public AsyncRelayCommand TeleportSelectedBotCommand { get; }
+    public AsyncRelayCommand TakeOverSelectedBotCommand { get; }
     public RelayCommand DismissSimulationResultsCommand { get; }
     public RelayCommand OpenInstanceCommand { get; }
     public RelayCommand OpenContentManagerCommand { get; }
@@ -961,6 +987,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool CanControlLiveRace() =>
         _lastInstance is not null && _processController.State == ServerProcessState.Running;
 
+    private bool CanControlSelectedBot() => IsSelectedBotControllable;
+    private bool CanToggleTakeover() => IsServerRunning
+                                        && (_takeoverSessionId.HasValue
+                                            || SelectedLiveCar is { IsBot: true, IsActive: true });
+
     private async Task SendLiveRaceCommandAsync(LiveRaceCommand command)
     {
         if (_lastInstance is null)
@@ -975,6 +1006,98 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             HandleException($"Could not {command.ToString().ToLowerInvariant()} race", exception);
         }
+    }
+
+    private async Task StopGoSelectedBotAsync()
+    {
+        if (SelectedLiveCar is not { IsBot: true } car || _lastInstance is null)
+            return;
+        try
+        {
+            bool stop = !car.IsStoppedByRaceControl;
+            var client = new LiveRaceControlClient(_lastInstance.RootPath);
+            _pendingLiveCommandId = await client.SendBotStopAsync(car.SessionId, stop);
+            LiveControlStatus = stop ? $"Stopping {car.Name}…" : $"Returning {car.Name} to AI control…";
+            if (stop && _takeoverSessionId == car.SessionId)
+                SetTakeoverSession(null);
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not change bot stop state", exception);
+        }
+    }
+
+    private async Task TeleportSelectedBotAsync()
+    {
+        if (SelectedLiveCar is not { IsBot: true } car || _lastInstance is null)
+            return;
+        try
+        {
+            var client = new LiveRaceControlClient(_lastInstance.RootPath);
+            _pendingLiveCommandId = await client.SendBotTeleportToP1Async(car.SessionId);
+            LiveControlStatus = $"Teleporting {car.Name} ahead of the current leader…";
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not teleport bot", exception);
+        }
+    }
+
+    private async Task ToggleSelectedBotTakeoverAsync()
+    {
+        if (_lastInstance is null)
+            return;
+        int? sessionId = _takeoverSessionId ?? SelectedLiveCar?.SessionId;
+        if (!sessionId.HasValue)
+            return;
+        bool takeOver = !_takeoverSessionId.HasValue;
+        try
+        {
+            var client = new LiveRaceControlClient(_lastInstance.RootPath);
+            _pendingLiveCommandId = await client.SendBotTakeoverAsync(sessionId.Value, takeOver);
+            SetTakeoverSession(takeOver ? sessionId : null);
+            LiveControlStatus = takeOver
+                ? "Manual bot control requested…"
+                : "Returning bot to AI control…";
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not change manual bot control", exception);
+        }
+    }
+
+    public async Task UpdateTakeoverInputAsync(float steering, float throttle, float brake)
+    {
+        if (!_takeoverSessionId.HasValue || _lastInstance is null
+                                         || _processController.State != ServerProcessState.Running
+                                         || Interlocked.Exchange(ref _manualInputWriteInProgress, 1) != 0)
+            return;
+        try
+        {
+            var client = new LiveRaceControlClient(_lastInstance.RootPath);
+            await client.WriteManualInputAsync(_takeoverSessionId.Value, steering, throttle, brake);
+        }
+        catch (Exception exception)
+        {
+            LiveControlStatus = $"Manual input failed: {exception.Message}";
+        }
+        finally
+        {
+            Volatile.Write(ref _manualInputWriteInProgress, 0);
+        }
+    }
+
+    public void ReleaseTakeoverFromInput() => TakeOverSelectedBotCommand.Execute(null);
+
+    private void SetTakeoverSession(int? sessionId)
+    {
+        if (_takeoverSessionId == sessionId)
+            return;
+        _takeoverSessionId = sessionId;
+        OnPropertyChanged(nameof(IsBotTakeoverActive));
+        OnPropertyChanged(nameof(TakeOverSelectedBotText));
+        OnPropertyChanged(nameof(BotControlStatus));
+        TakeOverSelectedBotCommand.RaiseCanExecuteChanged();
     }
 
     private void ScheduleSimulationTimeScaleUpdate()
@@ -1098,10 +1221,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             && snapshot.LastCommand?.Id == _pendingLiveCommandId.Value)
         {
             LiveControlStatus = snapshot.LastCommand.Message;
+            if (snapshot.LastCommand.Command == "bot_takeover"
+                && snapshot.LastCommand.Status != "accepted")
+                SetTakeoverSession(null);
             _pendingLiveCommandId = null;
         }
         else if (!snapshot.ServerRunning)
         {
+            SetTakeoverSession(null);
             LiveControlStatus = "Server is offline. The last authoritative frame remains visible.";
         }
         else if (snapshot.IsSimulation)
@@ -1112,6 +1239,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             LiveControlStatus = "Live server telemetry connected.";
         }
+        if (_takeoverSessionId.HasValue)
+        {
+            var controlled = LiveCars.FirstOrDefault(car => car.SessionId == _takeoverSessionId.Value);
+            if (controlled is null || !controlled.IsBot || controlled.IsStoppedByRaceControl)
+                SetTakeoverSession(null);
+        }
+        NotifySelectedBotControlChanged();
         OnPropertyChanged(nameof(LiveSessionSummary));
         OnPropertyChanged(nameof(LiveTimingSummary));
     }
@@ -1200,7 +1334,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StartRaceCommand.RaiseCanExecuteChanged();
         StopRaceCommand.RaiseCanExecuteChanged();
         RestartRaceCommand.RaiseCanExecuteChanged();
+        StopGoSelectedBotCommand.RaiseCanExecuteChanged();
+        TeleportSelectedBotCommand.RaiseCanExecuteChanged();
+        TakeOverSelectedBotCommand.RaiseCanExecuteChanged();
         OpenInstanceCommand.RaiseCanExecuteChanged();
+    }
+
+    private void NotifySelectedBotControlChanged()
+    {
+        OnPropertyChanged(nameof(IsSelectedBotControllable));
+        OnPropertyChanged(nameof(SelectedBotIsStopped));
+        OnPropertyChanged(nameof(StopGoSelectedBotText));
+        OnPropertyChanged(nameof(BotControlStatus));
+        StopGoSelectedBotCommand.RaiseCanExecuteChanged();
+        TeleportSelectedBotCommand.RaiseCanExecuteChanged();
+        TakeOverSelectedBotCommand.RaiseCanExecuteChanged();
     }
 
     private static void Replace<T>(ObservableCollection<T> collection, IEnumerable<T> items)

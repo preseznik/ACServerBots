@@ -160,7 +160,7 @@ public sealed class ServerProcessController : IDisposable
         Directory.CreateDirectory(commandsDirectory);
         foreach (string command in Directory.EnumerateFiles(commandsDirectory, "*.json"))
             File.Delete(command);
-        foreach (string liveFile in new[] { "state.json", "track.json" })
+        foreach (string liveFile in new[] { "state.json", "track.json", "manual-input.json" })
         {
             string path = Path.Combine(directory, liveFile);
             if (File.Exists(path))

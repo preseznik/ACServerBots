@@ -167,6 +167,52 @@ try {
                 $state.LastCommand.Status -eq 'accepted' -and
                 [Math]::Abs($state.TargetRealTimeFactor - $expectedSimulationTimeScale) -lt 0.001
             } 'live simulation time-scale acknowledgement'
+
+            $controlledBot = $scaledState.Cars | Where-Object IsBot | Select-Object -First 1
+            $stopBotId = $liveClient.SendBotStopAsync($controlledBot.SessionId, $true).GetAwaiter().GetResult()
+            $stoppedBotState = Wait-LiveState { param($state)
+                $bot = $state.Cars | Where-Object SessionId -EQ $controlledBot.SessionId | Select-Object -First 1
+                $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $stopBotId -and
+                $state.LastCommand.Status -eq 'accepted' -and $bot.ControlMode -eq 'stopped' -and
+                $bot.SpeedKmh -lt 0.5
+            } 'selected bot hard stop'
+
+            $goBotId = $liveClient.SendBotStopAsync($controlledBot.SessionId, $false).GetAwaiter().GetResult()
+            $goBotState = Wait-LiveState { param($state)
+                $bot = $state.Cars | Where-Object SessionId -EQ $controlledBot.SessionId | Select-Object -First 1
+                $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $goBotId -and
+                $state.LastCommand.Status -eq 'accepted' -and $bot.ControlMode -eq 'automatic'
+            } 'selected bot GO command'
+
+            $teleportId = $liveClient.SendBotTeleportToP1Async(
+                $controlledBot.SessionId).GetAwaiter().GetResult()
+            $teleportedState = Wait-LiveState { param($state)
+                $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $teleportId -and
+                $state.LastCommand.Status -eq 'accepted'
+            } 'selected bot P1 teleport'
+
+            $takeoverId = $liveClient.SendBotTakeoverAsync(
+                $controlledBot.SessionId, $true).GetAwaiter().GetResult()
+            $manualState = Wait-LiveState { param($state)
+                $bot = $state.Cars | Where-Object SessionId -EQ $controlledBot.SessionId | Select-Object -First 1
+                $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $takeoverId -and
+                $state.LastCommand.Status -eq 'accepted' -and $bot.ControlMode -eq 'manual'
+            } 'selected bot manual takeover'
+            [void]$liveClient.WriteManualInputAsync(
+                $controlledBot.SessionId, 0.35, 1, 0).GetAwaiter().GetResult()
+            $manualInputState = Wait-LiveState { param($state)
+                $bot = $state.Cars | Where-Object SessionId -EQ $controlledBot.SessionId | Select-Object -First 1
+                $bot.ControlMode -eq 'manual' -and [Math]::Abs($bot.ManualSteering - 0.35) -lt 0.01 -and
+                [Math]::Abs($bot.ManualThrottle - 1) -lt 0.01 -and $bot.ManualBrake -lt 0.01
+            } 'manual steering and throttle input'
+
+            $releaseId = $liveClient.SendBotTakeoverAsync(
+                $controlledBot.SessionId, $false).GetAwaiter().GetResult()
+            $releasedState = Wait-LiveState { param($state)
+                $bot = $state.Cars | Where-Object SessionId -EQ $controlledBot.SessionId | Select-Object -First 1
+                $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $releaseId -and
+                $state.LastCommand.Status -eq 'accepted' -and $bot.ControlMode -eq 'automatic'
+            } 'selected bot manual-control release'
         }
 
         if (-not $SimulateRace) {

@@ -4,7 +4,9 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Microsoft.Win32;
+using AssettoServer.RaceControl.Infrastructure;
 using AssettoServer.RaceControl.Core.Storage;
 using AssettoServer.RaceControl.Theming;
 using AssettoServer.RaceControl.ViewModels;
@@ -16,11 +18,20 @@ public partial class MainWindow : Window
     private readonly MainViewModel _viewModel = new();
     private bool _initialized;
     private bool _allowClose;
+    private readonly DispatcherTimer _takeoverInputTimer;
+    private bool _leftPressed;
+    private bool _rightPressed;
+    private bool _throttlePressed;
+    private bool _brakePressed;
 
     public MainWindow()
     {
         InitializeComponent();
         DataContext = _viewModel;
+        _takeoverInputTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(33),
+            DispatcherPriority.Input, TakeoverInputTimer_Tick, Dispatcher);
+        _takeoverInputTimer.Start();
+        Closed += (_, _) => _takeoverInputTimer.Stop();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -174,6 +185,21 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (_viewModel.IsBotTakeoverActive)
+        {
+            if (e.Key == Key.Escape)
+            {
+                ClearTakeoverKeys();
+                _viewModel.ReleaseTakeoverFromInput();
+                e.Handled = true;
+                return;
+            }
+            if (SetTakeoverKey(e.Key, true))
+            {
+                e.Handled = true;
+                return;
+            }
+        }
         if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
         {
             return;
@@ -194,6 +220,61 @@ public partial class MainWindow : Window
             Settings_Click(this, new RoutedEventArgs());
             e.Handled = true;
         }
+    }
+
+    private void Window_PreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (_viewModel.IsBotTakeoverActive && SetTakeoverKey(e.Key, false))
+            e.Handled = true;
+    }
+
+    private void Window_Deactivated(object? sender, EventArgs e) => ClearTakeoverKeys();
+
+    private async void TakeoverInputTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!_viewModel.IsBotTakeoverActive || !IsActive)
+        {
+            ClearTakeoverKeys();
+            return;
+        }
+        XInputController.TryRead(out var controller);
+        float keyboardSteering = (_rightPressed ? 1 : 0) - (_leftPressed ? 1 : 0);
+        float steering = Math.Abs(keyboardSteering) > Math.Abs(controller.Steering)
+            ? keyboardSteering
+            : controller.Steering;
+        float throttle = Math.Max(_throttlePressed ? 1 : 0, controller.Throttle);
+        float brake = Math.Max(_brakePressed ? 1 : 0, controller.Brake);
+        await _viewModel.UpdateTakeoverInputAsync(steering, throttle, brake);
+    }
+
+    private bool SetTakeoverKey(Key key, bool pressed)
+    {
+        switch (key)
+        {
+            case Key.Left:
+                _leftPressed = pressed;
+                return true;
+            case Key.Right:
+                _rightPressed = pressed;
+                return true;
+            case Key.Up:
+                _throttlePressed = pressed;
+                return true;
+            case Key.Down:
+            case Key.Space:
+                _brakePressed = pressed;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void ClearTakeoverKeys()
+    {
+        _leftPressed = false;
+        _rightPressed = false;
+        _throttlePressed = false;
+        _brakePressed = false;
     }
 
     private void PersistWindowSettings()

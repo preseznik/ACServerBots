@@ -22,6 +22,7 @@ public sealed class LiveRaceControlClient
     public string CommandsDirectory => Path.Combine(ControlDirectory, "commands");
     public string SnapshotPath => Path.Combine(ControlDirectory, "state.json");
     public string TrackPath => Path.Combine(ControlDirectory, "track.json");
+    public string ManualInputPath => Path.Combine(ControlDirectory, "manual-input.json");
     public string SimulationSummaryPath => Path.Combine(GetSimulationOutputDirectory(
         Path.GetDirectoryName(ControlDirectory)!), "summary.json");
 
@@ -43,17 +44,56 @@ public sealed class LiveRaceControlClient
 
     public async Task<Guid> SendCommandAsync(LiveRaceCommand command,
         CancellationToken cancellationToken = default)
-        => await SendCommandAsync(command.ToString().ToLowerInvariant(), null, cancellationToken);
+        => await SendCommandAsync(command.ToString().ToLowerInvariant(), null, null, cancellationToken);
 
     public async Task<Guid> SendSimulationTimeScaleAsync(double timeScale,
         CancellationToken cancellationToken = default)
     {
         if (!double.IsFinite(timeScale) || timeScale is < 1 or > 100)
             throw new ArgumentOutOfRangeException(nameof(timeScale));
-        return await SendCommandAsync("simulation_time_scale", timeScale, cancellationToken);
+        return await SendCommandAsync("simulation_time_scale", timeScale, null, cancellationToken);
     }
 
-    private async Task<Guid> SendCommandAsync(string command, double? timeScale,
+    public Task<Guid> SendBotStopAsync(int sessionId, bool stop,
+        CancellationToken cancellationToken = default) =>
+        SendBotCommandAsync(stop ? "bot_stop" : "bot_go", sessionId, cancellationToken);
+
+    public Task<Guid> SendBotTeleportToP1Async(int sessionId,
+        CancellationToken cancellationToken = default) =>
+        SendBotCommandAsync("bot_teleport_p1", sessionId, cancellationToken);
+
+    public Task<Guid> SendBotTakeoverAsync(int sessionId, bool takeOver,
+        CancellationToken cancellationToken = default) =>
+        SendBotCommandAsync(takeOver ? "bot_takeover" : "bot_release", sessionId, cancellationToken);
+
+    public async Task WriteManualInputAsync(int sessionId, float steering, float throttle, float brake,
+        CancellationToken cancellationToken = default)
+    {
+        Directory.CreateDirectory(ControlDirectory);
+        string temporary = ManualInputPath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+        var now = DateTimeOffset.UtcNow;
+        string json = JsonSerializer.Serialize(new
+        {
+            sequence = now.UtcTicks,
+            sessionId,
+            steering = Math.Clamp(steering, -1, 1),
+            throttle = Math.Clamp(throttle, 0, 1),
+            brake = Math.Clamp(brake, 0, 1),
+            requestedAt = now,
+        }, _jsonOptions);
+        await File.WriteAllTextAsync(temporary, json, new UTF8Encoding(false), cancellationToken);
+        File.Move(temporary, ManualInputPath, true);
+    }
+
+    private Task<Guid> SendBotCommandAsync(string command, int sessionId,
+        CancellationToken cancellationToken)
+    {
+        if (sessionId is < 0 or > 253)
+            throw new ArgumentOutOfRangeException(nameof(sessionId));
+        return SendCommandAsync(command, null, sessionId, cancellationToken);
+    }
+
+    private async Task<Guid> SendCommandAsync(string command, double? timeScale, int? sessionId,
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(CommandsDirectory);
@@ -67,6 +107,7 @@ public sealed class LiveRaceControlClient
             command,
             requestedAt = DateTimeOffset.UtcNow,
             timeScale,
+            sessionId,
         }, _jsonOptions);
         await File.WriteAllTextAsync(temporary, json, new UTF8Encoding(false), cancellationToken);
         File.Move(temporary, destination);
@@ -190,9 +231,15 @@ public sealed class LiveRaceCar
     public int? RacePosition { get; set; }
     public bool IsDnf { get; set; }
     public bool HasFinished { get; set; }
+    public string ControlMode { get; set; } = "automatic";
+    public float ManualSteering { get; set; }
+    public float ManualThrottle { get; set; }
+    public float ManualBrake { get; set; }
 
     public string DisplayName => $"{SessionId + 1}. {Name} — {Model}";
     public string Kind => IsBot ? "BOT" : IsConnected ? "HUMAN" : "EMPTY";
+    public bool IsStoppedByRaceControl => ControlMode.Equals("stopped", StringComparison.OrdinalIgnoreCase);
+    public bool IsManuallyControlled => ControlMode.Equals("manual", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class LiveTrackMap

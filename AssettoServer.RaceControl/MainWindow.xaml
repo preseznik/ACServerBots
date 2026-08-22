@@ -9,6 +9,7 @@
         Width="1480" Height="900" MinWidth="1120" MinHeight="720"
         WindowStartupLocation="CenterScreen"
         Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown"
+        PreviewKeyUp="Window_PreviewKeyUp" Deactivated="Window_Deactivated"
         SourceInitialized="Window_SourceInitialized"
         ToolTipService.InitialShowDelay="350" ToolTipService.BetweenShowDelay="100"
         ToolTipService.ShowDuration="12000">
@@ -732,6 +733,7 @@
                                                            SelectedSessionId="{Binding SelectedLiveCarSessionId, Mode=TwoWay}"
                                                            FullTrack="{Binding FullTrackView, Mode=TwoWay}"
                                                            ZoomMeters="{Binding LiveZoomMeters, Mode=TwoWay}"
+                                                           ChaseView="{Binding IsBotTakeoverActive}"
                                                            ToolTip="Click a car marker to select it. Use the mouse wheel to zoom in or out; the camera, slider, and selected-car details stay synchronized." />
                                 <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="14"
                                         Padding="10,7" Background="{DynamicResource PanelBrush}"
@@ -739,6 +741,49 @@
                                     <StackPanel>
                                         <TextBlock Text="{Binding LiveSessionSummary}" FontWeight="SemiBold" />
                                         <TextBlock Text="{Binding LiveTimingSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                </Border>
+                                <Border VerticalAlignment="Top" HorizontalAlignment="Right" Margin="14"
+                                        Padding="12,10" Background="{DynamicResource PanelBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelectedBotControllable}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock Text="SELECTED BOT CONTROL" Style="{StaticResource FieldLabel}" />
+                                        <TextBlock Text="{Binding SelectedLiveCar.Name}" FontWeight="SemiBold" Margin="0,2,0,7" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="{Binding StopGoSelectedBotText}" Command="{Binding StopGoSelectedBotCommand}"
+                                                    MinWidth="66" Foreground="White" FontWeight="Bold"
+                                                    ToolTip="STOP freezes the selected server bot at its current position. GO returns it to autonomous race AI.">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                        <Setter Property="Background" Value="#C62828" />
+                                                        <Setter Property="BorderBrush" Value="#C62828" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedBotIsStopped}" Value="True">
+                                                                <Setter Property="Background" Value="#2E7D32" />
+                                                                <Setter Property="BorderBrush" Value="#2E7D32" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                            <Button Content="TELEPORT P1" Command="{Binding TeleportSelectedBotCommand}" Margin="7,0,0,0"
+                                                    ToolTip="Move the selected bot just ahead of the current physical race leader without awarding skipped lap distance." />
+                                        </StackPanel>
+                                        <Button Content="{Binding TakeOverSelectedBotText}" Command="{Binding TakeOverSelectedBotCommand}"
+                                                Style="{StaticResource PrimaryButton}" Margin="0,7,0,0"
+                                                ToolTip="Switch between autonomous AI and manual chase-view control using arrow keys or an Xbox controller." />
+                                        <TextBlock Text="{Binding BotControlStatus}" Foreground="{DynamicResource MutedTextBrush}"
+                                                   FontSize="11" Margin="0,6,0,0" MaxWidth="250" TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
                                 <Border Margin="24" Padding="20" Background="{DynamicResource PanelBrush}"

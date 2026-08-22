@@ -26,6 +26,9 @@ public sealed class LiveRaceViewport : FrameworkElement
         nameof(ZoomMeters), typeof(double), typeof(LiveRaceViewport),
         new FrameworkPropertyMetadata(180d,
             FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault));
+    public static readonly DependencyProperty ChaseViewProperty = DependencyProperty.Register(
+        nameof(ChaseView), typeof(bool), typeof(LiveRaceViewport),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
     private readonly List<CarHitTarget> _carHitTargets = [];
 
@@ -67,6 +70,12 @@ public sealed class LiveRaceViewport : FrameworkElement
         set => SetValue(ZoomMetersProperty, value);
     }
 
+    public bool ChaseView
+    {
+        get => (bool)GetValue(ChaseViewProperty);
+        set => SetValue(ChaseViewProperty, value);
+    }
+
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
@@ -78,6 +87,12 @@ public sealed class LiveRaceViewport : FrameworkElement
             return;
 
         var activeCars = Snapshot?.Cars.Where(car => car.IsActive).ToArray() ?? [];
+        var selected = activeCars.FirstOrDefault(car => car.SessionId == SelectedSessionId);
+        if (ChaseView && selected != null)
+        {
+            DrawChaseView(drawingContext, activeCars, selected);
+            return;
+        }
         if (!TryGetWorldBounds(activeCars, out var bounds))
         {
             DrawCenteredText(drawingContext, "WAITING FOR LIVE POSITION DATA", Brush("MutedTextBrush", Brushes.Gray));
@@ -94,7 +109,6 @@ public sealed class LiveRaceViewport : FrameworkElement
         DrawTrack(drawingContext, Map, scale);
         foreach (var car in activeCars.Where(car => car.SessionId != SelectedSessionId))
             DrawCar(drawingContext, car, Map, selected: false);
-        var selected = activeCars.FirstOrDefault(car => car.SessionId == SelectedSessionId);
         if (selected != null)
             DrawCar(drawingContext, selected, Map, selected: true);
     }
@@ -102,6 +116,8 @@ public sealed class LiveRaceViewport : FrameworkElement
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs eventArgs)
     {
         base.OnMouseLeftButtonDown(eventArgs);
+        if (ChaseView)
+            return;
         Point click = eventArgs.GetPosition(this);
         var hit = _carHitTargets
             .Select(target => (Target: target, DistanceSquared: (target.Center - click).LengthSquared))
@@ -118,6 +134,11 @@ public sealed class LiveRaceViewport : FrameworkElement
     protected override void OnMouseWheel(MouseWheelEventArgs eventArgs)
     {
         base.OnMouseWheel(eventArgs);
+        if (ChaseView)
+        {
+            eventArgs.Handled = true;
+            return;
+        }
         if (eventArgs.Delta == 0)
             return;
 
@@ -199,6 +220,119 @@ public sealed class LiveRaceViewport : FrameworkElement
         drawingContext.DrawGeometry(null, new Pen(Brush("BorderBrush", Brushes.Gray), 1), geometry);
     }
 
+    private void DrawChaseView(DrawingContext drawingContext, IReadOnlyList<LiveRaceCar> cars,
+        LiveRaceCar selected)
+    {
+        double horizon = ActualHeight * 0.24;
+        drawingContext.DrawRectangle(Brush("PanelRaisedBrush", Brushes.DarkSlateGray), null,
+            new Rect(0, 0, ActualWidth, horizon));
+        drawingContext.DrawRectangle(Brush("PreviewBrush", Brushes.Black), null,
+            new Rect(0, horizon, ActualWidth, ActualHeight - horizon));
+
+        var forward = GetHeadingForward(selected);
+        var side = new Vector(-forward.Y, forward.X);
+        var roadSegments = new List<ChaseSegment>();
+        if (Track is { Points.Count: > 1 })
+        {
+            for (int index = 0; index < Track.Points.Count; index++)
+            {
+                var first = Track.Points[index];
+                var second = Track.Points[(index + 1) % Track.Points.Count];
+                double worldDistance = Math.Sqrt(Math.Pow(second.X - first.X, 2) + Math.Pow(second.Z - first.Z, 2));
+                if (worldDistance > 80
+                    || !TryProjectChase(first.X, first.Z, selected, forward, side, out var firstPoint, out double firstDepth)
+                    || !TryProjectChase(second.X, second.Z, selected, forward, side, out var secondPoint, out double secondDepth))
+                    continue;
+                double depth = (firstDepth + secondDepth) * 0.5;
+                double width = Math.Clamp((first.LeftWidth + first.RightWidth
+                                           + second.LeftWidth + second.RightWidth) * ActualWidth
+                                          / Math.Max(20, depth) * 0.32, 3, 150);
+                roadSegments.Add(new ChaseSegment(firstPoint, secondPoint, depth, width));
+            }
+        }
+
+        foreach (var segment in roadSegments.OrderByDescending(segment => segment.Depth))
+        {
+            drawingContext.DrawLine(new Pen(Brush("PanelRaisedBrush", Brushes.DimGray), segment.Width),
+                segment.Start, segment.End);
+            drawingContext.DrawLine(new Pen(Brush("BorderBrush", Brushes.Gray), 1),
+                segment.Start, segment.End);
+        }
+
+        foreach (var car in cars.Where(car => car.SessionId != selected.SessionId)
+                     .Select(car => (Car: car, Projection: ProjectCar(car, selected, forward, side)))
+                     .Where(item => item.Projection.HasValue)
+                     .OrderByDescending(item => item.Projection!.Value.Depth))
+        {
+            var projection = car.Projection!.Value;
+            double scale = Math.Clamp(38 / projection.Depth, 0.35, 1.7);
+            var rect = new Rect(projection.Point.X - 15 * scale, projection.Point.Y - 9 * scale,
+                30 * scale, 18 * scale);
+            Brush fill = car.Car.IsBot ? Brush("AccentBrush", Brushes.Red)
+                : Brush("InfoBrush", Brushes.DeepSkyBlue);
+            drawingContext.DrawRoundedRectangle(fill, new Pen(Brush("TextBrush", Brushes.White), 1),
+                rect, 2, 2);
+            if (projection.Depth < 70)
+                DrawText(drawingContext, car.Car.Name,
+                    new Point(rect.Left, rect.Top - 17), Brush("TextBrush", Brushes.White), 11);
+        }
+
+        double carWidth = Math.Clamp(ActualWidth * 0.075, 44, 78);
+        double carHeight = carWidth * 0.52;
+        var playerCar = new StreamGeometry();
+        using (var context = playerCar.Open())
+        {
+            context.BeginFigure(new Point(ActualWidth * 0.5 - carWidth * 0.5, ActualHeight - 16), true, true);
+            context.LineTo(new Point(ActualWidth * 0.5 - carWidth * 0.38, ActualHeight - carHeight), true, false);
+            context.LineTo(new Point(ActualWidth * 0.5 + carWidth * 0.38, ActualHeight - carHeight), true, false);
+            context.LineTo(new Point(ActualWidth * 0.5 + carWidth * 0.5, ActualHeight - 16), true, false);
+        }
+        playerCar.Freeze();
+        drawingContext.DrawGeometry(Brush("WarningBrush", Brushes.Gold),
+            new Pen(Brush("TextBrush", Brushes.White), 2), playerCar);
+        DrawText(drawingContext, $"{selected.Name}  •  {selected.SpeedKmh:F0} km/h",
+            new Point(16, ActualHeight - 34), Brush("TextBrush", Brushes.White), 13);
+        DrawText(drawingContext, "MANUAL CONTROL  •  ↑ throttle  ↓ brake  ← → steer  •  Esc release",
+            new Point(16, 14), Brush("TextBrush", Brushes.White), 12);
+    }
+
+    private (Point Point, double Depth)? ProjectCar(LiveRaceCar car, LiveRaceCar selected,
+        Vector forward, Vector side) => TryProjectChase(car.X, car.Z, selected, forward, side,
+        out var point, out double depth) ? (point, depth) : null;
+
+    private bool TryProjectChase(float x, float z, LiveRaceCar selected, Vector forward, Vector side,
+        out Point point, out double depth)
+    {
+        var relative = new Vector(x - selected.X, z - selected.Z);
+        depth = Vector.Multiply(relative, forward) + 10;
+        double lateral = Vector.Multiply(relative, side);
+        if (depth is < 3 or > 240 || Math.Abs(lateral) > depth * 1.5)
+        {
+            point = default;
+            return false;
+        }
+        double horizon = ActualHeight * 0.24;
+        double bottom = ActualHeight - 54;
+        double distanceRatio = Math.Clamp(depth / 240, 0, 1);
+        point = new Point(ActualWidth * 0.5 + lateral * ActualWidth * 0.72 / depth,
+            horizon + (bottom - horizon) * (1 - Math.Sqrt(distanceRatio)));
+        return true;
+    }
+
+    private static Vector GetForward(LiveRaceCar car)
+    {
+        double speedSquared = car.VelocityX * car.VelocityX + car.VelocityZ * car.VelocityZ;
+        if (speedSquared > 0.25)
+        {
+            double inverse = 1 / Math.Sqrt(speedSquared);
+            return new Vector(car.VelocityX * inverse, car.VelocityZ * inverse);
+        }
+        return new Vector(-Math.Cos(car.HeadingRadians), Math.Sin(car.HeadingRadians));
+    }
+
+    private static Vector GetHeadingForward(LiveRaceCar car) =>
+        new(-Math.Cos(car.HeadingRadians), Math.Sin(car.HeadingRadians));
+
     private void DrawCar(DrawingContext drawingContext, LiveRaceCar car,
         Func<float, float, Point> map, bool selected)
     {
@@ -263,6 +397,7 @@ public sealed class LiveRaceViewport : FrameworkElement
     private Brush Brush(string resourceKey, Brush fallback) => TryFindResource(resourceKey) as Brush ?? fallback;
 
     private readonly record struct CarHitTarget(int SessionId, Point Center);
+    private readonly record struct ChaseSegment(Point Start, Point End, double Depth, double Width);
 
     private readonly record struct WorldBounds(float MinimumX, float MaximumX, float MinimumZ, float MaximumZ)
     {

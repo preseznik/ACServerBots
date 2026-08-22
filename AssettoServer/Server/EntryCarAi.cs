@@ -19,6 +19,16 @@ public enum AiMode
     Fixed
 }
 
+public enum RaceControlBotControlMode
+{
+    Automatic,
+    Stopped,
+    Manual,
+}
+
+public readonly record struct RaceControlBotInput(float Steering, float Throttle, float Brake,
+    DateTimeOffset UpdatedAt);
+
 public readonly record struct RaceAiDiagnostics(float MaximumAbsoluteLateralOffsetMeters,
     float MaximumPassSeparationMeters, int PassCommitCount, int SeparatedPassCount,
     int CompletedPassCount);
@@ -65,6 +75,8 @@ public partial class EntryCar
     // when it is updated concurrently
     private readonly List<AiState?> _aiStates = [];
     private readonly object _aiControlLock = new();
+    private RaceControlBotControlMode _raceControlMode;
+    private RaceControlBotInput _raceControlInput;
     private Span<AiState?> AiStatesSpan => CollectionsMarshal.AsSpan(_aiStates);
     
     private readonly Func<EntryCar, AiState> _aiStateFactory;
@@ -455,6 +467,74 @@ public partial class EntryCar
         }
     }
 
+    public RaceControlBotControlMode GetRaceControlMode()
+    {
+        lock (_aiControlLock)
+            return _raceControlMode;
+    }
+
+    public RaceControlBotInput GetRaceControlInput()
+    {
+        lock (_aiControlLock)
+            return _raceControlInput;
+    }
+
+    public bool TrySetRaceControlMode(RaceControlBotControlMode mode)
+    {
+        lock (_aiControlLock)
+        {
+            if (!AiControlled || _configuration.Extra.AiParams.Behavior != AiBehaviorMode.Race
+                              || !HasInitializedRaceControlState())
+                return false;
+            _raceControlMode = mode;
+            _raceControlInput = mode == RaceControlBotControlMode.Manual
+                ? new RaceControlBotInput(0, 0, 1, DateTimeOffset.UtcNow)
+                : default;
+            return true;
+        }
+    }
+
+    public bool TrySetRaceControlInput(float steering, float throttle, float brake,
+        DateTimeOffset updatedAt)
+    {
+        lock (_aiControlLock)
+        {
+            if (!AiControlled || _raceControlMode != RaceControlBotControlMode.Manual)
+                return false;
+            _raceControlInput = new RaceControlBotInput(
+                Math.Clamp(steering, -1, 1), Math.Clamp(throttle, 0, 1),
+                Math.Clamp(brake, 0, 1), updatedAt);
+            return true;
+        }
+    }
+
+    public bool TryTeleportRaceControlBot(int pointId)
+    {
+        lock (_aiControlLock)
+        {
+            if (!AiControlled || _configuration.Extra.AiParams.Behavior != AiBehaviorMode.Race)
+                return false;
+            foreach (var state in AiStatesSpan)
+            {
+                if (state is not { Initialized: true })
+                    continue;
+                state.TeleportForRaceControl(pointId);
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private bool HasInitializedRaceControlState()
+    {
+        foreach (var state in AiStatesSpan)
+        {
+            if (state is { Initialized: true })
+                return true;
+        }
+        return false;
+    }
+
     public void SetAiOverbooking(int count)
     {
         if (AiMaxOverbooking.HasValue)
@@ -494,6 +574,8 @@ public partial class EntryCar
 
     private void AiReset()
     {
+        _raceControlMode = RaceControlBotControlMode.Automatic;
+        _raceControlInput = default;
         foreach (var state in AiStatesSpan)
         {
             state?.Despawn();

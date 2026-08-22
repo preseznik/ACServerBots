@@ -357,6 +357,34 @@ public class AiState : IDisposable
         }
     }
 
+    public void TeleportForRaceControl(int pointId)
+    {
+        if (!Initialized || _racePhysicsWorld == null || (uint)pointId >= _spline.Points.Length)
+            throw new InvalidOperationException("Race Control can only teleport an initialized race bot");
+        _junctionEvaluator.Clear();
+        CurrentSplinePointId = pointId;
+        if (!_junctionEvaluator.TryNext(pointId, out var nextPointId))
+            throw new InvalidOperationException($"Cannot get the next spline point after {pointId}");
+        _currentVecLength = (_spline.Points[nextPointId].Position - _spline.Points[pointId].Position).Length();
+        _currentVecProgress = 0;
+        CalculateTangents();
+        _gridLineMergePending = false;
+        _gridLineMergeBlocked = false;
+        _gridPathBlendStarted = true;
+        _gridPathBlend = 1;
+        var pose = CreateSplinePose(pointId);
+        _racePhysicsWorld.TeleportBot(EntryCar.SessionId, pose);
+        if (_racePhysicsWorld.TryGetBotState(EntryCar.SessionId, out var physicsState))
+        {
+            _physicsLastPosition = physicsState.Position;
+            _physicsRecoveryCount = physicsState.RecoveryCount;
+        }
+        CurrentSpeed = 0;
+        TargetSpeed = InitialMaxSpeed;
+        Acceleration = 0;
+        _steeringAngleRadians = 0;
+    }
+
     public void ConfigureRace(RaceSplineLayout layout)
     {
         _raceLayout = layout;
@@ -1435,6 +1463,8 @@ public class AiState : IDisposable
             currentTime, _sessionManager.CurrentSession.StartTimeMilliseconds);
         bool holdForRaceControl = _sessionManager.CurrentSession.IsStoppedByRaceControl;
         bool hold = raceCountdown || holdForRaceControl;
+        var raceControlMode = EntryCar.GetRaceControlMode();
+        bool stopForRaceControl = !hold && raceControlMode == RaceControlBotControlMode.Stopped;
         if (hold)
         {
             _holdingForRaceStart = true;
@@ -1478,9 +1508,23 @@ public class AiState : IDisposable
         float maximumAcceleration = vehicleStep.AccelerationMetersPerSecondSquared > 0
             ? vehicleStep.AccelerationMetersPerSecondSquared
             : EntryCar.AiAcceleration;
+        float? manualSteering = null;
+        float? manualAcceleration = null;
+        if (!hold && raceControlMode == RaceControlBotControlMode.Manual)
+        {
+            var input = EntryCar.GetRaceControlInput();
+            bool fresh = DateTimeOffset.UtcNow - input.UpdatedAt <= TimeSpan.FromMilliseconds(750);
+            manualSteering = fresh ? input.Steering : 0;
+            manualAcceleration = fresh
+                ? input.Throttle * Math.Max(0.1f, maximumAcceleration)
+                  - input.Brake * EntryCar.RaceVehicleProfile.MaxBrakeDeceleration
+                : -EntryCar.RaceVehicleProfile.MaxBrakeDeceleration;
+        }
         _racePhysicsWorld.SetBotControl(EntryCar.SessionId, new RaceBotPhysicsControl(hold,
+            stopForRaceControl,
             targetPosition, targetForward, TargetSpeed, Math.Max(0.1f, maximumAcceleration),
-            EntryCar.RaceVehicleProfile.MaxBrakeDeceleration, EntryCar.RaceVehicleProfile.LateralGripG));
+            EntryCar.RaceVehicleProfile.MaxBrakeDeceleration, EntryCar.RaceVehicleProfile.LateralGripG,
+            manualSteering, manualAcceleration));
         _lastTick = currentTime;
     }
 

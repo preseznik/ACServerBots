@@ -87,6 +87,30 @@ public sealed class LiveRaceControlClientTests
     }
 
     [Test]
+    public async Task WritesBotControlCommandsAndLatestManualInput()
+    {
+        var client = new LiveRaceControlClient(_root);
+
+        var commandId = await client.SendBotStopAsync(3, stop: true);
+        string commandPath = Directory.GetFiles(client.CommandsDirectory, "*.json").Single();
+        using var command = JsonDocument.Parse(await File.ReadAllTextAsync(commandPath));
+        await client.WriteManualInputAsync(3, -0.5f, 0.75f, 0.25f);
+        using var manualInput = JsonDocument.Parse(await File.ReadAllTextAsync(client.ManualInputPath));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(command.RootElement.GetProperty("id").GetGuid(), Is.EqualTo(commandId));
+            Assert.That(command.RootElement.GetProperty("command").GetString(), Is.EqualTo("bot_stop"));
+            Assert.That(command.RootElement.GetProperty("sessionId").GetInt32(), Is.EqualTo(3));
+            Assert.That(manualInput.RootElement.GetProperty("sessionId").GetInt32(), Is.EqualTo(3));
+            Assert.That(manualInput.RootElement.GetProperty("steering").GetSingle(), Is.EqualTo(-0.5f));
+            Assert.That(manualInput.RootElement.GetProperty("throttle").GetSingle(), Is.EqualTo(0.75f));
+            Assert.That(manualInput.RootElement.GetProperty("brake").GetSingle(), Is.EqualTo(0.25f));
+            Assert.That(Directory.GetFiles(client.ControlDirectory, "*.tmp"), Is.Empty);
+        });
+    }
+
+    [Test]
     public void SimulationProgressUsesCloserRaceOrTimeLimit()
     {
         var snapshot = new LiveRaceSnapshot

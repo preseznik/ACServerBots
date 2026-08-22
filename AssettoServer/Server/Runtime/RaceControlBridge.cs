@@ -31,16 +31,21 @@ public sealed class RaceControlBridge : IHostedService
     private string _controlDirectory = null!;
     private string _commandsDirectory = null!;
     private string _snapshotPath = null!;
+    private string _manualInputPath = null!;
     private long _initialServerTime;
     private long _sequence;
     private long _nextSnapshotAt;
+    private long _nextManualInputAt;
+    private long _lastManualInputSequence;
     private Guid? _lastCommandId;
     private string? _lastCommand;
     private string? _lastCommandStatus;
     private string? _lastCommandMessage;
 
     private sealed record CommandEnvelope(Guid Id, string Command, DateTimeOffset RequestedAt,
-        double? TimeScale = null);
+        double? TimeScale = null, int? SessionId = null);
+    private sealed record ManualInputEnvelope(long Sequence, int SessionId, float Steering,
+        float Throttle, float Brake, DateTimeOffset RequestedAt);
 
     public RaceControlBridge(ACServerConfiguration configuration,
         ServerRuntimeOptions runtimeOptions,
@@ -63,6 +68,7 @@ public sealed class RaceControlBridge : IHostedService
                             ?? throw new InvalidOperationException("Race Control directory is not configured");
         _commandsDirectory = Path.Combine(_controlDirectory, "commands");
         _snapshotPath = Path.Combine(_controlDirectory, "state.json");
+        _manualInputPath = Path.Combine(_controlDirectory, "manual-input.json");
         Directory.CreateDirectory(_commandsDirectory);
 
         _initialServerTime = _sessionManager.ServerTimeMilliseconds;
@@ -85,6 +91,11 @@ public sealed class RaceControlBridge : IHostedService
     {
         try
         {
+            if (_wallClock.ElapsedMilliseconds >= _nextManualInputAt)
+            {
+                ProcessManualInput();
+                _nextManualInputAt = _wallClock.ElapsedMilliseconds + 16;
+            }
             bool commandProcessed = ProcessCommands();
             if (commandProcessed || _wallClock.ElapsedMilliseconds >= _nextSnapshotAt)
             {
@@ -120,19 +131,15 @@ public sealed class RaceControlBridge : IHostedService
                     "restart" => _sessionManager.RestartRaceFromControl(),
                     "simulation_time_scale" => command.TimeScale.HasValue
                                                && _runtimeOptions.TrySetTargetRealTimeFactor(command.TimeScale.Value),
+                    "bot_stop" => TrySetBotMode(command.SessionId, RaceControlBotControlMode.Stopped),
+                    "bot_go" => TrySetBotMode(command.SessionId, RaceControlBotControlMode.Automatic),
+                    "bot_takeover" => TrySetBotMode(command.SessionId, RaceControlBotControlMode.Manual),
+                    "bot_release" => TrySetBotMode(command.SessionId, RaceControlBotControlMode.Automatic),
+                    "bot_teleport_p1" => TryTeleportBotToP1(command.SessionId),
                     _ => throw new InvalidDataException($"Unknown race command '{command.Command}'"),
                 };
                 _lastCommandStatus = accepted ? "accepted" : "rejected";
-                _lastCommandMessage = accepted && command.Command.Equals("simulation_time_scale",
-                        StringComparison.OrdinalIgnoreCase)
-                    ? $"Simulation time acceleration set to {_runtimeOptions.TargetRealTimeFactor:F0}x."
-                    : accepted
-                        ? $"Race {command.Command} command accepted."
-                    : command.Command.Equals("stop", StringComparison.OrdinalIgnoreCase)
-                        ? "There is no active race to stop."
-                        : command.Command.Equals("simulation_time_scale", StringComparison.OrdinalIgnoreCase)
-                            ? "Time acceleration can only be changed during a simulation and must be 1x to 100x."
-                            : "No race session is configured.";
+                _lastCommandMessage = GetCommandMessage(command, accepted);
                 Log.Information("Race Control command {Command} ({CommandId}) was {Status}",
                     command.Command, command.Id, _lastCommandStatus);
             }
@@ -156,6 +163,92 @@ public sealed class RaceControlBridge : IHostedService
         }
 
         return processed;
+    }
+
+    private void ProcessManualInput()
+    {
+        if (!File.Exists(_manualInputPath))
+            return;
+        try
+        {
+            using var stream = new FileStream(_manualInputPath, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            var input = JsonSerializer.Deserialize<ManualInputEnvelope>(stream, _jsonOptions);
+            if (input == null || input.Sequence <= _lastManualInputSequence)
+                return;
+            _lastManualInputSequence = input.Sequence;
+            if ((uint)input.SessionId >= _entryCarManager.EntryCars.Length)
+                return;
+            _entryCarManager.EntryCars[input.SessionId].TrySetRaceControlInput(
+                input.Steering, input.Throttle, input.Brake, input.RequestedAt);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+        }
+    }
+
+    private bool TrySetBotMode(int? sessionId, RaceControlBotControlMode mode) =>
+        sessionId is >= 0 && sessionId < _entryCarManager.EntryCars.Length
+        && _entryCarManager.EntryCars[sessionId.Value].TrySetRaceControlMode(mode);
+
+    private bool TryTeleportBotToP1(int? sessionId)
+    {
+        if (sessionId is not >= 0 || sessionId >= _entryCarManager.EntryCars.Length
+                                   || _spline is not { Points.Length: > 1 }
+                                   || _sessionManager.CurrentSession.Configuration.Type != SessionType.Race
+                                   || _sessionManager.CurrentSession.Results == null)
+            return false;
+        var leader = _entryCarManager.EntryCars
+            .Where(car => _sessionManager.CurrentSession.Results.ContainsKey(car.SessionId))
+            .OrderBy(car => _sessionManager.CurrentSession.Results[car.SessionId].RacePos)
+            .FirstOrDefault();
+        if (leader == null)
+            return false;
+        int leaderPoint = leader.GetRaceAiStateSnapshot()?.SplinePointId
+                          ?? _spline.WorldToSpline(leader.Status.Position).PointId;
+        if (leaderPoint < 0)
+            return false;
+        return _entryCarManager.EntryCars[sessionId.Value]
+            .TryTeleportRaceControlBot(AdvanceSplinePoint(leaderPoint, 12));
+    }
+
+    private int AdvanceSplinePoint(int startPoint, float distanceMeters)
+    {
+        int point = Math.Clamp(startPoint, 0, _spline!.Points.Length - 1);
+        float distance = 0;
+        int steps = 0;
+        while (distance < distanceMeters && steps++ < _spline.Points.Length)
+        {
+            int next = (point + 1) % _spline.Points.Length;
+            distance += Vector3.Distance(_spline.Points[point].Position, _spline.Points[next].Position);
+            point = next;
+        }
+        return point;
+    }
+
+    private string GetCommandMessage(CommandEnvelope command, bool accepted)
+    {
+        if (accepted)
+        {
+            return command.Command.ToLowerInvariant() switch
+            {
+                "simulation_time_scale" => $"Simulation time acceleration set to {_runtimeOptions.TargetRealTimeFactor:F0}x.",
+                "bot_stop" => $"Bot {command.SessionId} stopped.",
+                "bot_go" => $"Bot {command.SessionId} returned to AI control.",
+                "bot_takeover" => $"Manual control enabled for bot {command.SessionId}.",
+                "bot_release" => $"Manual control released for bot {command.SessionId}.",
+                "bot_teleport_p1" => $"Bot {command.SessionId} teleported ahead of the current leader.",
+                _ => $"Race {command.Command} command accepted.",
+            };
+        }
+        return command.Command.ToLowerInvariant() switch
+        {
+            "stop" => "There is no active race to stop.",
+            "simulation_time_scale" => "Time acceleration can only be changed during a simulation and must be 1x to 100x.",
+            "bot_stop" or "bot_go" or "bot_takeover" or "bot_release" or "bot_teleport_p1" =>
+                "The selected slot is not an active server-controlled race bot.",
+            _ => "No race session is configured.",
+        };
     }
 
     private void WriteTrack()
@@ -217,6 +310,7 @@ public sealed class RaceControlBridge : IHostedService
             double normalizedPosition = ai != null && _spline is { Points.Length: > 1 }
                 ? ai.Value.SplinePointId / (double)(_spline.Points.Length - 1)
                 : car.Status.NormalizedPosition;
+            var manualInput = car.GetRaceControlInput();
             return new
             {
                 sessionId = (int)car.SessionId,
@@ -237,6 +331,10 @@ public sealed class RaceControlBridge : IHostedService
                 racePosition = result == null ? null : (int?)result.RacePos + 1,
                 isDnf = result?.IsDnf ?? false,
                 hasFinished = result?.HasCompletedLastLap ?? false,
+                controlMode = car.GetRaceControlMode().ToString().ToLowerInvariant(),
+                manualSteering = manualInput.Steering,
+                manualThrottle = manualInput.Throttle,
+                manualBrake = manualInput.Brake,
             };
         }).ToArray();
         double wallMilliseconds = Math.Max(1, _wallClock.Elapsed.TotalMilliseconds);
