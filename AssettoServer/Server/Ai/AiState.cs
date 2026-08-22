@@ -1433,7 +1433,9 @@ public class AiState : IDisposable
         long currentTime = _sessionManager.ServerTimeMilliseconds;
         bool raceCountdown = RaceBotMath.ShouldHoldForCountdown(_sessionManager.CurrentSession.Configuration.Type,
             currentTime, _sessionManager.CurrentSession.StartTimeMilliseconds);
-        if (raceCountdown)
+        bool holdForRaceControl = _sessionManager.CurrentSession.IsStoppedByRaceControl;
+        bool hold = raceCountdown || holdForRaceControl;
+        if (hold)
         {
             _holdingForRaceStart = true;
             CurrentSpeed = 0;
@@ -1446,7 +1448,7 @@ public class AiState : IDisposable
             SetTargetSpeed(InitialMaxSpeed);
         }
 
-        if (RaceBotMath.CanTransitionLane(_sessionManager.CurrentSession.Configuration.Type,
+        if (!holdForRaceControl && RaceBotMath.CanTransitionLane(_sessionManager.CurrentSession.Configuration.Type,
                 currentTime, _sessionManager.CurrentSession.StartTimeMilliseconds))
             _lateralOffsetMeters = RaceBotMath.AdvanceLaneOffset(_lateralOffsetMeters,
                 _targetLateralOffsetMeters, CurrentSpeed, fixedDeltaSeconds,
@@ -1476,7 +1478,7 @@ public class AiState : IDisposable
         float maximumAcceleration = vehicleStep.AccelerationMetersPerSecondSquared > 0
             ? vehicleStep.AccelerationMetersPerSecondSquared
             : EntryCar.AiAcceleration;
-        _racePhysicsWorld.SetBotControl(EntryCar.SessionId, new RaceBotPhysicsControl(raceCountdown,
+        _racePhysicsWorld.SetBotControl(EntryCar.SessionId, new RaceBotPhysicsControl(hold,
             targetPosition, targetForward, TargetSpeed, Math.Max(0.1f, maximumAcceleration),
             EntryCar.RaceVehicleProfile.MaxBrakeDeceleration, EntryCar.RaceVehicleProfile.LateralGripG));
         _lastTick = currentTime;

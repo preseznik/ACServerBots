@@ -97,6 +97,9 @@ public static class Program
 
         [Option("simulation-sample-ms", Required = false, HelpText = "Structured telemetry sample interval in simulated milliseconds")]
         public int SimulationSampleMilliseconds { get; set; } = 500;
+
+        [Option("race-control-directory", Required = false, HelpText = "Local Race Control snapshot and command directory")]
+        public string? RaceControlDirectory { get; set; }
     }
 
     private class StartOptions
@@ -173,8 +176,21 @@ public static class Program
 
         if (options.SimulateRace)
         {
-            await RunRaceSimulationAsync(startOptions.Preset, startOptions.ServerCfgPath,
-                startOptions.EntryListPath, options, CancellationToken.None);
+            using var simulationCts = new CancellationTokenSource();
+            var simulationTask = RunRaceSimulationAsync(startOptions.Preset, startOptions.ServerCfgPath,
+                startOptions.EntryListPath, options, simulationCts.Token);
+            var shutdownTask = WaitForShutdownFileAsync(options.ShutdownFile, simulationCts.Token);
+            if (await Task.WhenAny(simulationTask, shutdownTask) == shutdownTask)
+                await simulationCts.CancelAsync();
+            await simulationTask;
+            await simulationCts.CancelAsync();
+            try
+            {
+                await shutdownTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
             return;
         }
         
@@ -182,7 +198,9 @@ public static class Program
         {
             _restartTask = new TaskCompletionSource<StartOptions>();
             using var cts = new CancellationTokenSource();
-            var serverTask = RunServerAsync(startOptions.Preset, startOptions.ServerCfgPath, startOptions.EntryListPath, startOptions.PortOverrides ,options.UseVerboseLogging, cts.Token);
+            var serverTask = RunServerAsync(startOptions.Preset, startOptions.ServerCfgPath,
+                startOptions.EntryListPath, startOptions.PortOverrides, options.UseVerboseLogging,
+                options.RaceControlDirectory, cts.Token);
             var shutdownTask = WaitForShutdownFileAsync(options.ShutdownFile, cts.Token);
             var finishedTask = await Task.WhenAny(serverTask, _restartTask.Task, shutdownTask);
 
@@ -259,6 +277,7 @@ public static class Program
         string? entryListPath,
         PortOverrides? portOverrides,
         bool useVerboseLogging,
+        string? raceControlDirectory,
         CancellationToken token = default)
     {
         ConfigurationLocations = ConfigurationLocations.FromOptions(preset, serverCfgPath, entryListPath);
@@ -266,6 +285,7 @@ public static class Program
         try
         {
             var config = new ACServerConfiguration(preset, ConfigurationLocations, _loadPluginsFromWorkdir, _generatePluginConfigs, portOverrides);
+            var runtimeOptions = ServerRuntimeOptions.CreateLiveServer(raceControlDirectory);
 
             string logPrefix = string.IsNullOrEmpty(preset) ? "log" : preset;
             Logging.CreateLogger(logPrefix, IsContentManager, preset, useVerboseLogging, config.Extra.RedactIpAddresses, config.Extra.LokiSettings);
@@ -285,7 +305,7 @@ public static class Program
                             lo.ApplicationServices
                                 .GetServices<Func<ConnectionDelegate, ConnectionDelegate>>()
                                 .ForEach(m => lo.Use(m))))
-                        .UseStartup(_ => new Startup(config))
+                        .UseStartup(_ => new Startup(config, runtimeOptions))
                         .UseUrls($"http://{config.Extra.NetworkBindAddress}:{config.Server.HttpPort}");
                 })
                 .Build();
@@ -320,7 +340,8 @@ public static class Program
 
             var runtimeOptions = ServerRuntimeOptions.CreateSimulation(options.SimulationOutput,
                 options.SimulationSeed, options.SimulationMaximumMinutes,
-                options.SimulationMaximumWallSeconds, options.SimulationSampleMilliseconds);
+                options.SimulationMaximumWallSeconds, options.SimulationSampleMilliseconds,
+                options.RaceControlDirectory);
             string logPrefix = string.IsNullOrEmpty(preset) ? "simulation" : $"{preset}-simulation";
             Logging.CreateLogger(logPrefix, false, preset, options.UseVerboseLogging,
                 config.Extra.RedactIpAddresses, config.Extra.LokiSettings);
@@ -340,6 +361,9 @@ public static class Program
                 .ConfigureContainer<ContainerBuilder>(startup.ConfigureContainer)
                 .Build();
             await host.RunAsync(token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {

@@ -29,6 +29,7 @@ public class SessionState
 
     public long OverTimeMilliseconds { get; set; } = 0;
     public bool HasSentRaceOverPacket { get; set; } = false;
+    public bool IsStoppedByRaceControl { get; set; }
     public long LastRaceStartUpdateMilliseconds { get; set; }
     public Dictionary<byte, EntryCarResult>? Results { get; set; }
     public IEnumerable<IEntryCar<IClient>>? Grid { get; set; }

@@ -59,6 +59,7 @@ public sealed class ServerRuntimeOptions
     public int MaximumWallTimeSeconds { get; init; } = 300;
     public int SampleIntervalMilliseconds { get; init; } = 500;
     public IServerClock Clock { get; init; } = new RealTimeServerClock();
+    public string? RaceControlDirectory { get; init; }
     public string? SimulationCompletionReason { get; set; }
     public ManualResetEventSlim SimulationReady { get; } = new(false);
     public bool SimulationStopRequested => Volatile.Read(ref _simulationStopRequested) != 0;
@@ -70,7 +71,8 @@ public sealed class ServerRuntimeOptions
     }
 
     public static ServerRuntimeOptions CreateSimulation(string outputDirectory, int seed,
-        int maximumSimulatedMinutes, int maximumWallTimeSeconds, int sampleIntervalMilliseconds)
+        int maximumSimulatedMinutes, int maximumWallTimeSeconds, int sampleIntervalMilliseconds,
+        string? raceControlDirectory = null)
     {
         if (string.IsNullOrWhiteSpace(outputDirectory))
             throw new ArgumentException("Simulation output directory is required", nameof(outputDirectory));
@@ -90,8 +92,17 @@ public sealed class ServerRuntimeOptions
             MaximumWallTimeSeconds = maximumWallTimeSeconds,
             SampleIntervalMilliseconds = sampleIntervalMilliseconds,
             Clock = new ManualServerClock(),
+            RaceControlDirectory = NormalizeOptionalDirectory(raceControlDirectory),
         };
     }
+
+    public static ServerRuntimeOptions CreateLiveServer(string? raceControlDirectory) => new()
+    {
+        RaceControlDirectory = NormalizeOptionalDirectory(raceControlDirectory),
+    };
+
+    private static string? NormalizeOptionalDirectory(string? directory) =>
+        string.IsNullOrWhiteSpace(directory) ? null : System.IO.Path.GetFullPath(directory);
 }
 
 public interface IRaceRandomSource

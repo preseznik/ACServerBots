@@ -628,6 +628,145 @@
                     </Border>
                 </Grid>
             </TabItem>
+
+            <TabItem Header="LIVE RACE">
+                <Grid Margin="24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="3*" />
+                                <ColumnDefinition Width="3*" />
+                                <ColumnDefinition Width="2*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Server" Style="{StaticResource SectionTitle}" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Start live server" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}"
+                                            ToolTip="Validate and stage the current setup, start the network server, and connect this live view." />
+                                    <Button Content="Stop server" Command="{Binding StopCommand}" Margin="7,0,0,0"
+                                            ToolTip="Gracefully stop the whole AssettoServer process. This is separate from stopping the current race session." />
+                                    <Button Content="Restart server" Command="{Binding RestartCommand}" Margin="7,0,0,0"
+                                            ToolTip="Restart the current staged server or simulation in the same mode." />
+                                </StackPanel>
+                                <TextBlock Text="{Binding ServerStateText}" FontWeight="Bold" Margin="0,10,0,0" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Margin="20,0">
+                                <TextBlock Text="Race session" Style="{StaticResource SectionTitle}" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="START RACE" Command="{Binding StartRaceCommand}" Style="{StaticResource PrimaryButton}"
+                                            ToolTip="Immediately select the configured race session and begin its normal grid countdown, even with no human players connected." />
+                                    <Button Content="Stop race" Command="{Binding StopRaceCommand}" Margin="7,0,0,0"
+                                            ToolTip="End the active race, classify unfinished participants as DNF, hold bots, and leave the server online." />
+                                    <Button Content="Restart race" Command="{Binding RestartRaceCommand}" Margin="7,0,0,0"
+                                            ToolTip="Reset the configured race session and start its grid countdown again, regardless of connected-player count." />
+                                </StackPanel>
+                                <TextBlock Text="{Binding LiveControlStatus}" Foreground="{DynamicResource MutedTextBrush}"
+                                           TextWrapping="Wrap" Margin="0,10,0,0" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Accelerated simulation" Style="{StaticResource SectionTitle}" />
+                                <StackPanel Orientation="Horizontal">
+                                    <StackPanel Width="74" Margin="0,0,7,0">
+                                        <TextBlock Text="Seed" Style="{StaticResource FieldLabel}" />
+                                        <TextBox Text="{Binding SimulationSeed}" ToolTip="Deterministic seed used for bot decisions." />
+                                    </StackPanel>
+                                    <StackPanel Width="88" Margin="0,0,7,0">
+                                        <TextBlock Text="Max minutes" Style="{StaticResource FieldLabel}" />
+                                        <TextBox Text="{Binding SimulationMaximumMinutes}"
+                                                 ToolTip="Maximum virtual race time before an unfinished simulation is stopped." />
+                                    </StackPanel>
+                                    <Button Content="SIMULATE RACE" Command="{Binding SimulateRaceCommand}" Style="{StaticResource PrimaryButton}"
+                                            VerticalAlignment="Bottom"
+                                            ToolTip="Stage and run a deterministic bot-only race without network listeners. Physics time stays fixed-step while virtual time advances as fast as the CPU permits." />
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="310" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,14,0" Padding="0">
+                            <Grid>
+                                <controls:LiveRaceViewport Snapshot="{Binding LiveSnapshot}"
+                                                           Track="{Binding LiveTrack}"
+                                                           SelectedSessionId="{Binding SelectedLiveCarSessionId}"
+                                                           FullTrack="{Binding FullTrackView}"
+                                                           ZoomMeters="{Binding LiveZoomMeters}" />
+                                <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="14"
+                                        Padding="10,7" Background="{DynamicResource PanelBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding LiveSessionSummary}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding LiveTimingSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <StackPanel Grid.Column="1">
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Camera" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Focus car" Style="{StaticResource FieldLabel}" />
+                                    <ComboBox ItemsSource="{Binding LiveCars}" SelectedItem="{Binding SelectedLiveCar}"
+                                              DisplayMemberPath="DisplayName" IsTextSearchEnabled="True"
+                                              ToolTip="Choose the car followed by the close top-down camera." />
+                                    <CheckBox Content="Full track view" IsChecked="{Binding FullTrackView}"
+                                              Margin="0,12,0,0"
+                                              ToolTip="Show the complete AI centerline and every active car. Clear this option to follow the selected car." />
+                                    <TextBlock Text="Follow-view width" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                    <Slider Minimum="50" Maximum="600" TickFrequency="25" IsSnapToTickEnabled="False"
+                                            Value="{Binding LiveZoomMeters}" ToolTip="World-space width, in metres, around the selected car when full-track view is disabled." />
+                                    <TextBlock Text="{Binding LiveZoomMeters, StringFormat={}{0:F0} m}" HorizontalAlignment="Right"
+                                               Foreground="{DynamicResource MutedTextBrush}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Selected car" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="{Binding SelectedLiveCar.Name}" FontSize="17" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding SelectedLiveCar.Model}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,2,0,12" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="TYPE" Style="{StaticResource FieldLabel}" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.Kind}" FontWeight="SemiBold" />
+                                            <TextBlock Text="SPEED" Style="{StaticResource FieldLabel}" Margin="0,12,0,0" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.SpeedKmh, StringFormat={}{0:F1} km/h}" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="POSITION" Style="{StaticResource FieldLabel}" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.RacePosition, StringFormat= P{0}}" FontWeight="SemiBold" />
+                                            <TextBlock Text="LAP" Style="{StaticResource FieldLabel}" Margin="0,12,0,0" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.Lap}" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}" Margin="0">
+                                <StackPanel>
+                                    <TextBlock Text="Legend" Style="{StaticResource SectionTitle}" />
+                                    <StackPanel Orientation="Horizontal"><Ellipse Width="9" Height="9" Fill="{DynamicResource AccentBrush}" Margin="0,0,8,0" /><TextBlock Text="Race bot" /></StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0"><Ellipse Width="9" Height="9" Fill="{DynamicResource InfoBrush}" Margin="0,0,8,0" /><TextBlock Text="Human driver" /></StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0"><Ellipse Width="9" Height="9" Fill="{DynamicResource WarningBrush}" Margin="0,0,8,0" /><TextBlock Text="Selected car" /></StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </TabItem>
         </TabControl>
 
         <Border Grid.Row="3" Background="{DynamicResource ChromeBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">

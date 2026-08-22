@@ -99,6 +99,8 @@ dotnet publish AssettoServer\AssettoServer.csproj --configuration Release --runt
 
 Each run writes `events.jsonl`, `samples.jsonl`, and `summary.json`. Samples include each bot's lap, spline point, position, velocity, target speed, line offset, obstacle distance, steering, slip, road-height error, suspension compression, upright state, recoveries, pass state, and pass counters. Events record laps, pass phases, recoveries, stop reason, and bounded anomaly detections. The summary records classification, physics maxima, contacts, anomalies, simulated/wall duration, and achieved real-time factor.
 
+When launched by Race Control, the accelerated run also publishes a wall-clock-throttled live snapshot for the `LIVE RACE` viewport. This does not slow or alter fixed-step simulation; the display samples authoritative state while the simulation continues as fast as the CPU permits.
+
 Run a staged preset directly:
 
 ```powershell

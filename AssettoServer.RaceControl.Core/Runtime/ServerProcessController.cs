@@ -12,8 +12,11 @@ public sealed class ServerProcessController : IDisposable
 
     public ServerProcessState State { get; private set; } = ServerProcessState.Stopped;
     public int? ProcessId => _process is { HasExited: false } ? _process.Id : null;
+    public bool IsSimulation { get; private set; }
 
-    public void Start(string executablePath, string workingDirectory, string presetName, string shutdownFilePath)
+    public void Start(string executablePath, string workingDirectory, string presetName,
+        string shutdownFilePath, string? raceControlDirectory = null,
+        RaceSimulationLaunchOptions? simulation = null)
     {
         if (_process is { HasExited: false })
         {
@@ -26,20 +29,11 @@ public sealed class ServerProcessController : IDisposable
         {
             File.Delete(shutdownFilePath);
         }
+        if (!string.IsNullOrWhiteSpace(raceControlDirectory))
+            PrepareRaceControlDirectory(raceControlDirectory);
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = executablePath,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("--preset");
-        startInfo.ArgumentList.Add(presetName);
-        startInfo.ArgumentList.Add("--shutdown-file");
-        startInfo.ArgumentList.Add(shutdownFilePath);
+        var startInfo = CreateStartInfo(executablePath, workingDirectory, presetName,
+            shutdownFilePath, raceControlDirectory, simulation);
 
         _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         _process.OutputDataReceived += OnOutput;
@@ -54,8 +48,9 @@ public sealed class ServerProcessController : IDisposable
 
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
+        IsSimulation = simulation != null;
         ChangeState(ServerProcessState.Running);
-        LogReceived?.Invoke(this, $"Server started (PID {_process.Id}).");
+        LogReceived?.Invoke(this, $"{(IsSimulation ? "Simulation" : "Server")} started (PID {_process.Id}).");
     }
 
     public async Task StopAsync(string shutdownFilePath, TimeSpan? timeout = null)
@@ -110,10 +105,63 @@ public sealed class ServerProcessController : IDisposable
         return stopped;
     }
 
-    public async Task RestartAsync(string executablePath, string workingDirectory, string presetName, string shutdownFilePath)
+    public async Task RestartAsync(string executablePath, string workingDirectory, string presetName,
+        string shutdownFilePath, string? raceControlDirectory = null,
+        RaceSimulationLaunchOptions? simulation = null)
     {
         await StopAsync(shutdownFilePath);
-        Start(executablePath, workingDirectory, presetName, shutdownFilePath);
+        Start(executablePath, workingDirectory, presetName, shutdownFilePath,
+            raceControlDirectory, simulation);
+    }
+
+    internal static ProcessStartInfo CreateStartInfo(string executablePath, string workingDirectory,
+        string presetName, string shutdownFilePath, string? raceControlDirectory,
+        RaceSimulationLaunchOptions? simulation)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executablePath,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        Add("--preset", presetName);
+        Add("--shutdown-file", shutdownFilePath);
+        if (!string.IsNullOrWhiteSpace(raceControlDirectory))
+            Add("--race-control-directory", raceControlDirectory);
+        if (simulation != null)
+        {
+            startInfo.ArgumentList.Add("--simulate-race");
+            Add("--simulation-output", simulation.OutputDirectory);
+            Add("--simulation-seed", simulation.Seed.ToString());
+            Add("--simulation-max-minutes", simulation.MaximumSimulatedMinutes.ToString());
+            Add("--simulation-max-wall-seconds", simulation.MaximumWallSeconds.ToString());
+            Add("--simulation-sample-ms", simulation.SampleIntervalMilliseconds.ToString());
+        }
+        return startInfo;
+
+        void Add(string name, string value)
+        {
+            startInfo.ArgumentList.Add(name);
+            startInfo.ArgumentList.Add(value);
+        }
+    }
+
+    private static void PrepareRaceControlDirectory(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        string commandsDirectory = Path.Combine(directory, "commands");
+        Directory.CreateDirectory(commandsDirectory);
+        foreach (string command in Directory.EnumerateFiles(commandsDirectory, "*.json"))
+            File.Delete(command);
+        foreach (string liveFile in new[] { "state.json", "track.json" })
+        {
+            string path = Path.Combine(directory, liveFile);
+            if (File.Exists(path))
+                File.Delete(path);
+        }
     }
 
     private void OnOutput(object sender, DataReceivedEventArgs args)
@@ -131,7 +179,10 @@ public sealed class ServerProcessController : IDisposable
         int? exitCode = TryGetExitCode(exitedProcess);
         LogReceived?.Invoke(this, $"Server exited{(exitCode is null ? string.Empty : $" with code {exitCode}")}.");
         if (ReferenceEquals(_process, exitedProcess))
+        {
+            IsSimulation = false;
             ChangeState(ServerProcessState.Stopped);
+        }
     }
 
     internal static bool IsOwnedServerExecutable(string executablePath, string instancesDirectory)
@@ -199,6 +250,7 @@ public sealed class ServerProcessController : IDisposable
         process.Exited -= OnExited;
         process.Dispose();
         _process = null;
+        IsSimulation = false;
     }
 
     private void ChangeState(ServerProcessState state)
@@ -230,6 +282,13 @@ public sealed class ServerProcessController : IDisposable
         }
     }
 }
+
+public sealed record RaceSimulationLaunchOptions(
+    string OutputDirectory,
+    int Seed = 1,
+    int MaximumSimulatedMinutes = 45,
+    int MaximumWallSeconds = 300,
+    int SampleIntervalMilliseconds = 500);
 
 public enum ServerProcessState
 {

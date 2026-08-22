@@ -109,6 +109,9 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     {
         try
         {
+            if (CurrentSession.IsStoppedByRaceControl)
+                return;
+
             if (IsSessionOver())
                 NextSession();
 
@@ -627,6 +630,55 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
         SetSession(CurrentSessionIndex);
         return true;
+    }
+
+    public bool StartRaceFromControl()
+    {
+        int raceSessionId = _configuration.Sessions.FindIndex(session => session.Type == SessionType.Race);
+        if (raceSessionId < 0)
+            return false;
+
+        CurrentSessionIndex = raceSessionId;
+        SetSession(raceSessionId);
+        Log.Information("Race Control started race session {SessionId}", raceSessionId);
+        return true;
+    }
+
+    public bool RestartRaceFromControl()
+    {
+        int raceSessionId = CurrentSession.Configuration.Type == SessionType.Race
+            ? CurrentSessionIndex
+            : _configuration.Sessions.FindIndex(session => session.Type == SessionType.Race);
+        if (raceSessionId < 0)
+            return false;
+
+        CurrentSessionIndex = raceSessionId;
+        SetSession(raceSessionId);
+        Log.Information("Race Control restarted race session {SessionId}", raceSessionId);
+        return true;
+    }
+
+    public bool StopRaceFromControl()
+    {
+        if (CurrentSession.Configuration.Type != SessionType.Race)
+            return false;
+
+        CurrentSession.IsStoppedByRaceControl = true;
+        CurrentSession.EndTimeMilliseconds = ServerTimeMilliseconds;
+        if (CurrentSession.Results != null)
+        {
+            MarkUnfinishedParticipantsDnf(CurrentSession.Results);
+            RaceParticipantPolicy.RefreshClassification(CurrentSession.Results);
+        }
+        SendSessionOver();
+        Log.Information("Race Control stopped race session {SessionId}", CurrentSessionIndex);
+        return true;
+    }
+
+    internal static void MarkUnfinishedParticipantsDnf(IDictionary<byte, EntryCarResult> results)
+    {
+        foreach (var result in results.Values.Where(result => !result.HasCompletedLastLap))
+            result.IsDnf = true;
     }
 
     public bool NextSession()

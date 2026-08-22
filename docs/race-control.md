@@ -26,6 +26,20 @@ The native menu bar groups event actions under **File**, appearance under **View
 
 Settings also control compact grid rows, loading the most recent saved race at startup, returning to the last open page, and confirmation before an active server is stopped on exit. These application-wide preferences are independent of race presets and are saved in `%LocalAppData%\AssettoServer Race Control\settings.json`.
 
+## Live Race view
+
+`LIVE RACE` provides a server-authoritative top-down view of every active bot and connected human. Select a car and clear **Full track view** to follow it, adjust the follow-view width, or enable the full-track camera to see the complete staged AI centerline.
+
+The controls deliberately distinguish the process from the session:
+
+- **Start live server**, **Stop server**, and **Restart server** manage the AssettoServer process.
+- **Start race** selects the configured race and begins its normal grid countdown even with zero humans.
+- **Stop race** broadcasts race-over, classifies unfinished participants as DNF, holds the bots, and leaves the server online.
+- **Restart race** rebuilds the race state and starts a fresh countdown regardless of connected-player count.
+- **Simulate race** stages the current setup and runs its bots with deterministic virtual time and no network listeners. Seed and maximum simulated time are set beside the button.
+
+Live control is local-only. Race Control passes a private directory inside the staged instance; AssettoServer writes `state.json` and `track.json` there and consumes single-use command files from `commands`. No unauthenticated control API is exposed on the LAN HTTP port.
+
 ## Content Manager interoperation
 
 **Import latest CM preset** reads the most recently modified `server_cfg.ini` and `entry_list.ini` pair under `<Assetto Corsa>\server\presets`. A single imported entry is cloned to the two-slot minimum. Import does not modify the CM preset.

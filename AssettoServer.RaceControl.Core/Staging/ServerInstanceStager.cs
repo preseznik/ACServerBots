@@ -69,7 +69,7 @@ public sealed class ServerInstanceStager
             cancellationToken);
 
         progress?.Report(new("Content", "Copying checksums and AI line…", 0.7));
-        CopyServerContent(root, rendered, preset.Bots.Enabled);
+        CopyServerContent(root, rendered);
 
         var cacheHit = false;
         if (preset.Bots.Enabled)
@@ -167,7 +167,7 @@ public sealed class ServerInstanceStager
         }
     }
 
-    private static void CopyServerContent(string root, RenderedServerConfiguration rendered, bool botsEnabled)
+    private static void CopyServerContent(string root, RenderedServerConfiguration rendered)
     {
         foreach (var car in rendered.Cars)
         {
@@ -181,10 +181,8 @@ public sealed class ServerInstanceStager
             File.Copy(car.DataAcdPath, Path.Combine(carDestination, "data.acd"), true);
         }
 
-        if (!botsEnabled)
-        {
+        if (!File.Exists(rendered.Track.FastLanePath))
             return;
-        }
 
         var aiDestination = string.IsNullOrEmpty(rendered.Track.LayoutId)
             ? Path.Combine(root, "content", "tracks", rendered.Track.TrackId, "ai")

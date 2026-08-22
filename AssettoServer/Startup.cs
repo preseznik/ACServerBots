@@ -80,6 +80,8 @@ public class Startup
         else
             builder.RegisterType<SignalHandler>().AsSelf().As<IHostedService>().SingleInstance();
         builder.RegisterType<HttpInfoCache>().AsSelf().As<IHostedService>().SingleInstance();
+        if (_runtimeOptions.RaceControlDirectory != null)
+            builder.RegisterType<RaceControlBridge>().AsSelf().As<IHostedService>().SingleInstance();
         if (_runtimeOptions.IsRaceSimulation)
             builder.RegisterType<RaceSimulationTelemetry>().AsSelf().As<IHostedService>().SingleInstance();
         if (!_runtimeOptions.IsRaceSimulation)

@@ -744,6 +744,30 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void RaceControlStopMarksOnlyUnfinishedParticipantsDnf()
+    {
+        var finished = Result("Finished", laps: 3, total: 300_000);
+        finished.HasCompletedLastLap = true;
+        var running = Result("Running", laps: 2, total: 200_000);
+        var alreadyDnf = Result("DNF", laps: 1, total: 100_000, dnf: true);
+        var results = new Dictionary<byte, EntryCarResult>
+        {
+            [0] = finished,
+            [1] = running,
+            [2] = alreadyDnf,
+        };
+
+        SessionManager.MarkUnfinishedParticipantsDnf(results);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(finished.IsDnf, Is.False);
+            Assert.That(running.IsDnf, Is.True);
+            Assert.That(alreadyDnf.IsDnf, Is.True);
+        });
+    }
+
+    [Test]
     public void RaceCompletionWaitsForActiveHumanAndBotButNotDnf()
     {
         var finished = Result("Finished", 3, 300_000);

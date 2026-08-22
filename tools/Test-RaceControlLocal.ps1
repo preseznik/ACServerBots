@@ -15,7 +15,9 @@ param(
     [ValidateRange(0, 1)]
     [double] $BotAggression = 0.5,
     [switch] $VerifyMovingBots,
-    [switch] $VerifyPassing
+    [switch] $VerifyPassing,
+    [switch] $VerifyLiveControl,
+    [switch] $SimulateRace
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,6 +27,7 @@ if ($VerifyMovingBots -and $SmokeSeconds -lt 30) {
 if ($VerifyPassing -and -not $VerifyMovingBots) {
     throw '-VerifyPassing requires -VerifyMovingBots.'
 }
+if ($SimulateRace) { $VerifyLiveControl = $true }
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($RaceControlBuild)) {
     $RaceControlBuild = Join-Path $repositoryRoot 'out-race-control'
@@ -60,7 +63,7 @@ $preset.Network.TcpPort = 19600
 $preset.Network.UdpPort = 19600
 $preset.Network.HttpPort = 18081
 $preset.Sessions.PracticeMinutes = 2
-$preset.Sessions.RaceLaps = 3
+$preset.Sessions.RaceLaps = if ($SimulateRace) { 99 } else { 3 }
 $preset.Sessions.PracticeEnabled = -not $VerifyMovingBots
 $preset.Bots.Enabled = $true
 $preset.Bots.Aggression = $BotAggression
@@ -97,9 +100,76 @@ Write-Host "Staged $($instance.SlotCount) slots ($($instance.BotSlotCount) bot-c
 $stdout = Join-Path $instance.RootPath 'acceptance-stdout.log'
 $stderr = Join-Path $instance.RootPath 'acceptance-stderr.log'
 $arguments = @('--preset', $instance.PresetName, '--shutdown-file', $instance.ShutdownFilePath)
+$liveClient = $null
+if ($VerifyLiveControl) {
+    $liveClient = [AssettoServer.RaceControl.Core.Runtime.LiveRaceControlClient]::new($instance.RootPath)
+    $arguments += @('--race-control-directory', $liveClient.ControlDirectory)
+}
+if ($SimulateRace) {
+    $simulationOutput = Join-Path $instance.RootPath 'simulation-live-acceptance'
+    $arguments += @('--simulate-race', '--simulation-output', $simulationOutput,
+        '--simulation-seed', '23', '--simulation-max-minutes', '30',
+        '--simulation-max-wall-seconds', '60')
+}
 $serverProcess = Start-Process -FilePath $instance.ExecutablePath -WorkingDirectory $instance.RootPath `
     -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
 try {
+    if ($VerifyLiveControl) {
+        function Wait-LiveState([scriptblock] $Condition, [string] $Description) {
+            $deadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+            while ([DateTimeOffset]::UtcNow -lt $deadline) {
+                $state = $liveClient.TryReadSnapshot()
+                if ($null -ne $state -and (& $Condition $state)) { return $state }
+                Start-Sleep -Milliseconds 100
+            }
+            throw "Timed out waiting for live Race Control state: $Description"
+        }
+
+        $initialState = Wait-LiveState { param($state) $state.ServerRunning -and $state.Cars.Count -eq $Slots } 'initial snapshot'
+        if ($SimulateRace -and -not $initialState.IsSimulation) {
+            throw 'Live snapshot did not identify the accelerated simulation mode.'
+        }
+        $trackMap = $liveClient.TryReadTrack()
+        if ($null -eq $trackMap -or $trackMap.Points.Count -lt 20) {
+            throw 'Live Race Control track map is missing or unusable.'
+        }
+
+        $startId = $liveClient.SendCommandAsync(
+            [AssettoServer.RaceControl.Core.Runtime.LiveRaceCommand]::Start).GetAwaiter().GetResult()
+        $startedState = Wait-LiveState { param($state)
+            $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $startId -and
+            $state.LastCommand.Status -eq 'accepted' -and $state.Session.Type -eq 'Race'
+        } 'start-race acknowledgement'
+
+        if ($SimulateRace) {
+            $movingState = Wait-LiveState { param($state)
+                @($state.Cars | Where-Object {
+                    $_.SpeedKmh -gt 1 -and ([Math]::Abs($_.X) -gt 1 -or [Math]::Abs($_.Z) -gt 1)
+                }).Count -gt 0
+            } 'moving car coordinates'
+        }
+
+        if (-not $SimulateRace) {
+            $stopId = $liveClient.SendCommandAsync(
+                [AssettoServer.RaceControl.Core.Runtime.LiveRaceCommand]::Stop).GetAwaiter().GetResult()
+            $stoppedState = Wait-LiveState { param($state)
+                $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $stopId -and
+                $state.LastCommand.Status -eq 'accepted' -and $state.Session.Phase -eq 'stopped'
+            } 'stop-race acknowledgement'
+            if (@($stoppedState.Cars | Where-Object IsActive | Where-Object { -not $_.IsDnf }).Count -gt 0) {
+                throw 'Stopping a race did not classify every unfinished active car as DNF.'
+            }
+
+            $restartId = $liveClient.SendCommandAsync(
+                [AssettoServer.RaceControl.Core.Runtime.LiveRaceCommand]::Restart).GetAwaiter().GetResult()
+            $restartedState = Wait-LiveState { param($state)
+                $null -ne $state.LastCommand -and $state.LastCommand.Id -eq $restartId -and
+                $state.LastCommand.Status -eq 'accepted' -and $state.Session.Type -eq 'Race' -and
+                $state.Session.Phase -in @('countdown', 'racing')
+            } 'restart-race acknowledgement'
+        }
+    }
+
     Start-Sleep -Seconds $SmokeSeconds
     if ($serverProcess.HasExited) {
         throw "Server exited early with code $($serverProcess.ExitCode): $((Get-Content -Raw -LiteralPath $stderr -ErrorAction SilentlyContinue))"
@@ -107,6 +177,12 @@ try {
     $startupLog = Get-Content -Raw -LiteralPath $stdout -ErrorAction SilentlyContinue
     if ($startupLog -match 'Fatal exception occurred|\sFTL\]') {
         throw "Server reported a fatal startup error: $startupLog"
+    }
+    if ($SimulateRace) {
+        $simulationState = $liveClient.TryReadSnapshot()
+        if ($null -eq $simulationState -or $simulationState.RealTimeFactor -le 1) {
+            throw 'Accelerated live simulation did not advance faster than real time.'
+        }
     }
 
     [IO.File]::WriteAllText($instance.ShutdownFilePath, 'stop')
@@ -126,8 +202,16 @@ try {
 
 $combinedLog = (Get-Content -Raw -LiteralPath $stdout -ErrorAction SilentlyContinue) + [Environment]::NewLine + `
     (Get-Content -Raw -LiteralPath $stderr -ErrorAction SilentlyContinue)
-if ($combinedLog -notmatch 'Using preset race-control') { throw 'Server log did not confirm the generated preset' }
+$presetLogPattern = if ($SimulateRace) {
+    'Running network-free race simulation for preset race-control'
+} else {
+    'Using preset race-control'
+}
+if ($combinedLog -notmatch $presetLogPattern) { throw 'Server log did not confirm the generated preset' }
 if ($combinedLog -notmatch 'Shutdown requested by control file') { throw 'Server log did not confirm graceful control-file shutdown' }
+if ($VerifyLiveControl -and $combinedLog -notmatch 'Race Control live bridge ready') {
+    throw 'Server log did not confirm the Race Control live bridge.'
+}
 if ($VerifyMovingBots) {
     $samples = @([regex]::Matches($combinedLog,
         'Race physics: \d+ bots, Y (?<min>-?\d+(?:\.\d+)?)\.\.(?<max>-?\d+(?:\.\d+)?) m, max speed (?<speed>\d+(?:\.\d+)?) m/s, max rise (?<rise>\d+(?:\.\d+)?) m/s, height error (?<height>\d+(?:\.\d+)?) m, suspension (?<suspension>\d+(?:\.\d+)?) m'))

@@ -23,6 +23,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly ServerConfigurationRenderer _renderer = new();
     private readonly CmPresetService _cmPresetService = new();
     private readonly ServerProcessController _processController = new();
+    private readonly CancellationTokenSource _liveMonitorCancellation = new();
     private PresetStore? _presetStore;
     private RaceControlPreset _preset = new();
     private AcContentCatalog? _catalog;
@@ -38,6 +39,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _progressText = string.Empty;
     private double _progressValue;
     private string _logText = string.Empty;
+    private LiveRaceSnapshot? _liveSnapshot;
+    private LiveTrackMap? _liveTrack;
+    private LiveRaceCar? _selectedLiveCar;
+    private string _liveControlStatus = "Start a server or simulation to open live telemetry.";
+    private bool _fullTrackView = true;
+    private double _liveZoomMeters = 180;
+    private int _simulationSeed = 1;
+    private int _simulationMaximumMinutes = 45;
+    private Guid? _pendingLiveCommandId;
+    private readonly Task _liveMonitorTask;
 
     public MainViewModel()
     {
@@ -58,6 +69,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         LaunchCommand = new AsyncRelayCommand(StageAndLaunchAsync, () => _catalog is not null && !IsBusy && _processController.State == ServerProcessState.Stopped);
         StopCommand = new AsyncRelayCommand(StopServerAsync, () => _processController.State != ServerProcessState.Stopped);
         RestartCommand = new AsyncRelayCommand(RestartServerAsync, () => _lastInstance is not null && _processController.State == ServerProcessState.Running);
+        SimulateRaceCommand = new AsyncRelayCommand(SimulateRaceAsync,
+            () => _catalog is not null && !IsBusy && _processController.State == ServerProcessState.Stopped);
+        StartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Start), CanControlLiveRace);
+        StopRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Stop), CanControlLiveRace);
+        RestartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Restart), CanControlLiveRace);
         OpenInstanceCommand = new RelayCommand(OpenInstance, () => _lastInstance is not null || SelectedRecentInstance is not null);
         OpenContentManagerCommand = new RelayCommand(OpenContentManager);
         ClearLogCommand = new RelayCommand(() => LogText = string.Empty);
@@ -69,6 +85,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsServerRunning));
             RaiseCommandStates();
         });
+        _liveMonitorTask = MonitorLiveRaceAsync(_liveMonitorCancellation.Token);
     }
 
     public RaceControlPreset Preset
@@ -91,6 +108,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<PresetSummary> SavedPresets { get; } = [];
     public ObservableCollection<InstanceSummary> RecentInstances { get; } = [];
     public ObservableCollection<string> NetworkAddresses { get; } = [];
+    public ObservableCollection<LiveRaceCar> LiveCars { get; } = [];
     public IReadOnlyList<SlotMode> SlotModes { get; } = Enum.GetValues<SlotMode>();
     public IReadOnlyList<PhysicsFidelity> PhysicsFidelities { get; } = Enum.GetValues<PhysicsFidelity>();
 
@@ -171,6 +189,60 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    public LiveRaceSnapshot? LiveSnapshot
+    {
+        get => _liveSnapshot;
+        private set => SetProperty(ref _liveSnapshot, value);
+    }
+
+    public LiveTrackMap? LiveTrack
+    {
+        get => _liveTrack;
+        private set => SetProperty(ref _liveTrack, value);
+    }
+
+    public LiveRaceCar? SelectedLiveCar
+    {
+        get => _selectedLiveCar;
+        set
+        {
+            if (SetProperty(ref _selectedLiveCar, value))
+                OnPropertyChanged(nameof(SelectedLiveCarSessionId));
+        }
+    }
+
+    public int SelectedLiveCarSessionId => SelectedLiveCar?.SessionId ?? -1;
+
+    public bool FullTrackView
+    {
+        get => _fullTrackView;
+        set => SetProperty(ref _fullTrackView, value);
+    }
+
+    public double LiveZoomMeters
+    {
+        get => _liveZoomMeters;
+        set => SetProperty(ref _liveZoomMeters, value);
+    }
+
+    public int SimulationSeed
+    {
+        get => _simulationSeed;
+        set => SetProperty(ref _simulationSeed, Math.Max(1, value));
+    }
+
+    public int SimulationMaximumMinutes
+    {
+        get => _simulationMaximumMinutes;
+        set => SetProperty(ref _simulationMaximumMinutes, Math.Clamp(value, 1, 1440));
+    }
+
+    public string LiveControlStatus
+    {
+        get => _liveControlStatus;
+        private set => SetProperty(ref _liveControlStatus, value);
+    }
+
     public int SelectedPageIndex
     {
         get => _selectedPageIndex;
@@ -204,11 +276,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string EventTitle => string.IsNullOrWhiteSpace(Preset.Name) ? "Untitled LAN race" : Preset.Name;
     public string ServerStateText => _processController.State switch
     {
-        ServerProcessState.Running => $"RUNNING  •  PID {_processController.ProcessId}",
+        ServerProcessState.Running => $"{(_processController.IsSimulation ? "SIMULATING" : "RUNNING")}  •  PID {_processController.ProcessId}",
         ServerProcessState.Stopping => "STOPPING",
         _ => "OFFLINE",
     };
     public bool IsServerRunning => _processController.State == ServerProcessState.Running;
+    public string LiveSessionSummary => LiveSnapshot is null
+        ? "No live server telemetry"
+        : $"{LiveSnapshot.Session.Name}  •  {LiveSnapshot.Session.Phase.ToUpperInvariant()}  •  "
+          + $"{LiveSnapshot.Cars.Count(car => car.IsActive)} active cars";
+    public string LiveTimingSummary => LiveSnapshot is null
+        ? "Waiting for a staged server instance"
+        : LiveSnapshot.Session.Phase == "countdown"
+            ? $"Race starts in {TimeSpan.FromMilliseconds(LiveSnapshot.Session.CountdownMilliseconds):mm\\:ss}"
+            : LiveSnapshot.IsSimulation
+                ? $"Accelerated simulation  •  {LiveSnapshot.RealTimeFactor:F1}× real time"
+                : $"Server time {TimeSpan.FromMilliseconds(LiveSnapshot.SimulatedMilliseconds):hh\\:mm\\:ss}";
     public string SelectedTrackDetails => SelectedTrack is null
         ? "No track selected"
         : $"{SelectedTrack.Country}  •  {SelectedTrack.PitBoxes} pit boxes  •  {(SelectedTrack.HasFastLane ? "AI line ready" : "no AI line")}";
@@ -236,6 +319,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand LaunchCommand { get; }
     public AsyncRelayCommand StopCommand { get; }
     public AsyncRelayCommand RestartCommand { get; }
+    public AsyncRelayCommand SimulateRaceCommand { get; }
+    public AsyncRelayCommand StartRaceCommand { get; }
+    public AsyncRelayCommand StopRaceCommand { get; }
+    public AsyncRelayCommand RestartRaceCommand { get; }
     public RelayCommand OpenInstanceCommand { get; }
     public RelayCommand OpenContentManagerCommand { get; }
     public RelayCommand ClearLogCommand { get; }
@@ -273,7 +360,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
             await RefreshContentInternalAsync();
             SelectedPageIndex = settings?.RememberLastPage == true
-                ? Math.Clamp(settings.LastPageIndex, 0, 5)
+                ? Math.Clamp(settings.LastPageIndex, 0, 6)
                 : 0;
             StatusText = $"Found {Cars.Count} cars and {Tracks.Count} track layouts.";
         }
@@ -642,9 +729,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the new race…";
             _lastInstance = await StageAsync();
-            _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath, _lastInstance.PresetName, _lastInstance.ShutdownFilePath);
+            var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
+            _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
+                _lastInstance.PresetName, _lastInstance.ShutdownFilePath,
+                liveClient.ControlDirectory);
             StatusText = $"Server is running on {Preset.Network.BindAddress}:{Preset.Network.HttpPort}.";
-            SelectedPageIndex = 5;
+            LiveControlStatus = "Waiting for authoritative server telemetry…";
+            SelectedPageIndex = 6;
         }
         catch (Exception exception)
         {
@@ -718,17 +809,164 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         try
         {
+            bool restartSimulation = _processController.IsSimulation;
+            var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             await _processController.RestartAsync(
                 _lastInstance.ExecutablePath,
                 _lastInstance.RootPath,
                 _lastInstance.PresetName,
-                _lastInstance.ShutdownFilePath);
-            StatusText = "Server restarted.";
+                _lastInstance.ShutdownFilePath,
+                liveClient.ControlDirectory,
+                restartSimulation ? CreateSimulationLaunchOptions(_lastInstance.RootPath) : null);
+            StatusText = restartSimulation ? "Race simulation restarted." : "Server restarted.";
+            LiveControlStatus = "Waiting for restarted server telemetry…";
+            SelectedPageIndex = 6;
         }
         catch (Exception exception)
         {
             HandleException("Could not restart server", exception);
         }
+    }
+
+    private async Task SimulateRaceAsync()
+    {
+        try
+        {
+            IsBusy = true;
+            SyncGridToPreset();
+            if (!Preset.Bots.Enabled)
+                throw new InvalidOperationException("Enable race bots before starting an accelerated simulation.");
+            if (Preset.Grid.Count(slot => slot.Mode != SlotMode.None) < 2)
+                throw new InvalidOperationException("Accelerated simulation requires at least two bot-capable grid slots.");
+
+            int recoveredServers = await _processController.StopOrphanedServersAsync(
+                _paths.InstancesDirectory);
+            if (recoveredServers > 0)
+                StatusText = $"Stopped {recoveredServers} previous server process(es); staging the simulation…";
+            _lastInstance = await StageAsync();
+            var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
+            _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
+                _lastInstance.PresetName, _lastInstance.ShutdownFilePath,
+                liveClient.ControlDirectory, CreateSimulationLaunchOptions(_lastInstance.RootPath));
+            StatusText = $"Accelerated race simulation started with seed {SimulationSeed}.";
+            LiveControlStatus = "Waiting for simulation telemetry…";
+            SelectedPageIndex = 6;
+        }
+        catch (Exception exception)
+        {
+            HandleException("Race simulation failed", exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private RaceSimulationLaunchOptions CreateSimulationLaunchOptions(string instanceRoot) => new(
+        LiveRaceControlClient.GetSimulationOutputDirectory(instanceRoot),
+        SimulationSeed,
+        SimulationMaximumMinutes,
+        MaximumWallSeconds: 300,
+        SampleIntervalMilliseconds: 500);
+
+    private bool CanControlLiveRace() =>
+        _lastInstance is not null && _processController.State == ServerProcessState.Running;
+
+    private async Task SendLiveRaceCommandAsync(LiveRaceCommand command)
+    {
+        if (_lastInstance is null)
+            return;
+        try
+        {
+            var client = new LiveRaceControlClient(_lastInstance.RootPath);
+            _pendingLiveCommandId = await client.SendCommandAsync(command);
+            LiveControlStatus = $"Race {command.ToString().ToLowerInvariant()} requested…";
+        }
+        catch (Exception exception)
+        {
+            HandleException($"Could not {command.ToString().ToLowerInvariant()} race", exception);
+        }
+    }
+
+    private async Task MonitorLiveRaceAsync(CancellationToken cancellationToken)
+    {
+        string? observedInstance = null;
+        bool trackLoaded = false;
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var instance = _lastInstance;
+                if (instance != null)
+                {
+                    if (!instance.RootPath.Equals(observedInstance, StringComparison.OrdinalIgnoreCase))
+                    {
+                        observedInstance = instance.RootPath;
+                        trackLoaded = false;
+                        RunOnUi(() =>
+                        {
+                            LiveSnapshot = null;
+                            LiveTrack = null;
+                            LiveCars.Clear();
+                            SelectedLiveCar = null;
+                            OnPropertyChanged(nameof(LiveSessionSummary));
+                            OnPropertyChanged(nameof(LiveTimingSummary));
+                        });
+                    }
+
+                    var client = new LiveRaceControlClient(instance.RootPath);
+                    var snapshot = client.TryReadSnapshot();
+                    LiveTrackMap? track = null;
+                    if (!trackLoaded)
+                    {
+                        track = client.TryReadTrack();
+                        trackLoaded = track != null;
+                    }
+                    if (snapshot != null || track != null)
+                        RunOnUi(() => ApplyLiveUpdate(snapshot, track));
+                }
+
+                await Task.Delay(100, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private void ApplyLiveUpdate(LiveRaceSnapshot? snapshot, LiveTrackMap? track)
+    {
+        if (track != null)
+            LiveTrack = track;
+        if (snapshot == null)
+            return;
+
+        int selectedSessionId = SelectedLiveCar?.SessionId ?? -1;
+        LiveSnapshot = snapshot;
+        Replace(LiveCars, snapshot.Cars);
+        SelectedLiveCar = LiveCars.FirstOrDefault(car => car.SessionId == selectedSessionId)
+                          ?? LiveCars.FirstOrDefault(car => car.IsActive)
+                          ?? LiveCars.FirstOrDefault();
+        if (_pendingLiveCommandId.HasValue
+            && snapshot.LastCommand?.Id == _pendingLiveCommandId.Value)
+        {
+            LiveControlStatus = snapshot.LastCommand.Message;
+            _pendingLiveCommandId = null;
+        }
+        else if (!snapshot.ServerRunning)
+        {
+            LiveControlStatus = "Server is offline. The last authoritative frame remains visible.";
+        }
+        else if (snapshot.IsSimulation)
+        {
+            LiveControlStatus = $"Simulation running at {snapshot.RealTimeFactor:F1}× real time.";
+        }
+        else
+        {
+            LiveControlStatus = "Live server telemetry connected.";
+        }
+        OnPropertyChanged(nameof(LiveSessionSummary));
+        OnPropertyChanged(nameof(LiveTimingSummary));
     }
 
     private void OpenInstance()
@@ -803,6 +1041,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         LaunchCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();
         RestartCommand.RaiseCanExecuteChanged();
+        SimulateRaceCommand.RaiseCanExecuteChanged();
+        StartRaceCommand.RaiseCanExecuteChanged();
+        StopRaceCommand.RaiseCanExecuteChanged();
+        RestartRaceCommand.RaiseCanExecuteChanged();
         OpenInstanceCommand.RaiseCanExecuteChanged();
     }
 
@@ -856,5 +1098,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void Dispose() => _processController.Dispose();
+    public void Dispose()
+    {
+        _liveMonitorCancellation.Cancel();
+        _liveMonitorCancellation.Dispose();
+        _processController.Dispose();
+        GC.KeepAlive(_liveMonitorTask);
+    }
 }
