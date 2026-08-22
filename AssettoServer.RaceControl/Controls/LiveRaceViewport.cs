@@ -27,6 +27,14 @@ public sealed class LiveRaceViewport : FrameworkElement
 
     private readonly List<CarHitTarget> _carHitTargets = [];
 
+    public LiveRaceViewport()
+    {
+        // FrameworkElement does not clip custom drawing by default. Focus mode deliberately
+        // renders only a window around one car, so the rest of the track must not bleed into
+        // adjacent navigation and details panels.
+        ClipToBounds = true;
+    }
+
     public LiveRaceSnapshot? Snapshot
     {
         get => (LiveRaceSnapshot?)GetValue(SnapshotProperty);
