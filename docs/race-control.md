@@ -96,7 +96,7 @@ For repeated bot-only regression races across installed tracks, use:
 .\tools\Test-RaceBotsMatrix.ps1 -Slots 8 -Seeds 1,2,3
 ```
 
-The runner uses the bundled server's network-free virtual-time mode, preserves structured per-run telemetry, and writes an aggregate report under `.artifacts\race-bot-matrix`. It never edits installed Assetto Corsa content. The local acceptance runner also supports `-SimulateRace -SimulationTimeScale 10` to verify paced live telemetry and the versioned per-car result fields.
+The runner uses the bundled server's network-free virtual-time mode, preserves structured per-run telemetry, and writes an aggregate report under `.artifacts\race-bot-matrix`. It never edits installed Assetto Corsa content. The local acceptance runner also supports `-SimulateRace -SimulationTimeScale 10` to verify paced live telemetry and the versioned per-car result fields. Add `-VerifyStoppedObstaclePassing` to stop the settled race leader and require another bot to steer around it, complete the pass, and gain race position before the test can pass.
 
 ## Current limits
 

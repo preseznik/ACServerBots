@@ -91,6 +91,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public required float ProtocolReferenceHeight { get; init; }
         public required float MaximumSuspensionCompression { get; init; }
         public required float WheelbaseMeters { get; init; }
+        public required float HalfWidthMeters { get; init; }
         public required WheelShape[] Wheels { get; init; }
     }
 
@@ -167,8 +168,9 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         {
             var collider = CreateVehicleCollider(vertices, _asset.CarWheelColliders[model]);
             _colliders.Add(model, collider);
-            Log.Debug("Race collider {Model}: AC protocol reference height {Height:F3} m, wheelbase {Wheelbase:F2} m",
-                model, collider.ProtocolReferenceHeight, collider.WheelbaseMeters);
+            Log.Debug("Race collider {Model}: AC protocol reference height {Height:F3} m, wheelbase {Wheelbase:F2} m, half width {HalfWidth:F2} m",
+                model, collider.ProtocolReferenceHeight, collider.WheelbaseMeters,
+                collider.HalfWidthMeters);
         }
 
         Log.Information("Rigid-body race world loaded: {DriveTriangles} drivable and {BarrierTriangles} barrier triangles, "
@@ -183,6 +185,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             throw new ConfigurationException($"Track physics asset exposes {_asset.Grid.Count} grid slots but slot {gridIndex} was requested");
         return _asset.Grid[gridIndex];
     }
+
+    public float GetVehicleHalfWidthMeters(string model) => GetCollider(model).HalfWidthMeters;
 
     public void RegisterBot(byte sessionId, string model, RaceGridPose pose, float massKg)
     {
@@ -1023,8 +1027,20 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             MaximumSuspensionCompression = wheels.Average(wheel =>
                 GetSuspensionCompressionLimit(wheel.Radius)),
             WheelbaseMeters = GetWheelbaseMeters(wheels),
+            HalfWidthMeters = GetVehicleHalfWidthMeters(chassisVertices, wheels),
             Wheels = wheelShapes
         };
+    }
+
+    internal static float GetVehicleHalfWidthMeters(Vector3[] chassisVertices,
+        RaceWheelCollider[] wheels)
+    {
+        float halfWidth = chassisVertices.Length == 0
+            ? 0
+            : chassisVertices.Max(vertex => Math.Abs(vertex.X));
+        foreach (var wheel in wheels)
+            halfWidth = Math.Max(halfWidth, Math.Abs(wheel.Center.X) + wheel.Radius);
+        return Math.Clamp(halfWidth, 0.5f, 3f);
     }
 
     private WheelBody[] CreateSuspendedWheels(byte sessionId, RaceGridPose pose, BodyHandle chassisHandle,

@@ -328,6 +328,8 @@ public sealed class RaceControlBridge : IHostedService
                 speedKmh = Math.Sqrt(velocity.X * velocity.X + velocity.Z * velocity.Z) * 3.6,
                 normalizedPosition,
                 lap = result?.NumLaps ?? 0,
+                stoppedObstaclePassCommits = ai?.StoppedObstaclePassCommitCount ?? 0,
+                stoppedObstaclePassesCompleted = ai?.StoppedObstaclePassCompletedCount ?? 0,
                 racePosition = result == null ? null : (int?)result.RacePos + 1,
                 isDnf = result?.IsDnf ?? false,
                 hasFinished = result?.HasCompletedLastLap ?? false,

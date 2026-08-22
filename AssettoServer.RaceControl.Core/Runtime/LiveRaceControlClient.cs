@@ -228,6 +228,8 @@ public sealed class LiveRaceCar
     public double SpeedKmh { get; set; }
     public float NormalizedPosition { get; set; }
     public uint Lap { get; set; }
+    public int StoppedObstaclePassCommits { get; set; }
+    public int StoppedObstaclePassesCompleted { get; set; }
     public int? RacePosition { get; set; }
     public bool IsDnf { get; set; }
     public bool HasFinished { get; set; }

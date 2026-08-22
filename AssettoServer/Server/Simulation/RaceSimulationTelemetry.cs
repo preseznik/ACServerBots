@@ -45,7 +45,8 @@ public sealed class RaceSimulationTelemetry : IHostedService
     private string _completionReason = "cancelled";
 
     private readonly record struct BotCounters(uint Laps, int Recoveries, int PassCommits,
-        int SeparatedPasses, int CompletedPasses);
+        int SeparatedPasses, int CompletedPasses, int StoppedObstaclePassCommits,
+        int StoppedObstaclePassesCompleted);
 
     public RaceSimulationTelemetry(ACServerConfiguration configuration,
         ServerRuntimeOptions runtimeOptions,
@@ -175,7 +176,9 @@ public sealed class RaceSimulationTelemetry : IHostedService
                 ? result.NumLaps
                 : 0;
             var current = new BotCounters(laps, physics.RecoveryCount, ai.Value.PassCommitCount,
-                ai.Value.SeparatedPassCount, ai.Value.CompletedPassCount);
+                ai.Value.SeparatedPassCount, ai.Value.CompletedPassCount,
+                ai.Value.StoppedObstaclePassCommitCount,
+                ai.Value.StoppedObstaclePassCompletedCount);
             _previous.TryGetValue(car.SessionId, out var previous);
 
             WriteCounterEvents(car, "lap_completed", previous.Laps, current.Laps);
@@ -185,6 +188,10 @@ public sealed class RaceSimulationTelemetry : IHostedService
             WriteCounterEvents(car, "pass_committed", previous.PassCommits, current.PassCommits);
             WriteCounterEvents(car, "pass_separated", previous.SeparatedPasses, current.SeparatedPasses);
             WriteCounterEvents(car, "pass_completed", previous.CompletedPasses, current.CompletedPasses);
+            WriteCounterEvents(car, "stopped_obstacle_pass_committed",
+                previous.StoppedObstaclePassCommits, current.StoppedObstaclePassCommits);
+            WriteCounterEvents(car, "stopped_obstacle_pass_completed",
+                previous.StoppedObstaclePassesCompleted, current.StoppedObstaclePassesCompleted);
             _previous[car.SessionId] = current;
         }
     }
@@ -253,6 +260,8 @@ public sealed class RaceSimulationTelemetry : IHostedService
                 passCommits = ai.Value.PassCommitCount,
                 separatedPasses = ai.Value.SeparatedPassCount,
                 completedPasses = ai.Value.CompletedPassCount,
+                stoppedObstaclePassCommits = ai.Value.StoppedObstaclePassCommitCount,
+                stoppedObstaclePassesCompleted = ai.Value.StoppedObstaclePassCompletedCount,
             });
         }
 
@@ -373,6 +382,10 @@ public sealed class RaceSimulationTelemetry : IHostedService
             passCommits = _previous.Values.Sum(value => value.PassCommits),
             separatedPasses = _previous.Values.Sum(value => value.SeparatedPasses),
             completedPasses = _previous.Values.Sum(value => value.CompletedPasses),
+            stoppedObstaclePassCommits = _previous.Values.Sum(value =>
+                value.StoppedObstaclePassCommits),
+            stoppedObstaclePassesCompleted = _previous.Values.Sum(value =>
+                value.StoppedObstaclePassesCompleted),
             physics = diagnostics,
             mostFrequentContactPair = new { contactPair.A, contactPair.B, contactPair.Count },
             results,

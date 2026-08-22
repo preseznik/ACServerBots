@@ -101,6 +101,8 @@ public class AiUpdater
                 int passCommits = 0;
                 int separatedPasses = 0;
                 int completedPasses = 0;
+                int stoppedPassCommits = 0;
+                int stoppedPassesCompleted = 0;
                 foreach (var entryCar in _entryCarManager.EntryCars)
                 {
                     var raceAi = entryCar.GetRaceAiDiagnostics();
@@ -111,6 +113,8 @@ public class AiUpdater
                     passCommits += raceAi.PassCommitCount;
                     separatedPasses += raceAi.SeparatedPassCount;
                     completedPasses += raceAi.CompletedPassCount;
+                    stoppedPassCommits += raceAi.StoppedObstaclePassCommitCount;
+                    stoppedPassesCompleted += raceAi.StoppedObstaclePassCompletedCount;
                 }
                 Log.Debug("Race physics: {BotCount} bots, Y {MinimumY:F2}..{MaximumY:F2} m, max speed {MaximumSpeed:F1} m/s, "
                           + "max rise {MaximumUpwardSpeed:F1} m/s, height error {MaximumSplineHeightError:F2} m, "
@@ -120,6 +124,7 @@ public class AiUpdater
                           + "launched {LaunchedBots}/{BotCount}, launch spread {LaunchStepSpread} ticks, "
                           + "lane offset {MaximumLaneOffset:F2} m, pass separation {MaximumPassSeparation:F2} m, "
                           + "passes {PassCommits}/{SeparatedPasses}/{CompletedPasses} committed/separated/completed, "
+                          + "stopped-obstacle passes {StoppedPassCommits}/{StoppedPassesCompleted} committed/completed, "
                           + "vehicle contacts {VehicleManifolds}, contact pair {ContactA}/{ContactB} ({ContactCount}), "
                           + "static pairs {StaticPairTests}, manifolds {StaticManifolds}",
                     diagnostics.BotCount, diagnostics.MinimumY, diagnostics.MaximumY, diagnostics.MaximumSpeed,
@@ -130,7 +135,7 @@ public class AiUpdater
                     diagnostics.TotalTrackCorrections, diagnostics.LaunchedBots, diagnostics.BotCount,
                     diagnostics.LaunchStepSpread,
                     maximumLaneOffset, maximumPassSeparation, passCommits, separatedPasses,
-                    completedPasses,
+                    completedPasses, stoppedPassCommits, stoppedPassesCompleted,
                     diagnostics.VehicleManifolds,
                     contactPair.A, contactPair.B, contactPair.Count,
                     diagnostics.StaticPairTests, diagnostics.StaticManifolds);

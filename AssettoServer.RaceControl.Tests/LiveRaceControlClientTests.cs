@@ -35,7 +35,8 @@ public sealed class LiveRaceControlClientTests
           "serverRunning": true,
           "isSimulation": false,
           "session": { "name": "Race", "type": "Race", "phase": "racing" },
-          "cars": [{ "sessionId": 2, "name": "Bot 3", "model": "bmw_m3_e30", "isBot": true, "isActive": true }]
+          "cars": [{ "sessionId": 2, "name": "Bot 3", "model": "bmw_m3_e30", "isBot": true, "isActive": true,
+            "stoppedObstaclePassCommits": 2, "stoppedObstaclePassesCompleted": 1 }]
         }
         """);
 
@@ -50,6 +51,8 @@ public sealed class LiveRaceControlClientTests
             Assert.That(snapshot!.Sequence, Is.EqualTo(7));
             Assert.That(snapshot.Session.Phase, Is.EqualTo("racing"));
             Assert.That(snapshot.Cars.Single().DisplayName, Does.Contain("Bot 3"));
+            Assert.That(snapshot.Cars.Single().StoppedObstaclePassCommits, Is.EqualTo(2));
+            Assert.That(snapshot.Cars.Single().StoppedObstaclePassesCompleted, Is.EqualTo(1));
             Assert.That(command.RootElement.GetProperty("id").GetGuid(), Is.EqualTo(commandId));
             Assert.That(command.RootElement.GetProperty("command").GetString(), Is.EqualTo("restart"));
             Assert.That(Directory.GetFiles(client.CommandsDirectory, "*.tmp"), Is.Empty);

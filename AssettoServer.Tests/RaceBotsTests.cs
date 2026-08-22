@@ -670,6 +670,27 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void RacePassWidthIncludesPreparedWheelFootprint()
+    {
+        Vector3[] chassisVertices =
+        [
+            new(-0.7f, 0, -1),
+            new(0.7f, 0, 1),
+        ];
+        RaceWheelCollider[] wheels =
+        [
+            new(new Vector3(-0.8f, 0.3f, 1), 0.3f),
+            new(new Vector3(0.8f, 0.3f, 1), 0.3f),
+            new(new Vector3(-0.8f, 0.3f, -1), 0.3f),
+            new(new Vector3(0.8f, 0.3f, -1), 0.3f),
+        ];
+
+        Assert.That(RaceBotPhysicsWorld.GetVehicleHalfWidthMeters(chassisVertices, wheels),
+            Is.EqualTo(1.1f).Within(1e-6f),
+            "passing clearance must include the tyres rather than only the chassis mesh");
+    }
+
+    [Test]
     public void RecoveryPosePlacesThePhysicalOriginOnTheTrackTarget()
     {
         var trackTarget = new Vector3(20, 4, -15);
@@ -846,14 +867,34 @@ public class RaceBotsTests
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 20, 0.1f), Is.True);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 19, 25, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 25, 20, 0.1f), Is.False);
-            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 2, 0.1f), Is.False);
-            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 3.4f, 0.1f), Is.False);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 0.9f, 0.1f), Is.False);
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 2, 0.1f), Is.True,
+                "an already-close follower must still escape around a stationary race obstacle");
+            Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 3.4f, 0.1f), Is.True);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 3.6f, 0.1f), Is.True,
                 "a stopped bot must remain passable after the follower has braked close");
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 5, 7.9f, 0.1f), Is.False);
             Assert.That(RaceBotMath.ShouldAttemptPass(20, 0, 8.1f, 0.1f), Is.True);
             Assert.That(RaceBotMath.ShouldAttemptPass(0, 0, 4, 0.1f), Is.True,
                 "a stopped queue must not deadlock the pass planner");
+            float stoppedClearance = RaceBotMath.RequiredPassSeparation(0.9f, 0.85f,
+                stoppedObstacle: true);
+            Assert.That(stoppedClearance, Is.EqualTo(2.1f).Within(1e-6f),
+                "a stopped-car pass should use collider widths instead of a fixed four-metre lane");
+            Assert.That(RaceBotMath.RequiredPassSeparation(1.5f, 1.5f,
+                stoppedObstacle: true), Is.EqualTo(3.35f).Within(1e-6f),
+                "wide cars must not have their required clearance capped");
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 1.32f, 3, 3,
+                    false, false, 0, stoppedClearance), Is.EqualTo(-1.75f).Within(1e-6f),
+                "the narrow Battersea corridor must retain a legal escape lane");
+            Assert.That(RaceBotMath.ChoosePassTarget(0, 0, 3, 3,
+                    false, false, 0, 3.35f, 1.5f), Is.Null,
+                "a wide car must reject a corridor that would put its own collider off track");
+            Assert.That(RaceBotMath.PassAccelerationSeparation(stoppedClearance,
+                stoppedObstacle: true), Is.EqualTo(2.25f).Within(1e-6f));
+            Assert.That(RaceBotMath.PassLaneRearReservationDistance(0, 0), Is.EqualTo(4),
+                "a stationary queue more than one car behind must not reserve the escape lane");
+            Assert.That(RaceBotMath.PassLaneRearReservationDistance(0, 10), Is.EqualTo(15));
             Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 4), Is.EqualTo(1.5f));
             Assert.That(RaceBotMath.CommittedPassApproachSpeed(0, 23), Is.EqualTo(5));
             Assert.That(RaceBotMath.CommittedPassApproachSpeed(8, 7), Is.EqualTo(8));

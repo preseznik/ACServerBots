@@ -17,6 +17,7 @@ param(
     [switch] $VerifyMovingBots,
     [switch] $VerifyPassing,
     [switch] $VerifyLiveControl,
+    [switch] $VerifyStoppedObstaclePassing,
     [switch] $SimulateRace,
     [ValidateRange(1, 100)]
     [double] $SimulationTimeScale = 10
@@ -28,6 +29,12 @@ if ($VerifyMovingBots -and $SmokeSeconds -lt 30) {
 }
 if ($VerifyPassing -and -not $VerifyMovingBots) {
     throw '-VerifyPassing requires -VerifyMovingBots.'
+}
+if ($VerifyStoppedObstaclePassing -and -not $SimulateRace) {
+    throw '-VerifyStoppedObstaclePassing requires -SimulateRace.'
+}
+if ($VerifyStoppedObstaclePassing -and $Slots -lt 2) {
+    throw '-VerifyStoppedObstaclePassing requires at least two slots.'
 }
 if ($SimulateRace) { $VerifyLiveControl = $true }
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -168,7 +175,19 @@ try {
                 [Math]::Abs($state.TargetRealTimeFactor - $expectedSimulationTimeScale) -lt 0.001
             } 'live simulation time-scale acknowledgement'
 
-            $controlledBot = $scaledState.Cars | Where-Object IsBot | Select-Object -First 1
+            if ($VerifyStoppedObstaclePassing) {
+                $scaledState = Wait-LiveState { param($state)
+                    $state.Session.Phase -eq 'racing' -and
+                    $state.SimulatedMilliseconds - $state.Session.StartTimeMilliseconds -ge 90000 -and
+                    @($state.Cars | Where-Object { $null -ne $_.RacePosition }).Count -eq $Slots
+                } 'a settled racing field before the stopped-leader test'
+            }
+
+            $controlledBot = $scaledState.Cars | Where-Object IsBot | Sort-Object {
+                if ($null -eq $_.RacePosition) { [int]::MaxValue } else { $_.RacePosition }
+            } | Select-Object -First 1
+            $stoppedPassesBefore = ($scaledState.Cars | Measure-Object `
+                -Property StoppedObstaclePassesCompleted -Sum).Sum
             $stopBotId = $liveClient.SendBotStopAsync($controlledBot.SessionId, $true).GetAwaiter().GetResult()
             $stoppedBotState = Wait-LiveState { param($state)
                 $bot = $state.Cars | Where-Object SessionId -EQ $controlledBot.SessionId | Select-Object -First 1
@@ -176,6 +195,22 @@ try {
                 $state.LastCommand.Status -eq 'accepted' -and $bot.ControlMode -eq 'stopped' -and
                 $bot.SpeedKmh -lt 0.5
             } 'selected bot hard stop'
+
+            if ($VerifyStoppedObstaclePassing) {
+                $passedState = Wait-LiveState { param($state)
+                    $passer = $state.Cars | Where-Object {
+                        $_.SessionId -ne $controlledBot.SessionId -and
+                        $_.StoppedObstaclePassesCompleted -gt 0
+                    } | Select-Object -First 1
+                    $stoppedBot = $state.Cars | Where-Object SessionId -EQ $controlledBot.SessionId |
+                        Select-Object -First 1
+                    $completedPasses = ($state.Cars | Measure-Object `
+                        -Property StoppedObstaclePassesCompleted -Sum).Sum
+                    $null -ne $passer -and $null -ne $stoppedBot -and
+                    $completedPasses -gt $stoppedPassesBefore -and
+                    $passer.RacePosition -lt $stoppedBot.RacePosition
+                } 'a racing bot to navigate around and complete a pass of the stopped leader'
+            }
 
             $goBotId = $liveClient.SendBotStopAsync($controlledBot.SessionId, $false).GetAwaiter().GetResult()
             $goBotState = Wait-LiveState { param($state)

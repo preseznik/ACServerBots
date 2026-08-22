@@ -17,7 +17,10 @@ public static class RaceBotMath
     public const int RacePassStartDelayMilliseconds = 4_000;
     public const float EmergencyObstacleDistanceMeters = 3f;
     public const float MinimumMovingPassCommitClearanceMeters = 8f;
-    public const float MinimumStoppedPassCommitClearanceMeters = 3.5f;
+    public const float MinimumStoppedPassCommitClearanceMeters = 1f;
+    public const float StoppedObstacleSpeedMetersPerSecond = 1.5f;
+    public const float StoppedObstaclePassPlanningDistanceMeters = 30f;
+    public const float StoppedObstacleSafetyMarginMeters = 0.35f;
     public const float PassSeparationEvaluationDistanceMeters = 15f;
     public const float MaximumPlausiblePassSeparationMeters = 6f;
     public const float MinimumPassingSeparationMeters = 3.1f;
@@ -39,6 +42,25 @@ public static class RaceBotMath
     public const float PassLaneRearReservationMeters = 15f;
     private const float CarHalfWidthWithMarginMeters = 1.25f;
     private const float PreferredPassingSeparationMeters = 3.8f;
+
+    public static bool IsStoppedObstacle(float speedMetersPerSecond) =>
+        Math.Max(0, speedMetersPerSecond) < StoppedObstacleSpeedMetersPerSecond;
+
+    public static float RequiredPassSeparation(float ownHalfWidthMeters,
+        float obstacleHalfWidthMeters, bool stoppedObstacle)
+    {
+        float colliderClearance = Math.Max(0.5f, ownHalfWidthMeters)
+                                  + Math.Max(0.5f, obstacleHalfWidthMeters)
+                                  + (stoppedObstacle ? StoppedObstacleSafetyMarginMeters : 0.6f);
+        return stoppedObstacle
+            ? Math.Max(2.1f, colliderClearance)
+            : Math.Max(MinimumPassingSeparationMeters, colliderClearance);
+    }
+
+    public static float PassAccelerationSeparation(float requiredSeparationMeters,
+        bool stoppedObstacle) => stoppedObstacle
+        ? requiredSeparationMeters + 0.15f
+        : Math.Max(MinimumPassAccelerationSeparationMeters, requiredSeparationMeters + 0.2f);
 
     public static bool ShouldHoldForCountdown(SessionType sessionType, long serverTimeMilliseconds, long startTimeMilliseconds)
         => sessionType == SessionType.Race && serverTimeMilliseconds < startTimeMilliseconds;
@@ -195,7 +217,10 @@ public static class RaceBotMath
         : OvertakeTriggerDistance(currentSpeed, aggression) * 1.25f;
 
     public static float PassAttemptDistance(float currentSpeed, float leadSpeed,
-        float aggression) => leadSpeed < 8 || leadSpeed < currentSpeed * 0.6f
+        float aggression) => IsStoppedObstacle(leadSpeed)
+        ? Math.Max(StoppedObstaclePassPlanningDistanceMeters,
+            FollowingDecisionDistance(currentSpeed, leadSpeed, aggression))
+        : leadSpeed < 8 || leadSpeed < currentSpeed * 0.6f
         ? Math.Min(35, FollowingGapMeters(currentSpeed, aggression))
         : OvertakeTriggerDistance(currentSpeed, aggression);
 
@@ -217,8 +242,15 @@ public static class RaceBotMath
     public static bool HasPassAccelerationClearance(float lateralSeparationMeters) =>
         lateralSeparationMeters >= MinimumPassAccelerationSeparationMeters;
 
+    public static bool HasPassAccelerationClearance(float lateralSeparationMeters,
+        float requiredSeparationMeters) => lateralSeparationMeters >= requiredSeparationMeters;
+
     public static bool ShouldResetPassAccelerationClearance(float lateralSeparationMeters) =>
         lateralSeparationMeters < PassAccelerationClearanceResetMeters;
+
+    public static bool ShouldResetPassAccelerationClearance(float lateralSeparationMeters,
+        float requiredSeparationMeters) => lateralSeparationMeters
+                                           < requiredSeparationMeters - 0.2f;
 
     public static bool HasSustainedPassAccelerationClearance(float lateralSeparationMeters,
         long clearanceSinceMilliseconds, long serverTimeMilliseconds) =>
@@ -226,6 +258,19 @@ public static class RaceBotMath
         && clearanceSinceMilliseconds > 0
         && serverTimeMilliseconds - clearanceSinceMilliseconds
         >= PassAccelerationClearanceHoldMilliseconds;
+
+    public static bool HasSustainedPassAccelerationClearance(float lateralSeparationMeters,
+        float requiredSeparationMeters, long clearanceSinceMilliseconds,
+        long serverTimeMilliseconds) => HasPassAccelerationClearance(lateralSeparationMeters,
+                                              requiredSeparationMeters)
+                                          && clearanceSinceMilliseconds > 0
+                                          && serverTimeMilliseconds - clearanceSinceMilliseconds
+                                          >= PassAccelerationClearanceHoldMilliseconds;
+
+    public static float PassLaneRearReservationDistance(float ownSpeedMetersPerSecond,
+        float trailingSpeedMetersPerSecond) => Math.Clamp(4
+            + Math.Max(0, trailingSpeedMetersPerSecond - ownSpeedMetersPerSecond) * 1.5f,
+        4, PassLaneRearReservationMeters);
 
     public static int OvertakeCommitMilliseconds(float aggression, float clearanceMeters = 0) =>
         20_000 - (int)(Math.Clamp(aggression, 0, 1) * 5_000)
@@ -277,22 +322,52 @@ public static class RaceBotMath
             -Math.Max(0, sideLeftMeters - CarHalfWidthWithMarginMeters),
             Math.Max(0, sideRightMeters - CarHalfWidthWithMarginMeters));
 
+    public static float ClampLaneOffset(float offsetMeters, float sideLeftMeters,
+        float sideRightMeters, float vehicleHalfWidthMeters)
+    {
+        float edgeMargin = Math.Max(CarHalfWidthWithMarginMeters,
+            Math.Max(0.5f, vehicleHalfWidthMeters) + 0.15f);
+        return Math.Clamp(offsetMeters,
+            -Math.Max(0, sideLeftMeters - edgeMargin),
+            Math.Max(0, sideRightMeters - edgeMargin));
+    }
+
     public static float CommittedPassTarget(float obstacleOffsetMeters, bool passingLeft,
         float sideLeftMeters, float sideRightMeters) => ClampLaneOffset(
         obstacleOffsetMeters + (passingLeft ? -PreferredPassingSeparationMeters
             : PreferredPassingSeparationMeters), sideLeftMeters, sideRightMeters);
 
+    public static float CommittedPassTarget(float obstacleOffsetMeters, bool passingLeft,
+        float sideLeftMeters, float sideRightMeters, float vehicleHalfWidthMeters) => ClampLaneOffset(
+        obstacleOffsetMeters + (passingLeft ? -PreferredPassingSeparationMeters
+            : PreferredPassingSeparationMeters), sideLeftMeters, sideRightMeters,
+        vehicleHalfWidthMeters);
+
     public static float? ChoosePassTarget(float currentOffsetMeters, float obstacleOffsetMeters,
         float sideLeftMeters, float sideRightMeters, bool leftBlocked, bool rightBlocked, int seed)
+        => ChoosePassTarget(currentOffsetMeters, obstacleOffsetMeters, sideLeftMeters,
+            sideRightMeters, leftBlocked, rightBlocked, seed,
+            MinimumPassTargetSeparationMeters);
+
+    public static float? ChoosePassTarget(float currentOffsetMeters, float obstacleOffsetMeters,
+        float sideLeftMeters, float sideRightMeters, bool leftBlocked, bool rightBlocked, int seed,
+        float requiredSeparationMeters)
+        => ChoosePassTarget(currentOffsetMeters, obstacleOffsetMeters, sideLeftMeters,
+            sideRightMeters, leftBlocked, rightBlocked, seed, requiredSeparationMeters,
+            vehicleHalfWidthMeters: 1f);
+
+    public static float? ChoosePassTarget(float currentOffsetMeters, float obstacleOffsetMeters,
+        float sideLeftMeters, float sideRightMeters, bool leftBlocked, bool rightBlocked, int seed,
+        float requiredSeparationMeters, float vehicleHalfWidthMeters)
     {
         float leftTarget = CommittedPassTarget(obstacleOffsetMeters, passingLeft: true,
-            sideLeftMeters, sideRightMeters);
+            sideLeftMeters, sideRightMeters, vehicleHalfWidthMeters);
         float rightTarget = CommittedPassTarget(obstacleOffsetMeters, passingLeft: false,
-            sideLeftMeters, sideRightMeters);
+            sideLeftMeters, sideRightMeters, vehicleHalfWidthMeters);
         bool leftAvailable = !leftBlocked
-                             && obstacleOffsetMeters - leftTarget >= MinimumPassTargetSeparationMeters;
+                             && obstacleOffsetMeters - leftTarget >= requiredSeparationMeters;
         bool rightAvailable = !rightBlocked
-                              && rightTarget - obstacleOffsetMeters >= MinimumPassTargetSeparationMeters;
+                              && rightTarget - obstacleOffsetMeters >= requiredSeparationMeters;
         if (!leftAvailable && !rightAvailable)
             return null;
         if (!rightAvailable)
@@ -316,6 +391,10 @@ public static class RaceBotMath
         float leadSpeedMetersPerSecond) => leadSpeedMetersPerSecond < 1.5f
                                           || Math.Abs(targetOffsetMeters - obstacleOffsetMeters)
                                           >= PreferredPassingSeparationMeters - 0.01f;
+
+    public static bool HasRequiredPassTargetClearance(float targetOffsetMeters, float obstacleOffsetMeters,
+        float requiredSeparationMeters) => Math.Abs(targetOffsetMeters - obstacleOffsetMeters)
+                                           >= requiredSeparationMeters;
 
     public static float PassingTargetSpeed(float initialMaxSpeed, float absoluteMaxSpeed,
         float leadSpeed, float aggression) => Math.Min(Math.Max(0, absoluteMaxSpeed) * 1.12f,

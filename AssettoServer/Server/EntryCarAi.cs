@@ -31,12 +31,14 @@ public readonly record struct RaceControlBotInput(float Steering, float Throttle
 
 public readonly record struct RaceAiDiagnostics(float MaximumAbsoluteLateralOffsetMeters,
     float MaximumPassSeparationMeters, int PassCommitCount, int SeparatedPassCount,
-    int CompletedPassCount);
+    int CompletedPassCount, int StoppedObstaclePassCommitCount,
+    int StoppedObstaclePassCompletedCount);
 public readonly record struct RaceAiStateSnapshot(int SplinePointId, Vector3 Position, Vector3 Velocity,
     float CurrentSpeed, float TargetSpeed, float LateralOffsetMeters,
     float MaximumLateralOffsetMeters, float ClosestObstacleMeters, float SteeringAngleRadians,
     bool IsStoppedForObstacle, bool IsOvertaking, byte? OvertakeTargetSessionId, bool PassingLeft,
-    int PassCommitCount, int SeparatedPassCount, int CompletedPassCount);
+    int PassCommitCount, int SeparatedPassCount, int CompletedPassCount,
+    int StoppedObstaclePassCommitCount, int StoppedObstaclePassCompletedCount);
 
 public partial class EntryCar
 {
@@ -429,6 +431,8 @@ public partial class EntryCar
             int commits = 0;
             int separated = 0;
             int completed = 0;
+            int stoppedCommits = 0;
+            int stoppedCompleted = 0;
             foreach (var state in AiStatesSpan)
             {
                 if (state is not { Initialized: true })
@@ -438,8 +442,11 @@ public partial class EntryCar
                 commits += state.PassCommitCount;
                 separated += state.SeparatedPassCount;
                 completed += state.CompletedPassCount;
+                stoppedCommits += state.StoppedObstaclePassCommitCount;
+                stoppedCompleted += state.StoppedObstaclePassCompletedCount;
             }
-            return new RaceAiDiagnostics(maximumOffset, maximumSeparation, commits, separated, completed);
+            return new RaceAiDiagnostics(maximumOffset, maximumSeparation, commits, separated, completed,
+                stoppedCommits, stoppedCompleted);
         }
     }
 
@@ -463,7 +470,8 @@ public partial class EntryCar
                 state.ClosestAiObstacleDistance, state.SteeringAngleRadians,
                 state.IsStoppedForObstacle, state.IsOvertaking, state.OvertakeTargetSessionId,
                 state.PassingLeft, state.PassCommitCount, state.SeparatedPassCount,
-                state.CompletedPassCount);
+                state.CompletedPassCount, state.StoppedObstaclePassCommitCount,
+                state.StoppedObstaclePassCompletedCount);
         }
     }
 
