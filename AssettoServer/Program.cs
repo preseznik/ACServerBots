@@ -258,7 +258,18 @@ public static class Program
             options.PhysicsTrackConfig, options.PhysicsCars.Split(';', StringSplitOptions.RemoveEmptyEntries),
             options.PhysicsOutput);
         Console.WriteLine($"Prepared rigid-body assets: {result.GridSlots} grid slots, "
-                          + $"{result.TrackTriangles} track triangles, {result.CarColliders} car colliders");
+                          + $"{result.TrackTriangles} track triangles, {result.CarColliders} car colliders; "
+                          + $"route surface {result.SourceDriveTriangles} -> {result.RouteDriveTriangles} "
+                          + $"triangles at {result.RouteCoverage:P1} centerline coverage "
+                          + $"using {(result.UsesSplineRibbon ? "multilevel spline ribbon" : "physical road")}; "
+                          + $"route barriers {result.SourceBarrierTriangles} -> {result.RouteBarrierTriangles}; "
+                          + $"layout grid fallbacks {result.LayoutGridGroundingFallbacks}");
+        foreach (var car in result.CarCalibrations)
+        {
+            Console.WriteLine($"Car calibration {car.Model}: tyres {car.FrontTyreRadius:F3}/{car.RearTyreRadius:F3} m, "
+                              + $"protocol height {car.ProtocolReferenceHeight:F3} m, "
+                              + $"graphics offset {car.GraphicsOffset}, source {car.Source}");
+        }
     }
 
     public static void RestartServer(

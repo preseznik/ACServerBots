@@ -25,13 +25,14 @@ internal readonly record struct RaceWheelCollider(Vector3 Center, float Radius);
 internal sealed class RacePhysicsAsset
 {
     private const string Magic = "ASRPHY01";
-    private const int Version = 5;
+    private const int Version = 7;
 
     public required IReadOnlyList<RaceGridPose> Grid { get; init; }
     public required IReadOnlyList<Kn5Triangle> TrackTriangles { get; init; }
     public required IReadOnlyList<Kn5Triangle> TrackBarrierTriangles { get; init; }
     public required IReadOnlyDictionary<string, Vector3[]> CarColliderVertices { get; init; }
     public required IReadOnlyDictionary<string, RaceWheelCollider[]> CarWheelColliders { get; init; }
+    public required IReadOnlyDictionary<string, float> CarProtocolReferenceHeights { get; init; }
 
     public static RacePhysicsAsset Load(string path)
     {
@@ -56,6 +57,7 @@ internal sealed class RacePhysicsAsset
 
         var cars = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
         var wheelColliders = new Dictionary<string, RaceWheelCollider[]>(StringComparer.OrdinalIgnoreCase);
+        var protocolReferenceHeights = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
         int carCount = ReadCount(reader, 254, "car collider");
         for (int i = 0; i < carCount; i++)
         {
@@ -68,6 +70,10 @@ internal sealed class RacePhysicsAsset
             for (int j = 0; j < wheels.Length; j++)
                 wheels[j] = new RaceWheelCollider(ReadVector3(reader), reader.ReadSingle());
             wheelColliders.Add(model, wheels);
+            float protocolReferenceHeight = reader.ReadSingle();
+            if (!float.IsFinite(protocolReferenceHeight) || protocolReferenceHeight is < 0.05f or > 2f)
+                throw new InvalidDataException($"Invalid protocol reference height for {model}: {protocolReferenceHeight}");
+            protocolReferenceHeights.Add(model, protocolReferenceHeight);
         }
 
         return new RacePhysicsAsset
@@ -76,7 +82,8 @@ internal sealed class RacePhysicsAsset
             TrackTriangles = triangles,
             TrackBarrierTriangles = barrierTriangles,
             CarColliderVertices = cars,
-            CarWheelColliders = wheelColliders
+            CarWheelColliders = wheelColliders,
+            CarProtocolReferenceHeights = protocolReferenceHeights
         };
     }
 
@@ -122,6 +129,7 @@ internal sealed class RacePhysicsAsset
                 Write(writer, wheel.Center);
                 writer.Write(wheel.Radius);
             }
+            writer.Write(CarProtocolReferenceHeights[model]);
         }
     }
 
@@ -171,6 +179,8 @@ internal static partial class RacePhysicsAssetBuilder
         string modelsIni = string.IsNullOrWhiteSpace(trackConfig)
             ? Path.Combine(trackRoot, "models.ini")
             : Path.Combine(trackRoot, $"models_{trackConfig}.ini");
+        string fastLanePath = RaceRouteSurfaceBuilder.FindFastLane(trackRoot, trackConfig);
+        var route = RaceRouteSurfaceBuilder.ReadFastLane(fastLanePath);
         var modelFiles = ReadModelFiles(modelsIni, trackRoot, track);
         var trackTriangles = new List<Kn5Triangle>();
         var trackBarrierTriangles = new List<Kn5Triangle>();
@@ -200,16 +210,39 @@ internal static partial class RacePhysicsAssetBuilder
         trackBarrierTriangles = DeduplicateTriangles(trackBarrierTriangles);
         if (trackTriangles.Count == 0)
             throw new InvalidDataException($"No physical track meshes were found in {modelsIni}");
+        // Keep the selected layout's raw physical road for grid grounding. A legal staggered
+        // grid can extend beyond the triangle samples retained by the centreline route filter
+        // (Vallelunga Classic is one stock example), even though AC_START_n is directly above
+        // a valid numbered ROAD mesh.
+        var layoutGridGroundingTriangles = trackTriangles;
+        var routeSurface = RaceRouteSurfaceBuilder.Filter(trackTriangles, route);
+        trackTriangles = DeduplicateTriangles(routeSurface.Triangles);
+        var routeBarriers = routeSurface.UsesSplineRibbon
+            ? new RaceRouteBarrierResult([], trackBarrierTriangles.Count)
+            : RaceRouteSurfaceBuilder.FilterBarriers(trackBarrierTriangles, route);
+        trackBarrierTriangles = DeduplicateTriangles(routeBarriers.Triangles);
+        if (trackTriangles.Count == 0)
+            throw new InvalidDataException($"No physical road surface matched {fastLanePath}");
         if (gridTransforms.Count == 0 || gridTransforms.Keys.First() != 0 ||
             !gridTransforms.Keys.SequenceEqual(Enumerable.Range(0, gridTransforms.Count)))
             throw new InvalidDataException($"Track must expose a contiguous AC_START_0..n race grid: {track}");
 
-        var groundedGrid = gridTransforms.Values
-            .Select(pose => GroundGridPose(pose, trackTriangles))
-            .ToArray();
+        var groundedGrid = new RaceGridPose[gridTransforms.Count];
+        int layoutGridGroundingFallbacks = 0;
+        int gridIndex = 0;
+        foreach (var pose in gridTransforms.Values)
+        {
+            groundedGrid[gridIndex++] = GroundGridPose(pose,
+                routeSurface.GridGroundingTriangles, layoutGridGroundingTriangles,
+                out bool usedLayoutFallback);
+            if (usedLayoutFallback)
+                layoutGridGroundingFallbacks++;
+        }
 
         var colliders = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
         var wheelColliders = new Dictionary<string, RaceWheelCollider[]>(StringComparer.OrdinalIgnoreCase);
+        var protocolReferenceHeights = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        var carCalibrations = new List<RaceCarCalibrationBuildResult>();
         foreach (string model in carModels.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             string carRoot = Path.Combine(gameRoot, "content", "cars", model);
@@ -224,7 +257,15 @@ internal static partial class RacePhysicsAssetBuilder
 
             string visualModelPath = FindVisualModelFile(carRoot, model);
             var visualModel = Kn5CollisionReader.Read(visualModelPath, _ => false, includeTriangles: false);
-            wheelColliders.Add(model, ReadWheelColliders(visualModel.NamedTransforms, model));
+            var calibration = AcCarPhysicsReader.Read(carRoot, model);
+            var wheels = ReadWheelColliders(visualModel.NamedTransforms, model, calibration);
+            wheelColliders.Add(model, wheels);
+            float protocolReferenceHeight = GetProtocolReferenceHeight(visualModel.NamedTransforms,
+                model, calibration);
+            protocolReferenceHeights.Add(model, protocolReferenceHeight);
+            carCalibrations.Add(new RaceCarCalibrationBuildResult(model, wheels[0].Radius,
+                wheels[2].Radius, protocolReferenceHeight, calibration.GraphicsOffset,
+                calibration.Source));
         }
 
         var asset = new RacePhysicsAsset
@@ -233,12 +274,16 @@ internal static partial class RacePhysicsAssetBuilder
             TrackTriangles = trackTriangles,
             TrackBarrierTriangles = trackBarrierTriangles,
             CarColliderVertices = colliders,
-            CarWheelColliders = wheelColliders
+            CarWheelColliders = wheelColliders,
+            CarProtocolReferenceHeights = protocolReferenceHeights
         };
         asset.Save(outputPath);
         return new RacePhysicsBuildResult(asset.Grid.Count,
             asset.TrackTriangles.Count + asset.TrackBarrierTriangles.Count, colliders.Count,
-            includedMeshes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray());
+            includedMeshes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
+            routeSurface.SourceTriangles, asset.TrackTriangles.Count, routeSurface.CenterlineCoverage,
+            routeSurface.UsesSplineRibbon, routeBarriers.SourceTriangles,
+            asset.TrackBarrierTriangles.Count, layoutGridGroundingFallbacks, carCalibrations);
     }
 
     private static IReadOnlyList<string> ReadModelFiles(string modelsIni, string trackRoot, string track)
@@ -381,7 +426,37 @@ internal static partial class RacePhysicsAssetBuilder
 
     internal static RaceGridPose GroundGridPose(RaceGridPose pose, IReadOnlyList<Kn5Triangle> triangles)
     {
-        const float maximumDropMeters = 5;
+        if (TryGroundGridPose(pose, triangles, 5, out var grounded))
+            return grounded;
+        throw new InvalidDataException($"AC grid position {pose.Position} has no physical track surface below it");
+    }
+
+    internal static RaceGridPose GroundGridPose(RaceGridPose pose,
+        IReadOnlyList<Kn5Triangle> routeTriangles,
+        IReadOnlyList<Kn5Triangle> layoutTriangles, out bool usedLayoutFallback)
+    {
+        if (TryGroundGridPose(pose, routeTriangles, 5, out var grounded))
+        {
+            usedLayoutFallback = false;
+            return grounded;
+        }
+
+        // AC_START transforms normally sit roughly one metre above the road. Keep this fallback
+        // deliberately tighter than route grounding so a missing upper deck cannot silently snap
+        // a multilevel grid to unrelated geometry below it.
+        if (TryGroundGridPose(pose, layoutTriangles, 1.5f, out grounded))
+        {
+            usedLayoutFallback = true;
+            return grounded;
+        }
+
+        throw new InvalidDataException($"AC grid position {pose.Position} has no physical track "
+                                       + "surface below it in the selected route or layout");
+    }
+
+    private static bool TryGroundGridPose(RaceGridPose pose, IReadOnlyList<Kn5Triangle> triangles,
+        float maximumDropMeters, out RaceGridPose grounded)
+    {
         float surfaceY = float.NegativeInfinity;
         foreach (var triangle in triangles)
         {
@@ -392,8 +467,12 @@ internal static partial class RacePhysicsAssetBuilder
         }
 
         if (!float.IsFinite(surfaceY))
-            throw new InvalidDataException($"AC grid position {pose.Position} has no physical track surface below it");
-        return pose with { Position = pose.Position with { Y = surfaceY } };
+        {
+            grounded = default;
+            return false;
+        }
+        grounded = pose with { Position = pose.Position with { Y = surfaceY } };
+        return true;
     }
 
     private static bool TryGetSurfaceHeight(Kn5Triangle triangle, float x, float z, out float height)
@@ -430,7 +509,8 @@ internal static partial class RacePhysicsAssetBuilder
     }
 
     internal static RaceWheelCollider[] ReadWheelColliders(
-        IReadOnlyList<Kn5NamedTransform> transforms, string model)
+        IReadOnlyList<Kn5NamedTransform> transforms, string model,
+        RaceCarPhysicsCalibration calibration = default)
     {
         string[] wheelNames = ["WHEEL_LF", "WHEEL_RF", "WHEEL_LR", "WHEEL_RR"];
         var wheels = new RaceWheelCollider[wheelNames.Length];
@@ -441,15 +521,54 @@ internal static partial class RacePhysicsAssetBuilder
             if (matches.Length != 1)
                 throw new InvalidDataException($"Car {model} must expose exactly one {name} transform; found {matches.Length}");
 
-            var center = matches[0].Transform.Translation;
-            float radius = center.Y;
+            var visualCenter = matches[0].Transform.Translation;
+            float radius = calibration.IsAuthoritative
+                ? i < 2 ? calibration.FrontTyreRadius : calibration.RearTyreRadius
+                : visualCenter.Y;
             if (!float.IsFinite(radius) || radius is < 0.1f or > 1.5f)
                 throw new InvalidDataException($"Car {model} has an invalid {name} wheel radius/height: {radius}");
-            wheels[i] = new RaceWheelCollider(center, radius);
+            // The KN5 wheel node is a visual transform and is not a reliable tyre radius. Keep its
+            // authored axle position, but ground the physical wheel center using the actual tyre.
+            var physicalCenter = visualCenter with { Y = radius };
+            wheels[i] = new RaceWheelCollider(physicalCenter, radius);
         }
         return wheels;
+    }
+
+    internal static float GetProtocolReferenceHeight(IReadOnlyList<Kn5NamedTransform> transforms,
+        string model, RaceCarPhysicsCalibration calibration)
+    {
+        string[] wheelNames = ["WHEEL_LF", "WHEEL_RF", "WHEEL_LR", "WHEEL_RR"];
+        float visualWheelHeight = wheelNames.Select(name => transforms.Single(node =>
+                node.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Transform.Translation.Y)
+            .Average();
+        // AC applies GRAPHICS_OFFSET to the rendered KN5 client-side. The network reference must
+        // compensate for that offset and for visual wheel nodes that are not authored at the real
+        // tyre radius, otherwise some cars render deeply buried while their physical wheels are
+        // correctly grounded.
+        float referenceHeight = calibration.IsAuthoritative
+            ? GetProtocolReferenceHeight(
+                (calibration.FrontTyreRadius + calibration.RearTyreRadius) * 0.5f,
+                visualWheelHeight, calibration.GraphicsOffset.Y)
+            : visualWheelHeight;
+        if (!float.IsFinite(referenceHeight) || referenceHeight is < 0.05f or > 2f)
+            throw new InvalidDataException($"Car {model} has an invalid visual/protocol reference height: {referenceHeight}");
+        return referenceHeight;
+    }
+
+    internal static float GetProtocolReferenceHeight(float tyreRadius, float visualWheelHeight,
+        float graphicsOffsetY)
+    {
+        const float visualTyreClearanceMeters = 0.02f;
+        return tyreRadius - visualWheelHeight - graphicsOffsetY + visualTyreClearanceMeters;
     }
 }
 
 internal readonly record struct RacePhysicsBuildResult(int GridSlots, int TrackTriangles, int CarColliders,
-    IReadOnlyList<string> IncludedTrackMeshes);
+    IReadOnlyList<string> IncludedTrackMeshes, int SourceDriveTriangles, int RouteDriveTriangles,
+    double RouteCoverage, bool UsesSplineRibbon, int SourceBarrierTriangles, int RouteBarrierTriangles,
+    int LayoutGridGroundingFallbacks,
+    IReadOnlyList<RaceCarCalibrationBuildResult> CarCalibrations);
+
+internal readonly record struct RaceCarCalibrationBuildResult(string Model, float FrontTyreRadius,
+    float RearTyreRadius, float ProtocolReferenceHeight, Vector3 GraphicsOffset, string Source);

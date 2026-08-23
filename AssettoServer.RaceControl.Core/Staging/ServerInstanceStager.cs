@@ -213,7 +213,15 @@ public sealed class ServerInstanceStager
             }
         }
 
-        inputs.AddRange(rendered.Cars.Select(car => car.ColliderPath ?? string.Empty));
+        foreach (var car in rendered.Cars)
+        {
+            inputs.Add(car.ColliderPath ?? string.Empty);
+            inputs.Add(car.DataAcdPath ?? string.Empty);
+            inputs.Add(Path.Combine(car.RootPath, "lods.ini"));
+            inputs.Add(Path.Combine(car.RootPath, "data", "tyres.ini"));
+            inputs.Add(Path.Combine(car.RootPath, "data", "car.ini"));
+            inputs.AddRange(Directory.EnumerateFiles(car.RootPath, "*.kn5", SearchOption.TopDirectoryOnly));
+        }
         var keyBuilder = new StringBuilder();
         foreach (var path in inputs.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
         {

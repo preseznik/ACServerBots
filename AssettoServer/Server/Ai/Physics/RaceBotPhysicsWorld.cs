@@ -64,6 +64,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     private const float MaximumSuspensionAcceleration = 40f;
     private const float SuspensionRayExtraLength = 0.75f;
     private const float MaximumSurfaceResidualStep = 0.04f;
+    private const float MaximumSurfaceContactDropoutSeconds = 0.08f;
+    private const float RecoveryCooldownSeconds = 1.5f;
     private const float TrackRayHeight = 50f;
     private const float TrackRayLength = 100f;
 
@@ -101,6 +103,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public float SurfaceHeight { get; set; }
         public Vector3 SurfaceNormal { get; set; } = Vector3.UnitY;
         public float CompressionMeters { get; set; }
+        public float SurfaceContactDropoutSeconds { get; set; }
     }
 
     private sealed class BodyRecord
@@ -133,6 +136,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         public Vector3 RoadNormal { get; set; } = Vector3.UnitY;
         public float MaximumSuspensionCompressionObserved { get; set; }
         public long FirstMovingStep { get; set; }
+        public float RecoveryCooldownRemainingSeconds { get; set; }
     }
 
     public int GridCount => _asset.Grid.Count;
@@ -174,7 +178,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         AddTrackMesh(_asset.TrackBarrierTriangles);
         foreach (var (model, vertices) in _asset.CarColliderVertices)
         {
-            var collider = CreateVehicleCollider(vertices, _asset.CarWheelColliders[model]);
+            var collider = CreateVehicleCollider(vertices, _asset.CarWheelColliders[model],
+                _asset.CarProtocolReferenceHeights[model]);
             _colliders.Add(model, collider);
             Log.Debug("Race collider {Model}: AC protocol reference height {Height:F3} m, wheelbase {Wheelbase:F2} m, half width {HalfWidth:F2} m",
                 model, collider.ProtocolReferenceHeight, collider.WheelbaseMeters,
@@ -315,7 +320,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, Control.Stop: true }))
                 StopBot(record);
             foreach (var record in _bodies.Values.Where(x => x is { IsBot: true, IsHeld: false }))
-                RecoverTransientLaunch(record);
+                RecoverTransientLaunch(record, deltaSeconds);
             foreach (var record in _bodies.Values.Where(x => x.IsBot))
                 CaptureMaximums(record);
         }
@@ -332,10 +337,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             }
             var body = _simulation.Bodies[record.Handle];
             var chassisOrigin = GetChassisOrigin(record, body);
-            var renderOrigin = chassisOrigin + Vector3.Transform(Vector3.UnitY
-                * GetNetworkRideHeightClearance(record.Collider.ProtocolReferenceHeight),
-                body.Pose.Orientation);
-            var protocolPosition = ToProtocolPosition(renderOrigin, body.Pose.Orientation,
+            var protocolPosition = ToProtocolPosition(chassisOrigin, body.Pose.Orientation,
                 record.Collider.ProtocolReferenceHeight);
             var forward = Vector3.Transform(Vector3.UnitZ, body.Pose.Orientation);
             state = new RaceBotPhysicsState(chassisOrigin, protocolPosition, body.Pose.Orientation,
@@ -584,8 +586,12 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         body.Awake = true;
     }
 
-    private void RecoverTransientLaunch(BodyRecord record)
+    private void RecoverTransientLaunch(BodyRecord record, float deltaSeconds)
     {
+        record.RecoveryCooldownRemainingSeconds = Math.Max(0,
+            record.RecoveryCooldownRemainingSeconds - Math.Max(0, deltaSeconds));
+        if (record.RecoveryCooldownRemainingSeconds > 0)
+            return;
         var body = _simulation.Bodies[record.Handle];
         var control = record.Control;
         var chassisOrigin = GetChassisOrigin(record, body);
@@ -611,6 +617,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         record.LastSteeringAngleRadians = 0;
         record.LastSlipAngleDegrees = 0;
         record.RecoveryNeededSeconds = 0;
+        record.RecoveryCooldownRemainingSeconds = RecoveryCooldownSeconds;
         record.RecoveryCount++;
         Log.Warning("Recovered overturned/off-track race bot {SessionId} ({Model}) from "
                     + "({OriginX:F1}, {OriginY:F1}, {OriginZ:F1}) to ({TargetX:F1}, {TargetY:F1}, {TargetZ:F1}); recovery {RecoveryCount}",
@@ -674,7 +681,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             float suspensionLength = GetSuspensionLength(wheel.Geometry.Radius);
             var anchor = chassisOrigin + Vector3.Transform(
                 wheel.Geometry.Center + Vector3.UnitY * suspensionLength, orientation);
-            if (!TryGetWheelSurface(record, wheel, anchor, bodyRight, expectedSurfaceStep,
+            if (!TryGetWheelSurface(record, wheel, anchor, bodyRight, expectedSurfaceStep, deltaSeconds,
                     out var surfacePoint, out var surfaceNormal))
             {
                 wheel.CompressionMeters = 0;
@@ -717,7 +724,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     }
 
     private bool TryGetWheelSurface(BodyRecord record, RaycastWheelState wheel, Vector3 anchor,
-        Vector3 bodyRight, float expectedSurfaceStep, out Vector3 surfacePoint, out Vector3 surfaceNormal)
+        Vector3 bodyRight, float expectedSurfaceStep, float deltaSeconds,
+        out Vector3 surfacePoint, out Vector3 surfaceNormal)
     {
         int sampleCount = _fidelity switch
         {
@@ -753,7 +761,17 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
         if (hitCount == 0)
         {
+            if (wheel.HasSurface
+                && wheel.SurfaceContactDropoutSeconds + deltaSeconds <= MaximumSurfaceContactDropoutSeconds)
+            {
+                wheel.SurfaceContactDropoutSeconds += Math.Max(0, deltaSeconds);
+                wheel.SurfaceHeight += expectedSurfaceStep;
+                surfacePoint = new Vector3(anchor.X, wheel.SurfaceHeight, anchor.Z);
+                surfaceNormal = wheel.SurfaceNormal;
+                return true;
+            }
             wheel.HasSurface = false;
+            wheel.SurfaceContactDropoutSeconds = 0;
             surfacePoint = default;
             surfaceNormal = Vector3.UnitY;
             return false;
@@ -775,6 +793,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         wheel.SurfaceHeight = stabilizedHeight;
         wheel.SurfaceNormal = surfaceNormal;
         wheel.HasSurface = true;
+        wheel.SurfaceContactDropoutSeconds = 0;
         surfacePoint = new Vector3(anchor.X, stabilizedHeight, anchor.Z);
         return true;
     }
@@ -837,9 +856,6 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         return handler.Hit;
     }
 
-    internal static float GetNetworkRideHeightClearance(float protocolReferenceHeight) =>
-        Math.Clamp(protocolReferenceHeight * 0.20f, 0.05f, 0.08f);
-
     internal static float GetTargetVerticalSpeed(Vector3 targetForward, Vector3 velocity,
         Quaternion orientation)
     {
@@ -886,7 +902,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
 
     internal static float GetCourseDriveScale(float horizontalError, float heightError)
     {
-        float horizontalScale = Math.Clamp((15f - Math.Max(0, horizontalError)) / 10f, 0, 1);
+        // Preserve full race pace on line, but stop powering a car over the edge once it has
+        // missed the course by more than roughly one car width. Braking starts at 2 m and reaches
+        // zero at 6 m; ordinary contact and close racing remain unaffected.
+        float horizontalScale = Math.Clamp((6f - Math.Max(0, horizontalError)) / 4f, 0, 1);
         float heightScale = Math.Clamp((4f - Math.Max(0, heightError)) / 3f, 0, 1);
         return Math.Min(horizontalScale, heightScale);
     }
@@ -973,11 +992,10 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     {
         float normalLookAhead = Math.Clamp(6 + Math.Max(0, forwardSpeedMetersPerSecond) * 0.45f,
             6, 18);
-        // A car already displaced from the course needs a gentler intercept. Pointing a short
-        // pure-pursuit target across a five-metre error saturated steering, crossed the line,
-        // and created a repeatable side-to-side departure at the same complex corners.
-        return Math.Clamp(normalLookAhead + Math.Max(0, courseErrorMeters) * 1.5f,
-            normalLookAhead, 30);
+        // A displaced car still needs a slightly gentler intercept to avoid oscillation, but a
+        // very long target made high-speed understeer effectively ignore the road edge.
+        return Math.Clamp(normalLookAhead + Math.Max(0, courseErrorMeters) * 0.5f,
+            normalLookAhead, 22);
     }
 
     internal static float MoveSteeringAngle(float currentRadians, float targetRadians, float deltaSeconds) =>
@@ -1120,7 +1138,8 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         return float.IsFinite(wheelbase) && wheelbase is >= 1 and <= 5 ? wheelbase : 2.5f;
     }
 
-    private ColliderShape CreateVehicleCollider(Vector3[] chassisVertices, RaceWheelCollider[] wheels)
+    private ColliderShape CreateVehicleCollider(Vector3[] chassisVertices, RaceWheelCollider[] wheels,
+        float protocolReferenceHeight)
     {
         var hull = new ConvexHull(chassisVertices.AsSpan(), _pool, out var center);
         var unitInertia = hull.ComputeInertia(1);
@@ -1130,7 +1149,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             ShapeIndex = _simulation.Shapes.Add(hull),
             Center = center,
             UnitInertia = unitInertia,
-            ProtocolReferenceHeight = GetProtocolReferenceHeight(wheels),
+            ProtocolReferenceHeight = protocolReferenceHeight,
             WheelbaseMeters = GetWheelbaseMeters(wheels),
             HalfWidthMeters = GetVehicleHalfWidthMeters(chassisVertices, wheels),
             Wheels = wheels
@@ -1156,6 +1175,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         foreach (var wheel in record.Wheels)
         {
             wheel.HasSurface = false;
+            wheel.SurfaceContactDropoutSeconds = 0;
             wheel.SurfaceHeight = pose.Position.Y;
             wheel.SurfaceNormal = Vector3.Transform(Vector3.UnitY, pose.Orientation);
             wheel.CompressionMeters = 0;

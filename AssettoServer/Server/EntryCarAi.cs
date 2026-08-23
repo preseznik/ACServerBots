@@ -538,6 +538,61 @@ public partial class EntryCar
         }
     }
 
+    internal bool TryRecoverRaceDeadlock()
+    {
+        lock (_aiControlLock)
+        {
+            if (!RaceBotMath.CanUseFieldDeadlockRecovery(AiControlled,
+                    _configuration.Extra.AiParams.Behavior, _raceControlMode))
+                return false;
+            foreach (var state in AiStatesSpan)
+            {
+                if (state is not { Initialized: true })
+                    continue;
+                return state.RecoverFromRaceDeadlock();
+            }
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Recreates this remote car on connected clients after a session restart. AC normally
+    /// keeps interpolation state for an existing session id; feeding that state a grid pose
+    /// after its previous racing pose can be interpreted as extreme wheel slip and produces
+    /// a cloud of tyre smoke. A TCP disconnect/connect pair clears only the client-side remote
+    /// representation. The authoritative slot, participant result and AI state remain intact.
+    /// </summary>
+    internal bool RefreshAiClientRepresentationAfterRestart()
+    {
+        lock (_aiControlLock)
+        {
+            if (!ShouldRefreshAiClientRepresentation(AiControlled, HasInitializedRaceControlState()))
+                return false;
+
+            ResetAiClientInterpolationState(AiPakSequenceIds, LastSeenAiState,
+                LastSeenAiSpawn, OtherCarsLastSentUpdateTime);
+            _entryCarManager.BroadcastPacket(new CarDisconnected { SessionId = SessionId });
+            _entryCarManager.BroadcastPacket(new CarConnected
+            {
+                SessionId = SessionId,
+                Name = AiName
+            });
+            return true;
+        }
+    }
+
+    internal static bool ShouldRefreshAiClientRepresentation(bool aiControlled,
+        bool hasInitializedState) => aiControlled && hasInitializedState;
+
+    internal static void ResetAiClientInterpolationState(byte[] packetSequenceIds,
+        AiState?[] lastSeenStates, byte[] lastSeenSpawns, long[] lastUpdateTimes)
+    {
+        Array.Clear(packetSequenceIds);
+        Array.Clear(lastSeenStates);
+        Array.Clear(lastSeenSpawns);
+        Array.Clear(lastUpdateTimes);
+    }
+
     private bool HasInitializedRaceControlState()
     {
         foreach (var state in AiStatesSpan)

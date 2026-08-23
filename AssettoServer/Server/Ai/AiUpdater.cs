@@ -15,6 +15,10 @@ public class AiUpdater
     private long _lastUpdateMilliseconds;
     private double _accumulatorMilliseconds;
     private long _lastPhysicsDiagnosticsMilliseconds;
+    private long _fieldDeadlockSinceMilliseconds;
+    private long _lastFieldDeadlockRecoveryMilliseconds;
+    private readonly long[] _immobilizedSinceMilliseconds = new long[byte.MaxValue + 1];
+    private long _lastImmobilizedRecoveryMilliseconds;
 
     public AiUpdater(EntryCarManager entryCarManager, ACServer server, ACServerConfiguration configuration,
         SessionManager sessionManager, RaceBotPhysicsWorld? racePhysicsWorld = null)
@@ -92,6 +96,7 @@ public class AiUpdater
                 if (entryCar.AiControlled)
                     entryCar.AiCompleteRacePhysics(stepSeconds);
             }
+            UpdateFieldDeadlockRecovery(now);
             if (now - _lastPhysicsDiagnosticsMilliseconds >= 5000)
             {
                 var diagnostics = _racePhysicsWorld.GetDiagnostics();
@@ -153,5 +158,126 @@ public class AiUpdater
             // Bound catch-up work after a pause so one slow tick cannot create a permanent backlog.
             _accumulatorMilliseconds = 0;
         }
+    }
+
+    private void UpdateFieldDeadlockRecovery(long now)
+    {
+        var session = _sessionManager.CurrentSession;
+        if (session.Configuration.Type != AssettoServer.Shared.Model.SessionType.Race
+            || session.IsStoppedByRaceControl
+            || session.EndTimeMilliseconds != 0
+            || session.HasSentRaceOverPacket
+            || now < session.StartTimeMilliseconds)
+        {
+            _fieldDeadlockSinceMilliseconds = 0;
+            Array.Clear(_immobilizedSinceMilliseconds);
+            return;
+        }
+
+        int activeBots = 0;
+        int stoppedBots = 0;
+        float maximumSpeed = 0;
+        EntryCar? fallbackCandidate = null;
+        EntryCar? rootCandidate = null;
+        EntryCar? immobilizedCandidate = null;
+        long longestImmobilizedMilliseconds = 0;
+        foreach (var car in _entryCarManager.EntryCars)
+        {
+            if (!car.AiControlled
+                || car.GetRaceControlMode() != RaceControlBotControlMode.Automatic)
+            {
+                _immobilizedSinceMilliseconds[car.SessionId] = 0;
+                continue;
+            }
+            if (session.Results?.TryGetValue(car.SessionId, out var result) == true
+                && (result.IsDnf || result.HasCompletedLastLap))
+            {
+                _immobilizedSinceMilliseconds[car.SessionId] = 0;
+                continue;
+            }
+            var snapshot = car.GetRaceAiStateSnapshot();
+            if (!snapshot.HasValue)
+            {
+                _immobilizedSinceMilliseconds[car.SessionId] = 0;
+                continue;
+            }
+
+            activeBots++;
+            maximumSpeed = Math.Max(maximumSpeed, snapshot.Value.CurrentSpeed);
+            if (snapshot.Value.CurrentSpeed > RaceBotMath.FieldDeadlockSpeedMetersPerSecond)
+            {
+                _immobilizedSinceMilliseconds[car.SessionId] = 0;
+                continue;
+            }
+            stoppedBots++;
+            fallbackCandidate ??= car;
+            if (rootCandidate == null
+                && snapshot.Value.ClosestObstacleMeters < 0
+                && !snapshot.Value.IsOvertaking)
+                rootCandidate = car;
+
+            if (snapshot.Value.CurrentSpeed
+                > RaceBotMath.ImmobilizedRaceBotSpeedMetersPerSecond)
+            {
+                _immobilizedSinceMilliseconds[car.SessionId] = 0;
+                continue;
+            }
+            ref long immobilizedSince = ref _immobilizedSinceMilliseconds[car.SessionId];
+            if (immobilizedSince == 0)
+            {
+                immobilizedSince = now;
+                continue;
+            }
+            long immobilizedMilliseconds = now - immobilizedSince;
+            if (RaceBotMath.IsRaceBotImmobilized(snapshot.Value.CurrentSpeed,
+                    immobilizedMilliseconds)
+                && immobilizedMilliseconds > longestImmobilizedMilliseconds)
+            {
+                longestImmobilizedMilliseconds = immobilizedMilliseconds;
+                immobilizedCandidate = car;
+            }
+        }
+
+        if (immobilizedCandidate != null
+            && now - _lastImmobilizedRecoveryMilliseconds
+            >= RaceBotMath.ImmobilizedRaceBotRecoverySpacingMilliseconds
+            && immobilizedCandidate.TryRecoverRaceDeadlock())
+        {
+            _immobilizedSinceMilliseconds[immobilizedCandidate.SessionId] = 0;
+            _lastImmobilizedRecoveryMilliseconds = now;
+            _fieldDeadlockSinceMilliseconds = 0;
+            Log.Warning("Race immobilization recovery moved bot {SessionId} after {StoppedSeconds:F1} s below {Speed:F2} m/s",
+                immobilizedCandidate.SessionId,
+                longestImmobilizedMilliseconds / 1000d,
+                RaceBotMath.ImmobilizedRaceBotSpeedMetersPerSecond);
+            return;
+        }
+
+        if (!RaceBotMath.IsFieldStalled(activeBots, stoppedBots, maximumSpeed))
+        {
+            _fieldDeadlockSinceMilliseconds = 0;
+            return;
+        }
+
+        if (_fieldDeadlockSinceMilliseconds == 0)
+        {
+            _fieldDeadlockSinceMilliseconds = now;
+            return;
+        }
+        if (!RaceBotMath.IsFieldDeadlocked(activeBots, stoppedBots, maximumSpeed,
+                now - _fieldDeadlockSinceMilliseconds)
+            || now - _lastFieldDeadlockRecoveryMilliseconds
+            < RaceBotMath.FieldDeadlockRecoveryCooldownMilliseconds)
+            return;
+
+        var recoveryCandidate = rootCandidate ?? fallbackCandidate;
+        if (recoveryCandidate?.TryRecoverRaceDeadlock() != true)
+            return;
+
+        _lastFieldDeadlockRecoveryMilliseconds = now;
+        _fieldDeadlockSinceMilliseconds = now;
+        Log.Warning("Race field deadlock recovery moved bot {SessionId}: {StoppedBots}/{ActiveBots} automatic bots were below {Speed:F2} m/s",
+            recoveryCandidate.SessionId, stoppedBots, activeBots,
+            RaceBotMath.FieldDeadlockSpeedMetersPerSecond);
     }
 }

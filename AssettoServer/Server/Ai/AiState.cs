@@ -118,6 +118,7 @@ public class AiState : IDisposable
     private long _blockedPassReverseUntil;
     private float _blockedPassReverseSteering;
     private int _blockedPassReplanCount;
+    private long _stoppedPassRecoveryCooldownUntil;
     private long _stoppedPassAheadSince;
     private byte[] _stoppedPassClusterSessionIds = [];
     private bool _passingLeft;
@@ -325,6 +326,7 @@ public class AiState : IDisposable
         _blockedPassReverseUntil = 0;
         _blockedPassReverseSteering = 0;
         _blockedPassReplanCount = 0;
+        _stoppedPassRecoveryCooldownUntil = 0;
         _stoppedPassAheadSince = 0;
         _stoppedPassClusterSessionIds = [];
         _yieldingToPasser = false;
@@ -429,6 +431,89 @@ public class AiState : IDisposable
         TargetSpeed = InitialMaxSpeed;
         Acceleration = 0;
         _steeringAngleRadians = 0;
+    }
+
+    internal bool RecoverFromRaceDeadlock()
+    {
+        if (!Initialized || _racePhysicsWorld == null
+            || EntryCar.GetRaceControlMode() != RaceControlBotControlMode.Automatic
+            || _sessionManager.CurrentSession.IsStoppedByRaceControl
+            || RaceBotMath.ShouldHoldForCountdown(
+                _sessionManager.CurrentSession.Configuration.Type,
+                _sessionManager.ServerTimeMilliseconds,
+                _sessionManager.CurrentSession.StartTimeMilliseconds))
+            return false;
+
+        int recoveryPointId = FindClearDeadlockRecoveryPoint();
+        if (recoveryPointId < 0)
+            return false;
+
+        int previousPointId = CurrentSplinePointId;
+        if (_overtakeTargetSessionId.HasValue)
+            EndRaceOvertake(completed: false);
+        _yieldingToPasser = false;
+        _yieldSpeedReference = 0;
+        _raceContactTargetSessionId = null;
+        _raceContactPersistenceUntil = 0;
+        _stoppedForObstacle = false;
+        _blockedPassReverseUntil = 0;
+        _blockedPassReverseSteering = 0;
+        _blockedPassReplanCount = 0;
+        _stoppedPassRecoveryCooldownUntil = _sessionManager.ServerTimeMilliseconds
+                                            + RaceBotMath.StoppedPassRecoveryCooldownMilliseconds;
+
+        TeleportForRaceControl(recoveryPointId);
+        ref readonly var recoveryPoint = ref _spline.Points[recoveryPointId];
+        _baseLateralOffsetMeters = GetRaceBaseLaneOffset(recoveryPoint);
+        _lateralOffsetMeters = 0;
+        _targetLateralOffsetMeters = _baseLateralOffsetMeters;
+        PhysicalLateralOffsetMeters = 0;
+        Log.Warning("Recovered field-deadlocked race bot {SessionId} from spline point {PreviousPointId} to clear point {RecoveryPointId}",
+            EntryCar.SessionId, previousPointId, recoveryPointId);
+        return true;
+    }
+
+    private int FindClearDeadlockRecoveryPoint()
+    {
+        int pointId = CurrentSplinePointId;
+        float distance = 0;
+        int guard = _spline.Points.Length;
+        while (distance < RaceBotMath.MaximumFieldDeadlockRecoveryAdvanceMeters
+               && guard-- > 0)
+        {
+            int nextPointId = _spline.Points[pointId].NextId;
+            if ((uint)nextPointId >= (uint)_spline.Points.Length
+                || nextPointId == pointId)
+                return -1;
+            distance += Math.Max(0.01f,
+                Vector3.Distance(_spline.Points[pointId].Position,
+                    _spline.Points[nextPointId].Position));
+            pointId = nextPointId;
+            if (distance < RaceBotMath.FieldDeadlockRecoveryAdvanceMeters)
+                continue;
+
+            var candidate = _spline.Points[pointId].Position;
+            bool occupied = false;
+            foreach (var car in _entryCarManager.EntryCars)
+            {
+                if (!TryGetRaceParticipant(car, out var participant)
+                    || Math.Abs(participant.Status.Position.Y - candidate.Y) >= 3)
+                    continue;
+                var separation = participant.Status.Position - candidate;
+                separation.Y = 0;
+                if (separation.LengthSquared()
+                    < RaceBotMath.FieldDeadlockRecoveryClearanceMeters
+                    * RaceBotMath.FieldDeadlockRecoveryClearanceMeters)
+                {
+                    occupied = true;
+                    break;
+                }
+            }
+            if (!occupied)
+                return pointId;
+        }
+
+        return -1;
     }
 
     public void ConfigureRace(RaceSplineLayout layout)
@@ -931,6 +1016,32 @@ public class AiState : IDisposable
         return false;
     }
 
+    private bool HasConflictingStoppedPassReservation(RaceObstacle obstacle,
+        float targetOffsetMeters, float requiredSeparationMeters)
+    {
+        float envelopeCenter = (obstacle.EnvelopeMinimumEdgeMeters
+                                + obstacle.EnvelopeMaximumEdgeMeters) * 0.5f;
+        bool passingLeft = targetOffsetMeters < envelopeCenter;
+        foreach (var car in _entryCarManager.EntryCars)
+        {
+            if (!TryGetRaceParticipant(car, out var participant)
+                || participant.AiState is not { Initialized: true } other
+                || !other._stoppedObstaclePass
+                || !other._overtakeTargetSessionId.HasValue)
+                continue;
+
+            if (RaceBotMath.StoppedPassReservationsConflict(
+                    obstacle.PassTarget.Car.SessionId, obstacle.ClusterSessionIds,
+                    passingLeft, targetOffsetMeters,
+                    other._overtakeTargetSessionId.Value, other._stoppedPassClusterSessionIds,
+                    other._passingLeft, other._committedPassLateralOffsetMeters,
+                    requiredSeparationMeters))
+                return true;
+        }
+
+        return false;
+    }
+
     private (float SideLeft, float SideRight) GetPassCorridorWidths(float lookaheadMeters)
     {
         int pointId = CurrentSplinePointId;
@@ -991,7 +1102,8 @@ public class AiState : IDisposable
         {
             _targetLateralOffsetMeters = RaceBotMath.ClampLaneOffset(
                 _committedPassLateralOffsetMeters, point.SideLeft, point.SideRight,
-                _racePhysicsWorld?.GetVehicleHalfWidthMeters(EntryCar.Model) ?? 1);
+                _racePhysicsWorld?.GetVehicleHalfWidthMeters(EntryCar.Model) ?? 1,
+                RaceBotMath.PassTrackEdgeReserveMeters(CurrentSpeed));
             return;
         }
 
@@ -1089,7 +1201,9 @@ public class AiState : IDisposable
         bool stoppedObstacle = obstacle.IsStoppedCluster;
         var passTarget = obstacle.PassTarget;
         if (_configuration.Extra.AiParams.Behavior != AiBehaviorMode.Race
-            || _gridLineMergePending
+            || (_gridLineMergePending && !stoppedObstacle)
+            || (stoppedObstacle
+                && _sessionManager.ServerTimeMilliseconds < _stoppedPassRecoveryCooldownUntil)
             || (!allowCloseContact && !stoppedObstacle
                 && obstacle.ClearanceMeters <= RaceBotMath.EmergencyObstacleDistanceMeters)
             || (!stoppedObstacle
@@ -1103,8 +1217,8 @@ public class AiState : IDisposable
                 _recentPassTargetSessionId, _sessionManager.ServerTimeMilliseconds,
                 _recentPassPairUntil))
             return false;
-        if (!stoppedObstacle
-            && passTarget.AiState?._overtakeTargetSessionId == EntryCar.SessionId)
+        if (RaceBotMath.IsReciprocalPass(EntryCar.SessionId,
+                passTarget.AiState?._overtakeTargetSessionId))
             return false;
 
         var corridor = GetPassCorridorWidths(stoppedObstacle
@@ -1117,6 +1231,7 @@ public class AiState : IDisposable
             passTarget.Car.Model) ?? 1;
         float requiredSeparation = RaceBotMath.RequiredPassSeparation(ownHalfWidth,
             obstacleHalfWidth, stoppedObstacle);
+        float trackEdgeReserve = RaceBotMath.PassTrackEdgeReserveMeters(CurrentSpeed);
         float? target;
         float? alternateTarget = null;
         if (stoppedObstacle)
@@ -1133,7 +1248,7 @@ public class AiState : IDisposable
             target = RaceBotMath.ChoosePassTarget(_lateralOffsetMeters,
                 obstacle.LateralOffsetMeters, corridor.SideLeft, corridor.SideRight,
                 leftBlocked: false, rightBlocked: false, EntryCar.SessionId,
-                requiredSeparation, ownHalfWidth);
+                requiredSeparation, ownHalfWidth, trackEdgeReserve);
         }
         if (!target.HasValue)
             return false;
@@ -1156,7 +1271,7 @@ public class AiState : IDisposable
                 target = RaceBotMath.ChoosePassTarget(_lateralOffsetMeters,
                     obstacle.LateralOffsetMeters, corridor.SideLeft, corridor.SideRight,
                     leftBlocked: chosenLeft, rightBlocked: !chosenLeft, EntryCar.SessionId,
-                    requiredSeparation, ownHalfWidth);
+                    requiredSeparation, ownHalfWidth, trackEdgeReserve);
             }
             if (!target.HasValue || (!stoppedObstacle
                                      && !RaceBotMath.HasRequiredPassTargetClearance(target.Value,
@@ -1172,6 +1287,17 @@ public class AiState : IDisposable
                 passTarget.Car.SessionId, obstacle.PassTargetLongitudinalMeters,
                 stoppedObstacle))
             alternateTarget = null;
+
+        if (stoppedObstacle && HasConflictingStoppedPassReservation(obstacle,
+                target.Value, requiredSeparation))
+        {
+            if (!alternateTarget.HasValue
+                || HasConflictingStoppedPassReservation(obstacle,
+                    alternateTarget.Value, requiredSeparation))
+                return false;
+            target = alternateTarget;
+            alternateTarget = null;
+        }
 
         if (!RaceBotMath.IsPracticalPassTarget(_lateralOffsetMeters, target.Value,
                 obstacle.Participant.Speed))
@@ -1331,18 +1457,18 @@ public class AiState : IDisposable
                    >= RaceBotMath.StoppedPassCompletionHoldMilliseconds);
     }
 
-    private void UpdateStoppedPassContactRecovery()
+    private bool UpdateStoppedPassContactRecovery()
     {
         if (!_stoppedObstaclePass || !_overtakeTargetSessionId.HasValue
                                   || _racePhysicsWorld == null)
-            return;
+            return false;
         long now = _sessionManager.ServerTimeMilliseconds;
         long contacts = GetStoppedPassContactManifoldCount();
         if (contacts <= _lastPassContactManifoldCount)
         {
             if (_passContactSince != 0 && now - _lastPassContactAt > 250)
                 _passContactSince = 0;
-            return;
+            return false;
         }
 
         _lastPassContactManifoldCount = contacts;
@@ -1350,15 +1476,26 @@ public class AiState : IDisposable
         if (CurrentSpeed > 2.5f || now < _blockedPassReverseUntil)
         {
             _passContactSince = 0;
-            return;
+            return false;
         }
         if (_passContactSince == 0)
         {
             _passContactSince = now;
-            return;
+            return false;
         }
         if (now - _passContactSince < RaceBotMath.BlockedPassContactDelayMilliseconds)
-            return;
+            return false;
+
+        if (RaceBotMath.ShouldAbandonBlockedPass(_blockedPassReplanCount))
+        {
+            byte targetSessionId = _overtakeTargetSessionId.Value;
+            EndRaceOvertake(completed: false);
+            _stoppedPassRecoveryCooldownUntil = now
+                                                + RaceBotMath.StoppedPassRecoveryCooldownMilliseconds;
+            Log.Debug("Race bot {SessionId} abandoned repeatedly blocked stopped-obstacle pass of {TargetSessionId}",
+                EntryCar.SessionId, targetSessionId);
+            return true;
+        }
 
         if (_blockedPassReplanCount == 0 && _alternatePassLateralOffsetMeters.HasValue)
         {
@@ -1376,7 +1513,7 @@ public class AiState : IDisposable
                 now + RaceBotMath.PassExtensionMilliseconds);
             Log.Debug("Race bot {SessionId} replanning blocked stopped-obstacle pass of {TargetSessionId} on the alternate side",
                 EntryCar.SessionId, _overtakeTargetSessionId.Value);
-            return;
+            return false;
         }
 
         _blockedPassReverseUntil = now + RaceBotMath.BlockedPassReverseMilliseconds;
@@ -1389,6 +1526,7 @@ public class AiState : IDisposable
             _blockedPassReverseUntil + RaceBotMath.PassExtensionMilliseconds);
         Log.Debug("Race bot {SessionId} reversing out of a blocked stopped-obstacle pass of {TargetSessionId}",
             EntryCar.SessionId, _overtakeTargetSessionId.Value);
+        return false;
     }
 
     private long GetStoppedPassContactManifoldCount()
@@ -1598,8 +1736,8 @@ public class AiState : IDisposable
                                          && _sessionManager.ServerTimeMilliseconds
                                          < _raceContactPersistenceUntil;
             bool rootStoppedObstacle = raceObstacle is { IsStoppedCluster: true };
-            if (committedOvertake)
-                UpdateStoppedPassContactRecovery();
+            if (committedOvertake && UpdateStoppedPassContactRecovery())
+                committedOvertake = false;
             float aggression = _configuration.Extra.AiParams.Race.Aggression;
             ClosestAiObstacleDistance = raceObstacle.HasValue
                                         && raceObstacle.Value.Participant.AiState != null
@@ -1633,7 +1771,11 @@ public class AiState : IDisposable
                 }
                 else
                 {
-                    targetSpeed = 0;
+                    targetSpeed = rootStoppedObstacle
+                        ? RaceBotMath.CongestionCrawlTargetSpeed(
+                            raceObstacle.Value.Participant.Speed,
+                            raceObstacle.Value.ClearanceMeters)
+                        : 0;
                     hasObstacle = true;
                 }
             }
@@ -1891,7 +2033,10 @@ public class AiState : IDisposable
                     return cursor + tangent * remaining;
                 float offset = RaceBotMath.ClampLaneOffset(lateralOffsetMeters,
                     _spline.Points[endPointId].SideLeft, _spline.Points[endPointId].SideRight,
-                    _racePhysicsWorld?.GetVehicleHalfWidthMeters(EntryCar.Model) ?? 1);
+                    _racePhysicsWorld?.GetVehicleHalfWidthMeters(EntryCar.Model) ?? 1,
+                    _overtakeTargetSessionId.HasValue
+                        ? RaceBotMath.PassTrackEdgeReserveMeters(CurrentSpeed)
+                        : 0.15f);
                 return cursor + tangent * remaining + Vector3.Normalize(lateral) * offset;
             }
 

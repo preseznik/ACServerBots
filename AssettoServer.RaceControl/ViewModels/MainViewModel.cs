@@ -19,6 +19,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly RaceControlPaths _paths = new();
     private readonly AcContentScanner _scanner = new();
+    private readonly AcContentCatalogCache _catalogCache;
     private readonly RaceControlValidator _validator = new();
     private readonly ServerConfigurationRenderer _renderer = new();
     private readonly CmPresetService _cmPresetService = new();
@@ -27,6 +28,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private PresetStore? _presetStore;
     private RaceControlPreset _preset = new();
     private AcContentCatalog? _catalog;
+    private string? _catalogRoot;
+    private CancellationTokenSource? _contentRefreshCancellation;
+    private Task? _contentRefreshTask;
+    private int _contentRefreshGeneration;
     private AcTrackLayout? _selectedTrack;
     private AcWeather? _selectedWeather;
     private GridSlotViewModel? _selectedGridSlot;
@@ -59,6 +64,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        _catalogCache = new AcContentCatalogCache(_paths.CacheDirectory);
         RefreshContentCommand = new AsyncRelayCommand(RefreshContentAsync, () => !IsBusy);
         SavePresetCommand = new RelayCommand(SavePreset, () => !IsBusy);
         LoadPresetCommand = new AsyncRelayCommand(LoadSelectedPresetAsync, () => SelectedSavedPreset is not null && !IsBusy);
@@ -493,11 +499,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Preset = RaceControlPreset.CreateDefault(acRoot, payload);
                 Preset.Network.BindAddress = NetworkAddressService.GetPreferredPrivateIpv4();
             }
-            await RefreshContentInternalAsync();
+            if (TryApplyCachedContent(preserveUi: false))
+            {
+                StatusText = $"Loaded {Cars.Count} cars and {Tracks.Count} track layouts from cache. Checking for changes…";
+                StartBackgroundContentRefresh(Preset.AssettoCorsaRoot);
+            }
+            else
+            {
+                await RefreshContentInternalAsync(preserveUi: false);
+                StatusText = $"Found {Cars.Count} cars and {Tracks.Count} track layouts.";
+            }
             SelectedPageIndex = settings?.RememberLastPage == true
                 ? Math.Clamp(settings.LastPageIndex, 0, 6)
                 : 0;
-            StatusText = $"Found {Cars.Count} cars and {Tracks.Count} track layouts.";
         }
         catch (Exception exception)
         {
@@ -511,9 +525,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public async Task SetAssettoCorsaRootAsync(string path)
     {
+        CancelBackgroundContentRefresh();
         Preset.AssettoCorsaRoot = path;
         OnPropertyChanged(nameof(Preset));
-        await RefreshContentAsync();
+        if (TryApplyCachedContent(preserveUi: true))
+        {
+            StatusText = $"Loaded {Cars.Count} cars and {Tracks.Count} track layouts from cache. Checking for changes…";
+            StartBackgroundContentRefresh(path);
+        }
+        else
+        {
+            await RefreshContentAsync();
+        }
     }
 
     public void SetServerPayloadPath(string path)
@@ -538,7 +561,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var newPreset = RaceControlPreset.CreateDefault(Preset.AssettoCorsaRoot, Preset.ServerPayloadPath);
             newPreset.Network.BindAddress = Preset.Network.BindAddress;
             Preset = newPreset;
-            await RefreshContentInternalAsync();
+            await ApplyCurrentCatalogOrRefreshAsync();
             SelectedPageIndex = 0;
             StatusText = "Created a new unsaved LAN race.";
         }
@@ -557,7 +580,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             IsBusy = true;
-            await RefreshContentInternalAsync();
+            CancelBackgroundContentRefresh();
+            await RefreshContentInternalAsync(preserveUi: true);
             StatusText = $"Content refreshed: {Cars.Count} cars, {Tracks.Count} layouts.";
         }
         catch (Exception exception)
@@ -570,16 +594,151 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task RefreshContentInternalAsync()
+    private async Task RefreshContentInternalAsync(bool preserveUi = false, CancellationToken cancellationToken = default)
     {
         StatusText = "Reading installed cars and tracks…";
-        _catalog = await _scanner.ScanAsync(Preset.AssettoCorsaRoot);
-        Replace(Cars, _catalog.Cars);
-        Replace(Tracks, _catalog.Tracks);
-        Replace(Weather, _catalog.Weather);
+        var root = Preset.AssettoCorsaRoot;
+        var catalog = await _scanner.ScanAsync(root, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        ApplyCatalog(root, catalog, preserveUi);
+        SaveCatalog(root, catalog);
+    }
+
+    private async Task ApplyCurrentCatalogOrRefreshAsync()
+    {
+        if (_catalog is not null && PathsEqual(_catalogRoot, Preset.AssettoCorsaRoot))
+        {
+            ApplyPresetToUi(Preset);
+            Validate();
+            return;
+        }
+
+        CancelBackgroundContentRefresh();
+        if (TryApplyCachedContent(preserveUi: false))
+        {
+            StartBackgroundContentRefresh(Preset.AssettoCorsaRoot);
+            return;
+        }
+
+        await RefreshContentInternalAsync(preserveUi: false);
+    }
+
+    private bool TryApplyCachedContent(bool preserveUi)
+    {
+        var catalog = _catalogCache.TryLoad(Preset.AssettoCorsaRoot);
+        if (catalog is null)
+        {
+            return false;
+        }
+
+        ApplyCatalog(Preset.AssettoCorsaRoot, catalog, preserveUi);
+        return true;
+    }
+
+    private void ApplyCatalog(string assettoCorsaRoot, AcContentCatalog catalog, bool preserveUi)
+    {
+        if (preserveUi && _catalog is not null)
+        {
+            SyncGridToPreset();
+        }
+
+        _catalog = catalog;
+        _catalogRoot = NormalizePath(assettoCorsaRoot);
+        Replace(Cars, catalog.Cars);
+        Replace(Tracks, catalog.Tracks);
+        Replace(Weather, catalog.Weather);
         ApplyPresetToUi(Preset);
         Validate();
+        RaiseCommandStates();
     }
+
+    private void StartBackgroundContentRefresh(string assettoCorsaRoot)
+    {
+        CancelBackgroundContentRefresh();
+        var cancellation = new CancellationTokenSource();
+        _contentRefreshCancellation = cancellation;
+        var generation = ++_contentRefreshGeneration;
+        _contentRefreshTask = RefreshContentInBackgroundAsync(
+            NormalizePath(assettoCorsaRoot), generation, cancellation);
+    }
+
+    private async Task RefreshContentInBackgroundAsync(
+        string assettoCorsaRoot,
+        int generation,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            var catalog = await _scanner.ScanAsync(assettoCorsaRoot, cancellation.Token);
+            if (cancellation.IsCancellationRequested
+                || generation != _contentRefreshGeneration
+                || !PathsEqual(assettoCorsaRoot, Preset.AssettoCorsaRoot))
+            {
+                return;
+            }
+
+            ApplyCatalog(assettoCorsaRoot, catalog, preserveUi: true);
+            SaveCatalog(assettoCorsaRoot, catalog);
+            StatusText = $"Content scan complete: {Cars.Count} cars, {Tracks.Count} track layouts.";
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // A manual refresh, root change, or application shutdown superseded this scan.
+        }
+        catch (Exception exception)
+        {
+            if (cancellation.IsCancellationRequested
+                || generation != _contentRefreshGeneration
+                || !PathsEqual(assettoCorsaRoot, Preset.AssettoCorsaRoot))
+            {
+                return;
+            }
+
+            StatusText = $"Using cached content; background scan failed: {exception.Message}";
+            AppendLog($"WARNING: Background content scan failed: {exception}");
+        }
+        finally
+        {
+            if (ReferenceEquals(_contentRefreshCancellation, cancellation))
+            {
+                _contentRefreshCancellation = null;
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private void CancelBackgroundContentRefresh()
+    {
+        _contentRefreshGeneration++;
+        var cancellation = _contentRefreshCancellation;
+        _contentRefreshCancellation = null;
+        cancellation?.Cancel();
+    }
+
+    private void SaveCatalog(string assettoCorsaRoot, AcContentCatalog catalog)
+    {
+        try
+        {
+            _catalogCache.Save(assettoCorsaRoot, catalog);
+        }
+        catch (Exception exception) when (exception is IOException
+                                          or UnauthorizedAccessException
+                                          or System.Text.Json.JsonException
+                                          or NotSupportedException)
+        {
+            AppendLog($"WARNING: Could not update the installed-content cache: {exception.Message}");
+        }
+    }
+
+    private static bool PathsEqual(string? left, string? right)
+    {
+        return !string.IsNullOrWhiteSpace(left)
+               && !string.IsNullOrWhiteSpace(right)
+               && string.Equals(NormalizePath(left), NormalizePath(right), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizePath(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
     private void ApplyPresetToUi(RaceControlPreset preset)
     {
@@ -648,7 +807,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             IsBusy = true;
             var loaded = _presetStore.Load(SelectedSavedPreset.Path);
             Preset = loaded;
-            await RefreshContentInternalAsync();
+            await ApplyCurrentCatalogOrRefreshAsync();
             StatusText = $"Loaded {loaded.Name}.";
         }
         catch (Exception exception)
@@ -672,7 +831,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             imported.Name = $"{cmPreset.Name} (Race Control)";
             imported.Network.BindAddress = NetworkAddressService.GetPreferredPrivateIpv4();
             Preset = imported;
-            await RefreshContentInternalAsync();
+            await ApplyCurrentCatalogOrRefreshAsync();
             StatusText = $"Imported Content Manager preset {cmPreset.Name}.";
         }
         catch (Exception exception)
@@ -1430,11 +1589,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        CancelBackgroundContentRefresh();
         _simulationTimeScaleUpdateCancellation?.Cancel();
         _simulationTimeScaleUpdateCancellation?.Dispose();
         _liveMonitorCancellation.Cancel();
         _liveMonitorCancellation.Dispose();
         _processController.Dispose();
         GC.KeepAlive(_liveMonitorTask);
+        GC.KeepAlive(_contentRefreshTask);
     }
 }

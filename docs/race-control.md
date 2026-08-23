@@ -2,6 +2,8 @@
 
 Race Control is the native Windows event editor and launcher for this fork's LAN race bots. It reads cars, skins, tracks, layouts, weather, previews, pit capacity, AI lines, checksum data, and collision inputs from the local Assetto Corsa installation. It never edits installed game content.
 
+The installed-content catalog is cached per Assetto Corsa installation under `%LocalAppData%\AssettoServer Race Control\Cache`. After the first scan, startup loads that cache immediately and checks for added, removed, or changed cars and track layouts in the background. The refreshed catalog replaces the cache atomically and preserves any grid edits made while scanning. Use **Refresh content** to force an immediate foreground rescan.
+
 The application targets .NET 10 WPF and opens in Visual Studio 2026 through `AssettoServer.slnx`. Its three projects are:
 
 - `AssettoServer.RaceControl`: native WPF interface;

@@ -629,6 +629,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             return false;
 
         SetSession(CurrentSessionIndex);
+        RefreshRestartedRaceBotClients();
         return true;
     }
 
@@ -654,8 +655,25 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
         CurrentSessionIndex = raceSessionId;
         SetSession(raceSessionId);
+        RefreshRestartedRaceBotClients();
         Log.Information("Race Control restarted race session {SessionId}", raceSessionId);
         return true;
+    }
+
+    private void RefreshRestartedRaceBotClients()
+    {
+        if (_configuration.Extra.AiParams.Behavior != AiBehaviorMode.Race)
+            return;
+
+        int refreshed = 0;
+        foreach (var car in _entryCarManager.EntryCars)
+        {
+            if (car.RefreshAiClientRepresentationAfterRestart())
+                refreshed++;
+        }
+
+        if (refreshed > 0)
+            Log.Debug("Reset client interpolation for {BotCount} race bots after session restart", refreshed);
     }
 
     public bool StopRaceFromControl()
