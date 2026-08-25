@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Fps;
 using AssettoServer.Server.Runtime;
 using AssettoServer.Utils;
 using Autofac;
@@ -62,6 +63,9 @@ public static class Program
         [Option("prepare-race-physics", Required = false, HelpText = "Build race-physics.bin from an Assetto Corsa installation and exit")]
         public bool PrepareRacePhysics { get; set; }
 
+        [Option("prepare-fps-arena", Required = false, HelpText = "Prepare an FPS arena sidecar from an Assetto Corsa layout and exit")]
+        public bool PrepareFpsArena { get; set; }
+
         [Option("ac-root", Required = false, HelpText = "Assetto Corsa installation root used by --prepare-race-physics")]
         public string AssettoCorsaRoot { get; set; } = "";
 
@@ -76,6 +80,9 @@ public static class Program
 
         [Option("physics-output", Required = false, HelpText = "Output race-physics.bin path used by --prepare-race-physics")]
         public string PhysicsOutput { get; set; } = "";
+
+        [Option("fps-arena-output", Required = false, HelpText = "Output JSON path used by --prepare-fps-arena")]
+        public string FpsArenaOutput { get; set; } = "";
 
         [Option("shutdown-file", Required = false, SetName = "AssettoServer", HelpText = "Gracefully stop when this file is created")]
         public string ShutdownFile { get; set; } = "";
@@ -139,7 +146,29 @@ public static class Program
 
         if (options.PrepareRacePhysics)
         {
-            PrepareRacePhysics(options);
+            try
+            {
+                PrepareRacePhysics(options);
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"Race physics preparation failed: {exception.GetType().Name}: {exception.Message}");
+                Environment.ExitCode = 2;
+            }
+            return;
+        }
+
+        if (options.PrepareFpsArena)
+        {
+            try
+            {
+                PrepareFpsArena(options);
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"FPS arena preparation failed: {exception.GetType().Name}: {exception.Message}");
+                Environment.ExitCode = 2;
+            }
             return;
         }
 
@@ -263,13 +292,30 @@ public static class Program
                           + $"triangles at {result.RouteCoverage:P1} centerline coverage "
                           + $"using {(result.UsesSplineRibbon ? "multilevel spline ribbon" : "physical road")}; "
                           + $"route barriers {result.SourceBarrierTriangles} -> {result.RouteBarrierTriangles}; "
-                          + $"layout grid fallbacks {result.LayoutGridGroundingFallbacks}");
+                          + $"layout grid fallbacks {result.LayoutGridGroundingFallbacks}, "
+                          + $"bounded grid snaps {result.SnappedGridPositions} "
+                          + $"(max {result.MaximumGridSnapDistance:F2} m), "
+                          + $"grid launch support {result.GridLaunchSupportTriangles} triangles");
         foreach (var car in result.CarCalibrations)
         {
             Console.WriteLine($"Car calibration {car.Model}: tyres {car.FrontTyreRadius:F3}/{car.RearTyreRadius:F3} m, "
                               + $"protocol height {car.ProtocolReferenceHeight:F3} m, "
                               + $"graphics offset {car.GraphicsOffset}, source {car.Source}");
         }
+    }
+
+    private static void PrepareFpsArena(Options options)
+    {
+        if (string.IsNullOrWhiteSpace(options.AssettoCorsaRoot)
+            || string.IsNullOrWhiteSpace(options.PhysicsTrack)
+            || string.IsNullOrWhiteSpace(options.FpsArenaOutput))
+        {
+            throw new ArgumentException("--prepare-fps-arena requires --ac-root, --track and --fps-arena-output");
+        }
+
+        var result = FpsArenaAssetBuilder.Build(options.AssettoCorsaRoot, options.PhysicsTrack,
+            options.PhysicsTrackConfig, options.FpsArenaOutput);
+        Console.WriteLine($"Prepared FPS arena: {result.SpawnPoints} spawns from {result.TrackTriangles} physical track triangles");
     }
 
     public static void RestartServer(
@@ -431,7 +477,8 @@ public static class Program
     {
         ValidatorOptions.Global.DisplayNameResolver = (_, member, _) =>
         {
-            foreach (var attr in member!.GetCustomAttributes(true))
+            if (member is null) return "configuration";
+            foreach (var attr in member.GetCustomAttributes(true))
             {
                 if (attr is IniFieldAttribute iniAttr)
                 {

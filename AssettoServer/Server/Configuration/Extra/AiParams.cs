@@ -20,6 +20,13 @@ public enum RacePhysicsFidelity
     High
 }
 
+public enum RaceJoinSlotSelection
+{
+    First,
+    Last,
+    Random
+}
+
 [UsedImplicitly(ImplicitUseKindFlags.Assign, ImplicitUseTargetFlags.WithMembers)]
 public class RacePhysicsParams
 {
@@ -36,8 +43,12 @@ public class RaceAiParams
 {
     [YamlMember(Description = "Overall race pace from 0 (slowest) to 1 (fastest)")]
     public float Difficulty { get; init; } = 0.75f;
+    [YamlMember(Description = "Deterministic per-slot skill variance as a percentage of Difficulty; explicit entry-list overrides take priority")]
+    public float DifficultyVariancePercent { get; init; } = 10;
     [YamlMember(Description = "Following and overtaking commitment from 0 (cautious) to 1 (aggressive)")]
     public float Aggression { get; init; } = 0.5f;
+    [YamlMember(Description = "Deterministic per-slot aggression variance as a percentage of Aggression; explicit entry-list overrides take priority")]
+    public float AggressionVariancePercent { get; init; } = 15;
     [YamlMember(Description = "Closed fast_lane.ai point used as the start/finish line")]
     public int StartSplinePointId { get; init; }
     [YamlMember(Description = "Legacy virtual-grid spacing; retained for configuration compatibility. Rigid-body race mode uses the track's exact AC_START transforms.")]
@@ -48,6 +59,8 @@ public class RaceAiParams
     public RacePhysicsParams Physics { get; init; } = new();
     [YamlMember(Description = "Allow players joining an active race to replace unfinished AI=auto bots. Players start with a fresh result; AI=fixed slots remain unavailable.")]
     public bool AllowMidRaceBotTakeover { get; init; }
+    [YamlMember(Description = "Order used to claim an eligible slot matching the joining player's car model. First and Last refer to configured CAR_n order; Random chooses independently for each connection.")]
+    public RaceJoinSlotSelection JoinSlotSelection { get; init; } = RaceJoinSlotSelection.First;
     [YamlMember(Description = "Restart the current session after the first human joins a bot-only server and finishes initial synchronization. Re-arms when all humans disconnect.")]
     public bool RestartSessionOnFirstHumanConnect { get; init; }
     [YamlMember(Description = "Locally-derived, per-model vehicle profiles used by race bots")]
@@ -144,7 +157,10 @@ public partial class AiParams : ObservableObject
     [property: YamlMember(Description = "AI cornering brake force factor. This is multiplied with DefaultDeceleration. Lower = AI cars will brake less hard for corners.")]
     private float _corneringBrakeForceFactor = 0.5f;
     
-    [YamlMember(Description = "Name prefix for AI cars. Names will be in the form of '<NamePrefix> <SessionId>'")]
+    [YamlMember(Description = "Assign each AI car a unique parody race-driver name. Names are randomized when the server starts and remain stable across session restarts.")]
+    public bool UseParodyNames { get; init; } = false;
+
+    [YamlMember(Description = "Name prefix for AI cars when UseParodyNames is false. Names will be in the form of '<NamePrefix> <SessionId>'")]
     public string NamePrefix { get; init; } = "Traffic";
     [YamlMember(Description = "Ignore obstacles for some time if the AI car is stopped for longer than x seconds")]
     public int IgnoreObstaclesAfterSeconds { get; set; } = 10;

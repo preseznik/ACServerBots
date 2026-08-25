@@ -8,6 +8,7 @@ internal sealed class RaceSimulationBotStatistics
     private long? _lastObservedAt;
     private float _lastSpeedMetersPerSecond;
     private double _speedIntegral;
+    private double _distanceMeters;
     private bool _hasMoved;
     private bool _isFullyStopped;
     private bool _isInContact;
@@ -24,6 +25,10 @@ internal sealed class RaceSimulationBotStatistics
         ? 0
         : _speedIntegral / ObservedMilliseconds * 3.6;
     public double TopSpeedKilometersPerHour => TopSpeedMetersPerSecond * 3.6;
+    public double DistanceKilometers => _distanceMeters / 1000;
+    public double ContactEpisodesPer100Kilometers => Per100Kilometers(ContactEpisodeCount);
+    public double RecoveriesPer100Kilometers => Per100Kilometers(RecoveryCount);
+    public double FullStopsPer100Kilometers => Per100Kilometers(FullStopCount);
 
     public void Observe(long simulatedMilliseconds, float speedMetersPerSecond,
         int recoveryCount, long contactManifolds = 0)
@@ -36,6 +41,7 @@ internal sealed class RaceSimulationBotStatistics
             long elapsed = Math.Max(0, simulatedMilliseconds - _lastObservedAt.Value);
             ObservedMilliseconds += elapsed;
             _speedIntegral += _lastSpeedMetersPerSecond * elapsed;
+            _distanceMeters += _lastSpeedMetersPerSecond * elapsed / 1000d;
             if (_isFullyStopped)
                 FullyStoppedMilliseconds += elapsed;
         }
@@ -70,4 +76,8 @@ internal sealed class RaceSimulationBotStatistics
         _lastSpeedMetersPerSecond = speedMetersPerSecond;
         _lastObservedAt = simulatedMilliseconds;
     }
+
+    private double Per100Kilometers(double value) => DistanceKilometers <= 0.001
+        ? 0
+        : value / DistanceKilometers * 100;
 }

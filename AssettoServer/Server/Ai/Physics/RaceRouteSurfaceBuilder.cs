@@ -11,7 +11,7 @@ internal readonly record struct RaceRoutePoint(Vector3 Position, float SideLeft,
 
 internal readonly record struct RaceRouteSurfaceResult(List<Kn5Triangle> Triangles,
     List<Kn5Triangle> GridGroundingTriangles, int SourceTriangles,
-    double CenterlineCoverage, bool UsesSplineRibbon);
+    double CenterlineCoverage, bool UsesSplineRibbon, RaceRoutePoint[] ProjectedRoute);
 
 internal readonly record struct RaceRouteBarrierResult(List<Kn5Triangle> Triangles,
     int SourceTriangles);
@@ -43,6 +43,8 @@ internal static class RaceRouteSurfaceBuilder
     private const float ProtectedLaneWidthFactor = 0.55f;
     private const float MinimumProtectedLaneHalfWidthMeters = 2.25f;
     private const float MaximumProtectedLaneHalfWidthMeters = 5.5f;
+    private const int MinimumSeparatedLayerCells = 50;
+    private const float MinimumSeparatedLayerCellFraction = 0.02f;
     private const int MaximumSplinePoints = 2_000_000;
 
     public static string FindFastLane(string trackRoot, string? trackConfig)
@@ -158,12 +160,11 @@ internal static class RaceRouteSurfaceBuilder
             throw new InvalidDataException($"Selected fast_lane.ai could only be matched to "
                                            + $"{coverage:P1} of the physical road surface");
         }
-        int separatedLayerThreshold = Math.Max(20, map.CenterlineCellCount / 1000);
-        bool useSplineRibbon = map.HasSeparatedElevationLayers
-                               || separatedPhysicalCells.Count >= separatedLayerThreshold;
-        var ribbonRoute = useSplineRibbon ? ProjectRouteToPhysicalSurface(route, result) : null;
-        return new RaceRouteSurfaceResult(useSplineRibbon ? BuildSplineRibbon(ribbonRoute!) : result,
-            result, source.Count, coverage, useSplineRibbon);
+        bool useSplineRibbon = ShouldUseSplineRibbon(map.CenterlineCellCount,
+            map.SeparatedElevationLayerCellCount, separatedPhysicalCells.Count);
+        var projectedRoute = ProjectRouteToPhysicalSurface(route, result);
+        return new RaceRouteSurfaceResult(useSplineRibbon ? BuildSplineRibbon(projectedRoute) : result,
+            result, source.Count, coverage, useSplineRibbon, projectedRoute);
     }
 
     internal static RaceRoutePoint[] ProjectRouteToPhysicalSurface(
@@ -239,6 +240,14 @@ internal static class RaceRouteSurfaceBuilder
         return projected;
     }
 
+    internal static bool ShouldUseSplineRibbon(int centerlineCellCount,
+        int separatedRouteCellCount, int separatedPhysicalCellCount)
+    {
+        int threshold = Math.Max(MinimumSeparatedLayerCells,
+            (int)Math.Ceiling(centerlineCellCount * MinimumSeparatedLayerCellFraction));
+        return separatedRouteCellCount >= threshold || separatedPhysicalCellCount >= threshold;
+    }
+
     private static List<Kn5Triangle> BuildSplineRibbon(IReadOnlyList<RaceRoutePoint> route)
     {
         var result = new List<Kn5Triangle>(route.Count * 2);
@@ -286,7 +295,7 @@ internal static class RaceRouteSurfaceBuilder
             result.Add(triangle);
     }
 
-    private static bool IsUsableSurface(Kn5Triangle triangle)
+    internal static bool IsUsableSurface(Kn5Triangle triangle)
     {
         var cross = Vector3.Cross(triangle.B - triangle.A, triangle.C - triangle.A);
         float length = cross.Length();
@@ -423,7 +432,8 @@ internal static class RaceRouteSurfaceBuilder
     {
         private readonly Dictionary<long, List<HeightLayer>> _layers = [];
         private readonly HashSet<long> _centerlineCells = [];
-        public bool HasSeparatedElevationLayers { get; private set; }
+        private readonly HashSet<long> _separatedElevationLayerCells = [];
+        public int SeparatedElevationLayerCellCount => _separatedElevationLayerCells.Count;
         public int CenterlineCellCount => _centerlineCells.Count;
 
         public RouteHeightMap(IReadOnlyList<RaceRoutePoint> route)
@@ -509,7 +519,7 @@ internal static class RaceRouteSurfaceBuilder
             float minimum = layers.Min(layer => layer.ExpectedY);
             float maximum = layers.Max(layer => layer.ExpectedY);
             if (maximum - minimum >= 3f)
-                HasSeparatedElevationLayers = true;
+                _separatedElevationLayerCells.Add(key);
         }
 
         public bool TryGetNearestSurfaceError(Vector3 sample, out long cell, out float error)

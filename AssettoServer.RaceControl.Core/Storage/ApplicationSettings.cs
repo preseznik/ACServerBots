@@ -20,6 +20,8 @@ public sealed class ApplicationSettings
     public int LastPageIndex { get; set; }
     public bool ConfirmBeforeStoppingServerOnExit { get; set; } = true;
     public bool CompactGridRows { get; set; }
+    public string AssettoCorsaRoot { get; set; } = string.Empty;
+    public string ServerPayloadPath { get; set; } = string.Empty;
 
     public ApplicationSettings Copy() => new()
     {
@@ -30,6 +32,8 @@ public sealed class ApplicationSettings
         LastPageIndex = LastPageIndex,
         ConfirmBeforeStoppingServerOnExit = ConfirmBeforeStoppingServerOnExit,
         CompactGridRows = CompactGridRows,
+        AssettoCorsaRoot = AssettoCorsaRoot,
+        ServerPayloadPath = ServerPayloadPath,
     };
 }
 

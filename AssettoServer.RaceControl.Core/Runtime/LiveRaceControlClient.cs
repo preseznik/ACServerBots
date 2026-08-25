@@ -252,6 +252,8 @@ public sealed class LiveRaceCar
     public float ForwardY { get; set; }
     public float ForwardZ { get; set; } = 1;
     public double SpeedKmh { get; set; }
+    public byte ProtocolGear { get; set; }
+    public int EngineRpm { get; set; }
     public float NormalizedPosition { get; set; }
     public uint Lap { get; set; }
     public int StoppedObstaclePassCommits { get; set; }
@@ -265,6 +267,12 @@ public sealed class LiveRaceCar
     public float ManualBrake { get; set; }
 
     public string DisplayName => $"{SessionId + 1}. {Name} — {Model}";
+    public string GearDisplay => ProtocolGear switch
+    {
+        0 => "R",
+        1 => "N",
+        _ => $"{ProtocolGear - 1}",
+    };
     public string Kind => IsBot ? "BOT" : IsConnected ? "HUMAN" : "EMPTY";
     public bool IsStoppedByRaceControl => ControlMode.Equals("stopped", StringComparison.OrdinalIgnoreCase);
     public bool IsManuallyControlled => ControlMode.Equals("manual", StringComparison.OrdinalIgnoreCase);

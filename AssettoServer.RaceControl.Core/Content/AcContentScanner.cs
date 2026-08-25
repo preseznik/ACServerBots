@@ -67,7 +67,8 @@ public sealed partial class AcContentScanner
                 LooseJson.SpecNumber(root, "weight"),
                 LooseJson.SpecNumber(root, "bhp") ?? LooseJson.SpecNumber(root, "power"),
                 LooseJson.SpecNumber(root, "torque"),
-                LooseJson.SpecNumber(root, "topspeed")));
+                LooseJson.SpecNumber(root, "topspeed"),
+                LooseJson.Int32(root, "year")));
         }
 
         return cars.OrderBy(car => car.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToList();
@@ -141,6 +142,7 @@ public sealed partial class AcContentScanner
                 }
 
                 var fastLane = FindFastLane(directory, layoutId);
+                var raceBotPreflight = RaceBotTrackPreflightInspector.Inspect(models, directory, fastLane);
                 tracks.Add(new AcTrackLayout(
                     trackId,
                     layoutId,
@@ -154,7 +156,8 @@ public sealed partial class AcContentScanner
                     ExistingPath(Path.Combine(uiDirectory, "preview.png")),
                     ExistingPath(Path.Combine(uiDirectory, "outline.png")),
                     models,
-                    fastLane));
+                    fastLane,
+                    raceBotPreflight));
             }
         }
 
@@ -413,7 +416,7 @@ public sealed partial class AcContentScanner
         {
             if (element.ValueKind == JsonValueKind.Number && element.TryGetDouble(out var numeric))
             {
-                return numeric;
+                return double.IsFinite(numeric) ? numeric : null;
             }
 
             if (element.ValueKind != JsonValueKind.String)
@@ -422,7 +425,10 @@ public sealed partial class AcContentScanner
             }
 
             var match = NumberRegex().Match(element.GetString() ?? string.Empty);
-            return match.Success && double.TryParse(match.Value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out numeric)
+            return match.Success
+                   && double.TryParse(match.Value.Replace(',', '.'), NumberStyles.Float,
+                       CultureInfo.InvariantCulture, out numeric)
+                   && double.IsFinite(numeric)
                 ? numeric
                 : null;
         }

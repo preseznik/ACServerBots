@@ -70,9 +70,10 @@ public class AiBehavior : BackgroundService
             if (_racePhysicsWorld == null)
                 throw new ConfigurationException("Race bot rigid-body world is not registered");
             _raceLayout = RaceSplineLayout.Create(spline.Points, _configuration.Extra.AiParams.Race.StartSplinePointId);
-            if (_racePhysicsWorld.GridCount < _configuration.EntryList.Cars.Count)
+            int racingEntryCount = _configuration.EntryList.Cars.Count(entry => entry.SpectatorMode == 0);
+            if (_racePhysicsWorld.GridCount < racingEntryCount)
                 throw new ConfigurationException($"Track physics asset exposes {_racePhysicsWorld.GridCount} grid slots "
-                                                 + $"but {_configuration.EntryList.Cars.Count} entries are configured");
+                                                 + $"but {racingEntryCount} racing entries are configured");
         }
 
         if (_configuration.Extra.AiParams.Debug)
@@ -383,6 +384,9 @@ public class AiBehavior : BackgroundService
 
     private void OnClientDisconnected(ACTcpClient sender, EventArgs args)
     {
+        if (sender.EntryCar.IsSpectator)
+            return;
+
         if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
             && _raceRosterFrozen
             && _sessionManager.CurrentSession.Configuration.Type == SessionType.Race)
@@ -512,7 +516,8 @@ public class AiBehavior : BackgroundService
             return;
         }
 
-        int playerCount = _entryCarManager.EntryCars.Count(car => car.Client != null && car.Client.IsConnected);
+        int playerCount = _entryCarManager.EntryCars.Count(car => !car.IsSpectator
+            && car.Client != null && car.Client.IsConnected);
         var aiSlots = _entryCarManager.EntryCars.Where(car => car.Client == null && car.AiControlled).ToList(); // client null check is necessary here so that slots where someone is connecting don't count
 
         if (aiSlots.Count == 0)
@@ -572,7 +577,8 @@ public class AiBehavior : BackgroundService
         }
 
         var grid = (_sessionManager.CurrentSession.Grid ?? _entryCarManager.EntryCars).ToList();
-        int humanGridSlots = _entryCarManager.EntryCars.Count(car => car.AiMode == AiMode.None || car.Client != null);
+        int humanGridSlots = _entryCarManager.EntryCars.Count(car => !car.IsSpectator
+            && (car.AiMode == AiMode.None || car.Client != null));
         for (int i = 0; i < bots.Count; i++)
         {
             var car = bots[i];

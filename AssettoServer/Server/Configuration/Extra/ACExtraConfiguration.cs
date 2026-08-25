@@ -117,6 +117,8 @@ public class ACExtraConfiguration
     public List<UserGroupCommandPermissions>? UserGroupCommandPermissions { get; init; }
     
     public AiParams AiParams { get; init; } = new();
+    [YamlMember(Description = "Experimental server-authoritative FPS deathmatch configuration")]
+    public FpsConfiguration Fps { get; init; } = new();
     
     [YamlIgnore] internal bool ContainsObsoletePluginConfiguration { get; private set; }
 

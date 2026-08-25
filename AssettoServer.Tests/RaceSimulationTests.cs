@@ -143,11 +143,15 @@ public class RaceSimulationTests
         {
             Assert.That(statistics.AverageSpeedKilometersPerHour, Is.EqualTo(18).Within(0.01));
             Assert.That(statistics.TopSpeedKilometersPerHour, Is.EqualTo(36).Within(0.01));
+            Assert.That(statistics.DistanceKilometers, Is.EqualTo(0.01).Within(0.0001));
             Assert.That(statistics.FullStopCount, Is.EqualTo(1));
             Assert.That(statistics.FullyStoppedMilliseconds, Is.EqualTo(1000));
             Assert.That(statistics.RecoveryCount, Is.EqualTo(2));
             Assert.That(statistics.ContactEpisodeCount, Is.EqualTo(2));
             Assert.That(statistics.ContactManifolds, Is.EqualTo(12));
+            Assert.That(statistics.RecoveriesPer100Kilometers, Is.EqualTo(20_000).Within(1));
+            Assert.That(statistics.ContactEpisodesPer100Kilometers, Is.EqualTo(20_000).Within(1));
+            Assert.That(statistics.FullStopsPer100Kilometers, Is.EqualTo(10_000).Within(1));
         });
     }
 

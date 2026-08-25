@@ -5,7 +5,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
-using Microsoft.Win32;
 using AssettoServer.RaceControl.Infrastructure;
 using AssettoServer.RaceControl.Core.Storage;
 using AssettoServer.RaceControl.Theming;
@@ -28,7 +27,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = _viewModel;
-        _takeoverInputTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(33),
+        _takeoverInputTimer = new DispatcherTimer(TimeSpan.FromSeconds(1d / 60d),
             DispatcherPriority.Input, TakeoverInputTimer_Tick, Dispatcher);
         _takeoverInputTimer.Start();
         Closed += (_, _) => _takeoverInputTimer.Stop();
@@ -47,36 +46,6 @@ public partial class MainWindow : Window
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e) => ThemeManager.ApplyWindowChrome(this);
-
-    private async void BrowseAcRoot_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFolderDialog
-        {
-            Title = "Select the Assetto Corsa installation",
-            InitialDirectory = Directory.Exists(_viewModel.Preset.AssettoCorsaRoot)
-                ? _viewModel.Preset.AssettoCorsaRoot
-                : Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-        };
-        if (dialog.ShowDialog(this) == true)
-        {
-            await _viewModel.SetAssettoCorsaRootAsync(dialog.FolderName);
-        }
-    }
-
-    private void BrowseServerPayload_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFolderDialog
-        {
-            Title = "Select the published standalone AssettoServer folder",
-            InitialDirectory = Directory.Exists(_viewModel.Preset.ServerPayloadPath)
-                ? _viewModel.Preset.ServerPayloadPath
-                : AppContext.BaseDirectory,
-        };
-        if (dialog.ShowDialog(this) == true)
-        {
-            _viewModel.SetServerPayloadPath(dialog.FolderName);
-        }
-    }
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
@@ -118,8 +87,8 @@ public partial class MainWindow : Window
     {
         var answer = MessageBox.Show(
             this,
-            "Create a new race? Unsaved changes to the current race will be discarded.",
-            "New LAN race",
+            "Create a new event? Unsaved changes to the current event will be discarded.",
+            "New LAN event",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
         if (answer == MessageBoxResult.Yes)
@@ -128,13 +97,22 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Settings_Click(object sender, RoutedEventArgs e)
+    private async void Settings_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsWindow(RaceControlApp.Settings, RaceControlApp.DataRoot) { Owner = this };
+        string previousAcRoot = _viewModel.Preset.AssettoCorsaRoot;
+        string previousServerPayload = _viewModel.Preset.ServerPayloadPath;
+        var dialog = new SettingsWindow(RaceControlApp.Settings, RaceControlApp.DataRoot,
+            previousAcRoot, previousServerPayload) { Owner = this };
         if (dialog.ShowDialog() == true)
         {
             RaceControlApp.ApplySettings(dialog.Settings);
             UpdateThemeMenuChecks();
+            if (!string.Equals(previousServerPayload, dialog.ServerPayloadPath,
+                    StringComparison.OrdinalIgnoreCase))
+                _viewModel.SetServerPayloadPath(dialog.ServerPayloadPath);
+            if (!string.Equals(previousAcRoot, dialog.AssettoCorsaRoot,
+                    StringComparison.OrdinalIgnoreCase))
+                await _viewModel.SetAssettoCorsaRootAsync(dialog.AssettoCorsaRoot);
         }
     }
 
@@ -239,9 +217,12 @@ public partial class MainWindow : Window
         }
         XInputController.TryRead(out var controller);
         float keyboardSteering = (_rightPressed ? 1 : 0) - (_leftPressed ? 1 : 0);
-        float steering = Math.Abs(keyboardSteering) > Math.Abs(controller.Steering)
+        float rawSteering = Math.Abs(keyboardSteering) > Math.Abs(controller.Steering)
             ? keyboardSteering
             : controller.Steering;
+        // The manual rigid-body input convention is opposite the keyboard/XInput axis.
+        // Keep Right and a positive thumb-stick X intuitive at the UI boundary.
+        float steering = -rawSteering;
         float throttle = Math.Max(_throttlePressed ? 1 : 0, controller.Throttle);
         float brake = Math.Max(_brakePressed ? 1 : 0, controller.Brake);
         await _viewModel.UpdateTakeoverInputAsync(steering, throttle, brake);

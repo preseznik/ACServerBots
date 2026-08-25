@@ -16,6 +16,8 @@ public sealed class GridSlotViewModel : ObservableObject
     private string _nationCode;
     private int _ballastKg;
     private int _restrictorPercent;
+    private double? _difficulty;
+    private double? _aggression;
     private SlotMode _mode;
 
     public GridSlotViewModel(GridSlotPreset slot, IReadOnlyList<AcCar> cars, int index)
@@ -27,6 +29,8 @@ public sealed class GridSlotViewModel : ObservableObject
         _nationCode = slot.NationCode;
         _ballastKg = slot.BallastKg;
         _restrictorPercent = slot.RestrictorPercent;
+        _difficulty = slot.Difficulty;
+        _aggression = slot.Aggression;
         _mode = slot.Mode;
         _selectedCar = cars.FirstOrDefault(car => car.Id.Equals(slot.CarId, StringComparison.OrdinalIgnoreCase)) ?? cars.FirstOrDefault();
         RefreshSkins(slot.SkinId);
@@ -113,6 +117,18 @@ public sealed class GridSlotViewModel : ObservableObject
         set => SetProperty(ref _restrictorPercent, value);
     }
 
+    public double? Difficulty
+    {
+        get => _difficulty;
+        set => SetProperty(ref _difficulty, value);
+    }
+
+    public double? Aggression
+    {
+        get => _aggression;
+        set => SetProperty(ref _aggression, value);
+    }
+
     public SlotMode Mode
     {
         get => _mode;
@@ -132,6 +148,8 @@ public sealed class GridSlotViewModel : ObservableObject
         NationCode = NationCode,
         BallastKg = BallastKg,
         RestrictorPercent = RestrictorPercent,
+        Difficulty = Difficulty,
+        Aggression = Aggression,
         Mode = Mode,
     };
 

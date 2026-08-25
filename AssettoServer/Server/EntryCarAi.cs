@@ -72,6 +72,8 @@ public partial class EntryCar
     public List<LaneSpawnBehavior>? AiAllowedLanes { get; set; }
     public float TyreDiameterMeters { get; set; }
     public RaceBotVehicleProfile? RaceVehicleProfile { get; private set; }
+    public float RaceDifficulty { get; private set; }
+    public float RaceAggression { get; private set; }
     
     // Theoretically, this list should never include null values. Since we access it as a Span later, we might catch a null anyway
     // when it is updated concurrently
@@ -86,11 +88,32 @@ public partial class EntryCar
 
     private void AiInit()
     {
-        AiName = $"{_configuration.Extra.AiParams.NamePrefix} {SessionId}";
+        AiName = RaceBotDriverNames.Resolve(
+            _configuration.Extra.AiParams.UseParodyNames,
+            _configuration.Extra.AiParams.NamePrefix,
+            SessionId);
+        RaceDifficulty = RaceBotMath.RacecraftValue(
+            _configuration.Extra.AiParams.Race.Difficulty,
+            _configuration.Extra.AiParams.Race.DifficultyVariancePercent,
+            SessionId, 0x51ED);
+        RaceAggression = RaceBotMath.RacecraftValue(
+            _configuration.Extra.AiParams.Race.Aggression,
+            _configuration.Extra.AiParams.Race.AggressionVariancePercent,
+            SessionId, 0xA663);
         SetAiOverbooking(0);
 
         _configuration.Extra.AiParams.PropertyChanged += OnConfigReload;
         OnConfigReload(_configuration, new PropertyChangedEventArgs(string.Empty));
+    }
+
+    internal void ConfigureRacecraft(float difficulty, float aggression)
+    {
+        if (difficulty is >= 0 and <= 1)
+            RaceDifficulty = difficulty;
+        if (aggression is >= 0 and <= 1)
+            RaceAggression = aggression;
+        Logger.Debug("Racecraft resolved to skill {Difficulty:F3}, aggression {Aggression:F3}",
+            RaceDifficulty, RaceAggression);
     }
 
     private void OnConfigReload(object? sender, PropertyChangedEventArgs args)
@@ -624,12 +647,15 @@ public partial class EntryCar
 
     public AiState PrepareSingleAiState(int pointId, RaceSplineLayout raceLayout, RaceGridPose? gridPose = null)
     {
-        AiReset();
-        TargetAiStateCount = 1;
-        var state = _aiStates[0] ?? throw new InvalidOperationException("Failed to create AI state");
-        state.ConfigureRace(raceLayout);
-        state.Teleport(pointId, gridPose);
-        return state;
+        lock (_aiControlLock)
+        {
+            AiReset();
+            TargetAiStateCount = 1;
+            var state = _aiStates[0] ?? throw new InvalidOperationException("Failed to create AI state");
+            state.ConfigureRace(raceLayout);
+            state.Teleport(pointId, gridPose);
+            return state;
+        }
     }
 
     public void DespawnAiStates()
@@ -646,7 +672,9 @@ public partial class EntryCar
         _raceControlInput = default;
         foreach (var state in AiStatesSpan)
         {
-            state?.Despawn();
+            // The state is being discarded, not parked. Suppress its finalizer so it cannot
+            // later despawn a replacement body that reused this car's session id.
+            state?.Dispose();
         }
         _aiStates.Clear();
         _aiStates.Add(_aiStateFactory(this));

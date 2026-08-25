@@ -1,11 +1,61 @@
 <Window x:Class="AssettoServer.RaceControl.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Race Control settings" Width="570" Height="570" MinWidth="520" MinHeight="520"
+        Title="Race Control settings" Width="650" Height="610" MinWidth="580" MinHeight="540"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
         Background="{DynamicResource WindowBrush}" SourceInitialized="Window_SourceInitialized"
         ToolTipService.InitialShowDelay="350" ToolTipService.BetweenShowDelay="100"
         ToolTipService.ShowDuration="12000">
+    <Window.Resources>
+        <Style x:Key="SettingsTabControl" TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TabPanel Grid.Row="0" IsItemsHost="True" />
+                            <Border Grid.Row="1" Margin="0,12,0,0"
+                                    Background="{DynamicResource WindowBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" />
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SettingsTab" TargetType="TabItem">
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabSurface" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                Padding="16,9" Margin="0,0,7,0" CornerRadius="4">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabSurface" Property="Background" Value="{DynamicResource HoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Foreground" Value="White" />
+                                <Setter TargetName="TabSurface" Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter TargetName="TabSurface" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="64" />
@@ -19,49 +69,85 @@
             </StackPanel>
         </Border>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <StackPanel Margin="20">
-                <Border Style="{DynamicResource Card}">
-                    <StackPanel>
-                        <TextBlock Text="Appearance" Style="{DynamicResource SectionTitle}" />
-                        <TextBlock Text="Theme" Style="{DynamicResource FieldLabel}" />
-                        <ComboBox ItemsSource="{Binding ThemeModes}" SelectedItem="{Binding Settings.Theme}"
-                                  ToolTip="Choose Light, Dark, or System. System follows the Windows application theme when Race Control starts." />
-                        <CheckBox Content="Use compact grid rows" IsChecked="{Binding Settings.CompactGridRows}" Margin="0,13,0,0"
-                                  ToolTip="Reduce row height in the GRID table so more entries fit on screen." />
-                        <TextBlock Text="Theme and density changes apply as soon as you save. System follows the Windows app theme on startup."
-                                   Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
-                    </StackPanel>
-                </Border>
+        <TabControl Grid.Row="1" Margin="20" Style="{StaticResource SettingsTabControl}">
+            <TabItem Header="GENERAL" Style="{StaticResource SettingsTab}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16">
+                        <Border Style="{DynamicResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Appearance" Style="{DynamicResource SectionTitle}" />
+                                <TextBlock Text="Theme" Style="{DynamicResource FieldLabel}" />
+                                <ComboBox ItemsSource="{Binding ThemeModes}" SelectedItem="{Binding Settings.Theme}"
+                                          ToolTip="Choose Light, Dark, or System. System follows the Windows application theme when Race Control starts." />
+                                <CheckBox Content="Use compact grid rows" IsChecked="{Binding Settings.CompactGridRows}" Margin="0,13,0,0"
+                                          ToolTip="Reduce row height in the GRID table so more entries fit on screen." />
+                                <TextBlock Text="Theme and density changes apply as soon as you save. System follows the Windows app theme on startup."
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                            </StackPanel>
+                        </Border>
 
-                <Border Style="{DynamicResource Card}">
-                    <StackPanel>
-                        <TextBlock Text="Startup and safety" Style="{DynamicResource SectionTitle}" />
-                        <CheckBox Content="Load the most recently saved race on startup"
-                                  IsChecked="{Binding Settings.LoadMostRecentPresetOnStartup}"
-                                  ToolTip="Open the last saved Race Control preset automatically when the app starts." />
-                        <CheckBox Content="Return to the last open page"
-                                  IsChecked="{Binding Settings.RememberLastPage}"
-                                  ToolTip="Restore the previously selected navigation page at the next startup." />
-                        <CheckBox Content="Confirm before stopping a running server when exiting"
-                                  IsChecked="{Binding Settings.ConfirmBeforeStoppingServerOnExit}"
-                                  ToolTip="Ask for confirmation before closing Race Control would stop its active server process." />
-                    </StackPanel>
-                </Border>
+                        <Border Style="{DynamicResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Startup and safety" Style="{DynamicResource SectionTitle}" />
+                                <CheckBox Content="Load the most recently saved race on startup"
+                                          IsChecked="{Binding Settings.LoadMostRecentPresetOnStartup}"
+                                          ToolTip="Open the last saved Race Control preset automatically when the app starts." />
+                                <CheckBox Content="Return to the last open page"
+                                          IsChecked="{Binding Settings.RememberLastPage}"
+                                          ToolTip="Restore the previously selected navigation page at the next startup." />
+                                <CheckBox Content="Confirm before stopping a running server when exiting"
+                                          IsChecked="{Binding Settings.ConfirmBeforeStoppingServerOnExit}"
+                                          ToolTip="Ask for confirmation before closing Race Control would stop its active server process." />
+                            </StackPanel>
+                        </Border>
 
-                <Border Style="{DynamicResource Card}">
-                    <Grid>
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <StackPanel>
-                            <TextBlock Text="Local application data" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding DataRoot}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,10,0" />
-                        </StackPanel>
-                        <Button Grid.Column="1" Content="Open folder" Click="OpenDataFolder_Click" VerticalAlignment="Center"
-                                ToolTip="Open the folder containing saved presets, settings, staged instances, caches, and logs." />
-                    </Grid>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
+                        <Border Style="{DynamicResource Card}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Local application data" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding DataRoot}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,6,10,0" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open folder" Click="OpenDataFolder_Click" VerticalAlignment="Center"
+                                        ToolTip="Open the folder containing saved presets, settings, staged instances, caches, and logs." />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="LOCAL INSTALLATIONS" Style="{StaticResource SettingsTab}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16">
+                        <Border Style="{DynamicResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Local installations" Style="{DynamicResource SectionTitle}" />
+                                <TextBlock Text="Assetto Corsa root" Style="{DynamicResource FieldLabel}" />
+                                <Grid Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding AssettoCorsaRoot, Mode=OneWay}" IsReadOnly="True"
+                                             ToolTip="Assetto Corsa installation used to scan cars, tracks, skins, weather, checksums, and AI lines." />
+                                    <Button Grid.Column="1" Content="Browse…" Click="BrowseAcRoot_Click" Margin="7,0,0,0"
+                                            ToolTip="Choose the local Assetto Corsa installation folder." />
+                                </Grid>
+
+                                <TextBlock Text="Standalone server payload" Style="{DynamicResource FieldLabel}" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding ServerPayloadPath, Mode=OneWay}" IsReadOnly="True"
+                                             ToolTip="Published standalone AssettoServer files copied into the reusable working server." />
+                                    <Button Grid.Column="1" Content="Browse…" Click="BrowseServerPayload_Click" Margin="7,0,0,0"
+                                            ToolTip="Choose a different standalone server payload folder." />
+                                </Grid>
+
+                                <TextBlock Margin="0,14,0,0" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
+                                           Text="These are local-machine settings. They take precedence over installation paths stored in older race presets. Changing the Assetto Corsa root refreshes the installed content catalog after settings are saved." />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
 
         <Border Grid.Row="2" Background="{DynamicResource ChromeBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="16,0">

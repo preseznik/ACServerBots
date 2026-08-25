@@ -8,6 +8,8 @@ using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Admin;
 using AssettoServer.Server.Blacklist;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Configuration.Kunos;
 using AssettoServer.Server.OpenSlotFilters;
 using AssettoServer.Shared.Network.Packets.Incoming;
 using AssettoServer.Shared.Network.Packets.Outgoing;
@@ -187,11 +189,13 @@ public class EntryCarManager
                 return false;
 
             IEnumerable<EntryCar> candidates;
+            bool explicitSlotRequest = false;
 
             // Support for SLOT_INDEX CSP feature. CSP sends "car_model:n" where n is the specific slot index the user wants to connect to.
             var slotIndexSeparator = handshakeRequest.RequestedCar.IndexOf(':');
             if (slotIndexSeparator >= 0)
             {
+                explicitSlotRequest = true;
                 var requestedSlotIndex = int.Parse(handshakeRequest.RequestedCar.AsSpan(slotIndexSeparator + 1));
                 var requestedCarName = handshakeRequest.RequestedCar[..slotIndexSeparator];
                 var candidate = EntryCars.Where(c => c.Model == requestedCarName).ElementAtOrDefault(requestedSlotIndex);
@@ -209,10 +213,19 @@ public class EntryCarManager
             }
 
             var isAdmin = await _adminService.IsAdminAsync(handshakeRequest.Guid);
-            foreach (var entryCar in candidates.OrderByDescending(x => x.AllowedGuids.Count))
+            var selection = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+                ? _configuration.Extra.AiParams.Race.JoinSlotSelection
+                : RaceJoinSlotSelection.First;
+            var orderedCandidates = SlotSelectionPolicy.OrderForConnection(candidates, selection,
+                car => car.IsSpectator, client.SupportsCSPSpectating, explicitSlotRequest,
+                car => car.AllowedGuids.Count, car => car.SessionId);
+            foreach (var entryCar in orderedCandidates)
             {
+                if (entryCar.IsSpectator && !client.SupportsCSPSpectating)
+                    continue;
                 var slotOpen = await _openSlotFilterChain.Value.IsSlotOpen(entryCar, handshakeRequest.Guid);
-                var adminBypassAllowed = isAdmin && !_sessionManager.Value.IsMidRaceBotTakeoverSession;
+                var adminBypassAllowed = isAdmin && !_sessionManager.Value.IsMidRaceBotTakeoverSession
+                    && !(_configuration.Extra.Fps.Enabled && entryCar.FpsRole == FpsSlotRole.Bot);
                 if (entryCar.Client == null && (slotOpen || adminBypassAllowed))
                 {
                     if (entryCar.AiControlled)
@@ -230,6 +243,13 @@ public class EntryCarManager
                     client.IsConnected = true;
                     client.IsAdministrator = isAdmin;
                     client.Guid = handshakeRequest.Guid;
+
+                    if (entryCar.IsSpectator)
+                    {
+                        entryCar.TargetCar = EntryCars.FirstOrDefault(car => !car.IsSpectator
+                            && (car.Client != null || car.AiControlled))
+                            ?? EntryCars.FirstOrDefault(car => !car.IsSpectator);
+                    }
 
                     ConnectedCars[client.SessionId] = entryCar;
 
@@ -250,6 +270,18 @@ public class EntryCarManager
         return false;
     }
 
+    internal bool IsExplicitSpectatorRequest(HandshakeRequest handshakeRequest, bool supportsSpectating)
+    {
+        if (!supportsSpectating)
+            return false;
+        var separator = handshakeRequest.RequestedCar.IndexOf(':');
+        if (separator < 0
+            || !int.TryParse(handshakeRequest.RequestedCar.AsSpan(separator + 1), out var modelSlotIndex))
+            return false;
+        var model = handshakeRequest.RequestedCar[..separator];
+        return EntryCars.Where(car => car.Model == model).ElementAtOrDefault(modelSlotIndex)?.IsSpectator == true;
+    }
+
     internal void Initialize()
     {
         EntryCars = new EntryCar[Math.Min(_configuration.Server.MaxClients, _configuration.EntryList.Cars.Count)];
@@ -261,17 +293,19 @@ public class EntryCarManager
             var aiMode = _configuration.Extra.EnableAi ? entry.AiMode : AiMode.None;
 
             var car = _entryCarFactory(entry.Model, entry.Skin, (byte)i);
-            car.SpectatorMode = entry.SpectatorMode;
+            car.ConfigureSpectatorMode(entry.SpectatorMode);
             car.Ballast = entry.Ballast;
             car.Restrictor = entry.Restrictor;
+            car.ConfigureRacecraft(entry.AiDifficulty, entry.AiAggression);
             car.FixedSetup = entry.FixedSetup;
             car.DriverOptionsFlags = driverOptions;
-            car.AiMode = aiMode;
+            car.AiMode = car.IsSpectator ? AiMode.None : aiMode;
             car.AiEnableColorChanges = driverOptions.HasFlag(DriverOptionsFlags.AllowColorChange);
-            car.AiControlled = aiMode != AiMode.None;
+            car.AiControlled = !car.IsSpectator && aiMode != AiMode.None;
             car.NetworkDistanceSquared = MathF.Pow(_configuration.Extra.NetworkBubbleDistance, 2);
             car.OutsideNetworkBubbleUpdateRateMs = 1000 / _configuration.Extra.OutsideNetworkBubbleRefreshRateHz;
             car.LegalTyres = entry.LegalTyres ?? _configuration.Server.LegalTyres;
+            car.FpsRole = entry.FpsRole;
             if (!string.IsNullOrWhiteSpace(entry.Guid))
             {
                 car.AllowedGuids = entry.Guid.Split(';').Select(ulong.Parse).ToList();

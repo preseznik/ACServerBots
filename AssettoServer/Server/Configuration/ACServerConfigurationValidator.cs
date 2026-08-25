@@ -29,6 +29,35 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
             extra.RuleFor(x => x.WhitelistUserGroup).NotEmpty();
             extra.RuleFor(x => x.AdminUserGroup).NotEmpty();
             extra.RuleFor(x => x.VoteKickMinimumConnectedPlayers).GreaterThanOrEqualTo((ushort)3);
+            extra.RuleFor(x => x.Fps).NotNull();
+            extra.RuleFor(x => x.NetworkBindAddress)
+                .Must(PrivateNetworkAddress.IsPrivateIpv4)
+                .When(x => x.Fps.Enabled)
+                .WithMessage("FPS V1 is LAN-only; NetworkBindAddress must be a private IPv4 address");
+            extra.RuleFor(x => x.EnableAi).Equal(false).When(x => x.Fps.Enabled)
+                .WithMessage("FPS mode cannot run vehicle AI");
+            extra.RuleFor(x => x.EnableClientMessages).Equal(true).When(x => x.Fps.Enabled)
+                .WithMessage("FPS mode requires CSP client messages");
+            extra.RuleFor(x => x.EnableUdpClientMessages).Equal(true).When(x => x.Fps.Enabled)
+                .WithMessage("FPS mode requires CSP UDP client messages");
+            extra.RuleFor(x => x.MinimumCSPVersion).Must(version => version is >= 4053).When(x => x.Fps.Enabled)
+                .WithMessage("FPS mode requires CSP 0.3.0-preview520 (build 4053) or newer");
+            extra.RuleFor(x => x.Fps).ChildRules(fps =>
+            {
+                fps.RuleFor(x => x.MatchType).Equal(Extra.FpsMatchType.Deathmatch);
+                fps.RuleFor(x => x.TimeLimitMinutes).InclusiveBetween(1, 1440);
+                fps.RuleFor(x => x.KillLimit).InclusiveBetween(1, 999);
+                fps.RuleFor(x => x.RespawnSeconds).InclusiveBetween(0, 30);
+                fps.RuleFor(x => x.SpawnProtectionSeconds).InclusiveBetween(0, 10);
+                fps.RuleFor(x => x.Bots.Health).InclusiveBetween(50, 200);
+                fps.RuleFor(x => x.Bots.Difficulty).InclusiveBetween(0, 1);
+                fps.RuleFor(x => x.Bots.Aggression).InclusiveBetween(0, 1);
+                fps.RuleFor(x => x.Arena.SpawnPoints).Must(points => points.Count >= 2)
+                    .When(x => x.Enabled).WithMessage("FPS arena needs at least two spawn points");
+                fps.RuleFor(x => x.Arena.BoundsMax.X).GreaterThan(x => x.Arena.BoundsMin.X).When(x => x.Enabled);
+                fps.RuleFor(x => x.Arena.BoundsMax.Y).GreaterThan(x => x.Arena.BoundsMin.Y).When(x => x.Enabled);
+                fps.RuleFor(x => x.Arena.BoundsMax.Z).GreaterThan(x => x.Arena.BoundsMin.Z).When(x => x.Enabled);
+            });
 
             extra.RuleFor(x => x.AiParams).ChildRules(aiParams =>
             {
@@ -42,7 +71,9 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 aiParams.RuleFor(ai => ai.NamePrefix).NotNull();
                 aiParams.RuleFor(ai => ai.Race).NotNull();
                 aiParams.RuleFor(ai => ai.Race.Difficulty).InclusiveBetween(0, 1);
+                aiParams.RuleFor(ai => ai.Race.DifficultyVariancePercent).InclusiveBetween(0, 100);
                 aiParams.RuleFor(ai => ai.Race.Aggression).InclusiveBetween(0, 1);
+                aiParams.RuleFor(ai => ai.Race.AggressionVariancePercent).InclusiveBetween(0, 100);
                 aiParams.RuleFor(ai => ai.Race.StartSplinePointId).GreaterThanOrEqualTo(0);
                 aiParams.RuleFor(ai => ai.Race.GridSpacingMeters).GreaterThan(0);
                 aiParams.RuleFor(ai => ai.Race.UpdateHz).InclusiveBetween(10, 120);
@@ -131,6 +162,12 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 car.RuleFor(c => c.Guid).NotNull();
                 car.RuleFor(c => c.Restrictor).InclusiveBetween(0, 400);
                 car.RuleFor(c => c.Ballast).GreaterThanOrEqualTo(0);
+                car.RuleFor(c => c.AiDifficulty)
+                    .Must(value => value == -1 || value is >= 0 and <= 1)
+                    .WithMessage("AI_DIFFICULTY must be -1 (automatic) or between 0 and 1");
+                car.RuleFor(c => c.AiAggression)
+                    .Must(value => value == -1 || value is >= 0 and <= 1)
+                    .WithMessage("AI_AGGRESSION must be -1 (automatic) or between 0 and 1");
             });
         });
 
@@ -144,5 +181,13 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
             .When(cfg => cfg.Extra.AiParams is
                 { Behavior: AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race, Race.AllowMidRaceBotTakeover: true })
             .WithMessage("Mid-race bot takeover requires at least one AI=auto entry-list slot");
+        RuleFor(cfg => cfg.EntryList.Cars)
+            .Must(cars => cars.Count(car => car.FpsRole != Kunos.FpsSlotRole.Spectator) is >= 2 and <= 32)
+            .When(cfg => cfg.Extra.Fps.Enabled)
+            .WithMessage("FPS mode requires 2..32 scored participant slots");
+        RuleFor(cfg => cfg.EntryList.Cars)
+            .Must(cars => cars.All(car => car.AiMode == AiMode.None))
+            .When(cfg => cfg.Extra.Fps.Enabled)
+            .WithMessage("FPS carrier entries must use AI=none");
     }
 }

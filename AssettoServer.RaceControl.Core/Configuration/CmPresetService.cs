@@ -43,7 +43,11 @@ public sealed class CmPresetService
                 NationCode = section.Get("NATION") ?? string.Empty,
                 BallastKg = ParseInt(section.Get("BALLAST"), 0),
                 RestrictorPercent = ParseInt(section.Get("RESTRICTOR"), 0),
-                Mode = ParseMode(section.Get("AI")),
+                Difficulty = ParseOptionalRacecraft(section.Get("AI_DIFFICULTY")),
+                Aggression = ParseOptionalRacecraft(section.Get("AI_AGGRESSION")),
+                Mode = ParseInt(section.Get("SPECTATOR_MODE"), 0) != 0
+                    ? SlotMode.Spectator
+                    : ParseMode(section.Get("AI")),
             })
             .ToList();
 
@@ -78,7 +82,7 @@ public sealed class CmPresetService
         preset.Conditions.AmbientTemperatureCelsius = ParseInt(server.Get("WEATHER_0", "BASE_TEMPERATURE_AMBIENT"), 22);
         preset.Conditions.RoadTemperatureCelsius = preset.Conditions.AmbientTemperatureCelsius
             + ParseInt(server.Get("WEATHER_0", "BASE_TEMPERATURE_ROAD"), 6);
-        preset.Bots.Enabled = preset.Grid.Any(slot => slot.Mode != SlotMode.None);
+        preset.Bots.Enabled = preset.Grid.Any(slot => slot.Mode is SlotMode.Auto or SlotMode.Fixed);
         return preset;
     }
 
@@ -107,6 +111,8 @@ public sealed class CmPresetService
         DriverName = name,
         TeamName = source.TeamName,
         NationCode = source.NationCode,
+        Difficulty = source.Difficulty,
+        Aggression = source.Aggression,
         Mode = SlotMode.Auto,
     };
 
@@ -119,6 +125,11 @@ public sealed class CmPresetService
 
     private static ushort ParsePort(string? value, ushort fallback) => ushort.TryParse(value, out var parsed) && parsed > 0 ? parsed : fallback;
     private static int ParseInt(string? value, int fallback) => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+    private static double? ParseOptionalRacecraft(string? value) =>
+        double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+        && parsed is >= 0 and <= 1
+            ? parsed
+            : null;
 
     private static string WeatherIdFromGraphics(string? graphics)
     {

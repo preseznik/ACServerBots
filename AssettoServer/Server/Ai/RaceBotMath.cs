@@ -22,6 +22,12 @@ public static class RaceBotMath
     public const float MinimumStoppedPassCommitClearanceMeters = 1f;
     public const float StoppedObstacleSpeedMetersPerSecond = 1.5f;
     public const float StoppedObstaclePassPlanningDistanceMeters = 30f;
+    public const float MaximumPredictivePassPlanningDistanceMeters = 180f;
+    public const float PredictiveCorridorLongitudinalBufferMeters = 1.5f;
+    public const float PredictiveCorridorRiskDistanceMeters = 12f;
+    public const float PredictiveCorridorRiskLateralMeters = 2f;
+    public const float PredictivePassSafetyBufferMeters = 0.45f;
+    public const float PredictiveHumanUncertaintyMeters = 0.6f;
     public const float StoppedObstacleSafetyMarginMeters = 0.10f;
     public const float StoppedObstacleTargetBufferMeters = 0.5f;
     public const float PassSeparationEvaluationDistanceMeters = 15f;
@@ -71,25 +77,47 @@ public static class RaceBotMath
     public const float RaceCornerBrakeDistanceFactor = 1.15f;
     public const float RaceCornerBrakeForceFactor = 0.85f;
     public const float RaceCornerStabilitySpeedFactor = 0.95f;
+    public const float MinimumLaneCommandLeadMeters = 1.25f;
+    public const float MaximumLaneCommandLeadMeters = 2.25f;
+    public const float FullOffroadPenaltyMeters = 2f;
+    public const float MinimumOffroadTargetSpeedScale = 0.45f;
+    public const float MaximumOffroadDragDeceleration = 3f;
+    public const float MaximumOffroadRecoveryEdgeReserveMeters = 1.5f;
     private const float CarHalfWidthWithMarginMeters = 1.25f;
     private const float PreferredPassingSeparationMeters = 3.8f;
 
     public static float PassTrackEdgeReserveMeters(float speedMetersPerSecond) =>
         Math.Clamp(0.25f + Math.Max(0, speedMetersPerSecond) * 0.015f, 0.35f, 0.8f);
 
+    public static float MaximumPredictivePassCenterOffsetMeters(float speedMetersPerSecond) =>
+        Math.Clamp(4.5f - Math.Max(0, speedMetersPerSecond) * 0.02f,
+            3.8f, 4.5f);
+
     public static bool IsStoppedObstacle(float speedMetersPerSecond) =>
         Math.Max(0, speedMetersPerSecond) < StoppedObstacleSpeedMetersPerSecond;
+
+    public static bool ShouldUsePredictiveCorridorPlanner(float currentSpeed,
+        float leadSpeed)
+    {
+        _ = currentSpeed;
+        return IsStoppedObstacle(leadSpeed);
+    }
 
     public static bool ShouldStopAfterReportedCollision(AiBehaviorMode behavior) =>
         behavior != AiBehaviorMode.Race;
 
     public static float CongestionCrawlTargetSpeed(float leadSpeedMetersPerSecond,
-        float clearanceMeters)
+        float clearanceMeters, int nearbyParticipantCount = 1)
     {
         float leadSpeed = Math.Max(0, leadSpeedMetersPerSecond);
         float clearanceAllowance = Math.Clamp(Math.Max(0, clearanceMeters) * 0.25f, 0, 1.5f);
+        // A dense race pack should keep rolling and create lateral opportunities instead of
+        // settling into a traffic-style stop-go queue. Keep the pressure bounded so collision
+        // avoidance and the physical speed controller remain authoritative.
+        float packPressure = Math.Clamp(Math.Max(0, nearbyParticipantCount - 1) * 0.30f,
+            0, 1.2f);
         return Math.Clamp(Math.Max(CongestionCrawlSpeedMetersPerSecond, leadSpeed)
-                          + clearanceAllowance,
+                          + clearanceAllowance + packPressure,
             CongestionCrawlSpeedMetersPerSecond, 5f);
     }
 
@@ -274,6 +302,25 @@ public static class RaceBotMath
 
     public static float PaceFactor(float difficulty) => 0.65f + Math.Clamp(difficulty, 0, 1) * 0.35f;
 
+    public static float RacecraftValue(float baseline, float variancePercent, int slot,
+        int salt)
+    {
+        float variation = Math.Clamp(variancePercent, 0, 100) / 100f;
+        if (variation <= 0)
+            return Math.Clamp(baseline, 0, 1);
+
+        // Stable integer mixing gives every slot two independent personalities while
+        // preserving the same grid across session restarts and accelerated simulations.
+        uint hash = unchecked((uint)(slot + 1) * 0x9E3779B9u + (uint)salt);
+        hash ^= hash >> 16;
+        hash *= 0x7FEB352Du;
+        hash ^= hash >> 15;
+        hash *= 0x846CA68Bu;
+        hash ^= hash >> 16;
+        float signed = (hash & 0xFFFF) / 32767.5f - 1f;
+        return Math.Clamp(baseline * (1 + signed * variation), 0, 1);
+    }
+
     public static float GridPaceFactor(float configuredVariationPercent, int seed)
     {
         float variation = Math.Clamp(configuredVariationPercent, 0, 0.15f);
@@ -308,6 +355,22 @@ public static class RaceBotMath
         targetOffsetMeters,
         Math.Max(StoppedPassMinimumPlanningSpeedMetersPerSecond, forwardSpeedMetersPerSecond),
         deltaSeconds, transitionMultiplier);
+
+    public static float AdvanceReachableLaneOffset(float currentOffsetMeters,
+        float targetOffsetMeters, float physicalOffsetMeters, float forwardSpeedMetersPerSecond,
+        float deltaSeconds, float transitionMultiplier = 1, bool stoppedPass = false)
+    {
+        float advanced = stoppedPass
+            ? AdvanceStoppedPassLaneOffset(currentOffsetMeters, targetOffsetMeters,
+                forwardSpeedMetersPerSecond, deltaSeconds, transitionMultiplier)
+            : AdvanceLaneOffset(currentOffsetMeters, targetOffsetMeters,
+                forwardSpeedMetersPerSecond, deltaSeconds, transitionMultiplier);
+        float maximumLead = Math.Clamp(MinimumLaneCommandLeadMeters
+                                       + Math.Max(0, forwardSpeedMetersPerSecond) * 0.03f,
+            MinimumLaneCommandLeadMeters, MaximumLaneCommandLeadMeters);
+        return Math.Clamp(advanced, physicalOffsetMeters - maximumLead,
+            physicalOffsetMeters + maximumLead);
+    }
 
     public static float CorneringSpeedSquared(float radiusMeters, float corneringFactor, float difficulty)
     {
@@ -353,18 +416,42 @@ public static class RaceBotMath
         Math.Clamp(8 + Math.Max(0, speedMetersPerSecond) * 0.75f, 12, 25)
         * (0.90f + Math.Clamp(aggression, 0, 1) * 0.10f);
 
+    public static float PredictivePassHorizonSeconds(float currentSpeed, float leadSpeed,
+        float aggression)
+    {
+        float speedContribution = Math.Clamp(Math.Max(0, currentSpeed) / 50f, 0, 1) * 0.5f;
+        float stoppedContribution = IsStoppedObstacle(leadSpeed) ? 0.5f : 0;
+        return Math.Clamp(2.5f + Math.Clamp(aggression, 0, 1) * 0.5f
+                               + speedContribution + stoppedContribution,
+            2.5f, 4f);
+    }
+
     public static float FollowingDecisionDistance(float currentSpeed, float leadSpeed,
         float aggression) => leadSpeed < 8 || leadSpeed < currentSpeed * 0.6f
         ? FollowingGapMeters(currentSpeed, aggression) * 1.5f
         : OvertakeTriggerDistance(currentSpeed, aggression) * 1.25f;
 
     public static float PassAttemptDistance(float currentSpeed, float leadSpeed,
-        float aggression) => IsStoppedObstacle(leadSpeed)
-        ? Math.Max(StoppedObstaclePassPlanningDistanceMeters,
-            FollowingDecisionDistance(currentSpeed, leadSpeed, aggression))
-        : leadSpeed < 8 || leadSpeed < currentSpeed * 0.6f
-        ? Math.Min(35, FollowingGapMeters(currentSpeed, aggression))
-        : OvertakeTriggerDistance(currentSpeed, aggression);
+        float aggression)
+    {
+        float speed = Math.Max(0, currentSpeed);
+        float targetSpeed = Math.Max(0, leadSpeed);
+        if (!IsStoppedObstacle(targetSpeed))
+        {
+            return targetSpeed < 8 || targetSpeed < speed * 0.6f
+                ? Math.Min(35, FollowingGapMeters(speed, aggression))
+                : OvertakeTriggerDistance(speed, aggression);
+        }
+
+        float closingSpeed = Math.Max(0, speed - targetSpeed);
+        float predictiveDistance = closingSpeed
+                                   * PredictivePassHorizonSeconds(speed, targetSpeed, aggression)
+                                   + speed * 0.25f;
+        return Math.Min(MaximumPredictivePassPlanningDistanceMeters,
+            Math.Max(Math.Max(StoppedObstaclePassPlanningDistanceMeters,
+                    FollowingDecisionDistance(speed, targetSpeed, aggression)),
+                predictiveDistance));
+    }
 
     public static bool ShouldAttemptPass(float currentSpeed, float leadSpeed, float distanceMeters,
         float aggression) => distanceMeters > (leadSpeed < 1.5f
@@ -372,6 +459,111 @@ public static class RaceBotMath
                                  : MinimumMovingPassCommitClearanceMeters)
                              && distanceMeters <= PassAttemptDistance(currentSpeed, leadSpeed, aggression)
                              && leadSpeed <= currentSpeed + 1f;
+
+    public static float[] BuildPredictivePassCorridors(float currentOffsetMeters,
+        float sideLeftMeters, float sideRightMeters, float vehicleHalfWidthMeters,
+        float trackEdgeReserveMeters, float maximumLeftPassCenterMeters,
+        float minimumRightPassCenterMeters, int seed)
+    {
+        float edgeMargin = Math.Max(CarHalfWidthWithMarginMeters,
+            Math.Max(0.5f, vehicleHalfWidthMeters)
+            + Math.Max(0.15f, trackEdgeReserveMeters));
+        float minimumCenter = -Math.Max(0, sideLeftMeters - edgeMargin);
+        float maximumCenter = Math.Max(0, sideRightMeters - edgeMargin);
+        var candidates = new List<float>(7);
+
+        static void AddUnique(List<float> values, float value)
+        {
+            foreach (float existing in values)
+            {
+                if (Math.Abs(existing - value) < 0.05f)
+                    return;
+            }
+            values.Add(value);
+        }
+
+        bool currentIsLegal = currentOffsetMeters <= maximumLeftPassCenterMeters
+                              || currentOffsetMeters >= minimumRightPassCenterMeters;
+        if (currentIsLegal && currentOffsetMeters >= minimumCenter
+                           && currentOffsetMeters <= maximumCenter)
+            AddUnique(candidates, currentOffsetMeters);
+
+        if (maximumLeftPassCenterMeters >= minimumCenter)
+        {
+            float nearest = Math.Min(maximumLeftPassCenterMeters, maximumCenter);
+            AddUnique(candidates, nearest);
+            AddUnique(candidates, (minimumCenter + nearest) * 0.5f);
+            AddUnique(candidates, minimumCenter);
+        }
+        if (minimumRightPassCenterMeters <= maximumCenter)
+        {
+            float nearest = Math.Max(minimumRightPassCenterMeters, minimumCenter);
+            AddUnique(candidates, nearest);
+            AddUnique(candidates, (maximumCenter + nearest) * 0.5f);
+            AddUnique(candidates, maximumCenter);
+        }
+
+        candidates.Sort((first, second) =>
+        {
+            float firstCost = Math.Abs(first - currentOffsetMeters)
+                              + (((seed & 1) == 0) == (first > 0) ? 0.05f : 0);
+            float secondCost = Math.Abs(second - currentOffsetMeters)
+                               + (((seed & 1) == 0) == (second > 0) ? 0.05f : 0);
+            return firstCost.CompareTo(secondCost);
+        });
+        return candidates.ToArray();
+    }
+
+    public static float PredictLateralOffset(float currentOffsetMeters, float targetOffsetMeters,
+        float elapsedSeconds, float horizonSeconds)
+    {
+        if (horizonSeconds <= 0)
+            return targetOffsetMeters;
+        float progress = Math.Clamp(elapsedSeconds / horizonSeconds, 0, 1);
+        float smoothProgress = progress * progress * (3 - 2 * progress);
+        return currentOffsetMeters
+               + (targetOffsetMeters - currentOffsetMeters) * smoothProgress;
+    }
+
+    public static float PredictiveCorridorInteractionCost(float initialLongitudinalMeters,
+        float ownSpeedMetersPerSecond, float participantSpeedMetersPerSecond,
+        float ownCurrentOffsetMeters, float ownTargetOffsetMeters,
+        float participantCurrentOffsetMeters, float participantTargetOffsetMeters,
+        float ownLengthMeters, float participantLengthMeters,
+        float requiredLateralSeparationMeters, float horizonSeconds)
+    {
+        float horizon = Math.Clamp(horizonSeconds, 0.25f, 6f);
+        float longitudinalLimit = (Math.Max(0, ownLengthMeters)
+                                   + Math.Max(0, participantLengthMeters)) * 0.5f
+                                  + PredictiveCorridorLongitudinalBufferMeters;
+        float totalRisk = 0;
+        const int sampleCount = 17;
+        for (int i = 0; i < sampleCount; i++)
+        {
+            float elapsed = horizon * i / (sampleCount - 1f);
+            float longitudinal = initialLongitudinalMeters
+                                 + (Math.Max(0, participantSpeedMetersPerSecond)
+                                    - Math.Max(0, ownSpeedMetersPerSecond)) * elapsed;
+            float ownOffset = PredictLateralOffset(ownCurrentOffsetMeters,
+                ownTargetOffsetMeters, elapsed, horizon);
+            float participantOffset = PredictLateralOffset(participantCurrentOffsetMeters,
+                participantTargetOffsetMeters, elapsed, horizon);
+            float longitudinalDistance = Math.Abs(longitudinal);
+            float lateralDistance = Math.Abs(ownOffset - participantOffset);
+            if (longitudinalDistance < longitudinalLimit
+                && lateralDistance < requiredLateralSeparationMeters)
+                return float.PositiveInfinity;
+
+            float longitudinalRisk = 1 - Math.Clamp(
+                (longitudinalDistance - longitudinalLimit)
+                / PredictiveCorridorRiskDistanceMeters, 0, 1);
+            float lateralRisk = 1 - Math.Clamp(
+                (lateralDistance - requiredLateralSeparationMeters)
+                / PredictiveCorridorRiskLateralMeters, 0, 1);
+            totalRisk += longitudinalRisk * lateralRisk;
+        }
+        return totalRisk;
+    }
 
     public static float CommittedPassApproachSpeed(float leadSpeed, float clearanceMeters)
     {
@@ -485,6 +677,35 @@ public static class RaceBotMath
             -Math.Max(0, sideLeftMeters - edgeMargin),
             Math.Max(0, sideRightMeters - edgeMargin));
     }
+
+    public static float CourseBoundaryErrorMeters(float physicalOffsetMeters,
+        float sideLeftMeters, float sideRightMeters, float vehicleHalfWidthMeters,
+        float trackEdgeReserveMeters = 0.15f)
+    {
+        float edgeMargin = Math.Max(CarHalfWidthWithMarginMeters,
+            Math.Max(0.5f, vehicleHalfWidthMeters)
+            + Math.Max(0.15f, trackEdgeReserveMeters));
+        float minimumCenter = -Math.Max(0, sideLeftMeters - edgeMargin);
+        float maximumCenter = Math.Max(0, sideRightMeters - edgeMargin);
+        if (physicalOffsetMeters < minimumCenter)
+            return minimumCenter - physicalOffsetMeters;
+        if (physicalOffsetMeters > maximumCenter)
+            return physicalOffsetMeters - maximumCenter;
+        return 0;
+    }
+
+    public static float OffroadSeverity(float boundaryErrorMeters) =>
+        Math.Clamp(Math.Max(0, boundaryErrorMeters) / FullOffroadPenaltyMeters, 0, 1);
+
+    public static float OffroadTargetSpeedScale(float boundaryErrorMeters) =>
+        1 - OffroadSeverity(boundaryErrorMeters) * (1 - MinimumOffroadTargetSpeedScale);
+
+    public static float OffroadDragDeceleration(float boundaryErrorMeters) =>
+        OffroadSeverity(boundaryErrorMeters) * MaximumOffroadDragDeceleration;
+
+    public static float OffroadRecoveryEdgeReserveMeters(float boundaryErrorMeters) =>
+        0.15f + OffroadSeverity(boundaryErrorMeters)
+        * (MaximumOffroadRecoveryEdgeReserveMeters - 0.15f);
 
     public static float LimitPassCorridorWidth(float sideWidthMeters,
         float vehicleHalfWidthMeters)

@@ -15,14 +15,21 @@ public sealed class RaceControlValidator
         ErrorIf(messages, !Directory.Exists(preset.ServerPayloadPath), "ServerPayloadPath", "Published AssettoServer payload was not found.");
         ErrorIf(messages, !File.Exists(Path.Combine(preset.ServerPayloadPath, "AssettoServer.exe")), "ServerPayloadPath", "The payload does not contain AssettoServer.exe.");
 
-        if (preset.Grid.Count < 2)
+        var isFps = preset.Mode == EventMode.Fps;
+        int racingSlotCount = preset.Grid.Count(slot => slot.Mode != SlotMode.Spectator);
+        int spectatorSlotCount = preset.Grid.Count - racingSlotCount;
+        if (racingSlotCount < 2)
         {
-            messages.Add(new(ValidationSeverity.Error, "Grid", "At least two grid slots are required."));
+            messages.Add(new(ValidationSeverity.Error, "Grid", "At least two racing grid slots are required."));
         }
 
         if (preset.Grid.Count > 254)
         {
             messages.Add(new(ValidationSeverity.Error, "Grid", "Assetto Corsa supports at most 254 server slots."));
+        }
+        if (isFps && racingSlotCount > 32)
+        {
+            messages.Add(new(ValidationSeverity.Error, "Grid", "FPS V1 supports at most 32 scored participants."));
         }
 
         var track = catalog?.Tracks.FirstOrDefault(candidate =>
@@ -39,17 +46,24 @@ public sealed class RaceControlValidator
             {
                 messages.Add(new(ValidationSeverity.Error, "Track", "The selected layout exposes fewer than two pit boxes."));
             }
-            else if (preset.Grid.Count > track.PitBoxes)
+            else if (racingSlotCount > track.PitBoxes)
             {
                 messages.Add(new(
                     ValidationSeverity.Warning,
                     "Grid",
-                    $"Only the first {track.PitBoxes} of {preset.Grid.Count} entries will be staged for this layout."));
+                    $"Only the first {track.PitBoxes} of {racingSlotCount} racing entries will be staged for this layout; spectator entries do not consume pit boxes."));
             }
 
-            if (preset.Bots.Enabled)
+            if (!isFps && preset.Bots.Enabled)
             {
                 ErrorIf(messages, !track.HasFastLane, "Track", "Race bots require this layout's fast_lane.ai.");
+                if (track.RaceBotPreflight is { } preflight)
+                {
+                    ErrorIf(messages, !preflight.HasReadableClosedSpline, "Track",
+                        $"Race bots require a readable closed fast_lane.ai: {preflight.Failure ?? "invalid spline"}.");
+                    ErrorIf(messages, preflight.MissingModelFiles.Count > 0, "Track",
+                        $"Track models are missing: {string.Join(", ", preflight.MissingModelFiles)}.");
+                }
             }
         }
 
@@ -66,9 +80,21 @@ public sealed class RaceControlValidator
             }
         }
 
+        if (isFps)
+        {
+            ValidateFps(messages, preset, catalog);
+        }
+
         for (var index = 0; index < preset.Grid.Count; index++)
         {
             var slot = preset.Grid[index];
+            if (isFps)
+            {
+                ErrorIf(messages, slot.Difficulty is < 0 or > 1, $"Grid[{index}]", "FPS bot skill must be between 0 and 1, or blank for automatic variance.");
+                ErrorIf(messages, slot.Aggression is < 0 or > 1, $"Grid[{index}]", "FPS bot aggression must be between 0 and 1, or blank for automatic variance.");
+                continue;
+            }
+
             var car = catalog?.Cars.FirstOrDefault(candidate => candidate.Id.Equals(slot.CarId, StringComparison.OrdinalIgnoreCase));
             if (catalog is not null && car is null)
             {
@@ -79,7 +105,10 @@ public sealed class RaceControlValidator
             if (car is not null)
             {
                 ErrorIf(messages, car.DataAcdPath is null, $"Grid[{index}]", $"{car.DisplayName} has no data.acd checksum source.");
-                ErrorIf(messages, preset.Bots.Enabled && !car.HasCollider, $"Grid[{index}]", $"{car.DisplayName} has no collider.kn5 for rigid-body bots.");
+                ErrorIf(messages, preset.Bots.Enabled
+                                  && (slot.Mode is SlotMode.Auto or SlotMode.Fixed)
+                                  && !car.HasCollider,
+                    $"Grid[{index}]", $"{car.DisplayName} has no collider.kn5 for rigid-body bots.");
                 ErrorIf(messages,
                     !string.IsNullOrWhiteSpace(slot.SkinId) && car.Skins.All(skin => !skin.Id.Equals(slot.SkinId, StringComparison.OrdinalIgnoreCase)),
                     $"Grid[{index}]",
@@ -89,17 +118,25 @@ public sealed class RaceControlValidator
             ErrorIf(messages, string.IsNullOrWhiteSpace(slot.CarId), $"Grid[{index}]", "Select a car.");
             ErrorIf(messages, slot.BallastKg is < 0 or > 1000, $"Grid[{index}]", "Ballast must be between 0 and 1000 kg.");
             ErrorIf(messages, slot.RestrictorPercent is < 0 or > 100, $"Grid[{index}]", "Restrictor must be between 0 and 100 percent.");
+            ErrorIf(messages, slot.Difficulty is < 0 or > 1, $"Grid[{index}]", "Bot skill must be between 0 and 1, or blank for automatic variance.");
+            ErrorIf(messages, slot.Aggression is < 0 or > 1, $"Grid[{index}]", "Bot aggression must be between 0 and 1, or blank for automatic variance.");
         }
 
-        ErrorIf(messages, preset.Sessions.PracticeEnabled && preset.Sessions.PracticeMinutes is < 1 or > 1440, "Sessions", "Practice duration must be 1..1440 minutes.");
-        ErrorIf(messages, preset.Sessions.QualifyingEnabled && preset.Sessions.QualifyingMinutes is < 1 or > 1440, "Sessions", "Qualifying duration must be 1..1440 minutes.");
-        ErrorIf(messages, preset.Sessions.RaceLaps is < 1 or > 999, "Sessions", "Race laps must be 1..999.");
+        ErrorIf(messages, !isFps && preset.Sessions.PracticeEnabled && preset.Sessions.PracticeMinutes is < 1 or > 1440, "Sessions", "Practice duration must be 1..1440 minutes.");
+        ErrorIf(messages, !isFps && preset.Sessions.QualifyingEnabled && preset.Sessions.QualifyingMinutes is < 1 or > 1440, "Sessions", "Qualifying duration must be 1..1440 minutes.");
+        ErrorIf(messages, !isFps && preset.Sessions.RaceLaps is < 1 or > 999, "Sessions", "Race laps must be 1..999.");
+        ErrorIf(messages, preset.Conditions.TimeOfDayHour is < 0 or > 23,
+            "Conditions", "Time of day must be between 00:00 and 23:00.");
 
-        ErrorIf(messages, preset.Bots.Difficulty is < 0 or > 1, "Bots", "Difficulty must be between 0 and 1.");
-        ErrorIf(messages, preset.Bots.Aggression is < 0 or > 1, "Bots", "Aggression must be between 0 and 1.");
-        ErrorIf(messages, preset.Bots.UpdateHz is < 10 or > 120, "Bots", "Bot update rate must be 10..120 Hz.");
-        ErrorIf(messages, preset.Bots.GridSpacingMeters <= 0, "Bots", "Grid spacing must be positive.");
-        ErrorIf(messages, preset.Bots.SurfaceFriction is < 0.1 or > 3, "Bots", "Surface friction must be 0.1..3.");
+        ErrorIf(messages, !isFps && preset.Bots.Difficulty is < 0 or > 1, "Bots", "Difficulty must be between 0 and 1.");
+        ErrorIf(messages, !isFps && preset.Bots.DifficultyVariancePercent is < 0 or > 100, "Bots", "Skill variance must be between 0 and 100 percent.");
+        ErrorIf(messages, !isFps && preset.Bots.Aggression is < 0 or > 1, "Bots", "Aggression must be between 0 and 1.");
+        ErrorIf(messages, !isFps && preset.Bots.AggressionVariancePercent is < 0 or > 100, "Bots", "Aggression variance must be between 0 and 100 percent.");
+        ErrorIf(messages, !isFps && preset.Bots.UpdateHz is < 10 or > 120, "Bots", "Bot update rate must be 10..120 Hz.");
+        ErrorIf(messages, !isFps && preset.Bots.GridSpacingMeters <= 0, "Bots", "Grid spacing must be positive.");
+        ErrorIf(messages, !isFps && preset.Bots.SurfaceFriction is < 0.1 or > 3, "Bots", "Surface friction must be 0.1..3.");
+        ErrorIf(messages, !isFps && !Enum.IsDefined(preset.Bots.JoinSlotSelection), "Bots",
+            "Choose First, Last, or Random for player slot selection.");
 
         ErrorIf(messages, !TryPrivateAddress(preset.Network.BindAddress, out var isLoopback), "Network", "Use a wildcard, loopback, or private IPv4 LAN address.");
         if (isLoopback)
@@ -111,13 +148,59 @@ public sealed class RaceControlValidator
             messages.Add(new(ValidationSeverity.Error, "Network", "HTTP and TCP ports cannot be the same."));
         }
 
-        if (!preset.Bots.Enabled)
+        if (!isFps && !preset.Bots.Enabled)
         {
-            messages.Add(new(ValidationSeverity.Information, "Bots", "Bots are disabled; every staged slot will be human-only."));
+            messages.Add(new(ValidationSeverity.Information, "Bots", "Bots are disabled; every staged racing slot will be human-only."));
+        }
+
+        if (spectatorSlotCount > 0)
+        {
+            messages.Add(new(ValidationSeverity.Information, "Grid",
+                $"{spectatorSlotCount} spectator connection slot(s) will be staged after the racing grid and require CSP spectating support."));
         }
 
         return new ValidationResult(messages);
     }
+
+    private static void ValidateFps(List<ValidationMessage> messages, RaceControlPreset preset, AcContentCatalog? catalog)
+    {
+        var fps = preset.Fps;
+        ErrorIf(messages, fps.MatchType != FpsMatchType.Deathmatch, "Fps", "FPS V1 only supports Deathmatch.");
+        ErrorIf(messages, fps.TimeLimitMinutes is < 1 or > 1440, "Fps", "Deathmatch duration must be 1..1440 minutes.");
+        ErrorIf(messages, fps.KillLimit is < 1 or > 999, "Fps", "Deathmatch kill limit must be 1..999.");
+        ErrorIf(messages, fps.RespawnSeconds is < 0 or > 30, "Fps", "Respawn delay must be 0..30 seconds.");
+        ErrorIf(messages, fps.SpawnProtectionSeconds is < 0 or > 10, "Fps", "Spawn protection must be 0..10 seconds.");
+        ErrorIf(messages, fps.Bots.Health is < 50 or > 200, "Fps", "FPS participant health must be 50..200 HP.");
+        ErrorIf(messages, fps.Bots.Difficulty is < 0 or > 1, "Fps", "FPS bot difficulty must be between 0 and 1.");
+        ErrorIf(messages, fps.Bots.DifficultyVariancePercent is < 0 or > 100, "Fps", "FPS skill variance must be 0..100 percent.");
+        ErrorIf(messages, fps.Bots.Aggression is < 0 or > 1, "Fps", "FPS bot aggression must be between 0 and 1.");
+        ErrorIf(messages, fps.Bots.AggressionVariancePercent is < 0 or > 100, "Fps", "FPS aggression variance must be 0..100 percent.");
+
+        var carrier = catalog?.Cars.FirstOrDefault(car => car.Id.Equals(fps.CarrierCarId, StringComparison.OrdinalIgnoreCase));
+        ErrorIf(messages, catalog is not null && carrier is null, "Fps.CarrierCarId", $"FPS carrier car '{fps.CarrierCarId}' is not installed.");
+        ErrorIf(messages, catalog is not null && carrier?.DataAcdPath is null, "Fps.CarrierCarId", "The FPS carrier car has no data.acd checksum source.");
+
+        var arena = fps.Arena;
+        ErrorIf(messages, arena is null, "Fps.Arena", "Prepare this layout as an FPS arena before launching it.");
+        if (arena is null) return;
+
+        ErrorIf(messages, arena.PreparationVersion != FpsArenaDefinition.CurrentPreparationVersion,
+            "Fps.Arena", "The FPS arena was prepared by an incompatible version; prepare it again.");
+        ErrorIf(messages, !arena.TrackId.Equals(preset.TrackId, StringComparison.OrdinalIgnoreCase)
+                          || !arena.LayoutId.Equals(preset.TrackLayoutId, StringComparison.OrdinalIgnoreCase),
+            "Fps.Arena", "The prepared FPS arena does not match the selected layout.");
+        ErrorIf(messages, arena.SpawnPoints.Count < 2, "Fps.Arena", "The FPS arena needs at least two safe spawn points.");
+        ErrorIf(messages, !Finite(arena.BoundsMin) || !Finite(arena.BoundsMax)
+                          || arena.BoundsMin.X >= arena.BoundsMax.X
+                          || arena.BoundsMin.Y >= arena.BoundsMax.Y
+                          || arena.BoundsMin.Z >= arena.BoundsMax.Z,
+            "Fps.Arena", "The FPS arena bounds are invalid.");
+        ErrorIf(messages, arena.SpawnPoints.Any(spawn => !Finite(spawn.Position) || !double.IsFinite(spawn.YawRadians)),
+            "Fps.Arena", "The FPS arena contains an invalid spawn point.");
+    }
+
+    private static bool Finite(FpsPoint point) =>
+        double.IsFinite(point.X) && double.IsFinite(point.Y) && double.IsFinite(point.Z);
 
     public static bool TryPrivateAddress(string text, out bool isLoopback)
     {

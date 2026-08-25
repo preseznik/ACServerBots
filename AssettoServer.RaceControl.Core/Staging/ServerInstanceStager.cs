@@ -49,7 +49,9 @@ public sealed class ServerInstanceStager
         }
 
         _paths.EnsureCreated();
-        var root = GetUniqueInstanceDirectory(preset);
+        await new InstanceStorageManager(_paths).PrepareWorkingDirectoryAsync(progress,
+            cancellationToken);
+        var root = _paths.WorkingInstanceDirectory;
         Directory.CreateDirectory(root);
         progress?.Report(new("Copy", "Copying the standalone server payload…", 0));
         await CopyDirectoryAsync(preset.ServerPayloadPath, root, progress, cancellationToken);
@@ -58,9 +60,7 @@ public sealed class ServerInstanceStager
         var rendered = _renderer.Render(preset, catalog);
         var presetRoot = Path.Combine(root, "presets", PresetName);
         Directory.CreateDirectory(presetRoot);
-        rendered.ServerConfiguration.Save(Path.Combine(presetRoot, "server_cfg.ini"));
-        rendered.EntryList.Save(Path.Combine(presetRoot, "entry_list.ini"));
-        await File.WriteAllTextAsync(Path.Combine(presetRoot, "extra_cfg.yml"), rendered.ExtraConfiguration, cancellationToken);
+        await WriteRenderedConfigurationAsync(presetRoot, rendered, cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(presetRoot, "welcome.txt"), "AssettoServer Race Control LAN event", cancellationToken);
         Directory.CreateDirectory(Path.Combine(root, "cfg"));
         await File.WriteAllTextAsync(
@@ -72,7 +72,7 @@ public sealed class ServerInstanceStager
         CopyServerContent(root, rendered);
 
         var cacheHit = false;
-        if (preset.Bots.Enabled)
+        if (preset.Mode == EventMode.Racing && preset.Bots.Enabled)
         {
             var physicsOutput = Path.Combine(presetRoot, "race-physics.bin");
             var cachePath = GetPhysicsCachePath(preset, rendered);
@@ -89,15 +89,33 @@ public sealed class ServerInstanceStager
                 Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
                 File.Copy(physicsOutput, cachePath, true);
             }
+
+            int physicalGridSlots = RacePhysicsAssetMetadataReader.ReadGridSlotCount(physicsOutput);
+            int racingSlots = rendered.EffectiveGrid.Count(slot => slot.Mode != SlotMode.Spectator);
+            if (physicalGridSlots < racingSlots)
+            {
+                if (physicalGridSlots < 2)
+                    throw new InvalidOperationException("The selected layout exposes fewer than two physical AC_START grid positions.");
+                int requestedSlots = racingSlots;
+                rendered = _renderer.Render(preset, catalog, physicalGridSlots);
+                await WriteRenderedConfigurationAsync(presetRoot, rendered, cancellationToken);
+                progress?.Report(new("Physics",
+                    $"Layout contains {physicalGridSlots} physical grid positions; reduced the racing grid from {requestedSlots} to {rendered.EffectiveGrid.Count(slot => slot.Mode != SlotMode.Spectator)} slots.",
+                    0.92));
+            }
         }
 
         var shutdownPath = Path.Combine(root, "shutdown.signal");
-        var botSlots = preset.Bots.Enabled
-            ? rendered.EffectiveGrid.Count(slot => slot.Mode != SlotMode.None)
+        var botSlots = preset.Mode == EventMode.Fps
+            ? rendered.EffectiveGrid.Count(slot => slot.Mode is SlotMode.Auto or SlotMode.Fixed)
+            : preset.Bots.Enabled
+            ? rendered.EffectiveGrid.Count(slot => slot.Mode is SlotMode.Auto or SlotMode.Fixed)
             : 0;
+        var spectatorSlots = rendered.EffectiveGrid.Count(slot => slot.Mode == SlotMode.Spectator);
         var manifest = new
         {
-            schemaVersion = 1,
+            schemaVersion = 2,
+            mode = preset.Mode.ToString(),
             presetId = preset.Id,
             presetName = preset.Name,
             createdAt = DateTimeOffset.Now,
@@ -105,7 +123,8 @@ public sealed class ServerInstanceStager
             cars = rendered.Cars.Select(car => car.Id).ToArray(),
             slots = rendered.EffectiveGrid.Count,
             botSlots,
-            physicsFidelity = preset.Bots.PhysicsFidelity.ToString(),
+            spectatorSlots,
+            physicsFidelity = preset.Mode == EventMode.Racing ? preset.Bots.PhysicsFidelity.ToString() : null,
             physicsCacheHit = cacheHit,
             bindAddress = preset.Network.BindAddress,
             ports = new { preset.Network.TcpPort, preset.Network.UdpPort, preset.Network.HttpPort },
@@ -126,15 +145,13 @@ public sealed class ServerInstanceStager
             cacheHit);
     }
 
-    private string GetUniqueInstanceDirectory(RaceControlPreset preset)
+    private static async Task WriteRenderedConfigurationAsync(string presetRoot,
+        RenderedServerConfiguration rendered, CancellationToken cancellationToken)
     {
-        var candidate = _paths.GetInstanceDirectory(preset.Name, preset.Id);
-        for (var suffix = 2; Directory.Exists(candidate); suffix++)
-        {
-            candidate = _paths.GetInstanceDirectory(preset.Name, preset.Id) + $"-{suffix}";
-        }
-
-        return candidate;
+        rendered.ServerConfiguration.Save(Path.Combine(presetRoot, "server_cfg.ini"));
+        rendered.EntryList.Save(Path.Combine(presetRoot, "entry_list.ini"));
+        await File.WriteAllTextAsync(Path.Combine(presetRoot, "extra_cfg.yml"),
+            rendered.ExtraConfiguration, cancellationToken);
     }
 
     private static async Task CopyDirectoryAsync(
@@ -208,12 +225,14 @@ public sealed class ServerInstanceStager
                 var separator = line.IndexOf('=');
                 if (separator > 0 && line[..separator].Trim().Equals("FILE", StringComparison.OrdinalIgnoreCase))
                 {
-                    inputs.Add(Path.Combine(rendered.Track.RootPath, line[(separator + 1)..].Trim()));
+                    string relative = line[(separator + 1)..].Split(';', 2)[0].Trim();
+                    if (!string.IsNullOrWhiteSpace(relative))
+                        inputs.Add(Path.Combine(rendered.Track.RootPath, relative));
                 }
             }
         }
 
-        foreach (var car in rendered.Cars)
+        foreach (var car in rendered.RacingCars)
         {
             inputs.Add(car.ColliderPath ?? string.Empty);
             inputs.Add(car.DataAcdPath ?? string.Empty);
@@ -261,7 +280,7 @@ public sealed class ServerInstanceStager
             startInfo.ArgumentList.Add(rendered.Track.LayoutId);
         }
         startInfo.ArgumentList.Add("--cars");
-        startInfo.ArgumentList.Add(string.Join(';', rendered.Cars.Select(car => car.Id)));
+        startInfo.ArgumentList.Add(string.Join(';', rendered.RacingCars.Select(car => car.Id)));
         startInfo.ArgumentList.Add("--physics-output");
         startInfo.ArgumentList.Add(output);
 

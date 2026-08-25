@@ -23,11 +23,13 @@
 
         <Menu Grid.Row="0" VerticalAlignment="Stretch" BorderThickness="0,0,0,1">
             <MenuItem Header="_File">
-                <MenuItem Header="_New race" InputGestureText="Ctrl+N" Click="NewRace_Click" />
+                <MenuItem Header="_New event" InputGestureText="Ctrl+N" Click="NewRace_Click" />
                 <MenuItem Header="_Save preset" InputGestureText="Ctrl+S" Command="{Binding SavePresetCommand}" />
                 <Separator />
                 <MenuItem Header="_Import latest Content Manager preset" Command="{Binding ImportCmPresetCommand}" />
                 <MenuItem Header="_Export new Content Manager preset" Command="{Binding ExportCmPresetCommand}" />
+                <Separator />
+                <MenuItem Header="Export current _server package…" Command="{Binding ExportServerPackageCommand}" />
                 <Separator />
                 <MenuItem Header="E_xit" Click="Exit_Click" />
             </MenuItem>
@@ -160,6 +162,10 @@
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="Event" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Event mode" Style="{StaticResource FieldLabel}" />
+                                    <ComboBox ItemsSource="{Binding EventModes}" SelectedItem="{Binding EventMode, Mode=TwoWay}"
+                                              Margin="0,0,0,12"
+                                              ToolTip="Racing uses AssettoServer race bots and AC sessions. FPS runs the isolated CSP-required Deathmatch compatibility mode." />
                                     <TextBlock Text="Preset name" Style="{StaticResource FieldLabel}" />
                                     <TextBox Text="{Binding Preset.Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"
                                              ToolTip="Local preset name used when saving this Race Control setup." />
@@ -170,24 +176,10 @@
                             </Border>
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
-                                    <TextBlock Text="Local installations" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="Assetto Corsa root" Style="{StaticResource FieldLabel}" />
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBox Text="{Binding Preset.AssettoCorsaRoot}" IsReadOnly="True"
-                                                 ToolTip="Assetto Corsa installation used to scan cars, tracks, skins, weather, checksums, and AI lines." />
-                                        <Button Grid.Column="1" Content="Browse…" Click="BrowseAcRoot_Click" Margin="7,0,0,0"
-                                                ToolTip="Choose the Assetto Corsa installation folder." />
-                                    </Grid>
-                                    <TextBlock Text="Standalone server payload" Style="{StaticResource FieldLabel}" />
-                                    <Grid>
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBox Text="{Binding Preset.ServerPayloadPath}" IsReadOnly="True"
-                                                 ToolTip="Standalone AssettoServer files copied into each staged race instance." />
-                                        <Button Grid.Column="1" Content="Browse…" Click="BrowseServerPayload_Click" Margin="7,0,0,0"
-                                                ToolTip="Choose a different standalone server payload folder." />
-                                    </Grid>
-                                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                    <TextBlock Text="Content tools" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Refresh the local catalog or exchange this event with Content Manager. Installation paths are configured from the cog menu."
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
+                                    <StackPanel Orientation="Horizontal">
                                         <Button Content="Refresh installed content" Command="{Binding RefreshContentCommand}"
                                                 ToolTip="Rescan the selected Assetto Corsa installation for cars, skins, tracks, layouts, and weather." />
                                         <Button Content="Import latest CM preset" Command="{Binding ImportCmPresetCommand}" Margin="7,0,0,0"
@@ -199,12 +191,32 @@
                             </Border>
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
-                                    <TextBlock Text="Circuit" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="Track and layout" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Text="{Binding ContentSectionTitle}" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="{Binding TrackSelectionLabel}" Style="{StaticResource FieldLabel}" />
                                     <ComboBox ItemsSource="{Binding Tracks}" SelectedItem="{Binding SelectedTrack}" DisplayMemberPath="DisplayName"
                                               IsTextSearchEnabled="True" Margin="0,0,0,10"
                                               ToolTip="Select an installed circuit layout. Its pit-box count limits the staged grid size." />
                                     <TextBlock Text="{Binding SelectedTrackDetails}" Foreground="{DynamicResource MutedTextBrush}" />
+                                    <StackPanel Margin="0,12,0,0">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <CheckBox Content="Show FPS arenas only" IsChecked="{Binding ShowPreparedFpsArenasOnly}"
+                                                  ToolTip="Filter the arena list to layouts with a current Race Control FPS sidecar in AppData." />
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <Button Content="Prepare as FPS arena" Command="{Binding PrepareFpsArenaCommand}"
+                                                    ToolTip="Generate bounded play space and safe spawn transforms from this layout without modifying installed track files." />
+                                            <Button Content="Export FPS Client Pack" Command="{Binding ExportFpsClientPackCommand}" Margin="7,0,0,0"
+                                                    ToolTip="Export the CSP compatibility-gate requirements for LAN clients. The online Lua is delivered by the server." />
+                                        </StackPanel>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -238,9 +250,11 @@
                                                      ToolTip="Initial track-surface temperature in degrees Celsius." />
                                         </StackPanel>
                                     </Grid>
-                                    <TextBlock Text="Sun angle" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
-                                    <TextBox Text="{Binding Preset.Conditions.SunAngleDegrees}"
-                                             ToolTip="Sun angle used by Assetto Corsa to determine event lighting and time of day." />
+                                    <TextBlock Text="Time of day" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                    <ComboBox ItemsSource="{Binding TimeOfDayOptions}"
+                                              DisplayMemberPath="Label" SelectedValuePath="Hour"
+                                              SelectedValue="{Binding Preset.Conditions.TimeOfDayHour, Mode=TwoWay}"
+                                              ToolTip="Starting hour for the event in 24-hour local track time. Assetto Corsa stores this as its equivalent sun angle." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -250,11 +264,16 @@
 
             <TabItem Header="GRID">
                 <Grid Margin="24">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid Grid.Row="0" Margin="0,0,0,14">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="Race grid" FontSize="22" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding GridSectionTitle}" FontSize="22" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding EffectiveGridSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
@@ -268,7 +287,82 @@
                                     ToolTip="Append a grid entry based on the selected row, or the last row if none is selected." />
                         </StackPanel>
                     </Grid>
-                    <DataGrid Grid.Row="1" ItemsSource="{Binding Grid}" SelectedItem="{Binding SelectedGridSlot}"
+                    <Grid Grid.Row="1" Margin="0,0,0,14">
+                        <Grid.Style>
+                            <Style TargetType="Grid">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Style>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="3*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="2*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Style="{StaticResource Card}" Margin="0">
+                            <StackPanel>
+                                <TextBlock Text="Populate by characteristics" Style="{StaticResource SectionTitle}" />
+                                <WrapPanel>
+                                    <StackPanel Width="205" Margin="0,0,10,8">
+                                        <TextBlock Text="Category" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox ItemsSource="{Binding GridPopulationCategories}"
+                                                  SelectedItem="{Binding SelectedGridPopulationCategory}"
+                                                  DisplayMemberPath="Label"
+                                                  ToolTip="Choose how installed bot-capable cars are filtered before the racing grid is generated." />
+                                    </StackPanel>
+                                    <StackPanel Width="145" Margin="0,0,10,8">
+                                        <TextBlock Text="Class" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox ItemsSource="{Binding CarClassOptions}"
+                                                  SelectedItem="{Binding GridPopulationClass}"
+                                                  IsEnabled="{Binding IsGridPopulationClassEnabled}"
+                                                  ToolTip="Exact class from each car's ui_car.json metadata, such as race, street, or trackday." />
+                                    </StackPanel>
+                                    <StackPanel Width="125" Margin="0,0,10,8">
+                                        <TextBlock Text="{Binding GridPopulationCriterionLabel}" Style="{StaticResource FieldLabel}" />
+                                        <TextBox Text="{Binding GridPopulationCriterionValue, UpdateSourceTrigger=PropertyChanged}"
+                                                 IsEnabled="{Binding IsGridPopulationCriterionEnabled}"
+                                                 ToolTip="Maximum horsepower, exact model year, or maximum horsepower per tonne, according to the selected category. Cars missing the required metadata are excluded." />
+                                    </StackPanel>
+                                    <StackPanel Width="75" Margin="0,0,10,8">
+                                        <TextBlock Text="Cars" Style="{StaticResource FieldLabel}" />
+                                        <TextBox Text="{Binding GridPopulationCount, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="Number of racing entries to generate. Valid range is 2 to 254, including room reserved by spectator slots." />
+                                    </StackPanel>
+                                    <Button Content="Populate" Command="{Binding PopulateGridCommand}"
+                                            Style="{StaticResource PrimaryButton}" VerticalAlignment="Bottom" Margin="0,0,0,8"
+                                            ToolTip="Replace racing rows with Auto bot-until-human entries selected across the matching installed cars. Existing spectator rows are preserved." />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0">
+                            <StackPanel>
+                                <TextBlock Text="Favorite grids" Style="{StaticResource SectionTitle}" />
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <ComboBox ItemsSource="{Binding SavedGrids}" SelectedItem="{Binding SelectedSavedGrid}"
+                                              DisplayMemberPath="Name" MinWidth="180"
+                                              ToolTip="Choose a previously saved grid. Loading it changes grid rows only and retains the current event setup." />
+                                    <Button Grid.Column="1" Content="Load" Command="{Binding LoadGridCommand}" Margin="7,0,0,0"
+                                            ToolTip="Replace the current grid with this favorite, including slot modes, skins, ballast, restrictors, and spectator rows." />
+                                    <Button Grid.Column="2" Content="Delete" Command="{Binding DeleteGridCommand}" Margin="7,0,0,0"
+                                            ToolTip="Permanently delete the selected favorite grid from local Race Control storage." />
+                                </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding SavedGridName, UpdateSourceTrigger=PropertyChanged}" MinWidth="180"
+                                             ToolTip="Name for this favorite. Saving with an existing name updates that favorite." />
+                                    <Button Grid.Column="1" Content="Save grid" Command="{Binding SaveGridCommand}"
+                                            Style="{StaticResource PrimaryButton}" Margin="7,0,0,0"
+                                            ToolTip="Save the current grid independently from the rest of the race preset for quick reuse." />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                    <DataGrid Grid.Row="2" ItemsSource="{Binding Grid}" SelectedItem="{Binding SelectedGridSlot}"
                               AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single" AlternationCount="2">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="#" Binding="{Binding Index}" IsReadOnly="True" Width="45" />
@@ -299,12 +393,33 @@
                             <DataGridTemplateColumn Header="Slot mode" Width="115">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <ComboBox ItemsSource="{Binding DataContext.SlotModes, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                  SelectedItem="{Binding Mode}"
-                                                  ToolTip="Auto starts as a replaceable bot; Fixed is always a bot; None reserves the slot for a human." />
+                                        <ComboBox ItemsSource="{Binding DataContext.SlotModeOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  SelectedValuePath="Value" DisplayMemberPath="Label"
+                                                  SelectedValue="{Binding Mode}"
+                                                  ToolTip="Auto starts as a replaceable bot; Fixed is always a bot; None reserves a racing slot for a human; Spectator reserves a CSP camera-only connection and is excluded from the race." />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
+                            <DataGridTextColumn Binding="{Binding Difficulty, UpdateSourceTrigger=PropertyChanged, StringFormat=0.00}" Width="78">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Skill" ToolTip="Optional per-car skill override from 0 to 1. Leave blank to derive this bot from the global Skill and Skill variance sliders." />
+                                </DataGridTextColumn.Header>
+                                <DataGridTextColumn.CellStyle>
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                        <Setter Property="ToolTip" Value="Set this car's skill from 0 to 1. Leave blank to use the global Skill plus this slot's stable Skill variance." />
+                                    </Style>
+                                </DataGridTextColumn.CellStyle>
+                            </DataGridTextColumn>
+                            <DataGridTextColumn Binding="{Binding Aggression, UpdateSourceTrigger=PropertyChanged, StringFormat=0.00}" Width="92">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Aggression" ToolTip="Optional per-car aggression override from 0 to 1. Leave blank to derive this bot from the global Aggression and Aggression variance sliders." />
+                                </DataGridTextColumn.Header>
+                                <DataGridTextColumn.CellStyle>
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                        <Setter Property="ToolTip" Value="Set this car's aggression from 0 to 1. Leave blank to use the global Aggression plus this slot's stable Aggression variance." />
+                                    </Style>
+                                </DataGridTextColumn.CellStyle>
+                            </DataGridTextColumn>
                             <DataGridTextColumn Binding="{Binding TeamName}" Width="130">
                                 <DataGridTextColumn.Header>
                                     <TextBlock Text="Team" ToolTip="Optional team name advertised for this grid entry." />
@@ -322,9 +437,9 @@
                             </DataGridTextColumn>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <Grid Grid.Row="2" Margin="0,12,0,0">
+                    <Grid Grid.Row="3" Margin="0,12,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <TextBlock Text="Auto = bot until claimed • Fixed = bot only • None = human only"
+                        <TextBlock Text="{Binding SlotModeHelp}"
                                    Foreground="{DynamicResource MutedTextBrush}" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="↑" Command="{Binding MoveSlotUpCommand}" Width="42"
@@ -338,8 +453,17 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="SESSIONS &amp; RULES">
+            <TabItem Header="{Binding SessionSectionTitle}">
+                <Grid>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer.Style>
+                        <Style TargetType="ScrollViewer">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsFpsMode}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ScrollViewer.Style>
                     <WrapPanel Margin="24">
                         <Border Style="{StaticResource Card}" Width="390">
                             <StackPanel>
@@ -416,10 +540,59 @@
                         </Border>
                     </WrapPanel>
                 </ScrollViewer>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer.Style>
+                        <Style TargetType="ScrollViewer">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsFpsMode}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ScrollViewer.Style>
+                    <WrapPanel Margin="24">
+                        <Border Style="{StaticResource Card}" Width="420">
+                            <StackPanel>
+                                <TextBlock Text="Deathmatch" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="Match type" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="Deathmatch" IsReadOnly="True"
+                                         ToolTip="V1 supports free-for-all Deathmatch only." />
+                                <TextBlock Text="Time limit (minutes)" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                <TextBox Text="{Binding Preset.Fps.TimeLimitMinutes}"
+                                         ToolTip="The authoritative match ends when this many minutes elapse. Set a positive value from 1 to 180." />
+                                <TextBlock Text="Kill target" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                <TextBox Text="{Binding Preset.Fps.KillLimit}"
+                                         ToolTip="The authoritative match ends as soon as a participant reaches this many kills." />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Width="420">
+                            <StackPanel>
+                                <TextBlock Text="Respawning" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="Respawn delay (seconds)" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Fps.RespawnSeconds}" Margin="0,0,0,12"
+                                         ToolTip="Time a dead participant waits before the server chooses a safe spawn." />
+                                <TextBlock Text="Spawn protection (seconds)" Style="{StaticResource FieldLabel}" />
+                                <TextBox Text="{Binding Preset.Fps.SpawnProtectionSeconds}"
+                                         ToolTip="Brief immunity after spawning. The server still controls all damage and scoring." />
+                                <TextBlock Text="The match runs inside one long AC Practice session; laps and AC race results are not used."
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,14,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </WrapPanel>
+                </ScrollViewer>
+                </Grid>
             </TabItem>
 
-            <TabItem Header="RACE BOTS">
+            <TabItem Header="{Binding BotSectionTitle}">
+                <Grid>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer.Style>
+                        <Style TargetType="ScrollViewer">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsFpsMode}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ScrollViewer.Style>
                     <Grid Margin="24">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
@@ -432,23 +605,81 @@
                                                Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,7,0,12" />
                                     <CheckBox Content="Humans can replace Auto bots during a race" IsChecked="{Binding Preset.Bots.AllowMidRaceTakeover}"
                                               ToolTip="Let a joining player claim an Auto slot after the race has started; Fixed bots remain protected." />
+                                    <TextBlock Text="Player slot selection" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                    <ComboBox ItemsSource="{Binding PlayerJoinSlotSelections}"
+                                              SelectedItem="{Binding Preset.Bots.JoinSlotSelection}"
+                                              ToolTip="Choose among eligible slots matching the player's selected car: First uses the lowest configured CAR_n, Last uses the highest, and Random chooses independently per connection. Explicitly reserved slots retain priority." />
                                     <CheckBox Content="Restart session when the first human connects" IsChecked="{Binding Preset.Bots.RestartWhenFirstHumanConnects}"
+                                              Margin="0,12,0,0"
                                               ToolTip="If only bots are present, reset the current session when the first human joins so everyone starts together." />
-                                    <TextBlock Text="Bot name prefix" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                    <CheckBox x:Name="UseParodyNamesCheckBox"
+                                              Content="Use random parody race-driver names"
+                                              IsChecked="{Binding Preset.Bots.UseParodyNames}"
+                                              Margin="0,12,0,0"
+                                              ToolTip="Give every bot a unique parody racing name. Assignments are randomized on server launch and remain stable across race restarts." />
+                                    <TextBlock Text="Custom bot name prefix" Style="{StaticResource FieldLabel}" Margin="0,12,0,5"
+                                               ToolTip="Prefix used for bot names when random parody names are disabled." />
                                     <TextBox Text="{Binding Preset.Bots.NamePrefix}"
-                                             ToolTip="Prefix used when Race Control generates bot driver names." />
+                                             ToolTip="Prefix used for bot names when random parody names are disabled. Bots are named &lt;prefix&gt; &lt;slot number&gt;.">
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ElementName=UseParodyNamesCheckBox, Path=IsChecked}" Value="True">
+                                                        <Setter Property="IsEnabled" Value="False" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="Racecraft" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="Difficulty (0–1)" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Bots.Difficulty}" Margin="0,0,0,12"
-                                             ToolTip="Overall bot pace from 0 to 1; higher values brake later and target greater speed." />
-                                    <TextBlock Text="Aggression (0–1)" Style="{StaticResource FieldLabel}" />
-                                    <TextBox Text="{Binding Preset.Bots.Aggression}" Margin="0,0,0,12"
-                                             ToolTip="Overtaking and following assertiveness from 0 to 1; higher values accept smaller gaps." />
-                                    <TextBlock Text="Start spline point" Style="{StaticResource FieldLabel}" />
+                                    <Grid ToolTip="Baseline bot pace from 0 to 1. Higher skill carries more speed through corners and brakes later. A per-car Grid value overrides it.">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Skill" Style="{StaticResource FieldLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ElementName=BotSkillSlider, Path=Value, StringFormat={}{0:F2}}"
+                                                   Foreground="{DynamicResource MutedTextBrush}" />
+                                    </Grid>
+                                    <Slider x:Name="BotSkillSlider" Minimum="0" Maximum="1" TickFrequency="0.01"
+                                            IsSnapToTickEnabled="True" Value="{Binding Preset.Bots.Difficulty, Mode=TwoWay}"
+                                            Margin="0,2,0,7"
+                                            ToolTip="Baseline bot pace from 0 to 1; higher values carry more speed and brake later." />
+                                    <Grid ToolTip="Varies each automatic bot's Skill above or below the baseline by up to this percentage. The value is stable per grid slot across restarts; a per-car Grid value overrides it.">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Skill variance" Style="{StaticResource FieldLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ElementName=BotSkillVarianceSlider, Path=Value, StringFormat={}{0:F0}%}"
+                                                   Foreground="{DynamicResource MutedTextBrush}" />
+                                    </Grid>
+                                    <Slider x:Name="BotSkillVarianceSlider" Minimum="0" Maximum="100" TickFrequency="1"
+                                            IsSnapToTickEnabled="True" Value="{Binding Preset.Bots.DifficultyVariancePercent, Mode=TwoWay}"
+                                            Margin="0,2,0,14"
+                                            ToolTip="Deterministically vary each automatic bot above or below the baseline Skill by up to this percentage. A per-car Grid value overrides it." />
+                                    <Grid ToolTip="Baseline racecraft assertiveness from 0 to 1. Higher aggression plans passes earlier, accepts smaller gaps, commits longer, and yields less readily. A per-car Grid value overrides it.">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Aggression" Style="{StaticResource FieldLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ElementName=BotAggressionSlider, Path=Value, StringFormat={}{0:F2}}"
+                                                   Foreground="{DynamicResource MutedTextBrush}" />
+                                    </Grid>
+                                    <Slider x:Name="BotAggressionSlider" Minimum="0" Maximum="1" TickFrequency="0.01"
+                                            IsSnapToTickEnabled="True" Value="{Binding Preset.Bots.Aggression, Mode=TwoWay}"
+                                            Margin="0,2,0,7"
+                                            ToolTip="Baseline overtaking and following assertiveness from 0 to 1; higher values accept smaller gaps." />
+                                    <Grid ToolTip="Varies each automatic bot's Aggression above or below the baseline by up to this percentage. The value is stable per grid slot across restarts; a per-car Grid value overrides it.">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Aggression variance" Style="{StaticResource FieldLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ElementName=BotAggressionVarianceSlider, Path=Value, StringFormat={}{0:F0}%}"
+                                                   Foreground="{DynamicResource MutedTextBrush}" />
+                                    </Grid>
+                                    <Slider x:Name="BotAggressionVarianceSlider" Minimum="0" Maximum="100" TickFrequency="1"
+                                            IsSnapToTickEnabled="True" Value="{Binding Preset.Bots.AggressionVariancePercent, Mode=TwoWay}"
+                                            Margin="0,2,0,14"
+                                            ToolTip="Deterministically vary each automatic bot above or below the baseline Aggression by up to this percentage. A per-car Grid value overrides it." />
+                                    <TextBlock Text="Blank Skill and Aggression cells in the Grid use this stable mixed-field variance. Enter 0–1 in a row to override one car."
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,14" />
+                                    <TextBlock Text="Start spline point" Style="{StaticResource FieldLabel}"
+                                               ToolTip="fast_lane.ai point treated as the start/finish line for lap progress and wrap detection." />
                                     <TextBox Text="{Binding Preset.Bots.StartSplinePointId}"
                                              ToolTip="fast_lane.ai point treated as the start/finish line for lap progress and wrap detection." />
                                 </StackPanel>
@@ -484,6 +715,66 @@
                         </StackPanel>
                     </Grid>
                 </ScrollViewer>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer.Style>
+                        <Style TargetType="ScrollViewer">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsFpsMode}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ScrollViewer.Style>
+                    <WrapPanel Margin="24">
+                        <Border Style="{StaticResource Card}" Width="440">
+                            <StackPanel>
+                                <TextBlock Text="FPS bot skill" Style="{StaticResource SectionTitle}" />
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Difficulty" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ElementName=FpsDifficultySlider, Path=Value, StringFormat={}{0:F2}}" Foreground="{DynamicResource MutedTextBrush}" />
+                                </Grid>
+                                <Slider x:Name="FpsDifficultySlider" Minimum="0" Maximum="1" TickFrequency="0.01" IsSnapToTickEnabled="True"
+                                        Value="{Binding Preset.Fps.Bots.Difficulty, Mode=TwoWay}" Margin="0,2,0,8"
+                                        ToolTip="Controls reaction time, aim error, target tracking, and navigation quality." />
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Difficulty variance" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ElementName=FpsDifficultyVarianceSlider, Path=Value, StringFormat={}{0:F0}%}" Foreground="{DynamicResource MutedTextBrush}" />
+                                </Grid>
+                                <Slider x:Name="FpsDifficultyVarianceSlider" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                        Value="{Binding Preset.Fps.Bots.DifficultyVariancePercent, Mode=TwoWay}" Margin="0,2,0,14"
+                                        ToolTip="Applies stable per-slot variation around the baseline FPS bot difficulty." />
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Aggression" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ElementName=FpsAggressionSlider, Path=Value, StringFormat={}{0:F2}}" Foreground="{DynamicResource MutedTextBrush}" />
+                                </Grid>
+                                <Slider x:Name="FpsAggressionSlider" Minimum="0" Maximum="1" TickFrequency="0.01" IsSnapToTickEnabled="True"
+                                        Value="{Binding Preset.Fps.Bots.Aggression, Mode=TwoWay}" Margin="0,2,0,8"
+                                        ToolTip="Controls pursuit, strafing, exposure, and how readily bots switch targets." />
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Aggression variance" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ElementName=FpsAggressionVarianceSlider, Path=Value, StringFormat={}{0:F0}%}" Foreground="{DynamicResource MutedTextBrush}" />
+                                </Grid>
+                                <Slider x:Name="FpsAggressionVarianceSlider" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                        Value="{Binding Preset.Fps.Bots.AggressionVariancePercent, Mode=TwoWay}"
+                                        ToolTip="Applies stable per-slot variation around the baseline FPS bot aggression." />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Width="440">
+                            <StackPanel>
+                                <TextBlock Text="Survivability" Style="{StaticResource SectionTitle}" />
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="Health" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ElementName=FpsHealthSlider, Path=Value, StringFormat={}{0:F0} HP}" Foreground="{DynamicResource MutedTextBrush}" />
+                                </Grid>
+                                <Slider x:Name="FpsHealthSlider" Minimum="50" Maximum="200" TickFrequency="5" IsSnapToTickEnabled="True"
+                                        Value="{Binding Preset.Fps.Bots.Health, Mode=TwoWay}" Margin="0,2,0,14"
+                                        ToolTip="Maximum health assigned to every FPS participant in V1, from 50 to 200 HP." />
+                                <TextBlock Text="The server owns movement, line-of-sight, hits, damage, deaths, respawns, kills, and final ranking. Clients send input and never report successful hits."
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </WrapPanel>
+                </ScrollViewer>
+                </Grid>
             </TabItem>
 
             <TabItem Header="NETWORK">
@@ -590,10 +881,13 @@
                                         <TextBlock Text="{Binding LastInstanceSummary}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,5,0,0" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                        <Button Content="Export package…" Command="{Binding ExportServerPackageCommand}"
+                                                ToolTip="Create a complete portable ZIP from the current working server. Available while the server is stopped." />
                                         <Button Content="Stage only" Command="{Binding StageCommand}"
-                                                ToolTip="Validate and create a complete standalone server instance without launching it." />
+                                                Margin="7,0,0,0"
+                                                ToolTip="Validate and replace the reusable working server without launching it. Compact artifacts from the previous run are archived first." />
                                         <Button Content="Start new" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0"
-                                                ToolTip="Validate, stage a new timestamped server instance, and launch it." />
+                                                ToolTip="Validate, replace the reusable working server, and launch it. Compact artifacts from the previous run are archived first." />
                                     </StackPanel>
                                 </Grid>
                                 <ProgressBar Grid.Row="1" Value="{Binding ProgressValue, Mode=OneWay}" Height="5" Margin="0,18,0,7" />
@@ -605,9 +899,9 @@
                                             ToolTip="Stop and relaunch the current staged instance without rebuilding its configuration." />
                                     <ComboBox ItemsSource="{Binding RecentInstances}" SelectedItem="{Binding SelectedRecentInstance}"
                                               DisplayMemberPath="DisplayName" Width="340" Margin="14,0,0,0"
-                                              ToolTip="Select a recently staged server instance for inspection." />
+                                              ToolTip="Select the current working server or compact artifacts from an earlier run." />
                                     <Button Content="Open selected folder" Command="{Binding OpenInstanceCommand}" Margin="7,0,0,0"
-                                            ToolTip="Open the selected instance folder containing generated configuration and server files." />
+                                            ToolTip="Open the selected working-server or compact-history folder." />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -754,7 +1048,7 @@
                                 <controls:LiveRace3DViewport Snapshot="{Binding LiveSnapshot}"
                                                              Track="{Binding LiveTrack}"
                                                              SelectedSessionId="{Binding SelectedLiveCarSessionId}"
-                                                             ToolTip="Live 3D chase camera. The road elevation and every vehicle pose come from authoritative server telemetry; use the mouse wheel to change camera distance.">
+                                                             ToolTip="Live 3D chase camera targeting 60 FPS during takeover. Road elevation and vehicle poses come from authoritative server telemetry; trackside grass is generated from the AI-line boundaries. Use the mouse wheel to change camera distance.">
                                     <controls:LiveRace3DViewport.Style>
                                         <Style TargetType="controls:LiveRace3DViewport">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -816,6 +1110,52 @@
                                         <TextBlock Text="{Binding BotControlStatus}" Foreground="{DynamicResource MutedTextBrush}"
                                                    FontSize="11" Margin="0,6,0,0" MaxWidth="250" TextWrapping="Wrap" />
                                     </StackPanel>
+                                </Border>
+                                <Border VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="18"
+                                        Padding="15,10" Background="#DF111820"
+                                        BorderBrush="#806E7C8C" BorderThickness="1"
+                                        ToolTip="Authoritative telemetry for the manually controlled bot: road speed, current gear, and engine RPM.">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsBotTakeoverActive}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="1" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="1" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel MinWidth="118">
+                                            <TextBlock Text="SPEED" Foreground="#AFC0CF" FontSize="10" FontWeight="SemiBold" />
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
+                                                <TextBlock Text="{Binding SelectedLiveCar.SpeedKmh, StringFormat={}{0:F0}}"
+                                                           Foreground="White" FontSize="38" FontWeight="Bold" />
+                                                <TextBlock Text="KM/H" Foreground="#AFC0CF" FontSize="10"
+                                                           Margin="5,0,0,7" VerticalAlignment="Bottom" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Background="#52606D" Margin="13,0" />
+                                        <StackPanel Grid.Column="2" MinWidth="58">
+                                            <TextBlock Text="GEAR" Foreground="#AFC0CF" FontSize="10" FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.GearDisplay}" Foreground="#FFBE45"
+                                                       FontSize="38" FontWeight="Bold" HorizontalAlignment="Center" />
+                                        </StackPanel>
+                                        <Border Grid.Column="3" Background="#52606D" Margin="13,0" />
+                                        <StackPanel Grid.Column="4" MinWidth="94">
+                                            <TextBlock Text="RPM" Foreground="#AFC0CF" FontSize="10" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.EngineRpm, StringFormat={}{0:N0}}"
+                                                       Foreground="White" FontSize="25" FontWeight="Bold" Margin="0,7,0,0" />
+                                        </StackPanel>
+                                    </Grid>
                                 </Border>
                                 <Border Margin="24" Padding="20" Background="{DynamicResource PanelBrush}"
                                         BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">

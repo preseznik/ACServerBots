@@ -1,7 +1,11 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
+using System.Text.Json;
 using System.Windows;
+using Microsoft.Win32;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Content;
 using AssettoServer.RaceControl.Core.Infrastructure;
@@ -15,27 +19,46 @@ using AssettoServer.RaceControl.Infrastructure;
 
 namespace AssettoServer.RaceControl.ViewModels;
 
+public sealed record TimeOfDayOption(int Hour, string Label);
+public sealed record GridPopulationCategoryOption(GridPopulationCategory Value, string Label);
+public sealed record SlotModeOption(SlotMode Value, string Label);
+
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly RaceControlPaths _paths = new();
     private readonly AcContentScanner _scanner = new();
+    private readonly GridPopulationService _gridPopulationService = new();
     private readonly AcContentCatalogCache _catalogCache;
     private readonly RaceControlValidator _validator = new();
     private readonly ServerConfigurationRenderer _renderer = new();
     private readonly CmPresetService _cmPresetService = new();
     private readonly ServerProcessController _processController = new();
     private readonly CancellationTokenSource _liveMonitorCancellation = new();
+    private readonly FpsArenaStore _fpsArenaStore;
     private PresetStore? _presetStore;
+    private SavedGridStore? _savedGridStore;
     private RaceControlPreset _preset = new();
     private AcContentCatalog? _catalog;
+    private readonly List<AcTrackLayout> _allTracks = [];
+    private RaceControlPreset? _racingDraft;
+    private RaceControlPreset? _fpsDraft;
     private string? _catalogRoot;
     private CancellationTokenSource? _contentRefreshCancellation;
     private Task? _contentRefreshTask;
     private int _contentRefreshGeneration;
     private AcTrackLayout? _selectedTrack;
+    private bool _showPreparedFpsArenasOnly;
     private AcWeather? _selectedWeather;
     private GridSlotViewModel? _selectedGridSlot;
     private PresetSummary? _selectedSavedPreset;
+    private SavedGridSummary? _selectedSavedGrid;
+    private string _savedGridName = string.Empty;
+    private GridPopulationCategoryOption _selectedGridPopulationCategory;
+    private string _gridPopulationClass = string.Empty;
+    private int _gridPopulationCount = 8;
+    private double _gridPopulationMaximumHorsepower = 500;
+    private int _gridPopulationYear = 2000;
+    private double _gridPopulationMaximumPowerToWeight = 350;
     private InstanceSummary? _selectedRecentInstance;
     private StagedInstance? _lastInstance;
     private bool _isBusy;
@@ -64,26 +87,40 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        _selectedGridPopulationCategory = GridPopulationCategories[0];
         _catalogCache = new AcContentCatalogCache(_paths.CacheDirectory);
+        _fpsArenaStore = new FpsArenaStore(_paths);
         RefreshContentCommand = new AsyncRelayCommand(RefreshContentAsync, () => !IsBusy);
         SavePresetCommand = new RelayCommand(SavePreset, () => !IsBusy);
         LoadPresetCommand = new AsyncRelayCommand(LoadSelectedPresetAsync, () => SelectedSavedPreset is not null && !IsBusy);
-        ImportCmPresetCommand = new AsyncRelayCommand(ImportLatestCmPresetAsync, () => !IsBusy);
-        ExportCmPresetCommand = new RelayCommand(ExportCmPreset, () => _catalog is not null && !IsBusy);
-        AddSlotCommand = new RelayCommand(AddSlot, () => Cars.Count > 0 && Grid.Count < 254 && !IsBusy);
-        RemoveSlotCommand = new RelayCommand(RemoveSelectedSlot, () => SelectedGridSlot is not null && Grid.Count > 2 && !IsBusy);
+        ImportCmPresetCommand = new AsyncRelayCommand(ImportLatestCmPresetAsync, () => !IsFpsMode && !IsBusy);
+        ExportCmPresetCommand = new RelayCommand(ExportCmPreset, () => !IsFpsMode && _catalog is not null && !IsBusy);
+        AddSlotCommand = new RelayCommand(AddSlot, () => Cars.Count > 0 && Grid.Count < (IsFpsMode ? 32 : 254) && !IsBusy);
+        RemoveSlotCommand = new RelayCommand(RemoveSelectedSlot, CanRemoveSelectedSlot);
         MoveSlotUpCommand = new RelayCommand(() => MoveSelectedSlot(-1), () => CanMoveSelectedSlot(-1));
         MoveSlotDownCommand = new RelayCommand(() => MoveSelectedSlot(1), () => CanMoveSelectedSlot(1));
         FillGridCommand = new RelayCommand(FillGridToPitCapacity, () => SelectedTrack is { PitBoxes: > 1 } && Cars.Count > 0 && !IsBusy);
         RandomizeSkinsCommand = new RelayCommand(RandomizeSkins, () => Grid.Count > 0 && !IsBusy);
         MakeAllReplaceableCommand = new RelayCommand(MakeAllReplaceable, () => Grid.Count > 0 && !IsBusy);
+        PopulateGridCommand = new RelayCommand(PopulateGrid, CanPopulateGrid);
+        SaveGridCommand = new RelayCommand(SaveGrid, () => !IsBusy && Grid.Count > 0
+            && !string.IsNullOrWhiteSpace(SavedGridName));
+        LoadGridCommand = new RelayCommand(LoadSavedGrid,
+            () => !IsBusy && SelectedSavedGrid is not null && Cars.Count > 0);
+        DeleteGridCommand = new RelayCommand(DeleteSavedGrid,
+            () => !IsBusy && SelectedSavedGrid is not null);
         ValidateCommand = new RelayCommand(Validate, () => _catalog is not null && !IsBusy);
-        StageCommand = new AsyncRelayCommand(StageOnlyAsync, () => _catalog is not null && !IsBusy);
+        StageCommand = new AsyncRelayCommand(StageOnlyAsync,
+            () => _catalog is not null && !IsBusy && _processController.State == ServerProcessState.Stopped);
         LaunchCommand = new AsyncRelayCommand(StageAndLaunchAsync, () => _catalog is not null && !IsBusy && _processController.State == ServerProcessState.Stopped);
         StopCommand = new AsyncRelayCommand(StopServerAsync, () => _processController.State != ServerProcessState.Stopped);
         RestartCommand = new AsyncRelayCommand(RestartServerAsync, () => _lastInstance is not null && _processController.State == ServerProcessState.Running);
         SimulateRaceCommand = new AsyncRelayCommand(SimulateRaceAsync,
-            () => _catalog is not null && !IsBusy && _processController.State == ServerProcessState.Stopped);
+            () => !IsFpsMode && _catalog is not null && !IsBusy && _processController.State == ServerProcessState.Stopped);
+        PrepareFpsArenaCommand = new AsyncRelayCommand(PrepareFpsArenaAsync,
+            () => IsFpsMode && SelectedTrack is not null && !IsBusy);
+        ExportFpsClientPackCommand = new AsyncRelayCommand(ExportFpsClientPackAsync,
+            () => IsFpsMode && !IsBusy);
         StartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Start), CanControlLiveRace);
         StopRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Stop), CanControlLiveRace);
         RestartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Restart), CanControlLiveRace);
@@ -92,6 +129,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         TakeOverSelectedBotCommand = new AsyncRelayCommand(ToggleSelectedBotTakeoverAsync, CanToggleTakeover);
         DismissSimulationResultsCommand = new RelayCommand(() => ShowSimulationResults = false,
             () => SimulationResults is not null && ShowSimulationResults);
+        ExportServerPackageCommand = new AsyncRelayCommand(ExportServerPackageAsync,
+            () => !IsBusy && _processController.State == ServerProcessState.Stopped
+                  && File.Exists(Path.Combine(_paths.WorkingInstanceDirectory,
+                      "race-control-instance.json")));
         OpenInstanceCommand = new RelayCommand(OpenInstance, () => _lastInstance is not null || SelectedRecentInstance is not null);
         OpenContentManagerCommand = new RelayCommand(OpenContentManager);
         ClearLogCommand = new RelayCommand(() => LogText = string.Empty);
@@ -114,6 +155,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _preset, value))
             {
                 OnPropertyChanged(nameof(EventTitle));
+                NotifyModeProperties();
             }
         }
     }
@@ -124,11 +166,41 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<GridSlotViewModel> Grid { get; } = [];
     public ObservableCollection<ValidationMessageViewModel> ValidationMessages { get; } = [];
     public ObservableCollection<PresetSummary> SavedPresets { get; } = [];
+    public ObservableCollection<SavedGridSummary> SavedGrids { get; } = [];
+    public ObservableCollection<string> CarClassOptions { get; } = [];
     public ObservableCollection<InstanceSummary> RecentInstances { get; } = [];
     public ObservableCollection<string> NetworkAddresses { get; } = [];
     public ObservableCollection<LiveRaceCar> LiveCars { get; } = [];
-    public IReadOnlyList<SlotMode> SlotModes { get; } = Enum.GetValues<SlotMode>();
+    public IReadOnlyList<EventMode> EventModes { get; } = Enum.GetValues<EventMode>();
+    public IReadOnlyList<SlotModeOption> SlotModeOptions => IsFpsMode
+        ?
+        [
+            new(SlotMode.Auto, "Auto"),
+            new(SlotMode.Fixed, "Bot"),
+            new(SlotMode.None, "Human"),
+            new(SlotMode.Spectator, "Spectator"),
+        ]
+        :
+        [
+            new(SlotMode.Auto, "Auto"),
+            new(SlotMode.Fixed, "Fixed"),
+            new(SlotMode.None, "None"),
+            new(SlotMode.Spectator, "Spectator"),
+        ];
     public IReadOnlyList<PhysicsFidelity> PhysicsFidelities { get; } = Enum.GetValues<PhysicsFidelity>();
+    public IReadOnlyList<PlayerJoinSlotSelection> PlayerJoinSlotSelections { get; } =
+        Enum.GetValues<PlayerJoinSlotSelection>();
+    public IReadOnlyList<TimeOfDayOption> TimeOfDayOptions { get; } = Enumerable.Range(0, 24)
+        .Select(hour => new TimeOfDayOption(hour, $"{hour:00}:00"))
+        .ToArray();
+    public IReadOnlyList<GridPopulationCategoryOption> GridPopulationCategories { get; } =
+    [
+        new(GridPopulationCategory.Any, "Any bot-capable car"),
+        new(GridPopulationCategory.Class, "Car class"),
+        new(GridPopulationCategory.MaximumHorsepower, "Maximum horsepower"),
+        new(GridPopulationCategory.ModelYear, "Model year"),
+        new(GridPopulationCategory.MaximumPowerToWeight, "Maximum power-to-weight"),
+    ];
 
     public AcTrackLayout? SelectedTrack
     {
@@ -139,11 +211,46 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 Preset.TrackId = value.TrackId;
                 Preset.TrackLayoutId = value.LayoutId;
+                if (IsFpsMode)
+                    Preset.Fps.Arena = _fpsArenaStore.Load(value.TrackId, value.LayoutId);
                 OnPropertyChanged(nameof(SelectedTrackDetails));
+                OnPropertyChanged(nameof(FpsArenaStatus));
                 RaiseCommandStates();
             }
         }
     }
+
+    public EventMode EventMode
+    {
+        get => Preset.Mode;
+        set => SwitchEventMode(value);
+    }
+
+    public bool IsFpsMode => Preset.Mode == EventMode.Fps;
+    public string ContentSectionTitle => IsFpsMode ? "Map" : "Circuit";
+    public string TrackSelectionLabel => IsFpsMode ? "Arena and layout" : "Track and layout";
+    public string GridSectionTitle => IsFpsMode ? "FPS participants" : "Race grid";
+    public string SessionSectionTitle => IsFpsMode ? "DEATHMATCH" : "SESSIONS & RULES";
+    public string BotSectionTitle => IsFpsMode ? "FPS BOTS" : "RACE BOTS";
+    public string SlotModeHelp => IsFpsMode
+        ? "Auto = bot until claimed • Bot = unclaimable server bot • Human = player-only • Spectator = camera-only"
+        : "Auto = bot until claimed • Fixed = bot only • None = human racer • Spectator = camera-only connection";
+
+    public bool ShowPreparedFpsArenasOnly
+    {
+        get => _showPreparedFpsArenasOnly;
+        set
+        {
+            if (!SetProperty(ref _showPreparedFpsArenasOnly, value)) return;
+            RefreshTrackFilter();
+        }
+    }
+
+    public string FpsArenaStatus => !IsFpsMode
+        ? string.Empty
+        : Preset.Fps.Arena is { PreparationVersion: FpsArenaDefinition.CurrentPreparationVersion } arena
+            ? $"Prepared FPS arena • {arena.SpawnPoints.Count} safe spawns • sidecar v{arena.PreparationVersion}"
+            : "Not prepared for FPS. Prepare this arena before validation or launch.";
 
     public AcWeather? SelectedWeather
     {
@@ -182,6 +289,112 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
         }
     }
+
+    public SavedGridSummary? SelectedSavedGrid
+    {
+        get => _selectedSavedGrid;
+        set
+        {
+            if (SetProperty(ref _selectedSavedGrid, value))
+            {
+                if (value is not null)
+                    SavedGridName = value.Name;
+                RaiseCommandStates();
+            }
+        }
+    }
+
+    public string SavedGridName
+    {
+        get => _savedGridName;
+        set
+        {
+            if (SetProperty(ref _savedGridName, value))
+                SaveGridCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public GridPopulationCategoryOption SelectedGridPopulationCategory
+    {
+        get => _selectedGridPopulationCategory;
+        set
+        {
+            if (value is null || !SetProperty(ref _selectedGridPopulationCategory, value))
+                return;
+            OnPropertyChanged(nameof(IsGridPopulationClassEnabled));
+            OnPropertyChanged(nameof(IsGridPopulationCriterionEnabled));
+            OnPropertyChanged(nameof(GridPopulationCriterionLabel));
+            OnPropertyChanged(nameof(GridPopulationCriterionValue));
+            PopulateGridCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public string GridPopulationClass
+    {
+        get => _gridPopulationClass;
+        set
+        {
+            if (SetProperty(ref _gridPopulationClass, value))
+                PopulateGridCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public int GridPopulationCount
+    {
+        get => _gridPopulationCount;
+        set
+        {
+            if (SetProperty(ref _gridPopulationCount, value))
+                PopulateGridCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public double GridPopulationCriterionValue
+    {
+        get => SelectedGridPopulationCategory.Value switch
+        {
+            GridPopulationCategory.MaximumHorsepower => _gridPopulationMaximumHorsepower,
+            GridPopulationCategory.ModelYear => _gridPopulationYear,
+            GridPopulationCategory.MaximumPowerToWeight => _gridPopulationMaximumPowerToWeight,
+            _ => 0,
+        };
+        set
+        {
+            switch (SelectedGridPopulationCategory.Value)
+            {
+                case GridPopulationCategory.MaximumHorsepower:
+                    if (!SetProperty(ref _gridPopulationMaximumHorsepower, value,
+                            nameof(GridPopulationCriterionValue))) return;
+                    break;
+                case GridPopulationCategory.ModelYear:
+                    int year = (int)Math.Round(value, MidpointRounding.AwayFromZero);
+                    if (!SetProperty(ref _gridPopulationYear, year,
+                            nameof(GridPopulationCriterionValue))) return;
+                    break;
+                case GridPopulationCategory.MaximumPowerToWeight:
+                    if (!SetProperty(ref _gridPopulationMaximumPowerToWeight, value,
+                            nameof(GridPopulationCriterionValue))) return;
+                    break;
+                default:
+                    return;
+            }
+            PopulateGridCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool IsGridPopulationClassEnabled =>
+        SelectedGridPopulationCategory.Value == GridPopulationCategory.Class;
+    public bool IsGridPopulationCriterionEnabled =>
+        SelectedGridPopulationCategory.Value is GridPopulationCategory.MaximumHorsepower
+            or GridPopulationCategory.ModelYear
+            or GridPopulationCategory.MaximumPowerToWeight;
+    public string GridPopulationCriterionLabel => SelectedGridPopulationCategory.Value switch
+    {
+        GridPopulationCategory.MaximumHorsepower => "Limit (hp)",
+        GridPopulationCategory.ModelYear => "Year",
+        GridPopulationCategory.MaximumPowerToWeight => "Limit (hp/tonne)",
+        _ => "Value",
+    };
 
     public InstanceSummary? SelectedRecentInstance
     {
@@ -430,11 +643,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
     public string SelectedTrackDetails => SelectedTrack is null
-        ? "No track selected"
-        : $"{SelectedTrack.Country}  •  {SelectedTrack.PitBoxes} pit boxes  •  {(SelectedTrack.HasFastLane ? "AI line ready" : "no AI line")}";
-    public string EffectiveGridSummary => SelectedTrack is null
-        ? $"{Grid.Count} requested slots"
-        : $"{Math.Min(Grid.Count, SelectedTrack.PitBoxes)} effective / {Grid.Count} requested  •  {SelectedTrack.PitBoxes} pit boxes";
+        ? (IsFpsMode ? "No arena selected" : "No track selected")
+        : IsFpsMode
+            ? $"{SelectedTrack.Country}  •  {SelectedTrack.PitBoxes} carrier slots  •  {FpsArenaStatus}"
+            : $"{SelectedTrack.Country}  •  {SelectedTrack.PitBoxes} pit boxes  •  {(SelectedTrack.HasFastLane ? "AI line ready" : "no AI line")}";
+    public string EffectiveGridSummary
+    {
+        get
+        {
+            int active = Grid.Count(slot => slot.Mode != SlotMode.Spectator);
+            int spectators = Grid.Count - active;
+            if (IsFpsMode)
+                return $"{active} participants • {Grid.Count(slot => slot.Mode is SlotMode.Auto or SlotMode.Fixed)} bot-capable • {Grid.Count(slot => slot.Mode == SlotMode.None)} human-only • {spectators} spectators";
+            return SelectedTrack is null
+                ? $"{active} racers + {spectators} spectators"
+                : $"{Math.Min(active, SelectedTrack.PitBoxes)} racing / {active} requested  •  {spectators} spectators  •  {SelectedTrack.PitBoxes} pit boxes";
+        }
+    }
     public string LastInstanceSummary => _lastInstance is null
         ? "No instance staged in this session."
         : $"{_lastInstance.SlotCount} slots • {_lastInstance.BotSlotCount} bot-capable • {(_lastInstance.PhysicsCacheHit ? "physics cache hit" : "physics prepared")}";
@@ -451,12 +676,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand FillGridCommand { get; }
     public RelayCommand RandomizeSkinsCommand { get; }
     public RelayCommand MakeAllReplaceableCommand { get; }
+    public RelayCommand PopulateGridCommand { get; }
+    public RelayCommand SaveGridCommand { get; }
+    public RelayCommand LoadGridCommand { get; }
+    public RelayCommand DeleteGridCommand { get; }
     public RelayCommand ValidateCommand { get; }
     public AsyncRelayCommand StageCommand { get; }
     public AsyncRelayCommand LaunchCommand { get; }
     public AsyncRelayCommand StopCommand { get; }
     public AsyncRelayCommand RestartCommand { get; }
     public AsyncRelayCommand SimulateRaceCommand { get; }
+    public AsyncRelayCommand PrepareFpsArenaCommand { get; }
+    public AsyncRelayCommand ExportFpsClientPackCommand { get; }
     public AsyncRelayCommand StartRaceCommand { get; }
     public AsyncRelayCommand StopRaceCommand { get; }
     public AsyncRelayCommand RestartRaceCommand { get; }
@@ -464,6 +695,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand TeleportSelectedBotCommand { get; }
     public AsyncRelayCommand TakeOverSelectedBotCommand { get; }
     public RelayCommand DismissSimulationResultsCommand { get; }
+    public AsyncRelayCommand ExportServerPackageCommand { get; }
     public RelayCommand OpenInstanceCommand { get; }
     public RelayCommand OpenContentManagerCommand { get; }
     public RelayCommand ClearLogCommand { get; }
@@ -476,29 +708,38 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             StatusText = "Locating Assetto Corsa…";
             _paths.EnsureCreated();
             _presetStore = new PresetStore(_paths);
+            _savedGridStore = new SavedGridStore(_paths);
             RefreshSavedPresets();
+            RefreshSavedGrids();
             RefreshRecentInstances();
             foreach (var address in NetworkAddressService.GetPrivateIpv4Addresses())
             {
                 NetworkAddresses.Add(address);
             }
 
-            var acRoot = InstallationLocator.FindAssettoCorsaRoot() ?? Preset.AssettoCorsaRoot;
-            var payload = FindServerPayload() ?? string.Empty;
-            if (settings?.LoadMostRecentPresetOnStartup == true && SavedPresets.FirstOrDefault() is { } recent)
+            string detectedAcRoot = InstallationLocator.FindAssettoCorsaRoot() ?? Preset.AssettoCorsaRoot;
+            string detectedPayload = FindServerPayload() ?? string.Empty;
+            string? configuredAcRoot = ExistingDirectory(settings?.AssettoCorsaRoot);
+            string? configuredPayload = ExistingServerPayload(settings?.ServerPayloadPath);
+            if (settings?.LoadMostRecentPresetOnStartup == true && _presetStore.List().FirstOrDefault() is { } recent)
             {
                 Preset = _presetStore.Load(recent.Path);
-                Preset.AssettoCorsaRoot = Directory.Exists(Preset.AssettoCorsaRoot) ? Preset.AssettoCorsaRoot : acRoot;
-                Preset.ServerPayloadPath = File.Exists(Path.Combine(Preset.ServerPayloadPath, "AssettoServer.exe"))
-                    ? Preset.ServerPayloadPath
-                    : payload;
+                Preset.AssettoCorsaRoot = configuredAcRoot
+                    ?? ExistingDirectory(Preset.AssettoCorsaRoot)
+                    ?? detectedAcRoot;
+                Preset.ServerPayloadPath = configuredPayload
+                    ?? ExistingServerPayload(Preset.ServerPayloadPath)
+                    ?? detectedPayload;
                 SelectedSavedPreset = recent;
             }
             else
             {
-                Preset = RaceControlPreset.CreateDefault(acRoot, payload);
+                Preset = RaceControlPreset.CreateDefault(configuredAcRoot ?? detectedAcRoot,
+                    configuredPayload ?? detectedPayload);
                 Preset.Network.BindAddress = NetworkAddressService.GetPreferredPrivateIpv4();
             }
+            RememberModeDraft(Preset);
+            RefreshSavedPresets();
             if (TryApplyCachedContent(preserveUi: false))
             {
                 StatusText = $"Loaded {Cars.Count} cars and {Tracks.Count} track layouts from cache. Checking for changes…";
@@ -558,9 +799,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             IsBusy = true;
-            var newPreset = RaceControlPreset.CreateDefault(Preset.AssettoCorsaRoot, Preset.ServerPayloadPath);
+            var newPreset = CreateModePreset(Preset.Mode, Preset);
             newPreset.Network.BindAddress = Preset.Network.BindAddress;
             Preset = newPreset;
+            RememberModeDraft(newPreset);
+            Replace(Tracks, FilteredTracks());
             await ApplyCurrentCatalogOrRefreshAsync();
             SelectedPageIndex = 0;
             StatusText = "Created a new unsaved LAN race.";
@@ -645,7 +888,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _catalog = catalog;
         _catalogRoot = NormalizePath(assettoCorsaRoot);
         Replace(Cars, catalog.Cars);
-        Replace(Tracks, catalog.Tracks);
+        RefreshCarClassOptions();
+        _allTracks.Clear();
+        _allTracks.AddRange(catalog.Tracks);
+        Replace(Tracks, FilteredTracks());
         Replace(Weather, catalog.Weather);
         ApplyPresetToUi(Preset);
         Validate();
@@ -740,6 +986,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private static string NormalizePath(string path) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
+    private static string? ExistingDirectory(string? path) =>
+        !string.IsNullOrWhiteSpace(path) && Directory.Exists(path) ? path : null;
+
+    private static string? ExistingServerPayload(string? path) =>
+        !string.IsNullOrWhiteSpace(path)
+        && File.Exists(Path.Combine(path, "AssettoServer.exe"))
+            ? path
+            : null;
+
     private void ApplyPresetToUi(RaceControlPreset preset)
     {
         var selectedWeather = Weather.FirstOrDefault(weather =>
@@ -748,6 +1003,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             ?? Weather.FirstOrDefault();
         preset.Conditions.WeatherId = selectedWeather?.Id ?? "3_clear";
         Preset = preset;
+        if (preset.Mode == EventMode.Fps)
+            preset.Fps.Arena = _fpsArenaStore.Load(preset.TrackId, preset.TrackLayoutId);
         _selectedWeather = selectedWeather;
         OnPropertyChanged(nameof(SelectedWeather));
         SelectedTrack = Tracks.FirstOrDefault(track =>
@@ -764,11 +1021,128 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var sourceSlots = preset.Grid.Count > 0 ? preset.Grid : RaceControlPreset.CreateDefault(preset.AssettoCorsaRoot, preset.ServerPayloadPath).Grid;
         foreach (var slot in sourceSlots)
         {
-            Grid.Add(new GridSlotViewModel(slot, Cars, Grid.Count + 1));
+            Grid.Add(CreateGridSlotViewModel(slot, Grid.Count + 1));
         }
         EnsureTwoSlots();
         SelectedGridSlot = Grid.FirstOrDefault();
         OnPropertyChanged(nameof(EventTitle));
+        OnPropertyChanged(nameof(EffectiveGridSummary));
+        OnPropertyChanged(nameof(SelectedTrackDetails));
+        OnPropertyChanged(nameof(FpsArenaStatus));
+        NotifyModeProperties();
+    }
+
+    private IEnumerable<AcTrackLayout> FilteredTracks()
+    {
+        IEnumerable<AcTrackLayout> tracks = _allTracks;
+        if (IsFpsMode && ShowPreparedFpsArenasOnly)
+            tracks = tracks.Where(track => _fpsArenaStore.IsPrepared(track.TrackId, track.LayoutId));
+        return tracks;
+    }
+
+    private void RefreshTrackFilter()
+    {
+        string trackId = Preset.TrackId;
+        string layoutId = Preset.TrackLayoutId;
+        Replace(Tracks, FilteredTracks());
+        SelectedTrack = Tracks.FirstOrDefault(track =>
+                            track.TrackId.Equals(trackId, StringComparison.OrdinalIgnoreCase)
+                            && track.LayoutId.Equals(layoutId, StringComparison.OrdinalIgnoreCase))
+                        ?? Tracks.FirstOrDefault();
+        OnPropertyChanged(nameof(SelectedTrackDetails));
+        OnPropertyChanged(nameof(FpsArenaStatus));
+        RaiseCommandStates();
+    }
+
+    private void SwitchEventMode(EventMode mode)
+    {
+        if (Preset.Mode == mode) return;
+
+        SyncGridToPreset();
+        RememberModeDraft(Preset);
+        var target = mode == EventMode.Fps ? _fpsDraft : _racingDraft;
+        target ??= CreateModePreset(mode, Preset);
+        target.Mode = mode;
+        if (mode == EventMode.Fps)
+            _fpsDraft = target;
+        else
+            _racingDraft = target;
+
+        Preset = target;
+        Replace(Tracks, FilteredTracks());
+        ApplyPresetToUi(target);
+        RefreshSavedPresets();
+        Validate();
+        RaiseCommandStates();
+    }
+
+    private void RememberModeDraft(RaceControlPreset preset)
+    {
+        if (preset.Mode == EventMode.Fps)
+            _fpsDraft = preset;
+        else
+            _racingDraft = preset;
+    }
+
+    private static RaceControlPreset CreateModePreset(EventMode mode, RaceControlPreset source)
+    {
+        var preset = RaceControlPreset.CreateDefault(source.AssettoCorsaRoot, source.ServerPayloadPath);
+        preset.Mode = mode;
+        preset.Name = mode == EventMode.Fps ? "New LAN deathmatch" : "New LAN race";
+        preset.ServerName = mode == EventMode.Fps ? "AssettoServer LAN Deathmatch" : "AssettoServer LAN Race";
+        preset.TrackId = source.TrackId;
+        preset.TrackLayoutId = source.TrackLayoutId;
+        preset.Conditions = new ConditionOptions
+        {
+            WeatherId = source.Conditions.WeatherId,
+            SunAngleDegrees = source.Conditions.SunAngleDegrees,
+            AmbientTemperatureCelsius = source.Conditions.AmbientTemperatureCelsius,
+            RoadTemperatureCelsius = source.Conditions.RoadTemperatureCelsius,
+            WindMinKmh = source.Conditions.WindMinKmh,
+            WindMaxKmh = source.Conditions.WindMaxKmh,
+            WindDirectionDegrees = source.Conditions.WindDirectionDegrees,
+            StartingGripPercent = source.Conditions.StartingGripPercent,
+            GripRandomnessPercent = source.Conditions.GripRandomnessPercent,
+            GripTransferPercent = source.Conditions.GripTransferPercent,
+            LapsPerGripIncrease = source.Conditions.LapsPerGripIncrease,
+        };
+        preset.Network = new NetworkOptions
+        {
+            BindAddress = source.Network.BindAddress,
+            TcpPort = source.Network.TcpPort,
+            UdpPort = source.Network.UdpPort,
+            HttpPort = source.Network.HttpPort,
+            JoinPassword = source.Network.JoinPassword,
+            AdminPassword = source.Network.AdminPassword,
+            LanOnly = source.Network.LanOnly,
+        };
+        if (mode == EventMode.Fps)
+        {
+            int count = Math.Clamp(source.Grid.Count(slot => slot.Mode != SlotMode.Spectator), 2, 8);
+            preset.Grid = Enumerable.Range(1, count).Select(index => new GridSlotPreset
+            {
+                CarId = preset.Fps.CarrierCarId,
+                DriverName = $"Operative {index:00}",
+                TeamName = "Deathmatch",
+                Mode = SlotMode.Auto,
+            }).ToList();
+        }
+        return preset;
+    }
+
+    private void NotifyModeProperties()
+    {
+        OnPropertyChanged(nameof(EventMode));
+        OnPropertyChanged(nameof(IsFpsMode));
+        OnPropertyChanged(nameof(ContentSectionTitle));
+        OnPropertyChanged(nameof(TrackSelectionLabel));
+        OnPropertyChanged(nameof(GridSectionTitle));
+        OnPropertyChanged(nameof(SessionSectionTitle));
+        OnPropertyChanged(nameof(BotSectionTitle));
+        OnPropertyChanged(nameof(SlotModeHelp));
+        OnPropertyChanged(nameof(SlotModeOptions));
+        OnPropertyChanged(nameof(SelectedTrackDetails));
+        OnPropertyChanged(nameof(FpsArenaStatus));
         OnPropertyChanged(nameof(EffectiveGridSummary));
     }
 
@@ -805,8 +1179,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             IsBusy = true;
+            string assettoCorsaRoot = Preset.AssettoCorsaRoot;
+            string serverPayloadPath = Preset.ServerPayloadPath;
             var loaded = _presetStore.Load(SelectedSavedPreset.Path);
+            loaded.AssettoCorsaRoot = assettoCorsaRoot;
+            loaded.ServerPayloadPath = serverPayloadPath;
             Preset = loaded;
+            RememberModeDraft(loaded);
+            Replace(Tracks, FilteredTracks());
             await ApplyCurrentCatalogOrRefreshAsync();
             StatusText = $"Loaded {loaded.Name}.";
         }
@@ -829,8 +1209,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 ?? throw new InvalidOperationException("No Content Manager server preset was found.");
             var imported = _cmPresetService.Import(cmPreset, Preset.AssettoCorsaRoot, Preset.ServerPayloadPath);
             imported.Name = $"{cmPreset.Name} (Race Control)";
+            imported.Mode = EventMode.Racing;
             imported.Network.BindAddress = NetworkAddressService.GetPreferredPrivateIpv4();
             Preset = imported;
+            _racingDraft = imported;
             await ApplyCurrentCatalogOrRefreshAsync();
             StatusText = $"Imported Content Manager preset {cmPreset.Name}.";
         }
@@ -858,29 +1240,171 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    private async Task PrepareFpsArenaAsync()
+    {
+        if (SelectedTrack is null) return;
+        try
+        {
+            IsBusy = true;
+            StatusText = $"Preparing FPS arena {SelectedTrack.DisplayName}…";
+            var progress = new Progress<StagingProgress>(update =>
+            {
+                ProgressText = update.Message;
+                ProgressValue = (update.Fraction ?? 0) * 100;
+                AppendLog($"[{update.Stage}] {update.Message}");
+            });
+            Preset.Fps.Arena = await new FpsArenaPreparationService(_fpsArenaStore)
+                .PrepareAsync(Preset, progress);
+            OnPropertyChanged(nameof(FpsArenaStatus));
+            OnPropertyChanged(nameof(SelectedTrackDetails));
+            if (ShowPreparedFpsArenasOnly) RefreshTrackFilter();
+            Validate();
+            StatusText = $"Prepared {SelectedTrack.DisplayName} as an FPS compatibility arena.";
+        }
+        catch (Exception exception)
+        {
+            HandleException("FPS arena preparation failed", exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task ExportFpsClientPackAsync()
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "Export FPS compatibility client pack",
+            Filter = "ZIP archive (*.zip)|*.zip",
+            DefaultExt = ".zip",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = "asrc-fps-compatibility-client-v1.zip",
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            IsBusy = true;
+            await using var stream = new FileStream(dialog.FileName, FileMode.Create, FileAccess.Write, FileShare.None,
+                64 * 1024, useAsync: true);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
+            var manifestEntry = archive.CreateEntry("asrc-fps-client.json", CompressionLevel.Optimal);
+            await using (var manifestStream = manifestEntry.Open())
+            {
+                await JsonSerializer.SerializeAsync(manifestStream, new
+                {
+                    protocol = 1,
+                    compatibilityGate = true,
+                    minimumCspVersion = "0.3.0-preview520",
+                    carrierCar = Preset.Fps.CarrierCarId,
+                    nativeHooks = false,
+                }, new JsonSerializerOptions { WriteIndented = true });
+            }
+            var readmeEntry = archive.CreateEntry("README.txt", CompressionLevel.Optimal);
+            await using (var writer = new StreamWriter(readmeEntry.Open()))
+            {
+                await writer.WriteAsync("""
+                    AssettoServer Race Control FPS compatibility gate
+
+                    Requirements:
+                    - Assetto Corsa with CSP 0.3.0-preview520 or newer compatible preview.
+                    - The carrier car named in asrc-fps-client.json must be installed.
+                    - Join through Content Manager Online > LAN.
+
+                    The server delivers the CSP online script automatically. This prototype uses the
+                    locally installed stock pit-crew model and does not redistribute Kunos assets.
+                    No acs.exe modification or native hook is installed.
+                    """);
+            }
+            StatusText = $"Exported FPS compatibility client pack: {Path.GetFileName(dialog.FileName)}";
+        }
+        catch (Exception exception)
+        {
+            HandleException("FPS client-pack export failed", exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task ExportServerPackageAsync()
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "Export standalone server package",
+            Filter = "ZIP archive (*.zip)|*.zip",
+            DefaultExt = ".zip",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = $"{FileNameSanitizer.Slug(Preset.Name)}-server-{DateTime.Now:yyyyMMdd-HHmmss}.zip",
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+
+        try
+        {
+            IsBusy = true;
+            StatusText = "Packaging the current standalone server…";
+            AppendLog($"[Export] Creating complete server package at {dialog.FileName}…");
+            await new InstancePackageExporter().ExportAsync(_paths.WorkingInstanceDirectory,
+                dialog.FileName);
+            StatusText = $"Exported standalone server package: {Path.GetFileName(dialog.FileName)}";
+            AppendLog($"[Export] Complete server package written to {dialog.FileName}");
+        }
+        catch (Exception exception)
+        {
+            HandleException("Server package export failed", exception);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private void AddSlot()
     {
         var source = SelectedGridSlot?.ToPreset() ?? Grid.LastOrDefault()?.ToPreset() ?? new GridSlotPreset();
-        source.DriverName = $"{Preset.Bots.NamePrefix} {Grid.Count + 1:00}";
+        source.CarId = IsFpsMode ? Preset.Fps.CarrierCarId : source.CarId;
+        source.DriverName = IsFpsMode
+            ? $"Operative {Grid.Count + 1:00}"
+            : $"{Preset.Bots.NamePrefix} {Grid.Count + 1:00}";
+        source.TeamName = IsFpsMode ? "Deathmatch" : source.TeamName;
         source.Mode = SlotMode.Auto;
-        var row = new GridSlotViewModel(source, Cars, Grid.Count + 1);
-        Grid.Add(row);
+        var row = CreateGridSlotViewModel(source, Grid.Count + 1);
+        var firstSpectatorIndex = Grid.ToList().FindIndex(slot => slot.Mode == SlotMode.Spectator);
+        if (firstSpectatorIndex >= 0)
+            Grid.Insert(firstSpectatorIndex, row);
+        else
+            Grid.Add(row);
         SelectedGridSlot = row;
         OnGridChanged();
     }
 
     private void RemoveSelectedSlot()
     {
-        if (SelectedGridSlot is null || Grid.Count <= 2)
+        var selected = SelectedGridSlot;
+        if (selected is null || !CanRemoveSelectedSlot())
         {
             return;
         }
 
-        var index = Grid.IndexOf(SelectedGridSlot);
-        Grid.Remove(SelectedGridSlot);
+        var index = Grid.IndexOf(selected);
+        selected.PropertyChanged -= OnGridSlotPropertyChanged;
+        Grid.Remove(selected);
         ReindexGrid();
         SelectedGridSlot = Grid[Math.Min(index, Grid.Count - 1)];
         OnGridChanged();
+    }
+
+    private bool CanRemoveSelectedSlot()
+    {
+        if (SelectedGridSlot is null || IsBusy)
+            return false;
+        return SelectedGridSlot.Mode == SlotMode.Spectator
+               || Grid.Count(slot => slot.Mode != SlotMode.Spectator) > 2;
     }
 
     private void MoveSelectedSlot(int offset)
@@ -920,13 +1444,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        while (Grid.Count < Math.Min(SelectedTrack.PitBoxes, 254))
+        int capacity = IsFpsMode ? Math.Min(32, SelectedTrack.PitBoxes) : SelectedTrack.PitBoxes;
+        while (Grid.Count(slot => slot.Mode != SlotMode.Spectator) < capacity
+               && Grid.Count < (IsFpsMode ? 32 : 254))
         {
             AddSlot();
         }
-        while (Grid.Count > SelectedTrack.PitBoxes && Grid.Count > 2)
+        while (Grid.Count(slot => slot.Mode != SlotMode.Spectator) > capacity)
         {
-            Grid.RemoveAt(Grid.Count - 1);
+            var lastRacingSlot = Grid.Last(slot => slot.Mode != SlotMode.Spectator);
+            lastRacingSlot.PropertyChanged -= OnGridSlotPropertyChanged;
+            Grid.Remove(lastRacingSlot);
         }
         ReindexGrid();
         OnGridChanged();
@@ -945,29 +1473,210 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void MakeAllReplaceable()
     {
-        Preset.Bots.Enabled = true;
+        if (!IsFpsMode) Preset.Bots.Enabled = true;
         OnPropertyChanged(nameof(Preset));
-        foreach (var slot in Grid)
+        foreach (var slot in Grid.Where(slot => slot.Mode != SlotMode.Spectator))
         {
             slot.Mode = SlotMode.Auto;
         }
-        StatusText = "All slots are now occupied by bots until humans claim them.";
+        StatusText = IsFpsMode
+            ? "All scored FPS slots are bots until humans claim them; spectator reservations were retained."
+            : "All racing slots are now occupied by bots until humans claim them; spectator reservations were retained.";
     }
+
+    private bool CanPopulateGrid()
+    {
+        if (IsFpsMode || _catalog is null || IsBusy || GridPopulationCount is < 2 or > 254)
+            return false;
+        return SelectedGridPopulationCategory.Value switch
+        {
+            GridPopulationCategory.Class => !string.IsNullOrWhiteSpace(GridPopulationClass),
+            GridPopulationCategory.MaximumHorsepower => GridPopulationCriterionValue > 0,
+            GridPopulationCategory.ModelYear => GridPopulationCriterionValue is >= 1886 and <= 2200,
+            GridPopulationCategory.MaximumPowerToWeight => GridPopulationCriterionValue > 0,
+            _ => true,
+        };
+    }
+
+    private void PopulateGrid()
+    {
+        if (_catalog is null)
+            return;
+        try
+        {
+            var spectators = Grid.Where(slot => slot.Mode == SlotMode.Spectator)
+                .Select(slot => CloneGridSlot(slot.ToPreset()))
+                .ToArray();
+            int maximumRacers = 254 - spectators.Length;
+            if (maximumRacers < 2)
+                throw new InvalidOperationException("Remove spectator entries before populating a racing grid.");
+            int requested = Math.Min(GridPopulationCount, maximumRacers);
+            var request = new GridPopulationRequest(
+                requested,
+                SelectedGridPopulationCategory.Value,
+                GridPopulationClass,
+                SelectedGridPopulationCategory.Value == GridPopulationCategory.MaximumHorsepower
+                    ? GridPopulationCriterionValue : null,
+                SelectedGridPopulationCategory.Value == GridPopulationCategory.ModelYear
+                    ? (int)GridPopulationCriterionValue : null,
+                SelectedGridPopulationCategory.Value == GridPopulationCategory.MaximumPowerToWeight
+                    ? GridPopulationCriterionValue : null,
+                Preset.Bots.NamePrefix);
+            var result = _gridPopulationService.Populate(_catalog, request);
+            if (result.Slots.Count == 0)
+            {
+                StatusText = "No bot-capable installed cars match that grid filter.";
+                return;
+            }
+
+            ReplaceGrid(result.Slots.Concat(spectators));
+            string capacityNote = requested < GridPopulationCount
+                ? $" Protocol capacity limited the request to {requested}."
+                : SelectedTrack is { PitBoxes: > 0 } && requested > SelectedTrack.PitBoxes
+                    ? $" The selected layout has {SelectedTrack.PitBoxes} pit boxes; staging will keep the first entries that fit."
+                    : string.Empty;
+            StatusText = $"Populated {requested} replaceable racing slots from {result.EligibleCarCount} matching cars.{capacityNote}";
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not populate grid", exception);
+        }
+    }
+
+    private void SaveGrid()
+    {
+        try
+        {
+            var store = _savedGridStore
+                        ?? throw new InvalidOperationException("Saved-grid storage is not initialized.");
+            var existing = SavedGrids.FirstOrDefault(grid =>
+                grid.Name.Equals(SavedGridName.Trim(), StringComparison.OrdinalIgnoreCase));
+            var grid = new SavedGridPreset
+            {
+                Id = existing?.Id ?? Guid.NewGuid(),
+                Name = SavedGridName,
+                Slots = Grid.Select(slot => CloneGridSlot(slot.ToPreset())).ToList(),
+            };
+            store.Save(grid);
+            RefreshSavedGrids();
+            SelectedSavedGrid = SavedGrids.FirstOrDefault(summary => summary.Id == grid.Id);
+            StatusText = $"Saved grid {grid.Name}.";
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not save grid", exception);
+        }
+    }
+
+    private void LoadSavedGrid()
+    {
+        if (SelectedSavedGrid is null || _savedGridStore is null)
+            return;
+        try
+        {
+            var saved = _savedGridStore.Load(SelectedSavedGrid.Path);
+            var installedIds = Cars.Select(car => car.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var missing = saved.Slots.Select(slot => slot.CarId)
+                .Where(id => !installedIds.Contains(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (missing.Length > 0)
+                throw new InvalidDataException($"The saved grid requires missing car(s): {string.Join(", ", missing)}");
+
+            ReplaceGrid(saved.Slots.Select(CloneGridSlot));
+            SavedGridName = saved.Name;
+            StatusText = $"Loaded grid {saved.Name}; event, track, sessions, and network settings were retained.";
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not load grid", exception);
+        }
+    }
+
+    private void DeleteSavedGrid()
+    {
+        if (SelectedSavedGrid is null || _savedGridStore is null)
+            return;
+        try
+        {
+            string name = SelectedSavedGrid.Name;
+            _savedGridStore.Delete(SelectedSavedGrid.Path);
+            SelectedSavedGrid = null;
+            SavedGridName = string.Empty;
+            RefreshSavedGrids();
+            StatusText = $"Deleted saved grid {name}.";
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not delete grid", exception);
+        }
+    }
+
+    private void ReplaceGrid(IEnumerable<GridSlotPreset> slots)
+    {
+        foreach (var row in Grid)
+            row.PropertyChanged -= OnGridSlotPropertyChanged;
+        Grid.Clear();
+        foreach (var slot in slots.Take(254))
+            Grid.Add(CreateGridSlotViewModel(slot, Grid.Count + 1));
+        EnsureTwoSlots();
+        SelectedGridSlot = Grid.FirstOrDefault(slot => slot.Mode != SlotMode.Spectator)
+                           ?? Grid.FirstOrDefault();
+        OnGridChanged();
+    }
+
+    private static GridSlotPreset CloneGridSlot(GridSlotPreset slot) => new()
+    {
+        CarId = slot.CarId,
+        SkinId = slot.SkinId,
+        DriverName = slot.DriverName,
+        TeamName = slot.TeamName,
+        NationCode = slot.NationCode,
+        BallastKg = slot.BallastKg,
+        RestrictorPercent = slot.RestrictorPercent,
+        Difficulty = slot.Difficulty,
+        Aggression = slot.Aggression,
+        Mode = slot.Mode,
+    };
 
     private void EnsureTwoSlots()
     {
-        while (Grid.Count < 2 && Cars.Count > 0)
+        while (Grid.Count(slot => slot.Mode != SlotMode.Spectator) < 2 && Cars.Count > 0)
         {
             var source = Grid.LastOrDefault()?.ToPreset() ?? new GridSlotPreset { CarId = Cars[0].Id };
-            source.DriverName = $"{Preset.Bots.NamePrefix} {Grid.Count + 1:00}";
+            source.CarId = IsFpsMode ? Preset.Fps.CarrierCarId : source.CarId;
+            source.DriverName = IsFpsMode
+                ? $"Operative {Grid.Count + 1:00}"
+                : $"{Preset.Bots.NamePrefix} {Grid.Count + 1:00}";
+            source.TeamName = IsFpsMode ? "Deathmatch" : source.TeamName;
             source.Mode = SlotMode.Auto;
-            Grid.Add(new GridSlotViewModel(source, Cars, Grid.Count + 1));
+            var row = CreateGridSlotViewModel(source, Grid.Count + 1);
+            var firstSpectatorIndex = Grid.ToList().FindIndex(slot => slot.Mode == SlotMode.Spectator);
+            if (firstSpectatorIndex >= 0)
+                Grid.Insert(firstSpectatorIndex, row);
+            else
+                Grid.Add(row);
         }
     }
 
     private void OnGridChanged()
     {
         ReindexGrid();
+        OnPropertyChanged(nameof(EffectiveGridSummary));
+        RaiseCommandStates();
+    }
+
+    private GridSlotViewModel CreateGridSlotViewModel(GridSlotPreset slot, int index)
+    {
+        var row = new GridSlotViewModel(slot, Cars, index);
+        row.PropertyChanged += OnGridSlotPropertyChanged;
+        return row;
+    }
+
+    private void OnGridSlotPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName != nameof(GridSlotViewModel.Mode))
+            return;
         OnPropertyChanged(nameof(EffectiveGridSummary));
         RaiseCommandStates();
     }
@@ -1000,6 +1709,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             IsBusy = true;
+            int recoveredServers = await _processController.StopOrphanedServersAsync(
+                _paths.InstancesDirectory);
+            if (recoveredServers > 0)
+                StatusText = $"Stopped {recoveredServers} previous server process(es); staging the working server…";
             _lastInstance = await StageAsync();
             SelectedPageIndex = 5;
         }
@@ -1133,7 +1846,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             SyncGridToPreset();
             if (!Preset.Bots.Enabled)
                 throw new InvalidOperationException("Enable race bots before starting an accelerated simulation.");
-            if (Preset.Grid.Count(slot => slot.Mode != SlotMode.None) < 2)
+            if (Preset.Grid.Count(slot => slot.Mode is SlotMode.Auto or SlotMode.Fixed) < 2)
                 throw new InvalidOperationException("Accelerated simulation requires at least two bot-capable grid slots.");
 
             int recoveredServers = await _processController.StopOrphanedServersAsync(
@@ -1382,7 +2095,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                         });
                 }
 
-                await Task.Delay(100, cancellationToken);
+                // The normal live map is intentionally inexpensive. During takeover, poll at
+                // the display target so authoritative poses can drive a responsive chase view.
+                await Task.Delay(IsBotTakeoverActive ? 16 : 100, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1474,8 +2189,29 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (_presetStore is not null)
         {
-            Replace(SavedPresets, _presetStore.List());
+            Replace(SavedPresets, _presetStore.List(Preset.Mode));
+            if (SelectedSavedPreset?.Mode != Preset.Mode)
+                SelectedSavedPreset = null;
         }
+    }
+
+    private void RefreshSavedGrids()
+    {
+        if (_savedGridStore is not null)
+            Replace(SavedGrids, _savedGridStore.List());
+    }
+
+    private void RefreshCarClassOptions()
+    {
+        string selected = GridPopulationClass;
+        Replace(CarClassOptions, Cars.Select(car => car.ClassName.Trim())
+            .Where(className => !string.IsNullOrWhiteSpace(className))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .Order(StringComparer.CurrentCultureIgnoreCase));
+        GridPopulationClass = CarClassOptions.FirstOrDefault(className =>
+                                  className.Equals(selected, StringComparison.OrdinalIgnoreCase))
+                              ?? CarClassOptions.FirstOrDefault()
+                              ?? string.Empty;
     }
 
     private void RefreshRecentInstances()
@@ -1511,18 +2247,25 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         FillGridCommand.RaiseCanExecuteChanged();
         RandomizeSkinsCommand.RaiseCanExecuteChanged();
         MakeAllReplaceableCommand.RaiseCanExecuteChanged();
+        PopulateGridCommand.RaiseCanExecuteChanged();
+        SaveGridCommand.RaiseCanExecuteChanged();
+        LoadGridCommand.RaiseCanExecuteChanged();
+        DeleteGridCommand.RaiseCanExecuteChanged();
         ValidateCommand.RaiseCanExecuteChanged();
         StageCommand.RaiseCanExecuteChanged();
         LaunchCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();
         RestartCommand.RaiseCanExecuteChanged();
         SimulateRaceCommand.RaiseCanExecuteChanged();
+        PrepareFpsArenaCommand.RaiseCanExecuteChanged();
+        ExportFpsClientPackCommand.RaiseCanExecuteChanged();
         StartRaceCommand.RaiseCanExecuteChanged();
         StopRaceCommand.RaiseCanExecuteChanged();
         RestartRaceCommand.RaiseCanExecuteChanged();
         StopGoSelectedBotCommand.RaiseCanExecuteChanged();
         TeleportSelectedBotCommand.RaiseCanExecuteChanged();
         TakeOverSelectedBotCommand.RaiseCanExecuteChanged();
+        ExportServerPackageCommand.RaiseCanExecuteChanged();
         OpenInstanceCommand.RaiseCanExecuteChanged();
     }
 

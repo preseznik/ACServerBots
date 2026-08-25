@@ -20,6 +20,7 @@ param(
     [switch] $VerifyPassing,
     [switch] $VerifyLiveControl,
     [switch] $VerifyStoppedObstaclePassing,
+    [switch] $FpsGate,
     [switch] $SimulateRace,
     [ValidateRange(1, 100)]
     [double] $SimulationTimeScale = 10
@@ -34,6 +35,10 @@ if ($VerifyPassing -and -not $VerifyMovingBots) {
 }
 if ($VerifyStoppedObstaclePassing -and -not $SimulateRace) {
     throw '-VerifyStoppedObstaclePassing requires -SimulateRace.'
+}
+if ($FpsGate -and ($VerifyMovingBots -or $VerifyPassing -or $VerifyLiveControl -or
+        $VerifyStoppedObstaclePassing -or $SimulateRace)) {
+    throw '-FpsGate is an isolated compatibility smoke test and cannot be combined with race simulation or live race controls.'
 }
 if ($VerifyStoppedObstaclePassing -and $Slots -lt 2) {
     throw '-VerifyStoppedObstaclePassing requires at least two slots.'
@@ -81,6 +86,12 @@ $preset.Bots.Aggression = $BotAggression
 $preset.Bots.Difficulty = $BotDifficulty
 $preset.Bots.PhysicsFidelity = [Enum]::Parse(
     [AssettoServer.RaceControl.Core.Models.PhysicsFidelity], $PhysicsFidelity)
+if ($FpsGate) {
+    $preset.Mode = [AssettoServer.RaceControl.Core.Models.EventMode]::Fps
+    $preset.Name = 'Race Control FPS Compatibility Gate'
+    $preset.ServerName = 'Race Control FPS Compatibility Gate'
+    $preset.Fps.CarrierCarId = $selectedCars[0].Id
+}
 
 $grid = [Collections.Generic.List[AssettoServer.RaceControl.Core.Models.GridSlotPreset]]::new()
 for ($index = 0; $index -lt $Slots; $index++) {
@@ -96,6 +107,13 @@ $preset.Grid = $grid
 
 $acceptanceRoot = Join-Path $repositoryRoot '.artifacts\race-control-local-acceptance'
 $paths = [AssettoServer.RaceControl.Core.Infrastructure.RaceControlPaths]::new($acceptanceRoot)
+if ($FpsGate) {
+    $arenaStore = [AssettoServer.RaceControl.Core.Storage.FpsArenaStore]::new($paths)
+    $preparer = [AssettoServer.RaceControl.Core.Staging.FpsArenaPreparationService]::new($arenaStore)
+    Write-Host 'Preparing bounded FPS arena sidecar and safe prototype spawns...'
+    $preset.Fps.Arena = $preparer.PrepareAsync(
+        $preset, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+}
 $validator = [AssettoServer.RaceControl.Core.Validation.RaceControlValidator]::new()
 $renderer = [AssettoServer.RaceControl.Core.Configuration.ServerConfigurationRenderer]::new()
 $validation = $validator.Validate($preset, $catalog)
@@ -105,7 +123,7 @@ if (-not $validation.IsValid) {
 }
 
 $stager = [AssettoServer.RaceControl.Core.Staging.ServerInstanceStager]::new($paths, $validator, $renderer)
-Write-Host 'Staging and preparing rigid-body inputs...'
+Write-Host $(if ($FpsGate) { 'Staging FPS compatibility server...' } else { 'Staging and preparing rigid-body inputs...' })
 $instance = $stager.StageAsync($preset, $catalog, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
 Write-Host "Staged $($instance.SlotCount) slots ($($instance.BotSlotCount) bot-capable) at $($instance.RootPath)"
 
@@ -338,6 +356,9 @@ $presetLogPattern = if ($SimulateRace) {
 }
 if ($combinedLog -notmatch $presetLogPattern) { throw 'Server log did not confirm the generated preset' }
 if ($combinedLog -notmatch 'Shutdown requested by control file') { throw 'Server log did not confirm graceful control-file shutdown' }
+if ($FpsGate -and $combinedLog -notmatch 'FPS deathmatch world started') {
+    throw 'Server log did not confirm the authoritative FPS world startup.'
+}
 if ($VerifyLiveControl -and $combinedLog -notmatch 'Race Control live bridge ready') {
     throw 'Server log did not confirm the Race Control live bridge.'
 }
@@ -412,4 +433,8 @@ if ($VerifyMovingBots) {
         }
     }
 }
-Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'
+if ($FpsGate) {
+    Write-Host 'PASS: FPS arena preparation, isolated authoritative-world startup, and graceful shutdown succeeded.'
+} else {
+    Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'
+}

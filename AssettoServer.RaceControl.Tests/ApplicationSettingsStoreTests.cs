@@ -19,6 +19,8 @@ public sealed class ApplicationSettingsStoreTests
             LastPageIndex = 4,
             ConfirmBeforeStoppingServerOnExit = false,
             CompactGridRows = true,
+            AssettoCorsaRoot = @"C:\Games\Assetto Corsa",
+            ServerPayloadPath = @"C:\Servers\AssettoServer",
         };
 
         store.Save(settings);
@@ -31,6 +33,8 @@ public sealed class ApplicationSettingsStoreTests
             Assert.That(loaded.LastPageIndex, Is.EqualTo(4));
             Assert.That(loaded.ConfirmBeforeStoppingServerOnExit, Is.False);
             Assert.That(loaded.CompactGridRows, Is.True);
+            Assert.That(loaded.AssettoCorsaRoot, Is.EqualTo(@"C:\Games\Assetto Corsa"));
+            Assert.That(loaded.ServerPayloadPath, Is.EqualTo(@"C:\Servers\AssettoServer"));
         });
     }
 }

@@ -9,9 +9,11 @@ public sealed record InstanceSummary(
     DateTimeOffset CreatedAt,
     string Track,
     int Slots,
-    int BotSlots)
+    int BotSlots,
+    bool IsCompactHistory = false)
 {
-    public string DisplayName => $"{CreatedAt.LocalDateTime:g} — {PresetName} ({Slots} slots, {Track})";
+    public string DisplayName => $"{(IsCompactHistory ? "History • " : string.Empty)}"
+                                 + $"{CreatedAt.LocalDateTime:g} — {PresetName} ({Slots} slots, {Track})";
 }
 
 public sealed class InstanceCatalog(RaceControlPaths paths)
@@ -20,7 +22,11 @@ public sealed class InstanceCatalog(RaceControlPaths paths)
     {
         paths.EnsureCreated();
         var summaries = new List<InstanceSummary>();
-        foreach (var manifestPath in Directory.EnumerateFiles(paths.InstancesDirectory, "race-control-instance.json", SearchOption.AllDirectories))
+        var manifestPaths = Directory.EnumerateFiles(paths.InstancesDirectory,
+                "race-control-instance.json", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(paths.HistoryDirectory,
+                "race-control-instance.json", SearchOption.AllDirectories));
+        foreach (var manifestPath in manifestPaths)
         {
             try
             {
@@ -32,7 +38,9 @@ public sealed class InstanceCatalog(RaceControlPaths paths)
                     root.GetProperty("createdAt").GetDateTimeOffset(),
                     root.GetProperty("track").GetString() ?? string.Empty,
                     root.GetProperty("slots").GetInt32(),
-                    root.GetProperty("botSlots").GetInt32()));
+                    root.GetProperty("botSlots").GetInt32(),
+                    File.Exists(Path.Combine(Path.GetDirectoryName(manifestPath)!,
+                        "archive-info.json"))));
             }
             catch (Exception exception) when (exception is IOException or JsonException or KeyNotFoundException)
             {

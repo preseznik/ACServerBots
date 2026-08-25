@@ -10,6 +10,7 @@ using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Ai;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Configuration.Kunos;
 using AssettoServer.Server.Runtime;
 using AssettoServer.Server.Blacklist;
 using AssettoServer.Server.GeoParams;
@@ -259,7 +260,9 @@ public class ACServer : BackgroundService, IHostedLifecycleService
 
                 if (_entryCarManager.ConnectedCars.Count > 0
                     || (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
-                        && _entryCarManager.EntryCars.Any(car => car.AiControlled)))
+                        && _entryCarManager.EntryCars.Any(car => car.AiControlled))
+                    || (_configuration.Extra.Fps.Enabled
+                        && _configuration.EntryList.Cars.Any(entry => entry.FpsRole is FpsSlotRole.Auto or FpsSlotRole.Bot)))
                 {
                     long tickDelta;
                     do

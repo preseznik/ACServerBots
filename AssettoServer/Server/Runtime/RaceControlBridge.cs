@@ -20,6 +20,7 @@ namespace AssettoServer.Server.Runtime;
 public sealed class RaceControlBridge : IHostedService
 {
     private const int SnapshotIntervalMilliseconds = 50;
+    private const int TakeoverSnapshotIntervalMilliseconds = 16;
     private const int MaximumTrackPoints = 1500;
 
     private readonly ACServerConfiguration _configuration;
@@ -29,6 +30,7 @@ public sealed class RaceControlBridge : IHostedService
     private readonly EntryCarManager _entryCarManager;
     private readonly AiSpline? _spline;
     private readonly RaceSimulationTelemetry? _simulationTelemetry;
+    private readonly RaceBotPhysicsWorld? _physicsWorld;
     private readonly Stopwatch _wallClock = new();
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private string _controlDirectory = null!;
@@ -56,7 +58,8 @@ public sealed class RaceControlBridge : IHostedService
         SessionManager sessionManager,
         EntryCarManager entryCarManager,
         AiSpline? spline = null,
-        RaceSimulationTelemetry? simulationTelemetry = null)
+        RaceSimulationTelemetry? simulationTelemetry = null,
+        RaceBotPhysicsWorld? physicsWorld = null)
     {
         _configuration = configuration;
         _runtimeOptions = runtimeOptions;
@@ -65,6 +68,7 @@ public sealed class RaceControlBridge : IHostedService
         _entryCarManager = entryCarManager;
         _spline = spline;
         _simulationTelemetry = simulationTelemetry;
+        _physicsWorld = physicsWorld;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -105,7 +109,10 @@ public sealed class RaceControlBridge : IHostedService
             if (commandProcessed || _wallClock.ElapsedMilliseconds >= _nextSnapshotAt)
             {
                 WriteSnapshot(serverRunning: true);
-                _nextSnapshotAt = _wallClock.ElapsedMilliseconds + SnapshotIntervalMilliseconds;
+                bool manualControlActive = _entryCarManager.EntryCars.Any(car =>
+                    car.GetRaceControlMode() == RaceControlBotControlMode.Manual);
+                _nextSnapshotAt = _wallClock.ElapsedMilliseconds
+                                  + GetSnapshotIntervalMilliseconds(manualControlActive);
             }
         }
         catch (Exception exception)
@@ -113,6 +120,9 @@ public sealed class RaceControlBridge : IHostedService
             Log.Warning(exception, "Race Control live bridge update failed");
         }
     }
+
+    internal static int GetSnapshotIntervalMilliseconds(bool manualControlActive) =>
+        manualControlActive ? TakeoverSnapshotIntervalMilliseconds : SnapshotIntervalMilliseconds;
 
     private bool ProcessCommands()
     {
@@ -309,11 +319,15 @@ public sealed class RaceControlBridge : IHostedService
             : session.HasSentRaceOverPacket ? "finished"
             : "racing";
         var results = session.Results;
-        var cars = _entryCarManager.EntryCars.Select(car =>
+        var cars = _entryCarManager.EntryCars.Where(car => !car.IsSpectator).Select(car =>
         {
             EntryCarResult? result = null;
             results?.TryGetValue(car.SessionId, out result);
             var ai = car.AiControlled ? car.GetRaceAiStateSnapshot() : null;
+            RaceBotPhysicsTelemetry? physicsTelemetry = null;
+            if (car.AiControlled && _physicsWorld?.TryGetBotTelemetry(
+                    car.SessionId, out var telemetry) == true)
+                physicsTelemetry = telemetry;
             Vector3 position = ai?.Position ?? car.Status.Position;
             Vector3 velocity = ai?.Velocity ?? car.Status.Velocity;
             // Bot position, velocity and orientation must come from the same authoritative AI
@@ -349,6 +363,12 @@ public sealed class RaceControlBridge : IHostedService
                 forwardY = forward.Y,
                 forwardZ = forward.Z,
                 speedKmh = Math.Sqrt(velocity.X * velocity.X + velocity.Z * velocity.Z) * 3.6,
+                protocolGear = car.Status.Gear,
+                engineRpm = car.Status.EngineRpm,
+                targetSpeedKmh = (ai?.TargetSpeed ?? 0) * 3.6,
+                effectiveTargetSpeedKmh = (physicsTelemetry?.EffectiveTargetSpeedMetersPerSecond ?? 0) * 3.6,
+                courseBoundaryErrorMeters = physicsTelemetry?.CourseBoundaryErrorMeters ?? 0,
+                courseDriveScale = physicsTelemetry?.CourseDriveScale ?? 1,
                 normalizedPosition,
                 lap = result?.NumLaps ?? 0,
                 stoppedObstaclePassCommits = ai?.StoppedObstaclePassCommitCount ?? 0,

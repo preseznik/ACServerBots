@@ -25,6 +25,28 @@ public class OnlineEventGeneratorTests
         var testMessage5 = OnlineEventGenerator.ParseClientMessage(typeof(TestMessage5));
         Assert.That(OnlineEventGenerator.GenerateStructure(testMessage5.Key, testMessage5.Fields), Is.EqualTo("rgbm i51;float i50;"));
     }
+
+    [Test]
+    public void FpsProtocol_ProducesDistinctCspCompatibleMessageDefinitions()
+    {
+        Type[] packets =
+        [
+            typeof(FpsInputPacket), typeof(FpsReadyPacket), typeof(FpsSnapshotPacket),
+            typeof(FpsRosterPacket), typeof(FpsMatchPacket), typeof(FpsKillPacket), typeof(FpsHitPacket),
+        ];
+        var definitions = packets.Select(OnlineEventGenerator.ParseClientMessage).ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(definitions.Select(definition => definition.Key), Is.Unique);
+            Assert.That(definitions.Select(definition => definition.PacketType), Is.Unique);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsInput").Udp, Is.True);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Udp, Is.True);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsKill").Udp, Is.False);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
+                Does.Contain($"uint8_t actorIDs[{FpsSnapshotPacket.Capacity}]"));
+        });
+    }
 }
 
 public class TestMessage1

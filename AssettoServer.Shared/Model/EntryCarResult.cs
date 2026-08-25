@@ -14,6 +14,7 @@ public class EntryCarResult
     public bool HasCompletedLastLap { get; set; } = false;
     public uint RacePos { get; set; } = 0;
     public bool IsDnf { get; set; }
+    public bool IsSpectator { get; set; }
 
     public EntryCarResult(IClient? client)
     {

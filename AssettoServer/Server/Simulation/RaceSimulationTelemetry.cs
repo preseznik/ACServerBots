@@ -430,6 +430,9 @@ public sealed class RaceSimulationTelemetry : IHostedService
                 surfaceDiscontinuities = physicsTelemetry.SurfaceDiscontinuityCount,
                 recoveries = physics.RecoveryCount,
                 trackCorrections = physicsTelemetry.TrackCorrectionCount,
+                courseBoundaryErrorMeters = physicsTelemetry.CourseBoundaryErrorMeters,
+                courseDriveScale = physicsTelemetry.CourseDriveScale,
+                effectiveTargetSpeedMetersPerSecond = physicsTelemetry.EffectiveTargetSpeedMetersPerSecond,
                 stoppedForObstacle = ai.Value.IsStoppedForObstacle,
                 overtaking = ai.Value.IsOvertaking,
                 overtakeTargetSessionId = ai.Value.OvertakeTargetSessionId,
@@ -566,7 +569,7 @@ public sealed class RaceSimulationTelemetry : IHostedService
         double wallMilliseconds = Math.Max(1, _wallClock.Elapsed.TotalMilliseconds);
         var summary = new
         {
-            schemaVersion = 3,
+            schemaVersion = 4,
             completedAt = DateTimeOffset.UtcNow,
             status = _completionReason,
             version = ThisAssembly.AssemblyInformationalVersion,
@@ -592,6 +595,13 @@ public sealed class RaceSimulationTelemetry : IHostedService
             stoppedObstaclePassesCompleted = _totals.Values.Sum(value =>
                 value.StoppedObstaclePassesCompleted),
             stoppedObstacleEpisodes = _stoppedObstacleEpisodes,
+            vehicleKilometers = _botStatistics.Values.Sum(value => value.DistanceKilometers),
+            recoveriesPer100VehicleKilometers = Per100VehicleKilometers(
+                _totals.Values.Sum(value => value.Recoveries)),
+            contactEpisodesPer100VehicleKilometers = Per100VehicleKilometers(
+                _botStatistics.Values.Sum(value => value.ContactEpisodeCount)),
+            fullStopsPer100VehicleKilometers = Per100VehicleKilometers(
+                _botStatistics.Values.Sum(value => value.FullStopCount)),
             physics = diagnostics,
             mostFrequentContactPair = new { contactPair.A, contactPair.B, contactPair.Count },
             resultsSession,
@@ -629,11 +639,15 @@ public sealed class RaceSimulationTelemetry : IHostedService
                     elapsedMilliseconds = botStatistics?.ObservedMilliseconds ?? 0,
                     averageSpeedKmh = botStatistics?.AverageSpeedKilometersPerHour ?? 0,
                     topSpeedKmh = botStatistics?.TopSpeedKilometersPerHour ?? 0,
+                    distanceKilometers = botStatistics?.DistanceKilometers ?? 0,
                     crashCount = botStatistics?.ContactEpisodeCount ?? 0,
                     contactManifolds = botStatistics?.ContactManifolds ?? 0,
                     recoveryCount = botStatistics?.RecoveryCount ?? 0,
                     fullStopCount = botStatistics?.FullStopCount ?? 0,
                     fullyStoppedMilliseconds = botStatistics?.FullyStoppedMilliseconds ?? 0,
+                    contactEpisodesPer100Kilometers = botStatistics?.ContactEpisodesPer100Kilometers ?? 0,
+                    recoveriesPer100Kilometers = botStatistics?.RecoveriesPer100Kilometers ?? 0,
+                    fullStopsPer100Kilometers = botStatistics?.FullStopsPer100Kilometers ?? 0,
                 };
             }).ToArray() ?? [];
     }
@@ -653,4 +667,10 @@ public sealed class RaceSimulationTelemetry : IHostedService
     }
 
     private static float[] Vector(System.Numerics.Vector3 value) => [value.X, value.Y, value.Z];
+
+    private double Per100VehicleKilometers(double value)
+    {
+        double kilometers = _botStatistics.Values.Sum(statistics => statistics.DistanceKilometers);
+        return kilometers <= 0.001 ? 0 : value / kilometers * 100;
+    }
 }

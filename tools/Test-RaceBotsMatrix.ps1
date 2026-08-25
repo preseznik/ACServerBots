@@ -4,7 +4,7 @@ param(
     [string] $RaceControlBuild,
     [string[]] $TrackKeys,
     [string[]] $CarModels = @('bmw_m3_e30'),
-    [ValidateRange(2, 32)]
+    [ValidateRange(2, 254)]
     [int] $Slots = 8,
     [ValidateRange(1, 999)]
     [int] $RaceLaps = 2,
@@ -19,13 +19,34 @@ param(
     [int] $MaximumSimulatedMinutes = 45,
     [ValidateRange(10, 86400)]
     [int] $MaximumWallSeconds = 300,
-    [ValidateRange(1, 12)]
+    [ValidateRange(1, 999)]
     [int] $MaximumTracks = 4,
     [string] $OutputRoot,
+    [switch] $AllUsableTracks,
+    [switch] $FullGrid,
+    [switch] $ContinueOnError,
     [switch] $FailOnAnomaly
 )
 
 $ErrorActionPreference = 'Stop'
+# This is an unattended diagnostic runner. Bad third-party KN5/layout data can make the
+# self-contained preparation child terminate through the CLR's native exception path.
+# Suppress Windows' modal fault dialog so the exit code is recorded and the matrix can continue.
+if ([OperatingSystem]::IsWindows()) {
+    if ($null -eq ('RaceBotMatrix.NativeErrorMode' -as [type])) {
+        Add-Type -TypeDefinition @'
+namespace RaceBotMatrix
+{
+    public static class NativeErrorMode
+    {
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        public static extern uint SetErrorMode(uint mode);
+    }
+}
+'@
+    }
+    [void][RaceBotMatrix.NativeErrorMode]::SetErrorMode(0x0001 -bor 0x0002)
+}
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($RaceControlBuild)) {
     $RaceControlBuild = Join-Path $repositoryRoot 'out-race-control'
@@ -72,7 +93,26 @@ function Resolve-TrackKey([string] $key) {
 }
 
 $tracks = [Collections.Generic.List[object]]::new()
-if ($TrackKeys.Count -gt 0) {
+$unsupportedTracks = @($catalog.Tracks | Where-Object {
+    -not $_.HasModels -or -not $_.HasFastLane -or $_.PitBoxes -lt 2
+} | Sort-Object TrackId, LayoutId | ForEach-Object {
+    $reasons = @()
+    if (-not $_.HasModels) { $reasons += 'models missing' }
+    if (-not $_.HasFastLane) { $reasons += 'fast_lane.ai missing' }
+    if ($_.PitBoxes -lt 2) { $reasons += "only $($_.PitBoxes) pit boxes" }
+    [pscustomobject]@{
+        Track = $_.Key
+        PitBoxes = $_.PitBoxes
+        Reasons = $reasons -join ', '
+    }
+})
+if ($AllUsableTracks) {
+    foreach ($track in @($catalog.Tracks | Where-Object {
+        $_.HasModels -and $_.HasFastLane -and $_.PitBoxes -ge 2
+    } | Sort-Object TrackId, LayoutId)) {
+        $tracks.Add($track)
+    }
+} elseif ($TrackKeys.Count -gt 0) {
     foreach ($key in $TrackKeys) {
         $track = Resolve-TrackKey $key
         if ($null -eq $track) { throw "Track layout is not installed: $key" }
@@ -91,8 +131,11 @@ if ($TrackKeys.Count -gt 0) {
         $tracks.Add($track)
     }
 }
-$tracks = @($tracks | Select-Object -First $MaximumTracks)
+$tracks = if ($AllUsableTracks) { @($tracks) } else { @($tracks | Select-Object -First $MaximumTracks) }
 if ($tracks.Count -eq 0) { throw 'No usable track layouts were selected.' }
+
+[IO.File]::WriteAllText((Join-Path $OutputRoot 'preflight-unsupported.json'),
+    ($unsupportedTracks | ConvertTo-Json -Depth 4))
 
 $paths = [AssettoServer.RaceControl.Core.Infrastructure.RaceControlPaths]::new(
     (Join-Path $OutputRoot 'staging'))
@@ -106,8 +149,9 @@ $runs = [Collections.Generic.List[object]]::new()
 $hardAnomalies = @('stuck', 'surface_height', 'suspension_compression', 'overturned', 'vertical_launch')
 
 foreach ($track in $tracks) {
-    $effectiveSlots = [Math]::Min($Slots, $track.PitBoxes)
-    if ($effectiveSlots -lt $Slots) {
+    $requestedSlots = if ($FullGrid) { $track.PitBoxes } else { $Slots }
+    $effectiveSlots = [Math]::Min($requestedSlots, $track.PitBoxes)
+    if ($effectiveSlots -lt $requestedSlots) {
         Write-Warning "$($track.Key) exposes $($track.PitBoxes) pits; reducing this run to $effectiveSlots bots."
     }
     foreach ($seed in $Seeds) {
@@ -116,11 +160,15 @@ foreach ($track in $tracks) {
         $runOutput = Join-Path (Join-Path $OutputRoot 'runs') $runName
         [IO.Directory]::CreateDirectory($runOutput) | Out-Null
         foreach ($oldOutput in @('summary.json', 'events.jsonl', 'samples.jsonl',
-            'server-stdout.log', 'server-stderr.log')) {
+            'server-stdout.log', 'server-stderr.log', 'harness-error.log')) {
             $oldPath = Join-Path $runOutput $oldOutput
             if ([IO.File]::Exists($oldPath)) { [IO.File]::Delete($oldPath) }
         }
 
+        $process = $null
+        $instance = $null
+        $startedAt = [DateTimeOffset]::UtcNow
+        try {
         $preset = [AssettoServer.RaceControl.Core.Models.RaceControlPreset]::CreateDefault(
             $AssettoCorsaRoot, $serverPayload)
         $preset.Name = "Race simulation $runName"
@@ -180,7 +228,6 @@ foreach ($track in $tracks) {
 
         $process = [Diagnostics.Process]::new()
         $process.StartInfo = $processInfo
-        $startedAt = [DateTimeOffset]::UtcNow
         if (-not $process.Start()) { throw "Failed to start simulation $runName" }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
@@ -237,6 +284,33 @@ foreach ($track in $tracks) {
         }
         $last = $runs[$runs.Count - 1]
         Write-Host "[$runName] $($last.Status), $($last.Factor)x, anomalies: $($last.Anomalies)"
+        } catch {
+            if ($null -ne $process -and -not $process.HasExited) {
+                $process.Kill($true)
+                $process.WaitForExit()
+            }
+            $message = $_.Exception.ToString()
+            [IO.File]::WriteAllText((Join-Path $runOutput 'harness-error.log'), $message)
+            $runs.Add([pscustomobject]@{
+                Track = $track.Key
+                Seed = $seed
+                Bots = $effectiveSlots
+                Status = 'harness_error'
+                SimulatedSeconds = 0
+                WallSeconds = [Math]::Round(([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds, 1)
+                Factor = 0
+                Anomalies = ($_.Exception.Message -replace '[\r\n|]', ' ')
+                Passes = '0/0/0'
+                ExitCode = $(if ($null -ne $process -and $process.HasExited) { $process.ExitCode } else { $null })
+                Passed = $false
+                Output = $runOutput
+                Instance = $(if ($null -ne $instance) { $instance.RootPath } else { $null })
+            })
+            Write-Warning "[$runName] $($_.Exception.Message)"
+            if (-not $ContinueOnError) { throw }
+        } finally {
+            if ($null -ne $process) { $process.Dispose() }
+        }
     }
 }
 
@@ -257,10 +331,20 @@ foreach ($run in $runs) {
 $failed = @($runs | Where-Object { -not $_.Passed })
 [void]$markdown.AppendLine()
 [void]$markdown.AppendLine("Passed $($runs.Count - $failed.Count) of $($runs.Count) runs.")
+[void]$markdown.AppendLine()
+[void]$markdown.AppendLine("Preflight unsupported layouts: $($unsupportedTracks.Count).")
+if ($unsupportedTracks.Count -gt 0) {
+    [void]$markdown.AppendLine()
+    [void]$markdown.AppendLine('| Unsupported layout | Pits | Reason |')
+    [void]$markdown.AppendLine('|---|---:|---|')
+    foreach ($track in $unsupportedTracks) {
+        [void]$markdown.AppendLine("| $($track.Track) | $($track.PitBoxes) | $($track.Reasons) |")
+    }
+}
 $markdownReport = Join-Path $OutputRoot 'matrix-report.md'
 [IO.File]::WriteAllText($markdownReport, $markdown.ToString())
 Write-Host "Matrix report: $markdownReport"
 
-if ($failed.Count -gt 0) {
+if ($failed.Count -gt 0 -and -not $ContinueOnError) {
     throw "$($failed.Count) of $($runs.Count) race simulation runs failed acceptance."
 }

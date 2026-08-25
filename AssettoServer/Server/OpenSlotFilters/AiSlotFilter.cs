@@ -1,5 +1,6 @@
 ﻿using System.Threading.Tasks;
 using AssettoServer.Server.Configuration;
+using System.Linq;
 
 namespace AssettoServer.Server.OpenSlotFilters;
 
@@ -18,8 +19,13 @@ public class AiSlotFilter : OpenSlotFilterBase
 
     public override async ValueTask<bool> IsSlotOpen(EntryCar entryCar, ulong guid)
     {
+        if (entryCar.IsSpectator)
+            return await base.IsSlotOpen(entryCar, guid);
+
         if (entryCar.AiMode == AiMode.Fixed
-            || (_configuration.Extra.AiParams.MaxPlayerCount > 0 && _entryCarManager.ConnectedCars.Count >= _configuration.Extra.AiParams.MaxPlayerCount))
+            || (_configuration.Extra.AiParams.MaxPlayerCount > 0
+                && _entryCarManager.ConnectedCars.Values.Count(car => !car.IsSpectator)
+                >= _configuration.Extra.AiParams.MaxPlayerCount))
         {
             return false;
         }

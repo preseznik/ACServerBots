@@ -27,6 +27,8 @@ public static class RaceParticipantPolicy
     {
         uint position = 0;
         uint leaderLapCount = 0;
+        foreach (var spectator in results.Values.Where(result => result.IsSpectator))
+            spectator.RacePos = byte.MaxValue;
         foreach (var participant in OrderClassification(results))
         {
             participant.Value.RacePos = position++;
@@ -44,13 +46,15 @@ public static class RaceParticipantPolicy
 
     public static IEnumerable<KeyValuePair<byte, EntryCarResult>> OrderClassification(
         IEnumerable<KeyValuePair<byte, EntryCarResult>> results)
-        => results.OrderBy(result => result.Value.IsDnf)
+        => results.Where(result => !result.Value.IsSpectator)
+            .OrderBy(result => result.Value.IsDnf)
             .ThenByDescending(result => result.Value.NumLaps)
             .ThenBy(result => result.Value.TotalTime);
 
     public static bool HasUnfinishedActiveParticipant(
         IEnumerable<(bool Active, EntryCarResult Result)> participants)
         => participants.Any(participant => participant.Active
+                                           && !participant.Result.IsSpectator
                                            && !participant.Result.IsDnf
                                            && !participant.Result.HasCompletedLastLap);
 }

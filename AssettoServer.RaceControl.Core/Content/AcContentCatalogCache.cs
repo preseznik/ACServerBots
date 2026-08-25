@@ -7,7 +7,7 @@ namespace AssettoServer.RaceControl.Core.Content;
 
 public sealed class AcContentCatalogCache
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly string _cacheDirectory;
 

@@ -7,6 +7,16 @@ namespace AssettoServer.RaceControl.Tests;
 [TestFixture]
 public sealed class LiveRaceControlClientTests
 {
+    [TestCase((byte)0, "R")]
+    [TestCase((byte)1, "N")]
+    [TestCase((byte)2, "1")]
+    [TestCase((byte)7, "6")]
+    public void LiveCarConvertsProtocolGearForHud(byte protocolGear, string expected)
+    {
+        Assert.That(new LiveRaceCar { ProtocolGear = protocolGear }.GearDisplay,
+            Is.EqualTo(expected));
+    }
+
     private string _root = null!;
 
     [SetUp]

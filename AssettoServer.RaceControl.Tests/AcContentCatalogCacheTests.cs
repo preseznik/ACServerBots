@@ -44,6 +44,26 @@ public sealed class AcContentCatalogCacheTests
     }
 
     [Test]
+    public void SaveAndLoad_FailedTrackPreflightUsesJsonNullForUnknownDistance()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation(fastLane: false);
+        var expected = factory.Scan();
+        var cache = new AcContentCatalogCache(Path.Combine(factory.DataRoot, "Cache", "Content"));
+
+        Assert.That(expected.Tracks.Single().RaceBotPreflight!.ClosureDistanceMeters, Is.Null);
+        Assert.DoesNotThrow(() => cache.Save(factory.AcRoot, expected));
+
+        var actual = cache.TryLoad(factory.AcRoot);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.Not.Null);
+            Assert.That(actual!.Tracks.Single().RaceBotPreflight!.ClosureDistanceMeters, Is.Null);
+            Assert.That(actual.Tracks.Single().RaceBotPreflight!.Failure, Does.Contain("fast_lane.ai"));
+        });
+    }
+
+    [Test]
     public void TryLoad_CorruptCacheFallsBackToScan()
     {
         using var factory = new TestContentFactory();

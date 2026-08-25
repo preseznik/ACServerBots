@@ -1,9 +1,12 @@
+using System.Text.Json.Serialization;
+
 namespace AssettoServer.RaceControl.Core.Models;
 
 public sealed class RaceControlPreset
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public Guid Id { get; set; } = Guid.NewGuid();
+    public EventMode Mode { get; set; } = EventMode.Racing;
     public string Name { get; set; } = "New LAN race";
     public string ServerName { get; set; } = "AssettoServer LAN Race";
     public string AssettoCorsaRoot { get; set; } = @"C:\Program Files (x86)\Steam\steamapps\common\assettocorsa";
@@ -15,6 +18,7 @@ public sealed class RaceControlPreset
     public RuleOptions Rules { get; set; } = new();
     public ConditionOptions Conditions { get; set; } = new();
     public BotOptions Bots { get; set; } = new();
+    public FpsOptions Fps { get; set; } = new();
     public NetworkOptions Network { get; set; } = new();
 
     public static RaceControlPreset CreateDefault(string acRoot, string serverPayloadPath)
@@ -32,6 +36,12 @@ public sealed class RaceControlPreset
     }
 }
 
+public enum EventMode
+{
+    Racing,
+    Fps,
+}
+
 public sealed class GridSlotPreset
 {
     public string CarId { get; set; } = "bmw_m3_e30";
@@ -41,6 +51,8 @@ public sealed class GridSlotPreset
     public string NationCode { get; set; } = string.Empty;
     public int BallastKg { get; set; }
     public int RestrictorPercent { get; set; }
+    public double? Difficulty { get; set; }
+    public double? Aggression { get; set; }
     public SlotMode Mode { get; set; } = SlotMode.Auto;
 }
 
@@ -49,6 +61,7 @@ public enum SlotMode
     Auto,
     Fixed,
     None,
+    Spectator,
 }
 
 public sealed class SessionOptions
@@ -81,6 +94,16 @@ public sealed class ConditionOptions
 {
     public string WeatherId { get; set; } = "3_clear";
     public int SunAngleDegrees { get; set; } = 16;
+    [JsonIgnore]
+    public int TimeOfDayHour
+    {
+        // Assetto Corsa's clock conversion uses SUN_ANGLE=0 for 13:00 and
+        // advances one hour per 16 degrees. Keep the protocol value serialized
+        // so existing presets remain compatible while exposing a clock in the UI.
+        get => (int)Math.Round(13d + SunAngleDegrees / 16d,
+            MidpointRounding.AwayFromZero);
+        set => SunAngleDegrees = (value - 13) * 16;
+    }
     public int AmbientTemperatureCelsius { get; set; } = 22;
     public int RoadTemperatureCelsius { get; set; } = 28;
     public int WindMinKmh { get; set; }
@@ -96,15 +119,26 @@ public sealed class BotOptions
 {
     public bool Enabled { get; set; } = true;
     public double Difficulty { get; set; } = 0.75;
+    public double DifficultyVariancePercent { get; set; } = 10;
     public double Aggression { get; set; } = 0.50;
+    public double AggressionVariancePercent { get; set; } = 15;
+    public bool UseParodyNames { get; set; }
     public string NamePrefix { get; set; } = "Bot";
     public int UpdateHz { get; set; } = 60;
     public PhysicsFidelity PhysicsFidelity { get; set; } = PhysicsFidelity.Balanced;
     public double SurfaceFriction { get; set; } = 1.0;
     public bool AllowMidRaceTakeover { get; set; } = true;
+    public PlayerJoinSlotSelection JoinSlotSelection { get; set; } = PlayerJoinSlotSelection.First;
     public bool RestartWhenFirstHumanConnects { get; set; } = true;
     public int StartSplinePointId { get; set; }
     public double GridSpacingMeters { get; set; } = 9;
+}
+
+public enum PlayerJoinSlotSelection
+{
+    First,
+    Last,
+    Random,
 }
 
 public enum PhysicsFidelity
@@ -112,6 +146,57 @@ public enum PhysicsFidelity
     Efficient,
     Balanced,
     High,
+}
+
+public sealed class FpsOptions
+{
+    public FpsMatchType MatchType { get; set; } = FpsMatchType.Deathmatch;
+    public int TimeLimitMinutes { get; set; } = 10;
+    public int KillLimit { get; set; } = 20;
+    public double RespawnSeconds { get; set; } = 3;
+    public double SpawnProtectionSeconds { get; set; } = 1;
+    public string CarrierCarId { get; set; } = "bmw_m3_e30";
+    public FpsBotOptions Bots { get; set; } = new();
+    public FpsArenaDefinition? Arena { get; set; }
+}
+
+public enum FpsMatchType
+{
+    Deathmatch,
+}
+
+public sealed class FpsBotOptions
+{
+    public double Difficulty { get; set; } = 0.75;
+    public double DifficultyVariancePercent { get; set; } = 10;
+    public double Aggression { get; set; } = 0.50;
+    public double AggressionVariancePercent { get; set; } = 15;
+    public int Health { get; set; } = 100;
+}
+
+public sealed class FpsArenaDefinition
+{
+    public const int CurrentPreparationVersion = 1;
+
+    public int PreparationVersion { get; set; } = CurrentPreparationVersion;
+    public string TrackId { get; set; } = string.Empty;
+    public string LayoutId { get; set; } = string.Empty;
+    public FpsPoint BoundsMin { get; set; } = new();
+    public FpsPoint BoundsMax { get; set; } = new();
+    public List<FpsSpawnPoint> SpawnPoints { get; set; } = [];
+}
+
+public sealed class FpsSpawnPoint
+{
+    public FpsPoint Position { get; set; } = new();
+    public double YawRadians { get; set; }
+}
+
+public sealed class FpsPoint
+{
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double Z { get; set; }
 }
 
 public sealed class NetworkOptions

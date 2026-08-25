@@ -159,6 +159,12 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
     public LapCompletedOutgoing? OnLapCompleted(EntryCar entryCar, string participantName, LapCompletedIncoming lap, uint latencyMilliseconds = 0)
     {
+        if (entryCar.IsSpectator)
+        {
+            Log.Warning("Ignoring lap packet from spectator {ParticipantName} ({SessionId})",
+                participantName, entryCar.SessionId);
+            return null;
+        }
         _configuration.Server.DynamicTrack.TotalLapCount++;
         if (!RecordLap(entryCar, participantName, lap, latencyMilliseconds))
             return null;
@@ -316,6 +322,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         IReadOnlyDictionary<byte, EntryCarResult> results, SessionType sessionType)
     {
         return results
+            .Where(result => !result.Value.IsSpectator)
             .OrderBy(result => string.IsNullOrEmpty(result.Value.Name))
             .ThenBy(result => result.Value.Name)
             .Select(result => new LapCompletedOutgoing.CompletedLap
@@ -332,6 +339,8 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
     public void MarkParticipantDnf(EntryCar entryCar, string participantName)
     {
+        if (entryCar.IsSpectator)
+            return;
         var results = CurrentSession.Results;
         if (results == null || !results.TryGetValue(entryCar.SessionId, out var result))
             return;
@@ -366,8 +375,9 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         }
 
         var connectedCount = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
-            ? _entryCarManager.EntryCars.Count(car => car.AiControlled || car.Client is { HasSentFirstUpdate: true })
-            : _entryCarManager.ConnectedCars.Count;
+            ? _entryCarManager.EntryCars.Count(car => !car.IsSpectator
+                                                      && (car.AiControlled || car.Client is { HasSentFirstUpdate: true }))
+            : _entryCarManager.ConnectedCars.Values.Count(car => !car.IsSpectator);
         
         switch (CurrentSession.Configuration.IsOpen)
         {
@@ -390,7 +400,8 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
     private void CalcOverTime()
     {
-        if (_entryCarManager.EntryCars.All(c => c.Client == null && !c.AiControlled))
+        if (_entryCarManager.EntryCars.Where(car => !car.IsSpectator)
+            .All(c => c.Client == null && !c.AiControlled))
         {
             CurrentSession.OverTimeMilliseconds = 0;
             return;
@@ -435,6 +446,14 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
     private void OnClientConnected(ACTcpClient client, EventArgs eventArgs)
     {
+        if (client.EntryCar.IsSpectator)
+        {
+            if (CurrentSession.Results != null)
+                CurrentSession.Results[client.SessionId] = CreateSpectatorResult(client);
+            Log.Information("{ClientName} joined spectator slot {SessionId}", client.Name, client.SessionId);
+            return;
+        }
+
         if (IsFirstHumanSessionRestartEnabled)
             client.FirstUpdateSent += OnClientFirstUpdateSent;
 
@@ -471,11 +490,11 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         bool rosterIsBotCapable = client.EntryCar.AiMode == AiMode.Auto
                                   && _entryCarManager.EntryCars.Any(car =>
                                       car.Client == null && car.AiMode is AiMode.Auto or AiMode.Fixed)
-                                  && _entryCarManager.EntryCars.All(car =>
+                                  && _entryCarManager.EntryCars.Where(car => !car.IsSpectator).All(car =>
                                       car.Client != null || car.AiMode is AiMode.Auto or AiMode.Fixed);
         lock (_firstHumanRestartLock)
         {
-            if (_firstHumanRestartGate.TrySchedule(true, _entryCarManager.ConnectedCars.Count, rosterIsBotCapable))
+            if (_firstHumanRestartGate.TrySchedule(true, ConnectedDriverCount, rosterIsBotCapable))
             {
                 _firstHumanRestartPending = true;
                 Log.Information("First human joined a bot-only server; current session will restart after client synchronization");
@@ -497,9 +516,16 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     {
         client.FirstUpdateSent -= OnClientFirstUpdateSent;
 
+        if (client.EntryCar.IsSpectator)
+        {
+            if (CurrentSession.Results != null)
+                CurrentSession.Results[client.SessionId] = CreateSpectatorResult(null);
+            return;
+        }
+
         lock (_firstHumanRestartLock)
         {
-            int connectedHumanCount = _entryCarManager.ConnectedCars.Count;
+            int connectedHumanCount = ConnectedDriverCount;
             _firstHumanRestartGate.UpdateConnectedHumanCount(connectedHumanCount);
             if (connectedHumanCount == 0)
                 _firstHumanRestartPending = false;
@@ -513,8 +539,9 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         lock (_firstHumanRestartLock)
         {
             if (!_firstHumanRestartPending
-                || _entryCarManager.ConnectedCars.Count == 0
-                || _entryCarManager.ConnectedCars.Values.Any(car => car.Client is not { HasSentFirstUpdate: true }))
+                || ConnectedDriverCount == 0
+                || _entryCarManager.ConnectedCars.Values.Any(car => !car.IsSpectator
+                    && car.Client is not { HasSentFirstUpdate: true }))
             {
                 return;
             }
@@ -530,7 +557,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
         lock (_firstHumanRestartLock)
         {
-            if (_entryCarManager.ConnectedCars.Count > 0)
+            if (ConnectedDriverCount > 0)
                 _firstHumanRestartPending = true;
         }
 
@@ -552,6 +579,11 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
         foreach (var entryCar in _entryCarManager.EntryCars)
         {
+            if (entryCar.IsSpectator)
+            {
+                CurrentSession.Results.Add(entryCar.SessionId, CreateSpectatorResult(entryCar.Client));
+                continue;
+            }
             bool isBotParticipant = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
                 ? RaceParticipantPolicy.ShouldControlSlot(entryCar.AiMode, entryCar.Client != null)
                 : entryCar.AiControlled;
@@ -586,11 +618,15 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         int invertedCount = 0;
         if (previousSessionResults == null)
         {
-            CurrentSession.Grid = _entryCarManager.EntryCars;
+            CurrentSession.Grid = _entryCarManager.EntryCars
+                .OrderBy(car => car.IsSpectator)
+                .ThenBy(car => car.SessionId)
+                .ToArray();
         }
         else
         {
             var grid = previousSessionResults
+                .Where(result => !result.Value.IsSpectator)
                 .OrderBy(result => result.Value.BestLap)
                 .Select(result => _entryCarManager.EntryCars[result.Key])
                 .ToList();
@@ -598,6 +634,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             if (MustInvertGrid)
             {
                 var inverted = previousSessionResults
+                    .Where(result => !result.Value.IsSpectator)
                     .Take(_configuration.Server.InvertedGridPositions)
                     .OrderByDescending(result => result.Value.BestLap)
                     .Select(result => _entryCarManager.EntryCars[result.Key])
@@ -613,6 +650,9 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
                 invertedCount = inverted.Count;
             }
 
+            grid.AddRange(_entryCarManager.EntryCars.Where(car => car.IsSpectator)
+                .OrderBy(car => car.SessionId));
+
             CurrentSession.Grid = grid;
         }
 
@@ -625,7 +665,8 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     public bool RestartSession()
     {
         // StallSessionSwitch
-        if (_entryCarManager.EntryCars.Any(c => c.Client is { HasSentFirstUpdate: false }))
+        if (_entryCarManager.EntryCars.Any(c => !c.IsSpectator
+                                                && c.Client is { HasSentFirstUpdate: false }))
             return false;
 
         SetSession(CurrentSessionIndex);
@@ -695,14 +736,16 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
     internal static void MarkUnfinishedParticipantsDnf(IDictionary<byte, EntryCarResult> results)
     {
-        foreach (var result in results.Values.Where(result => !result.HasCompletedLastLap))
+        foreach (var result in results.Values.Where(result => !result.IsSpectator
+                                                               && !result.HasCompletedLastLap))
             result.IsDnf = true;
     }
 
     public bool NextSession()
     {
         // StallSessionSwitch
-        if (_entryCarManager.EntryCars.Any(c => c.Client is { HasSentFirstUpdate: false }))
+        if (_entryCarManager.EntryCars.Any(c => !c.IsSpectator
+                                                && c.Client is { HasSentFirstUpdate: false }))
             return false;
 
         MustInvertGrid = false;
@@ -791,6 +834,8 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
                 IsRace = CurrentSession.Configuration.Type == SessionType.Race,
                 PickupMode = true,
                 Results = CurrentSession.Results
+                    .Where(result => !result.Value.IsSpectator)
+                    .ToDictionary(result => result.Key, result => result.Value)
             });
 
         CurrentSession.HasSentRaceOverPacket = true;
@@ -810,4 +855,14 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private int ConnectedDriverCount =>
+        _entryCarManager.ConnectedCars.Values.Count(car => !car.IsSpectator);
+
+    private static EntryCarResult CreateSpectatorResult(IClient? client) => new(client)
+    {
+        IsSpectator = true,
+        HasCompletedLastLap = true,
+        RacePos = byte.MaxValue,
+    };
 }

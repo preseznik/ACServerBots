@@ -11,14 +11,23 @@ public sealed class RaceControlPaths
 
     public string DataRoot { get; }
     public string PresetsDirectory => Path.Combine(DataRoot, "Presets");
+    public string GridsDirectory => Path.Combine(DataRoot, "Grids");
+    public string FpsArenasDirectory => Path.Combine(DataRoot, "FpsArenas");
+    public string FpsClientPacksDirectory => Path.Combine(DataRoot, "FpsClientPacks");
     public string InstancesDirectory => Path.Combine(DataRoot, "Instances");
+    public string WorkingInstanceDirectory => Path.Combine(InstancesDirectory, "Current");
+    public string HistoryDirectory => Path.Combine(DataRoot, "History");
     public string CacheDirectory => Path.Combine(DataRoot, "Cache");
     public string LogsDirectory => Path.Combine(DataRoot, "Logs");
 
     public void EnsureCreated()
     {
         Directory.CreateDirectory(PresetsDirectory);
+        Directory.CreateDirectory(GridsDirectory);
+        Directory.CreateDirectory(FpsArenasDirectory);
+        Directory.CreateDirectory(FpsClientPacksDirectory);
         Directory.CreateDirectory(InstancesDirectory);
+        Directory.CreateDirectory(HistoryDirectory);
         Directory.CreateDirectory(CacheDirectory);
         Directory.CreateDirectory(LogsDirectory);
     }

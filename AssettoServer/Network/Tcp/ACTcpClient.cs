@@ -64,6 +64,7 @@ public class ACTcpClient : IClient
     internal SocketAddress? UdpEndpoint { get; private set; }
     public bool HasUdpEndpoint => UdpEndpoint != null;
     public bool SupportsCSPCustomUpdate { get; private set; }
+    public bool SupportsCSPSpectating { get; private set; }
     public int? CSPVersion { get; private set; }
     internal string ApiKey { get; }
 
@@ -397,6 +398,7 @@ public class ACTcpClient : IClient
                     {
                         cspFeatures = new List<string>();
                     }
+                    SupportsCSPSpectating = cspFeatures.Contains("SPECTATING_AWARE");
 
                     AuthFailedResponse? response;
                     if (id != ACServerProtocol.RequestNewConnection || handshakeRequest.ClientVersion != 202)
@@ -409,7 +411,8 @@ public class ACTcpClient : IClient
                              && handshakeRequest.Password != _configuration.Server.Password
                              && !_configuration.Server.CheckAdminPassword(handshakeRequest.Password))
                         SendPacket(new WrongPasswordResponse());
-                    else if (!_sessionManager.IsOpen)
+                    else if (!_sessionManager.IsOpen
+                             && !_entryCarManager.IsExplicitSpectatorRequest(handshakeRequest, SupportsCSPSpectating))
                     {
                         Logger.Information("Rejecting handshake for {ClientName}: session {SessionType} is closed to new connections",
                             Name, _sessionManager.CurrentSession.Configuration.Type);
@@ -630,7 +633,9 @@ public class ACTcpClient : IClient
     private void OnSpectateCar(PacketReader reader)
     {
         var spectatePacket = reader.ReadPacket<SpectateCar>();
-        if (spectatePacket.SessionId == SessionId || spectatePacket.SessionId > _entryCarManager.EntryCars.Length)
+        if (spectatePacket.SessionId == SessionId
+            || spectatePacket.SessionId >= _entryCarManager.EntryCars.Length
+            || _entryCarManager.EntryCars[spectatePacket.SessionId].IsSpectator)
         {
             EntryCar.TargetCar = null;
         }

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 
@@ -39,7 +40,9 @@ internal static class PropertyInfoExtensions
             }
             else
             {
-                object? parsedValue = propertyType.GetMethod("Parse", [typeof(string)])!.Invoke(null, [value]);
+                // Kunos INI files and Race Control rendering always use invariant decimal points.
+                // Parsing through the host culture turns 0.91 into 91 on comma-decimal systems.
+                object? parsedValue = Convert.ChangeType(value, propertyType, CultureInfo.InvariantCulture);
 
                 if (percent && parsedValue != null)
                 {

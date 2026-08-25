@@ -25,7 +25,10 @@ public class EntryList
         [IniField("FIXED_SETUP")] public string? FixedSetup { get; init; } = null;
         [IniField("GUID")] public string Guid { get; init; } = "";
         [IniField("AI")] public AiMode AiMode { get; internal set; } = AiMode.None;
+        [IniField("AI_DIFFICULTY")] public float AiDifficulty { get; init; } = -1;
+        [IniField("AI_AGGRESSION")] public float AiAggression { get; init; } = -1;
         [IniField("LEGAL_TYRES")] public string? LegalTyres { get; init; }
+        [IniField("FPS_ROLE")] public FpsSlotRole FpsRole { get; init; } = FpsSlotRole.Human;
     }
     
     public static EntryList FromFile(string path)
@@ -57,4 +60,12 @@ public class EntryList
         
         return res;
     }
+}
+
+public enum FpsSlotRole
+{
+    Auto,
+    Bot,
+    Human,
+    Spectator,
 }

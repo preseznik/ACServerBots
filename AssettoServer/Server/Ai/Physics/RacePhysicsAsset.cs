@@ -25,9 +25,10 @@ internal readonly record struct RaceWheelCollider(Vector3 Center, float Radius);
 internal sealed class RacePhysicsAsset
 {
     private const string Magic = "ASRPHY01";
-    private const int Version = 7;
+    private const int Version = 8;
 
     public required IReadOnlyList<RaceGridPose> Grid { get; init; }
+    public required IReadOnlyList<RaceRoutePoint> RouteSurface { get; init; }
     public required IReadOnlyList<Kn5Triangle> TrackTriangles { get; init; }
     public required IReadOnlyList<Kn5Triangle> TrackBarrierTriangles { get; init; }
     public required IReadOnlyDictionary<string, Vector3[]> CarColliderVertices { get; init; }
@@ -47,6 +48,11 @@ internal sealed class RacePhysicsAsset
         var grid = new RaceGridPose[ReadCount(reader, 254, "grid")];
         for (int i = 0; i < grid.Length; i++)
             grid[i] = new RaceGridPose(ReadVector3(reader), ReadQuaternion(reader));
+
+        var routeSurface = new RaceRoutePoint[ReadCount(reader, 2_000_000, "route surface point")];
+        for (int i = 0; i < routeSurface.Length; i++)
+            routeSurface[i] = new RaceRoutePoint(ReadVector3(reader), reader.ReadSingle(),
+                reader.ReadSingle(), ReadVector3(reader));
 
         var triangles = new Kn5Triangle[ReadCount(reader, 20_000_000, "track triangle")];
         for (int i = 0; i < triangles.Length; i++)
@@ -79,6 +85,7 @@ internal sealed class RacePhysicsAsset
         return new RacePhysicsAsset
         {
             Grid = grid,
+            RouteSurface = routeSurface,
             TrackTriangles = triangles,
             TrackBarrierTriangles = barrierTriangles,
             CarColliderVertices = cars,
@@ -100,6 +107,14 @@ internal sealed class RacePhysicsAsset
         {
             Write(writer, pose.Position);
             Write(writer, pose.Orientation);
+        }
+        writer.Write(RouteSurface.Count);
+        foreach (var point in RouteSurface)
+        {
+            Write(writer, point.Position);
+            writer.Write(point.SideLeft);
+            writer.Write(point.SideRight);
+            Write(writer, point.SurfaceNormal);
         }
         writer.Write(TrackTriangles.Count);
         foreach (var triangle in TrackTriangles)
@@ -165,6 +180,15 @@ internal sealed class RacePhysicsAsset
 
 internal static partial class RacePhysicsAssetBuilder
 {
+    private const float GridLaunchSupportBehindMeters = 3f;
+    private const float GridLaunchSupportAheadMeters = 80f;
+    private const float MinimumGridLaunchSupportHalfWidthMeters = 4.5f;
+    private const float MaximumGridLaunchSupportHalfWidthMeters = 12f;
+    private const float GridLaunchSupportLateralMarginMeters = 3f;
+    private const float GridLaunchSupportVerticalMarginMeters = 1.5f;
+    private const float MaximumRouteGridSnapMeters = 6f;
+    private const float MaximumLayoutGridSnapMeters = 3f;
+
     [GeneratedRegex(@"^AC_START_(\d+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex GridNodeRegex();
 
@@ -229,14 +253,45 @@ internal static partial class RacePhysicsAssetBuilder
 
         var groundedGrid = new RaceGridPose[gridTransforms.Count];
         int layoutGridGroundingFallbacks = 0;
+        int snappedGridPositions = 0;
+        float maximumGridSnapDistance = 0;
         int gridIndex = 0;
         foreach (var pose in gridTransforms.Values)
         {
-            groundedGrid[gridIndex++] = GroundGridPose(pose,
+            var grounded = GroundGridPose(pose,
                 routeSurface.GridGroundingTriangles, layoutGridGroundingTriangles,
-                out bool usedLayoutFallback);
+                out bool usedLayoutFallback, out float snapDistance);
+            groundedGrid[gridIndex++] = grounded;
             if (usedLayoutFallback)
+            {
                 layoutGridGroundingFallbacks++;
+            }
+            if (snapDistance > 0.001f)
+            {
+                snappedGridPositions++;
+                maximumGridSnapDistance = Math.Max(maximumGridSnapDistance, snapDistance);
+            }
+        }
+
+        var unsupportedGrid = groundedGrid
+            .Where(pose => !HasGridLaunchSupport(pose, trackTriangles))
+            .ToArray();
+        int gridLaunchSupportTriangles = 0;
+        if (unsupportedGrid.Length > 0)
+        {
+            int routeTriangleCount = trackTriangles.Count;
+            trackTriangles = DeduplicateTriangles(trackTriangles.Concat(
+                unsupportedGrid.SelectMany(pose => BuildGridLaunchSupportTriangles(
+                    pose, route, layoutGridGroundingTriangles))));
+            gridLaunchSupportTriangles = trackTriangles.Count - routeTriangleCount;
+        }
+        foreach (var pose in groundedGrid)
+        {
+            if (!HasGridLaunchSupport(pose, trackTriangles))
+            {
+                throw new InvalidDataException($"AC grid position {pose.Position} has no continuous "
+                                               + "launch footprint in the final race physics collider");
+            }
         }
 
         var colliders = new Dictionary<string, Vector3[]>(StringComparer.OrdinalIgnoreCase);
@@ -271,6 +326,7 @@ internal static partial class RacePhysicsAssetBuilder
         var asset = new RacePhysicsAsset
         {
             Grid = groundedGrid,
+            RouteSurface = routeSurface.ProjectedRoute,
             TrackTriangles = trackTriangles,
             TrackBarrierTriangles = trackBarrierTriangles,
             CarColliderVertices = colliders,
@@ -283,10 +339,12 @@ internal static partial class RacePhysicsAssetBuilder
             includedMeshes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
             routeSurface.SourceTriangles, asset.TrackTriangles.Count, routeSurface.CenterlineCoverage,
             routeSurface.UsesSplineRibbon, routeBarriers.SourceTriangles,
-            asset.TrackBarrierTriangles.Count, layoutGridGroundingFallbacks, carCalibrations);
+            asset.TrackBarrierTriangles.Count, layoutGridGroundingFallbacks,
+            snappedGridPositions, maximumGridSnapDistance,
+            gridLaunchSupportTriangles, carCalibrations);
     }
 
-    private static IReadOnlyList<string> ReadModelFiles(string modelsIni, string trackRoot, string track)
+    internal static IReadOnlyList<string> ReadModelFiles(string modelsIni, string trackRoot, string track)
     {
         if (!File.Exists(modelsIni))
         {
@@ -297,12 +355,28 @@ internal static partial class RacePhysicsAssetBuilder
         }
 
         var files = new List<string>();
+        // FILE entries in DYNAMIC_OBJECT sections are optional scenery spawned by the
+        // client, not part of the physical circuit. Stock Spa references two such KN5s
+        // that are intentionally absent from the dedicated-server installation.
+        // Keep accepting sectionless model lists for older mod tracks.
+        bool isTrackModelSection = true;
         foreach (string rawLine in File.ReadLines(modelsIni))
         {
             string line = rawLine.Trim();
+            if (line.StartsWith('[') && line.EndsWith(']'))
+            {
+                string section = line[1..^1].Trim();
+                isTrackModelSection = section.Equals("MODEL", StringComparison.OrdinalIgnoreCase)
+                                      || section.StartsWith("MODEL_", StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+            if (!isTrackModelSection)
+                continue;
             if (!line.StartsWith("FILE=", StringComparison.OrdinalIgnoreCase))
                 continue;
-            string relative = line[5..].Trim();
+            string relative = line[5..].Split(';', 2)[0].Trim();
+            if (string.IsNullOrWhiteSpace(relative))
+                continue;
             string fullPath = Path.GetFullPath(Path.Combine(trackRoot, relative));
             if (!fullPath.StartsWith(Path.GetFullPath(trackRoot) + Path.DirectorySeparatorChar,
                     StringComparison.OrdinalIgnoreCase))
@@ -434,8 +508,22 @@ internal static partial class RacePhysicsAssetBuilder
     internal static RaceGridPose GroundGridPose(RaceGridPose pose,
         IReadOnlyList<Kn5Triangle> routeTriangles,
         IReadOnlyList<Kn5Triangle> layoutTriangles, out bool usedLayoutFallback)
+        => GroundGridPose(pose, routeTriangles, layoutTriangles, out usedLayoutFallback, out _);
+
+    internal static RaceGridPose GroundGridPose(RaceGridPose pose,
+        IReadOnlyList<Kn5Triangle> routeTriangles,
+        IReadOnlyList<Kn5Triangle> layoutTriangles, out bool usedLayoutFallback,
+        out float snapDistance)
     {
         if (TryGroundGridPose(pose, routeTriangles, 5, out var grounded))
+        {
+            usedLayoutFallback = false;
+            snapDistance = 0;
+            return grounded;
+        }
+
+        if (TrySnapAndGroundGridPose(pose, routeTriangles, maximumDropMeters: 5,
+                MaximumRouteGridSnapMeters, out grounded, out snapDistance))
         {
             usedLayoutFallback = false;
             return grounded;
@@ -447,9 +535,19 @@ internal static partial class RacePhysicsAssetBuilder
         if (TryGroundGridPose(pose, layoutTriangles, 1.5f, out grounded))
         {
             usedLayoutFallback = true;
+            snapDistance = 0;
             return grounded;
         }
 
+
+        if (TrySnapAndGroundGridPose(pose, layoutTriangles, maximumDropMeters: 1.5f,
+                MaximumLayoutGridSnapMeters, out grounded, out snapDistance))
+        {
+            usedLayoutFallback = true;
+            return grounded;
+        }
+
+        snapDistance = 0;
         throw new InvalidDataException($"AC grid position {pose.Position} has no physical track "
                                        + "surface below it in the selected route or layout");
     }
@@ -473,6 +571,208 @@ internal static partial class RacePhysicsAssetBuilder
         }
         grounded = pose with { Position = pose.Position with { Y = surfaceY } };
         return true;
+    }
+
+    private static bool TrySnapAndGroundGridPose(RaceGridPose pose,
+        IReadOnlyList<Kn5Triangle> triangles, float maximumDropMeters,
+        float maximumSnapMeters, out RaceGridPose grounded, out float snapDistance)
+    {
+        Vector2 point = new(pose.Position.X, pose.Position.Z);
+        float maximumDistanceSquared = maximumSnapMeters * maximumSnapMeters;
+        float bestDistanceSquared = float.PositiveInfinity;
+        float bestVerticalDifference = float.PositiveInfinity;
+        Vector3 best = default;
+        foreach (var triangle in triangles)
+        {
+            if (!RaceRouteSurfaceBuilder.IsUsableSurface(triangle))
+                continue;
+            Vector2 candidate = ClosestPointOnTriangleBoundary(point,
+                new Vector2(triangle.A.X, triangle.A.Z),
+                new Vector2(triangle.B.X, triangle.B.Z),
+                new Vector2(triangle.C.X, triangle.C.Z));
+            float distanceSquared = Vector2.DistanceSquared(point, candidate);
+            if (distanceSquared > maximumDistanceSquared
+                || !TryGetSurfaceHeight(triangle, candidate.X, candidate.Y, out float candidateY)
+                || candidateY > pose.Position.Y + 0.1f
+                || candidateY < pose.Position.Y - maximumDropMeters)
+                continue;
+
+            float verticalDifference = Math.Abs(candidateY - pose.Position.Y);
+            if (distanceSquared > bestDistanceSquared + 1e-4f
+                || Math.Abs(distanceSquared - bestDistanceSquared) <= 1e-4f
+                && verticalDifference >= bestVerticalDifference)
+                continue;
+            bestDistanceSquared = distanceSquared;
+            bestVerticalDifference = verticalDifference;
+            best = new Vector3(candidate.X, candidateY, candidate.Y);
+        }
+
+        if (!float.IsFinite(bestDistanceSquared))
+        {
+            grounded = default;
+            snapDistance = 0;
+            return false;
+        }
+
+        grounded = pose with { Position = best };
+        snapDistance = MathF.Sqrt(bestDistanceSquared);
+        return true;
+    }
+
+    private static Vector2 ClosestPointOnTriangleBoundary(Vector2 point,
+        Vector2 a, Vector2 b, Vector2 c)
+    {
+        Vector2 ab = ClosestPointOnSegment(point, a, b);
+        Vector2 bc = ClosestPointOnSegment(point, b, c);
+        Vector2 ca = ClosestPointOnSegment(point, c, a);
+        float abDistance = Vector2.DistanceSquared(point, ab);
+        float bcDistance = Vector2.DistanceSquared(point, bc);
+        float caDistance = Vector2.DistanceSquared(point, ca);
+        return abDistance <= bcDistance && abDistance <= caDistance
+            ? ab
+            : bcDistance <= caDistance ? bc : ca;
+    }
+
+    private static Vector2 ClosestPointOnSegment(Vector2 point, Vector2 from, Vector2 to)
+    {
+        Vector2 segment = to - from;
+        float lengthSquared = segment.LengthSquared();
+        float progress = lengthSquared <= 1e-8f
+            ? 0
+            : Math.Clamp(Vector2.Dot(point - from, segment) / lengthSquared, 0, 1);
+        return from + segment * progress;
+    }
+
+    internal static IReadOnlyList<Kn5Triangle> BuildGridLaunchSupportTriangles(
+        RaceGridPose pose, IReadOnlyList<RaceRoutePoint> route,
+        IReadOnlyList<Kn5Triangle> layoutTriangles)
+    {
+        var forward = Vector3.Transform(Vector3.UnitZ, pose.Orientation) with { Y = 0 };
+        if (forward.LengthSquared() < 1e-6f)
+            forward = Vector3.UnitZ;
+        else
+            forward = Vector3.Normalize(forward);
+        var from = pose.Position - forward * GridLaunchSupportBehindMeters;
+        var to = pose.Position + forward * GridLaunchSupportAheadMeters;
+
+        float nearestRouteDistance = route.Count == 0
+            ? MinimumGridLaunchSupportHalfWidthMeters
+            : MathF.Sqrt(route.Min(point => HorizontalDistanceSquared(point.Position, pose.Position)));
+        float halfWidth = Math.Clamp(nearestRouteDistance + GridLaunchSupportLateralMarginMeters,
+            MinimumGridLaunchSupportHalfWidthMeters, MaximumGridLaunchSupportHalfWidthMeters);
+
+        float minimumY = pose.Position.Y;
+        float maximumY = pose.Position.Y;
+        float routeBandHalfWidth = halfWidth + GridLaunchSupportLateralMarginMeters;
+        foreach (var point in route)
+        {
+            if (HorizontalDistanceSquaredToSegment(point.Position, from, to)
+                > routeBandHalfWidth * routeBandHalfWidth)
+                continue;
+            minimumY = Math.Min(minimumY, point.Position.Y);
+            maximumY = Math.Max(maximumY, point.Position.Y);
+        }
+        minimumY -= GridLaunchSupportVerticalMarginMeters;
+        maximumY += GridLaunchSupportVerticalMarginMeters;
+
+        var result = new List<Kn5Triangle>();
+        foreach (var triangle in layoutTriangles)
+        {
+            float triangleMinimumY = Math.Min(triangle.A.Y, Math.Min(triangle.B.Y, triangle.C.Y));
+            float triangleMaximumY = Math.Max(triangle.A.Y, Math.Max(triangle.B.Y, triangle.C.Y));
+            if (triangleMaximumY < minimumY || triangleMinimumY > maximumY
+                || !RaceRouteSurfaceBuilder.IsUsableSurface(triangle)
+                || !TriangleTouchesHorizontalCorridor(triangle, from, to, halfWidth))
+                continue;
+            result.Add(triangle);
+        }
+        return result;
+    }
+
+    internal static bool HasGridLaunchSupport(RaceGridPose pose,
+        IReadOnlyList<Kn5Triangle> finalTriangles)
+    {
+        var forward = Vector3.Transform(Vector3.UnitZ, pose.Orientation) with { Y = 0 };
+        if (forward.LengthSquared() < 1e-6f)
+            forward = Vector3.UnitZ;
+        else
+            forward = Vector3.Normalize(forward);
+        var right = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, forward));
+        float[] longitudinalSamples = [-1.5f, 0, 1.5f, 5, 10, 15, 20, 25];
+        float[] lateralSamples = [-1.15f, 0, 1.15f];
+        foreach (float lateral in lateralSamples)
+        {
+            float referenceY = pose.Position.Y;
+            foreach (float longitudinal in longitudinalSamples)
+            {
+                var sample = pose.Position + forward * longitudinal + right * lateral;
+                if (!TryFindSurfaceHeight(sample, referenceY, finalTriangles,
+                        maximumHeightDifferenceMeters: 1.5f, out referenceY))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool TryFindSurfaceHeight(Vector3 point, float referenceY,
+        IReadOnlyList<Kn5Triangle> triangles, float maximumHeightDifferenceMeters,
+        out float surfaceY)
+    {
+        surfaceY = 0;
+        float bestDifference = float.PositiveInfinity;
+        foreach (var triangle in triangles)
+        {
+            if (!TryGetSurfaceHeight(triangle, point.X, point.Z, out float candidateY))
+                continue;
+            float difference = Math.Abs(candidateY - referenceY);
+            if (difference > maximumHeightDifferenceMeters || difference >= bestDifference)
+                continue;
+            bestDifference = difference;
+            surfaceY = candidateY;
+        }
+        return float.IsFinite(bestDifference);
+    }
+
+    private static bool TriangleTouchesHorizontalCorridor(Kn5Triangle triangle,
+        Vector3 from, Vector3 to, float halfWidth)
+    {
+        Span<Vector3> samples = stackalloc Vector3[7]
+        {
+            triangle.A,
+            triangle.B,
+            triangle.C,
+            (triangle.A + triangle.B) * 0.5f,
+            (triangle.B + triangle.C) * 0.5f,
+            (triangle.C + triangle.A) * 0.5f,
+            (triangle.A + triangle.B + triangle.C) / 3f
+        };
+        float maximumDistanceSquared = halfWidth * halfWidth;
+        foreach (var sample in samples)
+        {
+            if (HorizontalDistanceSquaredToSegment(sample, from, to) <= maximumDistanceSquared)
+                return true;
+        }
+        return false;
+    }
+
+    private static float HorizontalDistanceSquared(Vector3 first, Vector3 second)
+    {
+        float x = first.X - second.X;
+        float z = first.Z - second.Z;
+        return x * x + z * z;
+    }
+
+    private static float HorizontalDistanceSquaredToSegment(Vector3 point,
+        Vector3 from, Vector3 to)
+    {
+        var segment = (to - from) with { Y = 0 };
+        var relative = (point - from) with { Y = 0 };
+        float lengthSquared = segment.LengthSquared();
+        float progress = lengthSquared <= 1e-6f
+            ? 0
+            : Math.Clamp(Vector3.Dot(relative, segment) / lengthSquared, 0, 1);
+        var closest = from + segment * progress;
+        return HorizontalDistanceSquared(point, closest);
     }
 
     private static bool TryGetSurfaceHeight(Kn5Triangle triangle, float x, float z, out float height)
@@ -567,7 +867,8 @@ internal static partial class RacePhysicsAssetBuilder
 internal readonly record struct RacePhysicsBuildResult(int GridSlots, int TrackTriangles, int CarColliders,
     IReadOnlyList<string> IncludedTrackMeshes, int SourceDriveTriangles, int RouteDriveTriangles,
     double RouteCoverage, bool UsesSplineRibbon, int SourceBarrierTriangles, int RouteBarrierTriangles,
-    int LayoutGridGroundingFallbacks,
+    int LayoutGridGroundingFallbacks, int SnappedGridPositions, float MaximumGridSnapDistance,
+    int GridLaunchSupportTriangles,
     IReadOnlyList<RaceCarCalibrationBuildResult> CarCalibrations);
 
 internal readonly record struct RaceCarCalibrationBuildResult(string Model, float FrontTyreRadius,

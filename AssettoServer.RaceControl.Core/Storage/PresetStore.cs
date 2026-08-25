@@ -18,7 +18,7 @@ public sealed class PresetStore
 
     public PresetStore(RaceControlPaths paths) => _paths = paths;
 
-    public IReadOnlyList<PresetSummary> List()
+    public IReadOnlyList<PresetSummary> List(EventMode? mode = null)
     {
         _paths.EnsureCreated();
         return Directory.EnumerateFiles(_paths.PresetsDirectory, "*.json", SearchOption.TopDirectoryOnly)
@@ -27,7 +27,10 @@ public sealed class PresetStore
                 try
                 {
                     var preset = Load(path);
-                    return new PresetSummary(preset.Id, preset.Name, path, File.GetLastWriteTime(path));
+                    return new PresetSummary(preset.Id, preset.Name, path, File.GetLastWriteTime(path))
+                    {
+                        Mode = preset.Mode,
+                    };
                 }
                 catch (Exception exception) when (exception is IOException or JsonException)
                 {
@@ -35,6 +38,7 @@ public sealed class PresetStore
                 }
             })
             .OfType<PresetSummary>()
+            .Where(summary => mode is null || summary.Mode == mode)
             .OrderByDescending(summary => summary.ModifiedAt)
             .ToArray();
     }
@@ -58,4 +62,7 @@ public sealed class PresetStore
     }
 }
 
-public sealed record PresetSummary(Guid Id, string Name, string Path, DateTime ModifiedAt);
+public sealed record PresetSummary(Guid Id, string Name, string Path, DateTime ModifiedAt)
+{
+    public EventMode Mode { get; init; }
+}

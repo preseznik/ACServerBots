@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Staging;
@@ -8,6 +9,30 @@ namespace AssettoServer.RaceControl.Tests;
 
 public sealed class ServerInstanceStagerTests
 {
+    [Test]
+    public void RacePhysicsMetadataReader_ReadsPhysicalGridCapacity()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"race-physics-{Guid.NewGuid():N}.bin");
+        try
+        {
+            using (var file = File.Create(path))
+            using (var compressed = new BrotliStream(file, CompressionLevel.Fastest))
+            using (var writer = new BinaryWriter(compressed))
+            {
+                writer.Write(System.Text.Encoding.ASCII.GetBytes("ASRPHY01"));
+                writer.Write(7);
+                writer.Write(44);
+            }
+
+            Assert.That(RacePhysicsAssetMetadataReader.ReadGridSlotCount(path), Is.EqualTo(44));
+        }
+        finally
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
+
     [Test]
     public async Task StageAsync_CreatesIsolatedHumanOnlyInstanceAndDoesNotExposePasswordsInManifest()
     {
@@ -38,6 +63,83 @@ public sealed class ServerInstanceStagerTests
             Assert.That(manifest, Does.Not.Contain("admin-secret"));
             Assert.That(Directory.Exists(Path.Combine(factory.PayloadRoot, "presets")), Is.False);
             Assert.That(recent.Single().RootPath, Is.EqualTo(instance.RootPath));
+        });
+    }
+
+    [Test]
+    public async Task StageAsync_ReusesWorkingInstanceAndArchivesOnlyCompactRunArtifacts()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation(2, false, "car_one");
+        var paths = new RaceControlPaths(factory.DataRoot);
+        var stager = new ServerInstanceStager(paths, new RaceControlValidator(),
+            new ServerConfigurationRenderer());
+        var preset = factory.CreatePreset(2, false);
+
+        var first = await stager.StageAsync(preset, factory.Scan());
+        Directory.CreateDirectory(Path.Combine(first.RootPath, "simulation"));
+        Directory.CreateDirectory(Path.Combine(first.RootPath, "logs"));
+        await File.WriteAllTextAsync(Path.Combine(first.RootPath, "simulation", "summary.json"),
+            "{\"status\":\"completed\"}");
+        await File.WriteAllTextAsync(Path.Combine(first.RootPath, "simulation", "events.jsonl"),
+            "{\"event\":\"finish\"}\n");
+        await File.WriteAllTextAsync(Path.Combine(first.RootPath, "simulation", "samples.jsonl"),
+            "sample-one\nsample-two\n");
+        await File.WriteAllTextAsync(Path.Combine(first.RootPath, "logs", "server.txt"),
+            "important log");
+
+        var second = await stager.StageAsync(preset, factory.Scan());
+        string archive = Directory.GetDirectories(paths.HistoryDirectory).Single();
+        string compressedSamples = Path.Combine(archive, "simulation", "samples.jsonl.gz");
+        await using var compressed = File.OpenRead(compressedSamples);
+        await using var gzip = new GZipStream(compressed, CompressionMode.Decompress);
+        using var reader = new StreamReader(gzip);
+        string restoredSamples = await reader.ReadToEndAsync();
+        var catalog = new InstanceCatalog(paths).List();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.RootPath, Is.EqualTo(paths.WorkingInstanceDirectory));
+            Assert.That(second.RootPath, Is.EqualTo(first.RootPath));
+            Assert.That(File.Exists(Path.Combine(archive, "race-control-instance.json")), Is.True);
+            Assert.That(File.Exists(Path.Combine(archive, "archive-info.json")), Is.True);
+            Assert.That(File.Exists(Path.Combine(archive, "presets", ServerInstanceStager.PresetName,
+                "server_cfg.ini")), Is.True);
+            Assert.That(File.Exists(Path.Combine(archive, "simulation", "summary.json")), Is.True);
+            Assert.That(File.Exists(Path.Combine(archive, "simulation", "events.jsonl")), Is.True);
+            Assert.That(File.Exists(Path.Combine(archive, "logs", "server.txt")), Is.True);
+            Assert.That(File.Exists(Path.Combine(archive, "AssettoServer.exe")), Is.False,
+                "compact history must not duplicate the standalone server payload");
+            Assert.That(File.Exists(Path.Combine(archive, "support.dll")), Is.False);
+            Assert.That(restoredSamples, Is.EqualTo("sample-one\nsample-two\n"));
+            Assert.That(catalog.Count, Is.EqualTo(2));
+            Assert.That(catalog.Count(item => item.IsCompactHistory), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task InstancePackageExporter_CreatesCompletePortableZipOnDemand()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation(2, false, "car_one");
+        var paths = new RaceControlPaths(factory.DataRoot);
+        var stager = new ServerInstanceStager(paths, new RaceControlValidator(),
+            new ServerConfigurationRenderer());
+        var instance = await stager.StageAsync(factory.CreatePreset(2, false), factory.Scan());
+        string destination = Path.Combine(factory.Root, "exported-server.zip");
+
+        await new InstancePackageExporter().ExportAsync(instance.RootPath, destination);
+
+        using var archive = ZipFile.OpenRead(destination);
+        var entries = archive.Entries.Select(entry => entry.FullName).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(entries, Does.Contain("AssettoServer.exe"));
+            Assert.That(entries, Does.Contain("support.dll"));
+            Assert.That(entries, Does.Contain("race-control-instance.json"));
+            Assert.That(entries, Does.Contain("presets/race-control/server_cfg.ini"));
+            Assert.That(entries, Does.Contain("presets/race-control/entry_list.ini"));
+            Assert.That(entries, Does.Contain("presets/race-control/extra_cfg.yml"));
         });
     }
 }

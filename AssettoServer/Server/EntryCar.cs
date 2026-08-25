@@ -7,6 +7,7 @@ using AssettoServer.Network.ClientMessages;
 using AssettoServer.Server.Ai;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Configuration.Kunos;
 using AssettoServer.Shared.Model;
 using AssettoServer.Shared.Network.Packets.Incoming;
 using AssettoServer.Shared.Network.Packets.Outgoing;
@@ -35,6 +36,7 @@ public partial class EntryCar : IEntryCar<ACTcpClient>
     public ushort Ping { get; internal set; }
     public DriverOptionsFlags DriverOptionsFlags { get; internal set; }
     public string LegalTyres { get; set; } = "";
+    public FpsSlotRole FpsRole { get; internal set; } = FpsSlotRole.Human;
 
     public bool IsSpectator { get; internal set; }
     public string Model { get; }
@@ -141,8 +143,6 @@ public partial class EntryCar : IEntryCar<ACTcpClient>
     internal void Reset()
     {
         ResetInvoked?.Invoke(this, EventArgs.Empty);
-        IsSpectator = false;
-        SpectatorMode = 0;
         LastActiveTime = 0;
         HasUpdateToSend = false;
         TimeOffset = 0;
@@ -156,6 +156,12 @@ public partial class EntryCar : IEntryCar<ACTcpClient>
             MandatoryPit = _configuration.Server.PitWindowStart < _configuration.Server.PitWindowEnd,
         };
         TargetCar = null;
+    }
+
+    internal void ConfigureSpectatorMode(int spectatorMode)
+    {
+        SpectatorMode = spectatorMode;
+        IsSpectator = spectatorMode != 0;
     }
 
     internal void SetActive()

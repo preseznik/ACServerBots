@@ -19,6 +19,7 @@ using AssettoServer.Server.CMContentProviders;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Serialization;
 using AssettoServer.Server.GeoParams;
+using AssettoServer.Server.Fps;
 using AssettoServer.Server.OpenSlotFilters;
 using AssettoServer.Server.Runtime;
 using AssettoServer.Server.RaceSimulation;
@@ -67,6 +68,8 @@ public class Startup
         // Registration order == order in which hosted services are started
         builder.RegisterType<ACServer>().AsSelf().As<IHostedService>().SingleInstance();
         builder.RegisterType<SessionManager>().AsSelf().As<IHostedService>().SingleInstance();
+        if (_configuration.Extra.Fps.Enabled)
+            builder.RegisterType<FpsWorld>().AsSelf().As<IHostedService>().SingleInstance();
         if (!_runtimeOptions.IsRaceSimulation)
         {
             builder.RegisterType<ACTcpServer>().AsSelf().As<IHostedService>().SingleInstance();
@@ -133,6 +136,8 @@ public class Startup
         builder.RegisterType<OpenSlotFilterChain>().AsSelf().SingleInstance();
         builder.RegisterType<WhitelistSlotFilter>().As<IOpenSlotFilter>();
         builder.RegisterType<GuidSlotFilter>().As<IOpenSlotFilter>();
+        if (_configuration.Extra.Fps.Enabled)
+            builder.RegisterType<FpsSlotFilter>().As<IOpenSlotFilter>();
         builder.RegisterType<ConfigurationSerializer>().AsSelf();
         builder.RegisterType<DefaultCMContentProvider>().As<ICMContentProvider>().SingleInstance();
         builder.RegisterType<CommandService>().AsSelf().SingleInstance();

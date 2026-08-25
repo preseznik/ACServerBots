@@ -34,6 +34,7 @@ internal sealed class TestContentFactory : IDisposable
                   "brand": "Codex",
                   "class": "race",
                   "country": "Italy",
+                  "year": {{2000 + index}},
                   "tags": ["test", "race"],
                   "specs": { "bhp": "200 bhp", "weight": "1000 kg", "topspeed": "220 km/h" }
                 }
@@ -55,7 +56,7 @@ internal sealed class TestContentFactory : IDisposable
         File.WriteAllText(Path.Combine(trackRoot, "track.kn5"), "track");
         if (fastLane)
         {
-            File.WriteAllText(Path.Combine(trackRoot, "ai", "fast_lane.ai"), "line");
+            WriteClosedFastLane(Path.Combine(trackRoot, "ai", "fast_lane.ai"));
         }
         File.WriteAllText(Path.Combine(AcRoot, "content", "weather", "3_clear", "weather.ini"), "[LAUNCHER]\nNAME=Clear\n");
 
@@ -65,6 +66,24 @@ internal sealed class TestContentFactory : IDisposable
     }
 
     public AcContentCatalog Scan() => new AcContentScanner().Scan(AcRoot);
+
+    private static void WriteClosedFastLane(string path)
+    {
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        const int count = 32;
+        writer.Write(-1);
+        writer.Write(count);
+        for (int index = 0; index < count; index++)
+        {
+            double angle = index * Math.PI * 2 / (count - 1);
+            writer.Write((float)(Math.Cos(angle) * 100));
+            writer.Write(0f);
+            writer.Write((float)(Math.Sin(angle) * 100));
+            writer.Write(100f);
+            writer.Write(0f);
+        }
+    }
 
     public RaceControlPreset CreatePreset(int slots = 2, bool bots = true)
     {

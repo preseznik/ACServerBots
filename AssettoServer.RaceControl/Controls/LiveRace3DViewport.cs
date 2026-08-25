@@ -67,23 +67,27 @@ public sealed class LiveRace3DViewport : DrawingSurface
 
     private static readonly Vector4 RoadColor = new(0.23f, 0.25f, 0.28f, 1);
     private static readonly Vector4 RoadEdgeColor = new(0.62f, 0.64f, 0.66f, 1);
+    private static readonly Vector4 GrassColor = new(0.10f, 0.29f, 0.09f, 1);
     private static readonly Vector4 SelectedCarColor = new(1.0f, 0.68f, 0.12f, 1);
     private static readonly Vector4 BotCarColor = new(0.82f, 0.11f, 0.10f, 1);
     private static readonly Vector4 HumanCarColor = new(0.08f, 0.47f, 0.82f, 1);
     private static readonly Vector4 GlassColor = new(0.07f, 0.12f, 0.17f, 1);
     private static readonly Vector4 LightColor = new(0.92f, 0.94f, 0.87f, 1);
 
-    private ID3D11Buffer? _vertexBuffer;
+    private ID3D11Buffer? _trackVertexBuffer;
+    private ID3D11Buffer? _carVertexBuffer;
     private ID3D11Buffer? _constantBuffer;
     private ID3D11VertexShader? _vertexShader;
     private ID3D11PixelShader? _pixelShader;
     private ID3D11InputLayout? _inputLayout;
     private ID3D11RasterizerState? _rasterizerState;
     private Vertex[] _trackVertices = [];
-    private Vertex[] _sceneVertices = [];
+    private Vertex[] _carVertices = [];
     private LiveTrackMap? _renderedTrack;
-    private int _sceneVersion;
-    private int _uploadedSceneVersion = -1;
+    private int _trackVersion;
+    private int _carVersion;
+    private int _uploadedTrackVersion = -1;
+    private int _uploadedCarVersion = -1;
     private float _cameraDistance = 8;
 
     public LiveRace3DViewport()
@@ -155,13 +159,16 @@ public sealed class LiveRace3DViewport : DrawingSurface
         ], vertexShaderByteCode.Span);
         _constantBuffer = eventArgs.Device.CreateConstantBuffer<FrameConstants>();
         _rasterizerState = eventArgs.Device.CreateRasterizerState(RasterizerDescription.CullNone);
-        _uploadedSceneVersion = -1;
+        _uploadedTrackVersion = -1;
+        _uploadedCarVersion = -1;
     }
 
     private void UnloadDirect3DContent(object? sender, DrawingSurfaceEventArgs eventArgs)
     {
-        _vertexBuffer?.Dispose();
-        _vertexBuffer = null;
+        _trackVertexBuffer?.Dispose();
+        _trackVertexBuffer = null;
+        _carVertexBuffer?.Dispose();
+        _carVertexBuffer = null;
         _constantBuffer?.Dispose();
         _constantBuffer = null;
         _vertexShader?.Dispose();
@@ -185,18 +192,27 @@ public sealed class LiveRace3DViewport : DrawingSurface
                 DepthStencilClearFlags.Depth, 1, 0);
         }
 
-        if (_sceneVertices.Length == 0 || _vertexShader == null || _pixelShader == null ||
+        if ((_trackVertices.Length == 0 && _carVertices.Length == 0)
+            || _vertexShader == null || _pixelShader == null ||
             _inputLayout == null || _constantBuffer == null)
             return;
 
-        if (_uploadedSceneVersion != _sceneVersion)
+        if (_uploadedTrackVersion != _trackVersion)
         {
-            _vertexBuffer?.Dispose();
-            _vertexBuffer = eventArgs.Device.CreateBuffer<Vertex>(_sceneVertices, BindFlags.VertexBuffer);
-            _uploadedSceneVersion = _sceneVersion;
+            _trackVertexBuffer?.Dispose();
+            _trackVertexBuffer = _trackVertices.Length == 0
+                ? null
+                : eventArgs.Device.CreateBuffer<Vertex>(_trackVertices, BindFlags.VertexBuffer);
+            _uploadedTrackVersion = _trackVersion;
         }
-        if (_vertexBuffer == null)
-            return;
+        if (_uploadedCarVersion != _carVersion)
+        {
+            _carVertexBuffer?.Dispose();
+            _carVertexBuffer = _carVertices.Length == 0
+                ? null
+                : eventArgs.Device.CreateBuffer<Vertex>(_carVertices, BindFlags.VertexBuffer);
+            _uploadedCarVersion = _carVersion;
+        }
 
         LiveRaceCar? selected = GetSelectedCar();
         Matrix4x4 viewProjection = CreateViewProjection(selected, eventArgs.Surface.TextureWidth,
@@ -205,7 +221,6 @@ public sealed class LiveRace3DViewport : DrawingSurface
 
         eventArgs.Context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         eventArgs.Context.IASetInputLayout(_inputLayout);
-        eventArgs.Context.IASetVertexBuffer(0, _vertexBuffer, Vertex.SizeInBytes);
         eventArgs.Context.VSSetShader(_vertexShader);
         eventArgs.Context.VSSetConstantBuffer(0, _constantBuffer);
         eventArgs.Context.PSSetShader(_pixelShader);
@@ -213,7 +228,16 @@ public sealed class LiveRace3DViewport : DrawingSurface
         eventArgs.Context.HSSetShader(null);
         eventArgs.Context.DSSetShader(null);
         eventArgs.Context.RSSetState(_rasterizerState);
-        eventArgs.Context.Draw((uint)_sceneVertices.Length, 0);
+        if (_trackVertexBuffer != null)
+        {
+            eventArgs.Context.IASetVertexBuffer(0, _trackVertexBuffer, Vertex.SizeInBytes);
+            eventArgs.Context.Draw((uint)_trackVertices.Length, 0);
+        }
+        if (_carVertexBuffer != null)
+        {
+            eventArgs.Context.IASetVertexBuffer(0, _carVertexBuffer, Vertex.SizeInBytes);
+            eventArgs.Context.Draw((uint)_carVertices.Length, 0);
+        }
     }
 
     private Matrix4x4 CreateViewProjection(LiveRaceCar? selected, int width, int height)
@@ -260,10 +284,11 @@ public sealed class LiveRace3DViewport : DrawingSurface
         if (Track is not { Points.Count: > 2 })
         {
             _trackVertices = [];
+            _trackVersion++;
             return;
         }
 
-        var vertices = new List<Vertex>(Track.Points.Count * 12);
+        var vertices = new List<Vertex>(Track.Points.Count * 30);
         int count = Track.Points.Count;
         for (int index = 0; index < count; index++)
         {
@@ -284,26 +309,41 @@ public sealed class LiveRace3DViewport : DrawingSurface
             Vector3 nextLeftPoint = nextCenter + nextSide * nextLeft;
             Vector3 nextRightPoint = nextCenter - nextSide * nextRight;
 
+            const float terrainWidth = 30;
+            var terrainDrop = new Vector3(0, -0.03f, 0);
+            Vector3 currentLeftTerrain = currentLeftPoint + terrainDrop;
+            Vector3 nextLeftTerrain = nextLeftPoint + terrainDrop;
+            Vector3 currentRightTerrain = currentRightPoint + terrainDrop;
+            Vector3 nextRightTerrain = nextRightPoint + terrainDrop;
+            AddQuad(vertices,
+                currentLeftTerrain + currentSide * terrainWidth,
+                nextLeftTerrain + nextSide * terrainWidth,
+                nextLeftTerrain, currentLeftTerrain, GrassColor);
+            AddQuad(vertices,
+                currentRightTerrain, nextRightTerrain,
+                nextRightTerrain - nextSide * terrainWidth,
+                currentRightTerrain - currentSide * terrainWidth, GrassColor);
+
             AddTriangle(vertices, currentLeftPoint, nextLeftPoint, currentRightPoint, RoadColor);
             AddTriangle(vertices, currentRightPoint, nextLeftPoint, nextRightPoint, RoadColor);
             AddTrackEdge(vertices, currentLeftPoint, nextLeftPoint, currentSide, RoadEdgeColor);
             AddTrackEdge(vertices, currentRightPoint, nextRightPoint, -currentSide, RoadEdgeColor);
         }
         _trackVertices = [.. vertices];
+        _trackVersion++;
     }
 
     private void RebuildScene()
     {
         RebuildTrack();
-        var vertices = new List<Vertex>(_trackVertices.Length + 360);
-        vertices.AddRange(_trackVertices);
         LiveRaceCar[] activeCars = Snapshot?.Cars.Where(car => car.IsActive).ToArray() ?? [];
+        var vertices = new List<Vertex>(activeCars.Length * 108);
         LiveRaceCar? selected = activeCars.FirstOrDefault(car => car.SessionId == SelectedSessionId)
                                 ?? activeCars.FirstOrDefault();
         foreach (LiveRaceCar car in activeCars)
             AddCar(vertices, car, car.SessionId == selected?.SessionId);
-        _sceneVertices = [.. vertices];
-        _sceneVersion++;
+        _carVertices = [.. vertices];
+        _carVersion++;
     }
 
     private static void AddCar(List<Vertex> vertices, LiveRaceCar car, bool selected)
