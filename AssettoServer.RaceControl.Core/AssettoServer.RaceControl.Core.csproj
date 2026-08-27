@@ -8,4 +8,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="AssettoServer.RaceControl.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Fps\*.kn5" />
+  </ItemGroup>
 </Project>

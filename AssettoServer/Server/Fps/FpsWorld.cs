@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
@@ -31,6 +33,7 @@ public sealed class FpsWorld : IHostedService
     private readonly Dictionary<byte, int> _neutralInputCounts = [];
     private readonly Dictionary<byte, uint> _knownSpawnCounts = [];
     private readonly Dictionary<byte, Vector3> _lastDiagnosticPositions = [];
+    private readonly Dictionary<byte, long> _lastClientViewmodelDiagnosticTicks = [];
 
     public FpsWorld(ACServer server, ACServerConfiguration configuration,
         EntryCarManager entryCarManager, CSPClientMessageTypeManager messageTypes,
@@ -42,6 +45,7 @@ public sealed class FpsWorld : IHostedService
         _messageTypes = messageTypes;
         _messageTypes.RegisterOnlineEvent<FpsInputPacket>(OnInput);
         _messageTypes.RegisterOnlineEvent<FpsReadyPacket>(OnReady);
+        _messageTypes.RegisterOnlineEvent<FpsClientDiagnosticPacket>(OnClientDiagnostic);
 
         using var script = Assembly.GetExecutingAssembly()
             .GetManifestResourceStream("AssettoServer.Server.Fps.fps.lua")
@@ -51,18 +55,27 @@ public sealed class FpsWorld : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        string geometryPath = Path.GetFullPath(Path.Combine(_configuration.BaseFolder,
+            _configuration.Extra.Fps.Arena.GeometryPath));
+        string presetRoot = Path.GetFullPath(_configuration.BaseFolder) + Path.DirectorySeparatorChar;
+        if (!geometryPath.StartsWith(presetRoot, StringComparison.OrdinalIgnoreCase))
+            throw new ConfigurationException("FPS Arena GeometryPath must stay inside the server preset directory");
+        if (!File.Exists(geometryPath))
+            throw new ConfigurationException($"FPS arena physical geometry was not found: {geometryPath}");
+        var geometry = FpsArenaGeometryAsset.Load(geometryPath);
+        var surface = new FpsArenaSurface(geometry.Triangles);
         var slots = _configuration.EntryList.Cars.Take(_configuration.Server.MaxClients)
             .Select((entry, index) => new FpsSimulationSlot((byte)index,
                 entry.DriverName ?? $"Player {index + 1}", entry.FpsRole,
                 entry.AiDifficulty is >= 0 and <= 1 ? entry.AiDifficulty : null,
                 entry.AiAggression is >= 0 and <= 1 ? entry.AiAggression : null));
-        _simulation = new FpsSimulation(_configuration.Extra.Fps, slots);
+        _simulation = new FpsSimulation(_configuration.Extra.Fps, slots, surface: surface);
         _server.Update += OnUpdate;
         _entryCarManager.ClientConnected += OnClientConnected;
         _entryCarManager.ClientDisconnected += OnClientDisconnected;
-        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills",
+        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills, {Triangles} physical arena triangles",
             _simulation.Actors.Count, _configuration.Extra.Fps.TimeLimitMinutes,
-            _configuration.Extra.Fps.KillLimit);
+            _configuration.Extra.Fps.KillLimit, surface.TriangleCount);
         foreach (var actor in _simulation.Actors.Where(actor => actor.Active).OrderBy(actor => actor.Id))
         {
             _knownSpawnCounts[actor.Id] = actor.SpawnCount;
@@ -120,7 +133,27 @@ public sealed class FpsWorld : IHostedService
             _clientsWithAcceptedInput.Remove(client.SessionId);
             _clientsWithActiveInput.Remove(client.SessionId);
             _neutralInputCounts.Remove(client.SessionId);
+            _lastClientViewmodelDiagnosticTicks.Remove(client.SessionId);
         }
+    }
+
+    private void OnClientDiagnostic(ACTcpClient client, FpsClientDiagnosticPacket packet)
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync)
+        {
+            if (_lastClientViewmodelDiagnosticTicks.TryGetValue(client.SessionId, out long previous)
+                && Stopwatch.GetElapsedTime(previous, now) < TimeSpan.FromMilliseconds(500))
+                return;
+            _lastClientViewmodelDiagnosticTicks[client.SessionId] = now;
+        }
+
+        client.Logger.Information(
+            "FPS client viewmodel diagnostic: pipeline={Pipeline}, flags={Flags}, updates={Completions}/{Attempts}, callbacks=frameBegin:{FrameBegin},draw3D:{Draw3D},drawUI:{DrawUI}, directDraw={DirectCompletions}/{DirectAttempts}, pending={DirectPending}, failures={DirectFailures}, stage={Stage}, intendedPosition={Position}",
+            packet.Pipeline, packet.Flags, packet.Completions, packet.Attempts,
+            packet.FrameBeginCalls, packet.Draw3DCalls, packet.DrawUiCalls,
+            packet.DirectDrawCompletions, packet.DirectDrawAttempts, packet.DirectDrawPending,
+            packet.DirectDrawFailures, packet.Stage, packet.Position);
     }
 
     private void OnInput(ACTcpClient client, FpsInputPacket packet)
@@ -208,6 +241,17 @@ public sealed class FpsWorld : IHostedService
                     RemainingHealth = hit.RemainingHealth,
                 });
             }
+            foreach (var shot in _simulation.ShotEvents)
+            {
+                Broadcast(new FpsShotPacket
+                {
+                    ShooterId = shot.ShooterId,
+                    Sequence = shot.Sequence,
+                    Origin = shot.Origin,
+                    Direction = shot.Direction,
+                    Distance = shot.Distance,
+                });
+            }
             foreach (var kill in _simulation.KillEvents)
             {
                 Broadcast(new FpsKillPacket
@@ -287,7 +331,9 @@ public sealed class FpsWorld : IHostedService
                 var actor = actors[offset + index];
                 packet.ActorIds[index] = actor.Id;
                 packet.Flags[index] = (byte)((actor.Active ? 1 : 0) | (actor.Dead ? 2 : 0)
-                    | (actor.HumanControlled ? 4 : 0) | (actor.SpawnProtectionRemaining > 0 ? 8 : 0));
+                    | (actor.HumanControlled ? 4 : 0) | (actor.SpawnProtectionRemaining > 0 ? 8 : 0)
+                    | (actor.IsGrounded ? 16 : 0) | (actor.IsCrouching ? 32 : 0)
+                    | (actor.GeometryBlocked ? 64 : 0) | (actor.IsProne ? 128 : 0));
                 packet.Positions[index] = actor.Position;
                 packet.Yaws[index] = actor.Yaw;
                 packet.Pitches[index] = actor.Pitch;

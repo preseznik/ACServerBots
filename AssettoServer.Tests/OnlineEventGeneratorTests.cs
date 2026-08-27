@@ -33,6 +33,7 @@ public class OnlineEventGeneratorTests
         [
             typeof(FpsInputPacket), typeof(FpsReadyPacket), typeof(FpsSnapshotPacket),
             typeof(FpsRosterPacket), typeof(FpsMatchPacket), typeof(FpsKillPacket), typeof(FpsHitPacket),
+            typeof(FpsShotPacket), typeof(FpsClientDiagnosticPacket),
         ];
         var definitions = packets.Select(OnlineEventGenerator.ParseClientMessage).ToArray();
 
@@ -43,6 +44,10 @@ public class OnlineEventGeneratorTests
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsInput").Udp, Is.True);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Udp, Is.True);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsKill").Udp, Is.False);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Udp,
+                Is.False);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Structure,
+                Does.Contain("char stage[48]"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Contain($"uint8_t actorIDs[{FpsSnapshotPacket.Capacity}]"));
         });

@@ -1280,13 +1280,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             DefaultExt = ".zip",
             AddExtension = true,
             OverwritePrompt = true,
-            FileName = "asrc-fps-compatibility-client-v1.zip",
+            FileName = "asrc-fps-compatibility-client-v2.zip",
         };
         if (dialog.ShowDialog() != true) return;
 
         try
         {
             IsBusy = true;
+            byte[] rifleViewmodel = FpsClientPackAssets.GetRifleViewmodel();
+            byte[] rifleWorldModel = FpsClientPackAssets.GetRifleWorldModel();
             await using var stream = new FileStream(dialog.FileName, FileMode.Create, FileAccess.Write, FileShare.None,
                 64 * 1024, useAsync: true);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
@@ -1296,10 +1298,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 await JsonSerializer.SerializeAsync(manifestStream, new
                 {
                     protocol = 1,
+                    clientPackVersion = 2,
                     compatibilityGate = true,
                     minimumCspVersion = "0.3.0-preview520",
                     carrierCar = Preset.Fps.CarrierCarId,
                     nativeHooks = false,
+                    weapon = new
+                    {
+                        id = "asrc_assault_rifle_v1",
+                        ammunition = "infinite",
+                        fireIntervalSeconds = 0.12,
+                        damage = 34,
+                        rangeMetres = 120,
+                        packagedViewmodel = true,
+                        viewmodelPath = FpsClientPackAssets.RifleViewmodelPath,
+                        viewmodelSha256 = FpsClientPackAssets.Sha256(rifleViewmodel),
+                        worldModelPath = FpsClientPackAssets.RifleWorldModelPath,
+                        worldModelSha256 = FpsClientPackAssets.Sha256(rifleWorldModel),
+                    },
                 }, new JsonSerializerOptions { WriteIndented = true });
             }
             var readmeEntry = archive.CreateEntry("README.txt", CompressionLevel.Optimal);
@@ -1315,9 +1331,25 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
                     The server delivers the CSP online script automatically. This prototype uses the
                     locally installed stock pit-crew model and does not redistribute Kunos assets.
+                    Extract this ZIP into the Assetto Corsa installation root. It installs the
+                    project-owned assault-rifle models under content/objects3D/asrc_fps and its
+                    sound under extension/audio/asrc_fps. Existing files are not replaced outside
+                    those folders.
                     No acs.exe modification or native hook is installed.
                     """);
             }
+            var rifleViewmodelEntry = archive.CreateEntry(FpsClientPackAssets.RifleViewmodelPath,
+                CompressionLevel.Optimal);
+            await using (var rifleViewmodelStream = rifleViewmodelEntry.Open())
+                await rifleViewmodelStream.WriteAsync(rifleViewmodel);
+            var rifleWorldModelEntry = archive.CreateEntry(FpsClientPackAssets.RifleWorldModelPath,
+                CompressionLevel.Optimal);
+            await using (var rifleWorldModelStream = rifleWorldModelEntry.Open())
+                await rifleWorldModelStream.WriteAsync(rifleWorldModel);
+            var rifleAudioEntry = archive.CreateEntry("extension/audio/asrc_fps/rifle.wav",
+                CompressionLevel.Optimal);
+            await using (var rifleAudioStream = rifleAudioEntry.Open())
+                await rifleAudioStream.WriteAsync(FpsClientPackAssets.CreateRifleWave());
             StatusText = $"Exported FPS compatibility client pack: {Path.GetFileName(dialog.FileName)}";
         }
         catch (Exception exception)

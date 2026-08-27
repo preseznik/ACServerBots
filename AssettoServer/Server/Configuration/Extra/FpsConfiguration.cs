@@ -32,6 +32,7 @@ public sealed class FpsBotConfiguration
 
 public sealed class FpsArenaConfiguration
 {
+    public string GeometryPath { get; init; } = "fps-arena-geometry.bin";
     public Vector3 BoundsMin { get; init; }
     public Vector3 BoundsMax { get; init; }
     public List<FpsSpawnConfiguration> SpawnPoints { get; init; } = [];

@@ -84,6 +84,9 @@ public static class Program
         [Option("fps-arena-output", Required = false, HelpText = "Output JSON path used by --prepare-fps-arena")]
         public string FpsArenaOutput { get; set; } = "";
 
+        [Option("fps-geometry-output", Required = false, HelpText = "Optional physical geometry output path used by --prepare-fps-arena")]
+        public string FpsGeometryOutput { get; set; } = "";
+
         [Option("shutdown-file", Required = false, SetName = "AssettoServer", HelpText = "Gracefully stop when this file is created")]
         public string ShutdownFile { get; set; } = "";
 
@@ -314,7 +317,7 @@ public static class Program
         }
 
         var result = FpsArenaAssetBuilder.Build(options.AssettoCorsaRoot, options.PhysicsTrack,
-            options.PhysicsTrackConfig, options.FpsArenaOutput);
+            options.PhysicsTrackConfig, options.FpsArenaOutput, options.FpsGeometryOutput);
         Console.WriteLine($"Prepared FPS arena: {result.SpawnPoints} spawns from {result.TrackTriangles} physical track triangles");
     }
 

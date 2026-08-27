@@ -104,6 +104,25 @@ public sealed class ServerInstanceStager
                     0.92));
             }
         }
+        else if (preset.Mode == EventMode.Fps)
+        {
+            var geometryOutput = Path.Combine(presetRoot, "fps-arena-geometry.bin");
+            var cachePath = GetFpsGeometryCachePath(preset, rendered);
+            if (File.Exists(cachePath))
+            {
+                File.Copy(cachePath, geometryOutput, true);
+                cacheHit = true;
+                progress?.Report(new("Physics", "Reused prepared FPS arena geometry from the local cache.", 0.9));
+            }
+            else
+            {
+                progress?.Report(new("Physics", "Preparing physical FPS arena geometry…", 0.8));
+                await PrepareFpsGeometryAsync(root, preset, rendered, geometryOutput, progress,
+                    cancellationToken);
+                Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+                File.Copy(geometryOutput, cachePath, true);
+            }
+        }
 
         var shutdownPath = Path.Combine(root, "shutdown.signal");
         var botSlots = preset.Mode == EventMode.Fps
@@ -210,6 +229,26 @@ public sealed class ServerInstanceStager
 
     private string GetPhysicsCachePath(RaceControlPreset preset, RenderedServerConfiguration rendered)
     {
+        var inputs = GetTrackGeometryInputs(preset, rendered);
+        foreach (var car in rendered.RacingCars)
+        {
+            inputs.Add(car.ColliderPath ?? string.Empty);
+            inputs.Add(car.DataAcdPath ?? string.Empty);
+            inputs.Add(Path.Combine(car.RootPath, "lods.ini"));
+            inputs.Add(Path.Combine(car.RootPath, "data", "tyres.ini"));
+            inputs.Add(Path.Combine(car.RootPath, "data", "car.ini"));
+            inputs.AddRange(Directory.EnumerateFiles(car.RootPath, "*.kn5", SearchOption.TopDirectoryOnly));
+        }
+        return CachePath("race-physics", inputs);
+    }
+
+    private string GetFpsGeometryCachePath(RaceControlPreset preset,
+        RenderedServerConfiguration rendered) =>
+        CachePath("fps-arena-geometry", GetTrackGeometryInputs(preset, rendered));
+
+    private static List<string> GetTrackGeometryInputs(RaceControlPreset preset,
+        RenderedServerConfiguration rendered)
+    {
         var inputs = new List<string>
         {
             Path.Combine(preset.ServerPayloadPath, "AssettoServer.exe"),
@@ -232,15 +271,11 @@ public sealed class ServerInstanceStager
             }
         }
 
-        foreach (var car in rendered.RacingCars)
-        {
-            inputs.Add(car.ColliderPath ?? string.Empty);
-            inputs.Add(car.DataAcdPath ?? string.Empty);
-            inputs.Add(Path.Combine(car.RootPath, "lods.ini"));
-            inputs.Add(Path.Combine(car.RootPath, "data", "tyres.ini"));
-            inputs.Add(Path.Combine(car.RootPath, "data", "car.ini"));
-            inputs.AddRange(Directory.EnumerateFiles(car.RootPath, "*.kn5", SearchOption.TopDirectoryOnly));
-        }
+        return inputs;
+    }
+
+    private string CachePath(string prefix, IEnumerable<string> inputs)
+    {
         var keyBuilder = new StringBuilder();
         foreach (var path in inputs.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
         {
@@ -249,7 +284,7 @@ public sealed class ServerInstanceStager
         }
 
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(keyBuilder.ToString()))).ToLowerInvariant();
-        return Path.Combine(_paths.CacheDirectory, "Physics", $"race-physics-{hash}.bin");
+        return Path.Combine(_paths.CacheDirectory, "Physics", $"{prefix}-{hash}.bin");
     }
 
     private static async Task PreparePhysicsAsync(
@@ -311,5 +346,59 @@ public sealed class ServerInstanceStager
         {
             throw new InvalidOperationException($"Rigid-body physics preparation failed with exit code {process.ExitCode}.");
         }
+    }
+
+    private static async Task PrepareFpsGeometryAsync(
+        string root,
+        RaceControlPreset preset,
+        RenderedServerConfiguration rendered,
+        string output,
+        IProgress<StagingProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var metadataOutput = Path.Combine(Path.GetDirectoryName(output)!, "fps-arena-generated.json");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = Path.Combine(root, "AssettoServer.exe"),
+            WorkingDirectory = root,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        startInfo.ArgumentList.Add("--prepare-fps-arena");
+        startInfo.ArgumentList.Add("--ac-root");
+        startInfo.ArgumentList.Add(preset.AssettoCorsaRoot);
+        startInfo.ArgumentList.Add("--track");
+        startInfo.ArgumentList.Add(rendered.Track.TrackId);
+        if (!string.IsNullOrEmpty(rendered.Track.LayoutId))
+        {
+            startInfo.ArgumentList.Add("--track-config");
+            startInfo.ArgumentList.Add(rendered.Track.LayoutId);
+        }
+        startInfo.ArgumentList.Add("--fps-arena-output");
+        startInfo.ArgumentList.Add(metadataOutput);
+        startInfo.ArgumentList.Add("--fps-geometry-output");
+        startInfo.ArgumentList.Add(output);
+
+        using var process = new Process { StartInfo = startInfo };
+        process.OutputDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Data))
+                progress?.Report(new("Physics", args.Data, 0.85));
+        };
+        process.ErrorDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Data))
+                progress?.Report(new("Physics", args.Data, 0.85));
+        };
+        if (!process.Start())
+            throw new InvalidOperationException("Could not start AssettoServer FPS geometry preparation.");
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        await process.WaitForExitAsync(cancellationToken);
+        if (process.ExitCode != 0 || !File.Exists(output))
+            throw new InvalidOperationException($"FPS arena geometry preparation failed with exit code {process.ExitCode}.");
     }
 }

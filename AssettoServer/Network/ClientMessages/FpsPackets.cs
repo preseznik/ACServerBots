@@ -9,6 +9,8 @@ public enum FpsInputButtons : byte
     None = 0,
     Fire = 1,
     Sprint = 2,
+    Jump = 4,
+    Crouch = 8,
 }
 
 [OnlineEvent(Key = "ASRC_FpsInput", Udp = true)]
@@ -25,6 +27,36 @@ public sealed class FpsInputPacket : OnlineEvent<FpsInputPacket>
 public sealed class FpsReadyPacket : OnlineEvent<FpsReadyPacket>
 {
     [OnlineEventField(Name = "protocol")] public ushort Protocol = 1;
+}
+
+[Flags]
+public enum FpsClientDiagnosticFlags : ushort
+{
+    None = 0,
+    GameplayActive = 1,
+    AssetCached = 2,
+    ModelLoaded = 4,
+    ActorAvailable = 8,
+    CameraActive = 16,
+    DirectRenderReady = 32,
+}
+
+[OnlineEvent(Key = "ASRC_FpsClientDiagnostic")]
+public sealed class FpsClientDiagnosticPacket : OnlineEvent<FpsClientDiagnosticPacket>
+{
+    [OnlineEventField(Name = "pipeline")] public byte Pipeline;
+    [OnlineEventField(Name = "flags")] public FpsClientDiagnosticFlags Flags;
+    [OnlineEventField(Name = "attempts")] public uint Attempts;
+    [OnlineEventField(Name = "completions")] public uint Completions;
+    [OnlineEventField(Name = "frameBeginCalls")] public uint FrameBeginCalls;
+    [OnlineEventField(Name = "draw3DCalls")] public uint Draw3DCalls;
+    [OnlineEventField(Name = "drawUICalls")] public uint DrawUiCalls;
+    [OnlineEventField(Name = "directDrawAttempts")] public uint DirectDrawAttempts;
+    [OnlineEventField(Name = "directDrawCompletions")] public uint DirectDrawCompletions;
+    [OnlineEventField(Name = "directDrawPending")] public uint DirectDrawPending;
+    [OnlineEventField(Name = "directDrawFailures")] public uint DirectDrawFailures;
+    [OnlineEventField(Name = "position")] public Vector3 Position;
+    [OnlineEventField(Name = "stage", Size = 48)] public string Stage = string.Empty;
 }
 
 [OnlineEvent(Key = "ASRC_FpsSnapshot", Udp = true)]
@@ -76,4 +108,14 @@ public sealed class FpsHitPacket : OnlineEvent<FpsHitPacket>
     [OnlineEventField(Name = "attackerID")] public byte AttackerId;
     [OnlineEventField(Name = "victimID")] public byte VictimId;
     [OnlineEventField(Name = "remainingHealth")] public ushort RemainingHealth;
+}
+
+[OnlineEvent(Key = "ASRC_FpsShot", Udp = true)]
+public sealed class FpsShotPacket : OnlineEvent<FpsShotPacket>
+{
+    [OnlineEventField(Name = "shooterID")] public byte ShooterId;
+    [OnlineEventField(Name = "sequence")] public uint Sequence;
+    [OnlineEventField(Name = "origin")] public Vector3 Origin;
+    [OnlineEventField(Name = "direction")] public Vector3 Direction;
+    [OnlineEventField(Name = "distance")] public float Distance;
 }

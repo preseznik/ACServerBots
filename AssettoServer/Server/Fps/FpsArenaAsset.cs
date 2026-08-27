@@ -34,7 +34,7 @@ internal static class FpsArenaAssetBuilder
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public static FpsArenaBuildResult Build(string assettoCorsaRoot, string track,
-        string? layout, string outputPath)
+        string? layout, string outputPath, string? geometryOutputPath = null)
     {
         string trackRoot = Path.Combine(Path.GetFullPath(assettoCorsaRoot), "content", "tracks", track);
         string modelsIni = string.IsNullOrWhiteSpace(layout)
@@ -88,11 +88,33 @@ internal static class FpsArenaAssetBuilder
             SpawnPoints = spawns,
         };
 
+        var arenaTriangles = RacePhysicsAssetBuilder.DeduplicateTriangles(triangles)
+            .Where(triangle => TouchesBounds(triangle, minX, minY, minZ, maxX, maxY, maxZ))
+            .ToArray();
+        if (arenaTriangles.Length == 0)
+            throw new InvalidDataException("No physical track geometry intersects the prepared FPS arena bounds");
+
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         File.WriteAllText(outputPath, JsonSerializer.Serialize(asset, new JsonSerializerOptions
         {
             WriteIndented = true,
         }));
-        return new FpsArenaBuildResult(spawns.Length, triangles.Count);
+        if (!string.IsNullOrWhiteSpace(geometryOutputPath))
+            new FpsArenaGeometryAsset { Triangles = arenaTriangles }.Save(geometryOutputPath);
+        return new FpsArenaBuildResult(spawns.Length, arenaTriangles.Length);
+    }
+
+    private static bool TouchesBounds(Kn5Triangle triangle, float minX, float minY, float minZ,
+        float maxX, float maxY, float maxZ)
+    {
+        float triangleMinX = MathF.Min(triangle.A.X, MathF.Min(triangle.B.X, triangle.C.X));
+        float triangleMinY = MathF.Min(triangle.A.Y, MathF.Min(triangle.B.Y, triangle.C.Y));
+        float triangleMinZ = MathF.Min(triangle.A.Z, MathF.Min(triangle.B.Z, triangle.C.Z));
+        float triangleMaxX = MathF.Max(triangle.A.X, MathF.Max(triangle.B.X, triangle.C.X));
+        float triangleMaxY = MathF.Max(triangle.A.Y, MathF.Max(triangle.B.Y, triangle.C.Y));
+        float triangleMaxZ = MathF.Max(triangle.A.Z, MathF.Max(triangle.B.Z, triangle.C.Z));
+        return triangleMaxX >= minX && triangleMinX <= maxX
+            && triangleMaxY >= minY && triangleMinY <= maxY
+            && triangleMaxZ >= minZ && triangleMinZ <= maxZ;
     }
 }

@@ -126,6 +126,13 @@ $stager = [AssettoServer.RaceControl.Core.Staging.ServerInstanceStager]::new($pa
 Write-Host $(if ($FpsGate) { 'Staging FPS compatibility server...' } else { 'Staging and preparing rigid-body inputs...' })
 $instance = $stager.StageAsync($preset, $catalog, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
 Write-Host "Staged $($instance.SlotCount) slots ($($instance.BotSlotCount) bot-capable) at $($instance.RootPath)"
+if ($FpsGate) {
+    $fpsGeometry = Join-Path $instance.RootPath 'presets\race-control\fps-arena-geometry.bin'
+    if (-not (Test-Path -LiteralPath $fpsGeometry -PathType Leaf) -or
+        (Get-Item -LiteralPath $fpsGeometry).Length -le 12) {
+        throw 'FPS staging did not produce a non-empty physical arena geometry asset.'
+    }
+}
 
 $stdout = Join-Path $instance.RootPath 'acceptance-stdout.log'
 $stderr = Join-Path $instance.RootPath 'acceptance-stderr.log'
@@ -146,6 +153,38 @@ if ($SimulateRace) {
 $serverProcess = Start-Process -FilePath $instance.ExecutablePath -WorkingDirectory $instance.RootPath `
     -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
 try {
+    if ($FpsGate) {
+        $assetUrl = 'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v4.zip'
+        $assetDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        $assetArchiveBytes = $null
+        $httpClient = [Net.Http.HttpClient]::new()
+        $httpClient.Timeout = [TimeSpan]::FromSeconds(2)
+        try {
+            while ([DateTimeOffset]::UtcNow -lt $assetDeadline -and $null -eq $assetArchiveBytes) {
+                try {
+                    $response = $httpClient.GetAsync($assetUrl).GetAwaiter().GetResult()
+                    try {
+                        if ($response.IsSuccessStatusCode) {
+                            $assetArchiveBytes = $response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+                        }
+                    } finally {
+                        $response.Dispose()
+                    }
+                } catch {
+                    if ($serverProcess.HasExited) { break }
+                }
+                if ($null -eq $assetArchiveBytes) { Start-Sleep -Milliseconds 100 }
+            }
+        } finally {
+            $httpClient.Dispose()
+        }
+        if ($null -eq $assetArchiveBytes -or $assetArchiveBytes.Length -le 10KB -or
+            $assetArchiveBytes[0] -ne 0x50 -or $assetArchiveBytes[1] -ne 0x4B) {
+            throw "FPS server did not expose a valid CSP asset archive at $assetUrl"
+        }
+        Write-Host "Verified CSP rifle asset archive endpoint ($($assetArchiveBytes.Length) bytes)."
+    }
+
     if ($VerifyLiveControl) {
         function Wait-LiveState([scriptblock] $Condition, [string] $Description) {
             $deadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
@@ -359,6 +398,16 @@ if ($combinedLog -notmatch 'Shutdown requested by control file') { throw 'Server
 if ($FpsGate -and $combinedLog -notmatch 'FPS deathmatch world started') {
     throw 'Server log did not confirm the authoritative FPS world startup.'
 }
+if ($FpsGate -and $combinedLog -notmatch '\d+ physical arena triangles') {
+    throw 'Server log did not confirm loading physical FPS arena geometry.'
+}
+if ($FpsGate) {
+    $initialBotSpawns = @([regex]::Matches($combinedLog,
+        'FPS actor initial spawn: actor=\d+, role=(?:Auto|Bot), human=False,'))
+    if ($initialBotSpawns.Count -ne $Slots) {
+        throw "FPS world spawned $($initialBotSpawns.Count) stationary bots; expected $Slots."
+    }
+}
 if ($VerifyLiveControl -and $combinedLog -notmatch 'Race Control live bridge ready') {
     throw 'Server log did not confirm the Race Control live bridge.'
 }
@@ -434,7 +483,7 @@ if ($VerifyMovingBots) {
     }
 }
 if ($FpsGate) {
-    Write-Host 'PASS: FPS arena preparation, isolated authoritative-world startup, and graceful shutdown succeeded.'
+    Write-Host "PASS: FPS arena preparation, $Slots stationary bot spawns, isolated authoritative-world startup, and graceful shutdown succeeded."
 } else {
     Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'
 }

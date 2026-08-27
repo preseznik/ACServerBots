@@ -218,6 +218,7 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.ExtraConfiguration, Does.Contain("MinimumCSPVersion: 4053"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("Fps:"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  KillLimit: 20"));
+            Assert.That(rendered.ExtraConfiguration, Does.Contain("    GeometryPath: fps-arena-geometry.bin"));
         });
 
         static FpsArenaDefinition Arena() => new()

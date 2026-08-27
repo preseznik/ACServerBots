@@ -268,6 +268,7 @@ public sealed class ServerConfigurationRenderer
             Line($"    AggressionVariancePercent: {fps.Bots.AggressionVariancePercent.ToString("0.###", invariant)}");
             Line($"    Health: {fps.Bots.Health}");
             Line("  Arena:");
+            Line("    GeometryPath: fps-arena-geometry.bin");
             Point("BoundsMin", arena.BoundsMin, 4);
             Point("BoundsMax", arena.BoundsMax, 4);
             Line("    SpawnPoints:");
