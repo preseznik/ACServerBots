@@ -39,6 +39,8 @@ public enum FpsClientDiagnosticFlags : ushort
     ActorAvailable = 8,
     CameraActive = 16,
     DirectRenderReady = 32,
+    ThirdPerson = 64,
+    LocalAvatarReady = 128,
 }
 
 [OnlineEvent(Key = "ASRC_FpsClientDiagnostic")]
@@ -69,6 +71,7 @@ public sealed class FpsSnapshotPacket : OnlineEvent<FpsSnapshotPacket>
     [OnlineEventField(Name = "actorIDs", Size = Capacity)] public byte[] ActorIds = new byte[Capacity];
     [OnlineEventField(Name = "flags", Size = Capacity)] public byte[] Flags = new byte[Capacity];
     [OnlineEventField(Name = "positions", Size = Capacity)] public Vector3[] Positions = new Vector3[Capacity];
+    [OnlineEventField(Name = "groundYs", Size = Capacity)] public float[] GroundYs = new float[Capacity];
     [OnlineEventField(Name = "yaws", Size = Capacity)] public float[] Yaws = new float[Capacity];
     [OnlineEventField(Name = "pitches", Size = Capacity)] public float[] Pitches = new float[Capacity];
     [OnlineEventField(Name = "health", Size = Capacity)] public ushort[] Health = new ushort[Capacity];

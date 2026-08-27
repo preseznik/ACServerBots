@@ -207,9 +207,60 @@ public sealed class FpsSimulationTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsArenaSurface.MaximumStepHeight, Is.EqualTo(0.35f));
+            Assert.That(FpsArenaSurface.MaximumStepHeight, Is.EqualTo(0.48f));
             Assert.That(actor.Position.X, Is.GreaterThan(1.5f));
             Assert.That(actor.Position.Y, Is.EqualTo(curbHeight).Within(0.01f));
+        });
+    }
+
+    [Test]
+    public void MovementStepsUpRepeatedStairRisers()
+    {
+        const float riserHeight = 0.24f;
+        const float treadDepth = 0.42f;
+        var triangles = new List<Kn5Triangle>
+        {
+            // Fire Pit-style geometry retains a floor below the modeled stair treads.
+            new(new Vector3(-10, 0, -2), new Vector3(-10, 0, 2), new Vector3(10, 0, 2)),
+            new(new Vector3(-10, 0, -2), new Vector3(10, 0, 2), new Vector3(10, 0, -2)),
+        };
+        for (int step = 0; step < 5; step++)
+        {
+            float x0 = step * treadDepth;
+            float x1 = (step + 1) * treadDepth;
+            float y0 = step * riserHeight;
+            float y1 = (step + 1) * riserHeight;
+            triangles.Add(new Kn5Triangle(new Vector3(x0, y1, -2), new Vector3(x0, y1, 2),
+                new Vector3(x1, y1, 2)));
+            triangles.Add(new Kn5Triangle(new Vector3(x0, y1, -2), new Vector3(x1, y1, 2),
+                new Vector3(x1, y1, -2)));
+            triangles.Add(new Kn5Triangle(new Vector3(x0, y0, -2), new Vector3(x0, y1, 2),
+                new Vector3(x0, y1, -2)));
+            triangles.Add(new Kn5Triangle(new Vector3(x0, y0, -2), new Vector3(x0, y0, 2),
+                new Vector3(x0, y1, 2)));
+        }
+        float topY = 5 * riserHeight;
+        triangles.Add(new Kn5Triangle(new Vector3(5 * treadDepth, topY, -2),
+            new Vector3(5 * treadDepth, topY, 2), new Vector3(10, topY, 2)));
+        triangles.Add(new Kn5Triangle(new Vector3(5 * treadDepth, topY, -2),
+            new Vector3(10, topY, 2), new Vector3(10, topY, -2)));
+
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Stair walker", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(triangles));
+        simulation.ClaimHuman(0);
+        var actor = simulation.Actors.Single();
+        actor.Position = new Vector3(-1, 0, 0);
+        actor.GroundY = 0;
+        simulation.ApplyInput(0, new FpsInputCommand(1, new Vector2(1, 0), 0, 0,
+            FpsInputButtons.None));
+
+        for (int tick = 0; tick < 24; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Position.X, Is.GreaterThan(2.5f));
+            Assert.That(actor.Position.Y, Is.EqualTo(topY).Within(0.01f));
         });
     }
 
@@ -226,6 +277,80 @@ public sealed class FpsSimulationTests
         for (int tick = 0; tick < 40; tick++) simulation.Step(0.05f);
 
         Assert.That(simulation.Actors.Single().Position.X, Is.LessThanOrEqualTo(1.01f));
+    }
+
+    [Test]
+    public void MovementOffLedgeTransitionsToGravityDrivenFall()
+    {
+        var triangles = new List<Kn5Triangle>
+        {
+            new(new Vector3(-10, 2, -5), new Vector3(-10, 2, 5), new Vector3(0, 2, 5)),
+            new(new Vector3(-10, 2, -5), new Vector3(0, 2, 5), new Vector3(0, 2, -5)),
+            new(new Vector3(0, 0, -5), new Vector3(0, 0, 5), new Vector3(10, 0, 5)),
+            new(new Vector3(0, 0, -5), new Vector3(10, 0, 5), new Vector3(10, 0, -5)),
+        };
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Drop runner", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(triangles));
+        simulation.ClaimHuman(0);
+        var actor = simulation.Actors.Single();
+        actor.Position = new Vector3(-1, 2, 0);
+        actor.GroundY = 2;
+        simulation.ApplyInput(0, new FpsInputCommand(1, new Vector2(1, 0), 0, 0,
+            FpsInputButtons.None));
+
+        float firstAirborneY = float.NaN;
+        for (int tick = 0; tick < 35; tick++)
+        {
+            simulation.Step(0.05f);
+            if (!actor.IsGrounded && float.IsNaN(firstAirborneY)) firstAirborneY = actor.Position.Y;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(FpsArenaSurface.MaximumStepDown, Is.EqualTo(0.48f));
+            Assert.That(firstAirborneY, Is.GreaterThan(1.8f),
+                "A ledge must begin a fall instead of snapping two metres to the lower floor");
+            Assert.That(actor.Position.X, Is.GreaterThan(2));
+            Assert.That(actor.Position.Y, Is.Zero.Within(0.01f));
+            Assert.That(actor.IsGrounded, Is.True);
+        });
+    }
+
+    [Test]
+    public void JumpCarriesMomentumAcrossLedgeAndLandsOnLowerFloor()
+    {
+        var triangles = new List<Kn5Triangle>
+        {
+            new(new Vector3(-10, 2, -5), new Vector3(-10, 2, 5), new Vector3(0, 2, 5)),
+            new(new Vector3(-10, 2, -5), new Vector3(0, 2, 5), new Vector3(0, 2, -5)),
+            new(new Vector3(0, 0, -5), new Vector3(0, 0, 5), new Vector3(10, 0, 5)),
+            new(new Vector3(0, 0, -5), new Vector3(10, 0, 5), new Vector3(10, 0, -5)),
+        };
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Ledge jumper", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(triangles));
+        simulation.ClaimHuman(0);
+        var actor = simulation.Actors.Single();
+        actor.Position = new Vector3(-1, 2, 0);
+        actor.GroundY = 2;
+        simulation.ApplyInput(0, new FpsInputCommand(1, new Vector2(1, 0), 0, 0,
+            FpsInputButtons.Sprint | FpsInputButtons.Jump));
+
+        float maximumY = actor.Position.Y;
+        for (int tick = 0; tick < 45; tick++)
+        {
+            simulation.Step(0.05f);
+            maximumY = MathF.Max(maximumY, actor.Position.Y);
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(maximumY, Is.GreaterThan(3.5f));
+            Assert.That(actor.Position.X, Is.GreaterThan(4));
+            Assert.That(actor.Position.Y, Is.Zero.Within(0.01f));
+            Assert.That(actor.IsGrounded, Is.True);
+        });
     }
 
     [Test]

@@ -335,6 +335,7 @@ public sealed class FpsWorld : IHostedService
                     | (actor.IsGrounded ? 16 : 0) | (actor.IsCrouching ? 32 : 0)
                     | (actor.GeometryBlocked ? 64 : 0) | (actor.IsProne ? 128 : 0));
                 packet.Positions[index] = actor.Position;
+                packet.GroundYs[index] = actor.GroundY;
                 packet.Yaws[index] = actor.Yaw;
                 packet.Pitches[index] = actor.Pitch;
                 packet.Health[index] = (ushort)Math.Max(0, actor.Health);

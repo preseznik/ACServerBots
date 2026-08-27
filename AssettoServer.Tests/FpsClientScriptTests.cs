@@ -22,8 +22,15 @@ public sealed class FpsClientScriptTests
         int updateStart = script.IndexOf("function script.update(dt)", StringComparison.Ordinal);
         int frameBeginStart = script.IndexOf("function script.frameBegin", StringComparison.Ordinal);
         int draw3DStart = script.IndexOf("function script.draw3D", StringComparison.Ordinal);
+        int directDrawStart = script.IndexOf("local function drawDirectRifleViewmodel",
+            StringComparison.Ordinal);
+        int localCollisionStart = script.IndexOf("local function localTrackMovementBlocked",
+            StringComparison.Ordinal);
         string updateDefinition = script[updateStart..frameBeginStart];
         string frameBeginDefinition = script[frameBeginStart..draw3DStart];
+        int drawUiStart = script.IndexOf("function script.drawUI", StringComparison.Ordinal);
+        string draw3DDefinition = script[draw3DStart..drawUiStart];
+        string directDrawDefinition = script[directDrawStart..localCollisionStart];
 
         Assert.Multiple(() =>
         {
@@ -53,6 +60,25 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("function script.frameBegin"));
             Assert.That(updateDefinition, Does.Not.Contain("applyFpsCamera(localActor)"));
             Assert.That(frameBeginDefinition, Does.Contain("applyFpsCamera(localActor)"));
+            Assert.That(updateDefinition, Does.Not.Contain("updateRifleViewmodel(dt"));
+            Assert.That(directDrawDefinition, Does.Contain(
+                "updateRifleViewmodel(viewmodelFrameDt, actor, viewmodelMove, viewmodelSprint)"));
+            Assert.That(draw3DDefinition, Does.Contain("drawDirectRifleViewmodel()"));
+            Assert.That(script, Does.Contain("ac.KeyIndex.F6"));
+            Assert.That(script, Does.Contain("third-person over-shoulder"));
+            Assert.That(script, Does.Contain("physics.raycastTrack(focus, direction, distance"));
+            Assert.That(script, Does.Contain("actor.root:setVisible(active and thirdPersonEnabled)"));
+            Assert.That(script, Does.Contain(
+                "render.setTransform(viewmodelRenderPosition, viewmodelRenderLook, viewmodelRenderUp, true)"));
+            Assert.That(script, Does.Contain("ac.getCameraPosition():clone()"));
+            Assert.That(script, Does.Contain("ac.getCameraForward():clone()"));
+            Assert.That(script, Does.Contain("ac.getCameraUp():clone()"));
+            Assert.That(script, Does.Contain("actor.root:setOrientation(vec3(math.sin(yaw)"));
+            Assert.That(script, Does.Contain("groundYs = ac.StructItem.array"));
+            Assert.That(script, Does.Contain("updateLocalThirdPersonAvatar(localActor)"));
+            Assert.That(script, Does.Contain("local third-person avatar ready:"));
+            Assert.That(script, Does.Contain("procedural-mannequin"));
+            Assert.That(script, Does.Contain("clientAssetPath('content/objects3D/pitcrew.kn5')"));
             Assert.That(script, Does.Contain("'quickPitsMenu'"));
             Assert.That(script, Does.Contain("ac.disableQuickMenuPitstop(true)"));
             Assert.That(script, Does.Contain("ac.accessMouseDelta(true, true, true)"));
@@ -72,7 +98,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("ui.transparentWindow('asrc-fps-scoreboard-controls'"));
             Assert.That(script, Does.Contain("ui.checkbox('Keep mouse cursor visible after releasing TAB'"));
             Assert.That(script, Does.Contain("DEATHMATCH SCOREBOARD"));
-            Assert.That(script, Does.Contain("bit.band(actor.flags, 16)"));
+            Assert.That(script, Does.Contain("bit.band(localActor.flags, 16)"));
             Assert.That(script, Does.Contain("bit.band(actor.flags, 64)"));
             Assert.That(script, Does.Contain("bit.band(actor.flags, 128)"));
             Assert.That(script, Does.Contain("cameraHeight = math.lerp"));
@@ -112,7 +138,10 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("viewmodelHolder:setPosition(position)"));
             Assert.That(script, Does.Not.Contain("viewmodelHolder:setOrientation(look, up)"));
             Assert.That(script, Does.Not.Contain("viewmodelRoot:setPosition(position)"));
-            Assert.That(script, Does.Contain("viewmodelRenderTransform = mat4x4.look(position, look, up)"));
+            Assert.That(script, Does.Contain("viewmodelRenderPosition = position:clone()"));
+            Assert.That(script, Does.Contain("viewmodelRenderLook = look:clone()"));
+            Assert.That(script, Does.Contain("viewmodelRenderUp = up:clone()"));
+            Assert.That(script, Does.Not.Contain("render.setTransform(viewmodelRenderTransform, true)"));
             Assert.That(script, Does.Contain("return render.mesh(viewmodelRenderParams)"));
             Assert.That(script, Does.Contain("render.setDepthMode(render.DepthMode.Off)"));
             Assert.That(script, Does.Contain("direct assault-rifle viewmodel draw completed"));

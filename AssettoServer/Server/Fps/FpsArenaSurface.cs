@@ -61,13 +61,18 @@ internal sealed class FpsArenaSurface
 {
     private const float CellSize = 4;
     internal const float MaximumWalkableSlopeDegrees = 45;
-    internal const float MaximumStepHeight = 0.35f;
+    // AC track stairs and deep kerbs can have individual risers above 35 cm. A candidate
+    // still needs a walkable top, so this does not turn vertical walls into climbable ramps.
+    internal const float MaximumStepHeight = 0.48f;
     internal const float MaximumMantleHeight = 1.75f;
     private const float MaximumMantleDistance = 1.8f;
     internal const float MaximumVaultHeight = 1.15f;
     private const float MaximumVaultDistance = 2.2f;
     private const float SurfaceContactTolerance = 0.08f;
-    private const float MaximumStepDown = 2;
+    // A drop is not a step. Keeping this close to the upward step limit lets stairs and
+    // kerbs descend smoothly, while larger drops transition into an airborne fall.
+    internal const float MaximumStepDown = 0.48f;
+    private const float MaximumFallDistance = 100;
     private const float ActorRadius = 0.35f;
     private const float StandingHeight = 1.8f;
     private const float CrouchingHeight = 1.15f;
@@ -136,6 +141,48 @@ internal sealed class FpsArenaSurface
                 && TryCandidate(zOnly, groundY, actorHeight, out next, out nextGround))
             {
                 resolved = next;
+                groundY = nextGround;
+                moved = slid = true;
+            }
+            if (!slid) break;
+        }
+        return moved || planarDelta.LengthSquared() < 1e-8f;
+    }
+
+    public bool TryResolveAirMove(Vector3 current, Vector3 desired, float actorHeight,
+        out Vector3 resolved, out float groundY)
+    {
+        resolved = current;
+        groundY = current.Y;
+        var planarDelta = new Vector2(desired.X - current.X, desired.Z - current.Z);
+        int steps = Math.Max(1, (int)MathF.Ceiling(planarDelta.Length() / MaximumSweepStep));
+        var increment = (desired - current) / steps;
+        bool moved = false;
+        for (int step = 0; step < steps; step++)
+        {
+            var candidate = resolved + increment;
+            if (TryAirCandidate(candidate, actorHeight, out float nextGround))
+            {
+                resolved = candidate;
+                groundY = nextGround;
+                moved = true;
+                continue;
+            }
+
+            bool slid = false;
+            var xOnly = new Vector3(resolved.X + increment.X, resolved.Y, resolved.Z);
+            if (MathF.Abs(increment.X) > 0.0001f
+                && TryAirCandidate(xOnly, actorHeight, out nextGround))
+            {
+                resolved = xOnly;
+                groundY = nextGround;
+                moved = slid = true;
+            }
+            var zOnly = new Vector3(resolved.X, resolved.Y, resolved.Z + increment.Z);
+            if (MathF.Abs(increment.Z) > 0.0001f
+                && TryAirCandidate(zOnly, actorHeight, out nextGround))
+            {
+                resolved = zOnly;
                 groundY = nextGround;
                 moved = slid = true;
             }
@@ -240,7 +287,7 @@ internal sealed class FpsArenaSurface
         float maximumDelta, out float height)
     {
         bool found = false;
-        float bestDistance = float.MaxValue;
+        float bestHeight = float.NegativeInfinity;
         height = referenceY;
         foreach (int index in Candidates(x, z))
         {
@@ -250,10 +297,11 @@ internal sealed class FpsArenaSurface
                 || !TryHeight(item.Triangle, x, z, out float candidate)) continue;
             float delta = candidate - referenceY;
             if (delta > maximumDelta || delta < minimumDelta) continue;
-            float distance = MathF.Abs(delta);
-            if (distance >= bestDistance) continue;
+            // Track collision meshes commonly retain a base floor underneath modeled stairs.
+            // Prefer the highest reachable support so that a tread wins over the hidden floor.
+            if (candidate <= bestHeight) continue;
             found = true;
-            bestDistance = distance;
+            bestHeight = candidate;
             height = candidate;
         }
         return found;
@@ -270,6 +318,15 @@ internal sealed class FpsArenaSurface
             return false;
         }
         resolved = position;
+        return true;
+    }
+
+    private bool TryAirCandidate(Vector3 position, float actorHeight, out float groundY)
+    {
+        if (!TryGetGroundHeight(position.X, position.Z, position.Y, -MaximumFallDistance,
+                SurfaceContactTolerance, out groundY)
+            || IsBlocked(position, position.Y, actorHeight))
+            return false;
         return true;
     }
 

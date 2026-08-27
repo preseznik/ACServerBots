@@ -413,9 +413,38 @@ internal sealed class FpsSimulation
         }
 
         var previous = actor.Position;
-        if (!_surface.TryResolveMove(actor.Position, desired, actor.GroundY,
-                CollisionHeight(actor.Stance),
-                out var resolved, out float groundY))
+        float actorHeight = CollisionHeight(actor.Stance);
+        Vector3 resolved;
+        float groundY;
+        bool resolvedMove;
+        if (actor.IsGrounded)
+        {
+            resolvedMove = _surface.TryResolveMove(actor.Position, desired, actor.GroundY,
+                actorHeight, out resolved, out groundY);
+            float supportedDistance = Vector2.Distance(new Vector2(previous.X, previous.Z),
+                new Vector2(resolved.X, resolved.Z));
+            float requestedPlanarDistance = Vector2.Distance(new Vector2(previous.X, previous.Z),
+                new Vector2(desired.X, desired.Z));
+            if (requestedPlanarDistance > supportedDistance + 0.01f
+                && _surface.TryResolveAirMove(resolved, desired, actorHeight,
+                    out var airResolved, out float landingGroundY)
+                && Vector2.Distance(new Vector2(previous.X, previous.Z),
+                    new Vector2(airResolved.X, airResolved.Z)) > supportedDistance + 0.001f)
+            {
+                resolved = airResolved;
+                groundY = landingGroundY;
+                actor.IsGrounded = false;
+                actor.VerticalVelocity = MathF.Min(0, actor.VerticalVelocity);
+                resolvedMove = true;
+            }
+        }
+        else
+        {
+            resolvedMove = _surface.TryResolveAirMove(actor.Position, desired, actorHeight,
+                out resolved, out groundY);
+        }
+
+        if (!resolvedMove)
         {
             actor.GeometryBlocked = true;
             actor.HorizontalVelocity = Vector2.Zero;

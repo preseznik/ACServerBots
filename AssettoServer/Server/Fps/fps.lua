@@ -24,8 +24,11 @@ local viewmodelHolder = nil
 local viewmodelRoot = nil
 local viewmodelKick = 0
 local viewmodelBobTime = 0
+local viewmodelMove = vec2()
+local viewmodelSprint = false
+local viewmodelFrameDt = 1 / 60
 local localMuzzlePosition = vec3()
-local viewmodelPipelineVersion = 'direct-render-v6'
+local viewmodelPipelineVersion = 'render-camera-v9'
 local viewmodelLastStage = 'not-started'
 local viewmodelLastStageDetail = ''
 local viewmodelStagesSeen = {}
@@ -36,7 +39,9 @@ local viewmodelDraw3DCalls = 0
 local viewmodelDrawUICalls = 0
 local viewmodelDiagnosticAccumulator = 0.5
 local viewmodelLastPosition = nil
-local viewmodelRenderTransform = nil
+local viewmodelRenderPosition = nil
+local viewmodelRenderLook = nil
+local viewmodelRenderUp = nil
 local viewmodelRenderParams = nil
 local viewmodelDirectDrawAttempts = 0
 local viewmodelDirectDrawCompletions = 0
@@ -86,6 +91,11 @@ local crouchWasHeld = false
 local crouchHeldSeconds = 0
 local crouchLatched = false
 local cameraHeight = 1.65
+local thirdPersonEnabled = false
+local thirdPersonToggleWasHeld = false
+local localAvatarReady = false
+local localAvatarKind = 'none'
+local localAvatarErrorLogged = false
 local scoreboardHeld = false
 local persistentCursor = false
 local cursorUnlocked = false
@@ -191,6 +201,7 @@ local snapshotEvent = ac.OnlineEvent({
   actorIDs = ac.StructItem.array(ac.StructItem.byte(), capacity),
   flags = ac.StructItem.array(ac.StructItem.byte(), capacity),
   positions = ac.StructItem.array(ac.StructItem.vec3(), capacity),
+  groundYs = ac.StructItem.array(ac.StructItem.float(), capacity),
   yaws = ac.StructItem.array(ac.StructItem.float(), capacity),
   pitches = ac.StructItem.array(ac.StructItem.float(), capacity),
   health = ac.StructItem.array(ac.StructItem.uint16(), capacity),
@@ -215,6 +226,7 @@ local snapshotEvent = ac.OnlineEvent({
     end
     local previousFlags = actor.flags
     actor.target:set(message.positions[i])
+    actor.groundY = message.groundYs[i]
     if actor.render:lengthSquared() < 0.001 then actor.render:set(actor.target) end
     actor.targetYaw = message.yaws[i]
     actor.pitch = message.pitches[i]
@@ -246,7 +258,7 @@ local snapshotEvent = ac.OnlineEvent({
       end
       local wasDead = bit.band(previousFlags, 2) ~= 0
       local isDead = bit.band(actor.flags, 2) ~= 0
-      if bit.band(actor.flags, 16) ~= 0 then predictedGroundY = actor.target.y end
+      predictedGroundY = actor.groundY
       if bit.band(actor.flags, 64) ~= 0 then
         actor.render.x = actor.target.x
         actor.render.z = actor.target.z
@@ -540,7 +552,6 @@ local function ensureLocalViewmodel()
       .. '; meshes=' .. tostring(meshCount)) or ('unavailable: ' .. tostring(boundsMin))))
   viewmodelRenderParams = {
     mesh = viewmodelRoot,
-    transform = mat4x4.identity(),
     async = true,
     cacheKey = 0x41535236,
     textures = {},
@@ -616,17 +627,35 @@ playRifleSound = function(position, localShot)
 end
 
 local function ensureAvatar(actor)
-  if actor.id == localSessionID then return end
   if actor.root == nil then
     local root = carsRoot:createBoundingSphereNode('ASRC_FPS_' .. actor.id, 1.5)
-    local ok, model = pcall(function() return root:loadKN5('content/objects3D/pitcrew.kn5') end)
+    local pitcrewPath = clientAssetPath('content/objects3D/pitcrew.kn5')
+    local pitcrewAnimationPath = clientAssetPath('content/objects3D/pitcrew_idle_up.ksanim')
+    local ok, model = pcall(function()
+      return root:loadKN5({filename = pitcrewPath, forceRenderableOn = true})
+    end)
     if ok and model ~= nil then
-      pcall(function() model:setAnimation('content/objects3D/pitcrew_idle_up.ksanim', 0, true) end)
+      pcall(function() model:setAnimation(pitcrewAnimationPath, 0, true) end)
       root:setVirtualCarFlag(true)
       actor.root = root
+      actor.avatarKind = 'stock-pitcrew'
     else
-      root:dispose()
-      actor.root = false
+      createBoxGroup(root, 'ASRC_FPS_MANNEQUIN_BODY_' .. actor.id, {
+        {vec3(0, 1.18, 0), vec3(0.48, 0.62, 0.28)},
+        {vec3(0, 0.78, 0), vec3(0.40, 0.24, 0.25)},
+        {vec3(-0.14, 0.35, 0), vec3(0.18, 0.70, 0.20)},
+        {vec3(0.14, 0.35, 0), vec3(0.18, 0.70, 0.20)},
+        {vec3(-0.34, 1.13, 0.02), vec3(0.16, 0.68, 0.18)},
+        {vec3(0.34, 1.13, 0.02), vec3(0.16, 0.68, 0.18)},
+      }, '343A46')
+      createBoxGroup(root, 'ASRC_FPS_MANNEQUIN_HEAD_' .. actor.id, {
+        {vec3(0, 1.65, 0), vec3(0.28, 0.32, 0.27)},
+      }, 'B99B82')
+      root:setVirtualCarFlag(true)
+      actor.root = root
+      actor.avatarKind = 'procedural-mannequin'
+      ac.warn('[ASRC FPS] stock pit-crew avatar unavailable for actor=' .. tostring(actor.id)
+        .. '; using procedural mannequin; error=' .. tostring(model))
     end
   end
   if actor.root == false or actor.weaponRoot ~= nil then return end
@@ -700,8 +729,30 @@ local function applyFpsCamera(actor)
   local look = vec3(math.sin(yaw) * math.cos(pitch), math.sin(pitch), math.cos(yaw) * math.cos(pitch))
   camera.ownShare = 1
   camera.fov = 72
-  camera.transform.position = actor.render + vec3(0, cameraHeight, 0)
-  camera.transform.look = look
+  if thirdPersonEnabled then
+    local forward = vec3(math.sin(yaw), 0, math.cos(yaw))
+    local right = vec3(forward.z, 0, -forward.x)
+    local focus = actor.render + vec3(0, math.max(1.05, cameraHeight - 0.25), 0)
+    local desired = focus - forward * 3.2 + right * 0.72 + vec3(0, 0.55, 0)
+    local cameraOffset = desired - focus
+    local distance = cameraOffset:length()
+    if distance > 0.001 then
+      local direction = cameraOffset / distance
+      local normal = vec3()
+      local hit = physics.raycastTrack(focus, direction, distance, nil, normal, false, false)
+      if hit >= 0 and hit < distance then
+        desired = focus + direction * math.max(0.35, hit - 0.15)
+      end
+    end
+    local aimTarget = actor.render + vec3(0, cameraHeight, 0) + look * 30
+    local cameraLook = aimTarget - desired
+    if cameraLook:lengthSquared() > 0.001 then cameraLook:normalize() else cameraLook:set(look) end
+      camera.transform.position = desired
+    camera.transform.look = cameraLook
+  else
+    camera.transform.position = actor.render + vec3(0, cameraHeight, 0)
+    camera.transform.look = look
+  end
   camera.transform.up = vec3(0, 1, 0)
   return true
 end
@@ -710,22 +761,29 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   viewmodelUpdateAttempts = viewmodelUpdateAttempts + 1
   if not ensureLocalViewmodel() then return end
   local visible = gameplayActive and actor ~= nil and bit.band(actor.flags, 1) ~= 0
-    and bit.band(actor.flags, 2) == 0 and not cursorUnlocked
+    and bit.band(actor.flags, 2) == 0 and not cursorUnlocked and not thirdPersonEnabled
   if not visible or camera == nil or not camera:active() then return end
   viewmodelKick = viewmodelKick * math.exp(-dt * 17)
   local moving = move:lengthSquared() > 0.01
   if moving then viewmodelBobTime = viewmodelBobTime + dt * (sprint and 12 or 8) end
-  local look = camera.transform.look:clone()
-  local up = vec3(0, 1, 0)
+  -- The grabbed camera transform is a request which CSP applies later in the frame. Draw
+  -- callbacks must anchor viewmodels to the renderer's actual camera pose instead.
+  local cameraPosition = ac.getCameraPosition():clone()
+  local look = ac.getCameraForward():clone()
+  local up = ac.getCameraUp():clone()
+  if look:lengthSquared() < 0.001 then look:set(camera.transform.look) else look:normalize() end
+  if up:lengthSquared() < 0.001 then up:set(0, 1, 0) else up:normalize() end
   local right = vec3(look.z, 0, -look.x)
   if right:lengthSquared() < 0.001 then right:set(1, 0, 0) else right:normalize() end
-  local bobX = moving and math.sin(viewmodelBobTime) * 0.012 or 0
-  local bobY = moving and math.abs(math.cos(viewmodelBobTime)) * 0.009 or 0
-  local sprintLower = sprint and moving and 0.09 or 0
-  local position = camera.transform.position + look * (0.32 - viewmodelKick * 0.085)
-    + right * (0.22 + bobX) + up * (-0.22 - bobY - sprintLower + viewmodelKick * 0.025)
+  local bobX = moving and math.sin(viewmodelBobTime) * 0.004 or 0
+  local bobY = moving and math.abs(math.cos(viewmodelBobTime)) * 0.003 or 0
+  local sprintLower = sprint and moving and 0.04 or 0
+  local position = cameraPosition + look * (0.30 - viewmodelKick * 0.04)
+    + right * (0.22 + bobX) + up * (-0.20 - bobY - sprintLower + viewmodelKick * 0.012)
   viewmodelLastPosition = position:clone()
-  viewmodelRenderTransform = mat4x4.look(position, look, up)
+  viewmodelRenderPosition = position:clone()
+  viewmodelRenderLook = look:clone()
+  viewmodelRenderUp = up:clone()
   localMuzzlePosition:set(position + look * 0.99 + up * 0.02)
   viewmodelUpdateCompletions = viewmodelUpdateCompletions + 1
   if not viewmodelStagesSeen['direct-transform:ready'] then
@@ -735,12 +793,19 @@ end
 
 local function drawDirectRifleViewmodel()
   local actor = actors[localSessionID]
-  if viewmodelRenderParams == nil or viewmodelRenderTransform == nil
-      or actor == nil or bit.band(actor.flags, 1) == 0 or bit.band(actor.flags, 2) ~= 0
-      or cursorUnlocked or camera == nil or not camera:active() then return end
+  if actor == nil or bit.band(actor.flags, 1) == 0 or bit.band(actor.flags, 2) ~= 0
+      or cursorUnlocked or thirdPersonEnabled or camera == nil or not camera:active() then return end
+
+  -- Scene operations later in script.update can be interrupted by CSP for some tracks.
+  -- Prepare the first-person pose here so rendering never depends on reaching that tail.
+  updateRifleViewmodel(viewmodelFrameDt, actor, viewmodelMove, viewmodelSprint)
+  if viewmodelRenderParams == nil or viewmodelRenderPosition == nil
+      or viewmodelRenderLook == nil or viewmodelRenderUp == nil then return end
 
   viewmodelDirectDrawAttempts = viewmodelDirectDrawAttempts + 1
-  viewmodelRenderParams.transform = viewmodelRenderTransform
+  -- Camera coordinates are world-space while CSP renders in a shifting graphics origin.
+  -- Apply that origin explicitly so the viewmodel remains rigidly attached to the view.
+  render.setTransform(viewmodelRenderPosition, viewmodelRenderLook, viewmodelRenderUp, true)
   render.setBlendMode(render.BlendMode.OpaqueForced)
   render.setCullMode(render.CullMode.None)
   render.setDepthMode(render.DepthMode.Off)
@@ -750,6 +815,7 @@ local function drawDirectRifleViewmodel()
   render.setDepthMode(render.DepthMode.Normal)
   render.setCullMode(render.CullMode.Back)
   render.setBlendMode(render.BlendMode.Opaque)
+  render.setTransform(vec3(), vec3(0, 0, 1), vec3(0, 1, 0))
 
   if not ok then
     viewmodelDirectDrawFailures = viewmodelDirectDrawFailures + 1
@@ -772,6 +838,40 @@ local function drawDirectRifleViewmodel()
       ac.log('[ASRC FPS] direct assault-rifle viewmodel draw completed')
     end
   end
+end
+
+local function updateLocalThirdPersonAvatar(actor)
+  if actor == nil then return false end
+  local ok, err = pcall(function()
+    ensureAvatar(actor)
+    if actor.root == nil or actor.root == false then return end
+    local active = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
+    actor.root:setVisible(active and thirdPersonEnabled)
+    actor.root:setPosition(actor.render)
+    -- Local mouse yaw is immediate; replicated yaw is intentionally delayed by snapshots.
+    -- Using it here made the shoulder camera orbit a body still facing its old direction.
+    actor.root:setOrientation(vec3(math.sin(yaw), 0, math.cos(yaw)), vec3(0, 1, 0))
+    if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
+      actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - (actor.weaponKick or 0) * 0.07))
+      actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
+        vec3(0, 1, 0))
+    end
+  end)
+  if not ok then
+    if not localAvatarErrorLogged then
+      localAvatarErrorLogged = true
+      ac.warn('[ASRC FPS] local third-person avatar update failed: ' .. tostring(err))
+    end
+    localAvatarReady = false
+    return false
+  end
+  local ready = actor.root ~= nil and actor.root ~= false
+  if ready and not localAvatarReady then
+    localAvatarKind = actor.avatarKind or 'unknown'
+    ac.log('[ASRC FPS] local third-person avatar ready: kind=' .. localAvatarKind)
+  end
+  localAvatarReady = ready
+  return ready
 end
 
 local function localTrackMovementBlocked(position, movement, crouching)
@@ -810,8 +910,10 @@ function script.update(dt)
       + (localActor ~= nil and 8 or 0)
       + (camera ~= nil and camera:active() and 16 or 0)
       + (viewmodelDirectDrawCompletions > 0 and 32 or 0)
+      + (thirdPersonEnabled and 64 or 0)
+      + (localAvatarReady and 128 or 0)
     viewmodelDiagnosticSendOk = clientDiagnosticEvent({
-      pipeline = 6,
+      pipeline = 9,
       flags = diagnosticFlags,
       attempts = viewmodelUpdateAttempts,
       completions = viewmodelUpdateCompletions,
@@ -874,6 +976,13 @@ function script.update(dt)
     -- owns the pointer even if a third-party app incorrectly asks for it.
     scoreboardHeld = ac.isKeyDown(ac.KeyIndex.Tab)
     cursorUnlocked = scoreboardHeld or persistentCursor
+    local thirdPersonToggle = ac.isKeyDown(ac.KeyIndex.F6)
+    if thirdPersonToggle and not thirdPersonToggleWasHeld then
+      thirdPersonEnabled = not thirdPersonEnabled
+      ac.log('[ASRC FPS] camera mode changed: '
+        .. (thirdPersonEnabled and 'third-person over-shoulder' or 'first-person'))
+    end
+    thirdPersonToggleWasHeld = thirdPersonToggle
     local mouse = vec2()
     if not cursorUnlocked then
       mouse = ac.accessMouseDelta(true, true, true)
@@ -900,6 +1009,8 @@ function script.update(dt)
     local fire = not cursorUnlocked and (ac.getUI().isMouseLeftKeyDown or gamepadFire)
     sprint = ac.isKeyDown(ac.KeyIndex.LeftShift) or ac.isKeyDown(ac.KeyIndex.RightShift)
       or ac.isGamepadButtonPressed(0, ac.GamepadButton.LeftThumb)
+    viewmodelMove:set(move)
+    viewmodelSprint = sprint
     local jump = ac.isKeyDown(ac.KeyIndex.Space)
     local crouch = ac.isKeyDown(ac.KeyIndex.C)
       or ac.isKeyDown(ac.KeyIndex.LeftControl) or ac.isKeyDown(ac.KeyIndex.RightControl)
@@ -975,6 +1086,9 @@ function script.update(dt)
     sendAccumulator = 0
     inputDiagnosticAccumulator = 0
     inputWasActive = false
+    viewmodelMove:set(0, 0)
+    viewmodelSprint = false
+    thirdPersonToggleWasHeld = false
     jumpWasHeld = false
     predictedHorizontalVelocity = vec2()
     predictedAirborne = false
@@ -1034,17 +1148,22 @@ function script.update(dt)
     local blend = 1 - math.exp(-dt * (actor.id == localSessionID and 6 or 18))
     actor.render:set(math.lerp(actor.render, actor.target, blend))
     actor.yaw = math.lerpAngle(actor.yaw, actor.targetYaw, blend)
-    ensureAvatar(actor)
-    if actor.root then
-      local active = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
-      actor.root:setVisible(active)
-      actor.root:setPosition(actor.render)
-      actor.root:setOrientation(vec3(math.sin(actor.yaw), 0, math.cos(actor.yaw)), vec3(0, 1, 0))
+    if actor.id ~= localSessionID then
+      local sceneOk, sceneError = pcall(function()
+        ensureAvatar(actor)
+        if actor.root then
+          local active = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
+          actor.root:setVisible(active)
+          actor.root:setPosition(actor.render)
+          actor.root:setOrientation(vec3(math.sin(actor.yaw), 0, math.cos(actor.yaw)), vec3(0, 1, 0))
+        end
+      end)
+      if not sceneOk and not actor.sceneErrorLogged then
+        actor.sceneErrorLogged = true
+        ac.warn('[ASRC FPS] avatar scene update failed: actor=' .. tostring(actor.id)
+          .. '; error=' .. tostring(sceneError))
+      end
     end
-  end
-
-  if gameplayActive then
-    updateRifleViewmodel(dt, localActor, move, sprint)
   end
 
   renderDiagnosticAccumulator = renderDiagnosticAccumulator + dt
@@ -1090,10 +1209,17 @@ function script.update(dt)
   end
   for _, actor in pairs(actors) do
     actor.weaponKick = (actor.weaponKick or 0) * math.exp(-dt * 15)
-    if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
-      actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - actor.weaponKick * 0.07))
-      actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
-        vec3(0, 1, 0))
+    if actor.id ~= localSessionID and actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
+      local weaponOk, weaponError = pcall(function()
+        actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - actor.weaponKick * 0.07))
+        actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
+          vec3(0, 1, 0))
+      end)
+      if not weaponOk and not actor.weaponSceneErrorLogged then
+        actor.weaponSceneErrorLogged = true
+        ac.warn('[ASRC FPS] avatar weapon scene update failed: actor=' .. tostring(actor.id)
+          .. '; error=' .. tostring(weaponError))
+      end
     end
   end
   for i = #killFeed, 1, -1 do
@@ -1104,11 +1230,13 @@ end
 
 function script.frameBegin(dt, gameDT)
   viewmodelFrameBeginCalls = viewmodelFrameBeginCalls + 1
+  viewmodelFrameDt = math.max(0.001, math.min(dt, 0.05))
   if not fpsGameplayIsActive() then return end
   local localActor = actors[localSessionID]
   if localActor ~= nil and acquireFpsCamera() then
     applyFpsCamera(localActor)
     ensureLocalViewmodel()
+    updateLocalThirdPersonAvatar(localActor)
   end
 end
 
@@ -1172,6 +1300,9 @@ function script.drawUI()
     actor ~= nil and inputSendOk and rgbm(0.35, 1, 0.45, 1) or rgbm(1, 0.55, 0.2, 1))
   ui.setCursor(vec2(size.x - 260, size.y - 66))
   ui.textAligned('ASSAULT RIFLE  |  INFINITE', 1, vec2(230, 24))
+  ui.setCursor(vec2(size.x - 260, size.y - 44))
+  ui.textAligned('F6  CAMERA: ' .. (thirdPersonEnabled and 'THIRD PERSON' or 'FIRST PERSON'),
+    1, vec2(230, 24))
   ui.setCursor(vec2(center.x - 80, 20))
   ui.textAligned(string.format('%02d:%02d   TARGET %d', math.floor(remainingSeconds / 60),
     math.floor(remainingSeconds % 60), killLimit), 0.5, vec2(160, 24))
