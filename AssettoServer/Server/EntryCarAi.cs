@@ -38,7 +38,8 @@ public readonly record struct RaceAiStateSnapshot(int SplinePointId, Vector3 Pos
     float MaximumLateralOffsetMeters, float ClosestObstacleMeters, float SteeringAngleRadians,
     bool IsStoppedForObstacle, bool IsOvertaking, byte? OvertakeTargetSessionId, bool PassingLeft,
     int PassCommitCount, int SeparatedPassCount, int CompletedPassCount,
-    int StoppedObstaclePassCommitCount, int StoppedObstaclePassCompletedCount);
+    int StoppedObstaclePassCommitCount, int StoppedObstaclePassCompletedCount,
+    byte ProtocolGear, ushort EngineRpm);
 
 public partial class EntryCar
 {
@@ -499,7 +500,8 @@ public partial class EntryCar
                 state.IsStoppedForObstacle, state.IsOvertaking, state.OvertakeTargetSessionId,
                 state.PassingLeft, state.PassCommitCount, state.SeparatedPassCount,
                 state.CompletedPassCount, state.StoppedObstaclePassCommitCount,
-                state.StoppedObstaclePassCompletedCount);
+                state.StoppedObstaclePassCompletedCount, state.Status.Gear,
+                state.Status.EngineRpm);
         }
     }
 

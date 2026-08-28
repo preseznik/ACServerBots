@@ -17,6 +17,11 @@ namespace AssettoServer.RaceControl.Controls;
 /// </summary>
 public sealed class LiveRace3DViewport : DrawingSurface
 {
+    // Physics can carry a fast car well beyond the road edge before its authoritative
+    // off-course recovery completes. Keep the simplified viewer ground comfortably beyond
+    // that recovery envelope so the car never appears to fall into an unrelated black void.
+    private const float TracksideTerrainWidthMeters = 100;
+
     public static readonly DependencyProperty SnapshotProperty = DependencyProperty.Register(
         nameof(Snapshot), typeof(LiveRaceSnapshot), typeof(LiveRace3DViewport),
         new FrameworkPropertyMetadata(null, ScenePropertyChanged));
@@ -309,20 +314,19 @@ public sealed class LiveRace3DViewport : DrawingSurface
             Vector3 nextLeftPoint = nextCenter + nextSide * nextLeft;
             Vector3 nextRightPoint = nextCenter - nextSide * nextRight;
 
-            const float terrainWidth = 30;
             var terrainDrop = new Vector3(0, -0.03f, 0);
             Vector3 currentLeftTerrain = currentLeftPoint + terrainDrop;
             Vector3 nextLeftTerrain = nextLeftPoint + terrainDrop;
             Vector3 currentRightTerrain = currentRightPoint + terrainDrop;
             Vector3 nextRightTerrain = nextRightPoint + terrainDrop;
             AddQuad(vertices,
-                currentLeftTerrain + currentSide * terrainWidth,
-                nextLeftTerrain + nextSide * terrainWidth,
+                currentLeftTerrain + currentSide * TracksideTerrainWidthMeters,
+                nextLeftTerrain + nextSide * TracksideTerrainWidthMeters,
                 nextLeftTerrain, currentLeftTerrain, GrassColor);
             AddQuad(vertices,
                 currentRightTerrain, nextRightTerrain,
-                nextRightTerrain - nextSide * terrainWidth,
-                currentRightTerrain - currentSide * terrainWidth, GrassColor);
+                nextRightTerrain - nextSide * TracksideTerrainWidthMeters,
+                currentRightTerrain - currentSide * TracksideTerrainWidthMeters, GrassColor);
 
             AddTriangle(vertices, currentLeftPoint, nextLeftPoint, currentRightPoint, RoadColor);
             AddTriangle(vertices, currentRightPoint, nextLeftPoint, nextRightPoint, RoadColor);

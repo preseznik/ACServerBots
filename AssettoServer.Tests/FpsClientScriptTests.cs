@@ -13,6 +13,8 @@ public sealed class FpsClientScriptTests
                               ?? throw new AssertionException("Embedded FPS client script was not found");
         using var reader = new StreamReader(stream);
         string script = reader.ReadToEnd();
+        int topLevelLocalCount = script.Split('\n')
+            .Count(line => line.StartsWith("local ", StringComparison.Ordinal));
         int snapshotStart = script.IndexOf("local snapshotEvent", StringComparison.Ordinal);
         int rosterStart = script.IndexOf("local rosterEvent", StringComparison.Ordinal);
         string snapshotDefinition = script[snapshotStart..rosterStart];
@@ -24,7 +26,7 @@ public sealed class FpsClientScriptTests
         int draw3DStart = script.IndexOf("function script.draw3D", StringComparison.Ordinal);
         int directDrawStart = script.IndexOf("local function drawDirectRifleViewmodel",
             StringComparison.Ordinal);
-        int localCollisionStart = script.IndexOf("local function localTrackMovementBlocked",
+        int localCollisionStart = script.IndexOf("local function localTrackProbeMovement",
             StringComparison.Ordinal);
         string updateDefinition = script[updateStart..frameBeginStart];
         string frameBeginDefinition = script[frameBeginStart..draw3DStart];
@@ -34,6 +36,8 @@ public sealed class FpsClientScriptTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(topLevelLocalCount, Is.LessThanOrEqualTo(190),
+                "CSP Lua rejects a main chunk with more than 200 locals; keep headroom for future additions.");
             Assert.That(script, Does.Not.Contain("ac.setCarActive"));
             Assert.That(script, Does.Contain("physics.setCarNoInput(true)"));
             Assert.That(script, Does.Contain("physics.setCarNoInput(false)"));
@@ -56,10 +60,24 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("releaseFpsCamera()"));
             Assert.That(script, Does.Contain("camera, cameraError = ac.grabCamera"));
             Assert.That(script, Does.Contain("camera.ownShare = 1"));
+            Assert.That(script, Does.Contain("fpsNearClip = 0.03"));
+            Assert.That(script, Does.Contain("ac.overrideCameraClipPlanes(fpsNearClip, nil)"));
+            Assert.That(script, Does.Contain("params.clipNear = fpsNearClip"));
+            Assert.That(script, Does.Contain("restoreFpsClipPlane()"));
+            Assert.That(script, Does.Contain("camera near-clip request:"));
+            Assert.That(script, Does.Contain("nearClip=%.3f clipMethod=%s"));
             Assert.That(script, Does.Contain("camera:dispose()"));
             Assert.That(script, Does.Contain("function script.frameBegin"));
             Assert.That(updateDefinition, Does.Not.Contain("applyFpsCamera(localActor)"));
-            Assert.That(frameBeginDefinition, Does.Contain("applyFpsCamera(localActor)"));
+            Assert.That(frameBeginDefinition,
+                Does.Contain("applyFpsCamera(localActor, viewmodelFrameDt)"));
+            Assert.That(script, Does.Contain("local function probeFirstPersonCameraClearance"));
+            Assert.That(script, Does.Contain("local function resolveFirstPersonCameraPosition"));
+            Assert.That(script, Does.Contain("firstPersonCameraRadius = 0.24"));
+            Assert.That(script, Does.Contain("for _ = 1, 4 do"));
+            Assert.That(script, Does.Contain("camera.transform.position = resolveFirstPersonCameraPosition"));
+            Assert.That(script, Does.Contain("first-person camera clearance engaged:"));
+            Assert.That(script, Does.Contain("cameraCorrections=%d"));
             Assert.That(updateDefinition, Does.Not.Contain("updateRifleViewmodel(dt"));
             Assert.That(directDrawDefinition, Does.Contain(
                 "updateRifleViewmodel(viewmodelFrameDt, actor, viewmodelMove, viewmodelSprint)"));
@@ -75,10 +93,18 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("ac.getCameraUp():clone()"));
             Assert.That(script, Does.Contain("actor.root:setOrientation(vec3(math.sin(yaw)"));
             Assert.That(script, Does.Contain("groundYs = ac.StructItem.array"));
+            Assert.That(script, Does.Contain("collisionDirections = ac.StructItem.array(ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain("collisionDirection / 254 * math.pi * 2"));
             Assert.That(script, Does.Contain("updateLocalThirdPersonAvatar(localActor)"));
             Assert.That(script, Does.Contain("local third-person avatar ready:"));
-            Assert.That(script, Does.Contain("procedural-mannequin"));
-            Assert.That(script, Does.Contain("clientAssetPath('content/objects3D/pitcrew.kn5')"));
+            Assert.That(script, Does.Contain("procedural-skinned-operator"));
+            Assert.That(script, Does.Contain("local function drawRemoteActors()"));
+            Assert.That(draw3DDefinition, Does.Contain("drawRemoteActors()"));
+            Assert.That(script, Does.Contain("remoteRender.actorSnapshotCount = visibleActors"));
+            Assert.That(script, Does.Contain("render.setTransform(actor.render"));
+            Assert.That(script, Does.Contain("return render.mesh(remoteAvatarRenderParams)"));
+            Assert.That(script, Does.Contain("direct remote actor rendering ready:"));
+            Assert.That(script, Does.Not.Contain("content/objects3D/pitcrew.kn5"));
             Assert.That(script, Does.Contain("'quickPitsMenu'"));
             Assert.That(script, Does.Contain("ac.disableQuickMenuPitstop(true)"));
             Assert.That(script, Does.Contain("ac.accessMouseDelta(true, true, true)"));
@@ -86,11 +112,18 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("local keyboardX = -inputAxis"));
             Assert.That(script, Does.Contain("ac.isKeyDown(ac.KeyIndex.Space)"));
             Assert.That(script, Does.Contain("(jump and 4 or 0)"));
+            Assert.That(script, Does.Contain("local avatarPosition = actor.render:clone()"));
+            Assert.That(script, Does.Contain("local standingProbeHeights = {0.52, 0.9, 1.48}"));
             Assert.That(script, Does.Contain("predictedVerticalVelocity = 7.25"));
             Assert.That(script, Does.Contain("ac.KeyIndex.LeftControl"));
             Assert.That(script, Does.Contain("ac.KeyIndex.LeftMenu"));
             Assert.That(script, Does.Contain("ac.KeyIndex.C"));
             Assert.That(script, Does.Contain("(crouch and 8 or 0)"));
+            Assert.That(script, Does.Contain("ac.KeyIndex.LeftButton"));
+            Assert.That(script, Does.Contain("ui.mouseDown(ui.MouseButton.Left)"));
+            Assert.That(script, Does.Contain("[ASRC FPS] fire input captured:"));
+            Assert.That(script, Does.Contain("ac.KeyIndex.R"));
+            Assert.That(script, Does.Contain("(reload and 16 or 0)"));
             Assert.That(script, Does.Contain("scoreboardHeld = ac.isKeyDown(ac.KeyIndex.Tab)"));
             Assert.That(script, Does.Contain("cursorUnlocked = scoreboardHeld or persistentCursor"));
             Assert.That(script, Does.Contain("if not cursorUnlocked then"));
@@ -100,10 +133,19 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("DEATHMATCH SCOREBOARD"));
             Assert.That(script, Does.Contain("bit.band(localActor.flags, 16)"));
             Assert.That(script, Does.Contain("bit.band(actor.flags, 64)"));
+            Assert.That(script, Does.Contain("predictionCollisionConstrained = true"));
+            Assert.That(script, Does.Contain("predictionClearSnapshots >= 3"));
+            Assert.That(script, Does.Contain("[ASRC FPS] prediction collision constraint:"));
+            Assert.That(script, Does.Contain("[ASRC FPS] prediction hard correction:"));
+            Assert.That(updateDefinition, Does.Not.Contain("predictionCollisionLocked"));
             Assert.That(script, Does.Contain("bit.band(actor.flags, 128)"));
             Assert.That(script, Does.Contain("cameraHeight = math.lerp"));
             Assert.That(script, Does.Contain("physics.raycastTrack"));
-            Assert.That(script, Does.Contain("localTrackMovementBlocked"));
+            Assert.That(script, Does.Contain("localTrackProbeMovement"));
+            Assert.That(script, Does.Contain("localTrackResolveMovement"));
+            Assert.That(script, Does.Contain("collisionProbeOffsets = {-1, -0.5, 0, 0.5, 1}"));
+            Assert.That(script, Does.Contain("if amount > 0 then"));
+            Assert.That(script, Does.Contain("viewmodelWallRetraction"));
             Assert.That(script, Does.Contain("[ASRC FPS] first snapshot"));
             Assert.That(script, Does.Contain("[ASRC FPS] local actor snapshot acquired"));
             Assert.That(script, Does.Contain("[ASRC FPS] snapshot heartbeat"));
@@ -125,7 +167,9 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("web.loadRemoteAssets"));
             Assert.That(script, Does.Contain("ac.getServerIP()"));
             Assert.That(script, Does.Contain("ac.getServerPortHTTP()"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v4.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v6.zip"));
+            Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
+            Assert.That(script, Does.Contain("asrc_operator_skin.png"));
             Assert.That(script, Does.Contain("crucial = rifleViewmodelFileName"));
             Assert.That(script, Does.Contain("requesting rifle assets:"));
             Assert.That(script, Does.Contain("rifle assets cached:"));
@@ -150,7 +194,48 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("clientAssetPath(rifleViewmodelRelativePath)"));
             Assert.That(script, Does.Contain("drawFallbackRifle(size)"));
             Assert.That(script, Does.Contain("function script.draw3D()"));
-            Assert.That(script, Does.Contain("render.debugLine(tracer.from, tracer.to"));
+            Assert.That(script, Does.Contain("direct shot-effect templates ready"));
+            Assert.That(script, Does.Contain("drawDirectShotEffects()"));
+            Assert.That(shotDefinition, Does.Contain("from = muzzleOrigin:clone()"));
+            Assert.That(shotDefinition, Does.Contain("flashFrom = muzzleOrigin:clone()"));
+            Assert.That(shotDefinition, Does.Contain("to = targetPoint"));
+            Assert.That(shotDefinition, Does.Contain("travelTime = math.clamp"));
+            Assert.That(shotDefinition, Does.Contain("while #tracers >= maxTracers"));
+            Assert.That(shotDefinition, Does.Contain("expiresAt = now + travelTime"));
+            Assert.That(shotDefinition, Does.Contain("targetID = ac.StructItem.byte()"));
+            Assert.That(shotDefinition, Does.Contain("targetSpawnCount"));
+            Assert.That(shotDefinition, Does.Contain("first shot event received:"));
+            Assert.That(shotDefinition, Does.Contain("while #impacts >= maxImpactMarks"));
+            Assert.That(script, Does.Contain("maxImpactMarks = 96"));
+            Assert.That(script, Does.Contain("(now - tracer.bornAt) / tracer.travelTime"));
+            Assert.That(script, Does.Contain("if tracers[i].expiresAt <= visualNow"));
+            Assert.That(script, Does.Contain("clearActorImpacts(message.victimID)"));
+            Assert.That(script, Does.Contain("target.spawnCount ~= impact.targetSpawnCount"));
+            Assert.That(script, Does.Contain("render.setTransform(tracer.flashFrom"));
+            Assert.That(script, Does.Contain("render.mesh(tracerRenderParams)"));
+            Assert.That(script, Does.Contain("render.mesh(impactRenderParams)"));
+            Assert.That(script, Does.Contain("render.mesh(sparkRenderParams)"));
+            Assert.That(script, Does.Not.Contain("render.debugLine(tracer.from, tracer.to"));
+            Assert.That(script, Does.Not.Contain("render.debugPlane(impact.position"));
+            Assert.That(script, Does.Contain("ac.Particles.Sparks"));
+            Assert.That(script, Does.Contain("ac.Particles.Smoke"));
+            Assert.That(snapshotDefinition, Does.Contain("ammo = ac.StructItem.array"));
+            Assert.That(snapshotDefinition, Does.Contain("reserveMagazines = ac.StructItem.array"));
+            Assert.That(snapshotDefinition, Does.Contain("reloadRemaining = ac.StructItem.array"));
+            Assert.That(snapshotDefinition, Does.Contain("spawnCounts = ac.StructItem.array"));
+            Assert.That(snapshotDefinition, Does.Contain("remote actor respawn reconciled:"));
+            Assert.That(shotDefinition, Does.Contain("impact = ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain("textures = { txDiffuse = rifleDiffusePath }"));
+            Assert.That(script, Does.Contain("textures = { txDiffuse = operatorSkinPath }"));
+            Assert.That(script, Does.Contain("local operatorUV ="));
+            Assert.That(script, Does.Contain("operatorUV.torso"));
+            Assert.That(script, Does.Contain("operatorUV.pants"));
+            Assert.That(script, Does.Contain("operatorUV.boot"));
+            Assert.That(script, Does.Contain("procedural-skinned-operator"));
+            Assert.That(script, Does.Contain("txDiffuse.SampleLevel(samLinear, pin.Tex, 0)"));
+            Assert.That(script, Does.Contain("RELOADING  %.1fs"));
+            Assert.That(script, Does.Contain("%02d  |  %d MAGS"));
+            Assert.That(script, Does.Not.Contain("ASSAULT RIFLE  |  INFINITE"));
             Assert.That(script, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
         });
     }

@@ -176,7 +176,7 @@ public sealed class FpsBotOptions
 
 public sealed class FpsArenaDefinition
 {
-    public const int CurrentPreparationVersion = 1;
+    public const int CurrentPreparationVersion = 2;
 
     public int PreparationVersion { get; set; } = CurrentPreparationVersion;
     public string TrackId { get; set; } = string.Empty;
@@ -184,6 +184,8 @@ public sealed class FpsArenaDefinition
     public FpsPoint BoundsMin { get; set; } = new();
     public FpsPoint BoundsMax { get; set; } = new();
     public List<FpsSpawnPoint> SpawnPoints { get; set; } = [];
+    public List<string> CollisionIncludeMeshes { get; set; } = [];
+    public List<string> CollisionExcludeMeshes { get; set; } = [];
 }
 
 public sealed class FpsSpawnPoint

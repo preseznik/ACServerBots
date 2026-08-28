@@ -569,7 +569,13 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var chassisOrigin = GetChassisOrigin(record, body);
         var origin = chassisOrigin;
         var targetForward = Vector3.Normalize(control.TargetForward);
-        var physicalTarget = GetTrackSupportTarget(control, origin, out var supportNormal);
+        var physicalTarget = GetTrackSupportTarget(control, origin, out var supportNormal,
+            out bool hasTrackSupport);
+        if (!hasTrackSupport)
+        {
+            RecoverBot(record, control);
+            return;
+        }
         var recoveryTarget = GetRecoveryAssessmentTarget(control.TargetPosition, physicalTarget);
         float uprightDot = GetUprightDot(orientation, supportNormal);
         var horizontalVelocity = body.Velocity.Linear with { Y = 0 };
@@ -669,7 +675,13 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         var body = _simulation.Bodies[record.Handle];
         var control = record.Control;
         var chassisOrigin = GetChassisOrigin(record, body);
-        var physicalTarget = GetTrackSupportTarget(control, chassisOrigin, out var supportNormal);
+        var physicalTarget = GetTrackSupportTarget(control, chassisOrigin, out var supportNormal,
+            out bool hasTrackSupport);
+        if (!hasTrackSupport)
+        {
+            RecoverBot(record, control);
+            return;
+        }
         float uprightDot = GetUprightDot(body.Pose.Orientation, supportNormal);
         float maximumCompressionOverrun = GetMaximumSuspensionCompressionOverrun(record.Wheels);
         bool critical = NeedsCriticalRecovery(uprightDot, chassisOrigin, physicalTarget,
@@ -951,14 +963,19 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     }
 
     private Vector3 GetTrackSupportTarget(RaceBotPhysicsControl control, Vector3 physicalOrigin,
-        out Vector3 surfaceNormal)
+        out Vector3 surfaceNormal, out bool hasTrackSupport)
     {
         var target = physicalOrigin with { Y = control.TargetPosition.Y };
-        if (TryGetTrackSurface(target, out float surfaceHeight, out surfaceNormal))
+        hasTrackSupport = TryGetTrackSurface(target, out float surfaceHeight, out surfaceNormal);
+        if (hasTrackSupport)
             target.Y = surfaceHeight;
         else
         {
-            target.Y = physicalOrigin.Y;
+            // There is no physical world beneath this X/Z position. Keeping the falling body's
+            // Y here made the height error appear to be zero, allowing it to descend through the
+            // void until it happened to hit a lower surface. Preserve the authored course height
+            // and let the caller perform an immediate track-limit recovery instead.
+            target.Y = control.TargetPosition.Y;
             surfaceNormal = Vector3.UnitY;
         }
         return target;

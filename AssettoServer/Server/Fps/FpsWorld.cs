@@ -30,9 +30,12 @@ public sealed class FpsWorld : IHostedService
     private bool _finalSent;
     private readonly HashSet<byte> _clientsWithAcceptedInput = [];
     private readonly HashSet<byte> _clientsWithActiveInput = [];
+    private readonly HashSet<byte> _clientsWithAcceptedShot = [];
     private readonly Dictionary<byte, int> _neutralInputCounts = [];
     private readonly Dictionary<byte, uint> _knownSpawnCounts = [];
     private readonly Dictionary<byte, Vector3> _lastDiagnosticPositions = [];
+    private readonly Dictionary<byte, (float GroundY, bool Grounded, bool Mantling)>
+        _lastMovementStates = [];
     private readonly Dictionary<byte, long> _lastClientViewmodelDiagnosticTicks = [];
 
     public FpsWorld(ACServer server, ACServerConfiguration configuration,
@@ -73,12 +76,13 @@ public sealed class FpsWorld : IHostedService
         _server.Update += OnUpdate;
         _entryCarManager.ClientConnected += OnClientConnected;
         _entryCarManager.ClientDisconnected += OnClientDisconnected;
-        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills, {Triangles} physical arena triangles",
+        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills, {Triangles} collision triangles",
             _simulation.Actors.Count, _configuration.Extra.Fps.TimeLimitMinutes,
             _configuration.Extra.Fps.KillLimit, surface.TriangleCount);
         foreach (var actor in _simulation.Actors.Where(actor => actor.Active).OrderBy(actor => actor.Id))
         {
             _knownSpawnCounts[actor.Id] = actor.SpawnCount;
+            _lastMovementStates[actor.Id] = (actor.GroundY, actor.IsGrounded, actor.IsMantling);
             Log.Debug(
                 "FPS actor initial spawn: actor={ActorId}, role={Role}, human={Human}, spawn={SpawnCount}, position={Position}, yaw={Yaw:F3}, health={Health}",
                 actor.Id, actor.Role, actor.HumanControlled, actor.SpawnCount, actor.Position,
@@ -107,6 +111,8 @@ public sealed class FpsWorld : IHostedService
                 var actor = _simulation!.Actors.Single(actor => actor.Id == client.SessionId);
                 _knownSpawnCounts[actor.Id] = actor.SpawnCount;
                 _lastDiagnosticPositions[actor.Id] = actor.Position;
+                _lastMovementStates[actor.Id] =
+                    (actor.GroundY, actor.IsGrounded, actor.IsMantling);
                 client.Logger.Information(
                     "FPS human actor spawned: actor={ActorId}, spawn={SpawnCount}, position={Position}, yaw={Yaw:F3}, health={Health}, active={Active}, dead={Dead}",
                     actor.Id, actor.SpawnCount, actor.Position, actor.Yaw, actor.Health,
@@ -132,8 +138,10 @@ public sealed class FpsWorld : IHostedService
             _simulation?.ReleaseHuman(client.SessionId);
             _clientsWithAcceptedInput.Remove(client.SessionId);
             _clientsWithActiveInput.Remove(client.SessionId);
+            _clientsWithAcceptedShot.Remove(client.SessionId);
             _neutralInputCounts.Remove(client.SessionId);
             _lastClientViewmodelDiagnosticTicks.Remove(client.SessionId);
+            _lastMovementStates.Remove(client.SessionId);
         }
     }
 
@@ -232,6 +240,7 @@ public sealed class FpsWorld : IHostedService
             if (_simulation is null) return;
             _simulation.Step(1f / _configuration.Server.RefreshRateHz);
             LogSpawnChanges();
+            LogMovementTransitions();
             foreach (var hit in _simulation.HitEvents)
             {
                 Broadcast(new FpsHitPacket
@@ -243,6 +252,17 @@ public sealed class FpsWorld : IHostedService
             }
             foreach (var shot in _simulation.ShotEvents)
             {
+                var shooter = _simulation.Actors.Single(actor => actor.Id == shot.ShooterId);
+                if (_clientsWithAcceptedShot.Add(shot.ShooterId))
+                    Log.Information(
+                        "FPS rifle accepted first shot: actor={ActorId}, sequence={Sequence}, impact={Impact}, distance={Distance:F2}, ammo={Ammo}, reserveMagazines={ReserveMagazines}",
+                        shot.ShooterId, shot.Sequence, shot.Impact, shot.Distance,
+                        shooter.AmmoInMagazine, shooter.ReserveMagazines);
+                else
+                    Log.Debug(
+                        "FPS rifle shot: actor={ActorId}, sequence={Sequence}, impact={Impact}, distance={Distance:F2}, ammo={Ammo}, reserveMagazines={ReserveMagazines}",
+                        shot.ShooterId, shot.Sequence, shot.Impact, shot.Distance,
+                        shooter.AmmoInMagazine, shooter.ReserveMagazines);
                 Broadcast(new FpsShotPacket
                 {
                     ShooterId = shot.ShooterId,
@@ -250,6 +270,8 @@ public sealed class FpsWorld : IHostedService
                     Origin = shot.Origin,
                     Direction = shot.Direction,
                     Distance = shot.Distance,
+                    Impact = (byte)shot.Impact,
+                    TargetId = shot.TargetId,
                 });
             }
             foreach (var kill in _simulation.KillEvents)
@@ -311,10 +333,35 @@ public sealed class FpsWorld : IHostedService
             var delta = actor.Position - previous;
             _lastDiagnosticPositions[actor.Id] = actor.Position;
             Log.Information(
-                "FPS actor input effect: actor={ActorId}, position={Position}, delta={Delta}, distance={Distance:F3}, inputSequence={Sequence}, inputMove={Move}, inputButtons={Buttons}, hasInput={HasInput}, active={Active}, dead={Dead}, match={MatchState}",
-                actor.Id, actor.Position, delta, delta.Length(), actor.LastInputSequence,
+                "FPS actor input effect: actor={ActorId}, position={Position}, ground={GroundY:F3}, verticalVelocity={VerticalVelocity:F3}, grounded={Grounded}, mantling={Mantling}, geometryBlocked={GeometryBlocked}, delta={Delta}, distance={Distance:F3}, inputSequence={Sequence}, inputMove={Move}, inputButtons={Buttons}, hasInput={HasInput}, active={Active}, dead={Dead}, ammo={Ammo}, reserveMagazines={ReserveMagazines}, reloadRemaining={ReloadRemaining:F2}, match={MatchState}",
+                actor.Id, actor.Position, actor.GroundY, actor.VerticalVelocity,
+                actor.IsGrounded, actor.IsMantling, actor.GeometryBlocked,
+                delta, delta.Length(), actor.LastInputSequence,
                 actor.Input.Move, actor.Input.Buttons, actor.HasInput, actor.Active, actor.Dead,
+                actor.AmmoInMagazine, actor.ReserveMagazines, actor.ReloadRemaining,
                 _simulation.MatchState);
+        }
+    }
+
+    private void LogMovementTransitions()
+    {
+        if (_simulation is null) return;
+        foreach (var actor in _simulation.Actors.Where(actor => actor.HumanControlled))
+        {
+            var current = (actor.GroundY, actor.IsGrounded, actor.IsMantling);
+            if (_lastMovementStates.TryGetValue(actor.Id, out var previous)
+                && (MathF.Abs(previous.GroundY - current.GroundY) > 0.05f
+                    || previous.Grounded != current.IsGrounded
+                    || previous.Mantling != current.IsMantling))
+            {
+                Log.Debug(
+                    "FPS actor movement transition: actor={ActorId}, position={Position}, ground={PreviousGround:F3}->{Ground:F3}, grounded={PreviousGrounded}->{Grounded}, mantling={PreviousMantling}->{Mantling}, verticalVelocity={VerticalVelocity:F3}, inputSequence={Sequence}, inputMove={Move}, inputButtons={Buttons}, geometryBlocked={GeometryBlocked}",
+                    actor.Id, actor.Position, previous.GroundY, current.GroundY,
+                    previous.Grounded, current.IsGrounded, previous.Mantling,
+                    current.IsMantling, actor.VerticalVelocity, actor.LastInputSequence,
+                    actor.Input.Move, actor.Input.Buttons, actor.GeometryBlocked);
+            }
+            _lastMovementStates[actor.Id] = current;
         }
     }
 
@@ -334,13 +381,19 @@ public sealed class FpsWorld : IHostedService
                     | (actor.HumanControlled ? 4 : 0) | (actor.SpawnProtectionRemaining > 0 ? 8 : 0)
                     | (actor.IsGrounded ? 16 : 0) | (actor.IsCrouching ? 32 : 0)
                     | (actor.GeometryBlocked ? 64 : 0) | (actor.IsProne ? 128 : 0));
+                packet.SpawnCounts[index] = actor.SpawnCount;
                 packet.Positions[index] = actor.Position;
                 packet.GroundYs[index] = actor.GroundY;
+                packet.CollisionDirections[index] = EncodeCollisionDirection(actor.CollisionNormal);
                 packet.Yaws[index] = actor.Yaw;
                 packet.Pitches[index] = actor.Pitch;
                 packet.Health[index] = (ushort)Math.Max(0, actor.Health);
                 packet.Kills[index] = actor.Kills;
                 packet.Deaths[index] = actor.Deaths;
+                packet.Ammo[index] = (byte)Math.Clamp(actor.AmmoInMagazine, 0, byte.MaxValue);
+                packet.ReserveMagazines[index] = (byte)Math.Clamp(actor.ReserveMagazines, 0,
+                    byte.MaxValue);
+                packet.ReloadRemaining[index] = actor.ReloadRemaining;
             }
 
             if (only is not null) only.SendPacketUdp(in packet);
@@ -350,6 +403,14 @@ public sealed class FpsWorld : IHostedService
                     client.SendPacketUdp(in packet);
             }
         }
+    }
+
+    internal static byte EncodeCollisionDirection(Vector2 direction)
+    {
+        if (direction.LengthSquared() < 1e-8f) return byte.MaxValue;
+        float angle = MathF.Atan2(direction.Y, direction.X);
+        float normalized = (angle + MathF.PI) / (2 * MathF.PI);
+        return (byte)Math.Clamp((int)MathF.Round(normalized * 254), 0, 254);
     }
 
     private void SendMatch(ACTcpClient client)
@@ -373,6 +434,19 @@ public sealed class FpsWorld : IHostedService
     private void Broadcast<TPacket>(TPacket packet) where TPacket : Shared.Network.Packets.Outgoing.IOutgoingNetworkPacket
     {
         foreach (var client in _entryCarManager.ConnectedCars.Values.Select(car => car.Client).OfType<ACTcpClient>())
-            client.SendPacket(packet);
+        {
+            if (UsesUdpTransport<TPacket>()) client.SendPacketUdp(in packet);
+            else client.SendPacket(packet);
+        }
+    }
+
+    internal static bool UsesUdpTransport<TPacket>()
+        where TPacket : Shared.Network.Packets.Outgoing.IOutgoingNetworkPacket
+        => PacketTransport<TPacket>.Udp;
+
+    private static class PacketTransport<TPacket>
+    {
+        public static readonly bool Udp =
+            typeof(TPacket).GetCustomAttribute<OnlineEventAttribute>()?.Udp == true;
     }
 }

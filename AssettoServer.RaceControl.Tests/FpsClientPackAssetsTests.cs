@@ -25,6 +25,25 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
+    public void GeneratedDiffuseTexturesAreEmbeddedPngAssets()
+    {
+        byte[] rifle = FpsClientPackAssets.GetRifleDiffuse();
+        byte[] operatorTexture = FpsClientPackAssets.GetOperatorSkin();
+        byte[] pngMagic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rifle.AsSpan(0, 8).SequenceEqual(pngMagic), Is.True);
+            Assert.That(operatorTexture.AsSpan(0, 8).SequenceEqual(pngMagic), Is.True);
+            Assert.That(rifle, Has.Length.GreaterThan(100_000));
+            Assert.That(operatorTexture, Has.Length.GreaterThan(100_000));
+            Assert.That(FpsClientPackAssets.RifleDiffusePath, Does.EndWith(".png"));
+            Assert.That(FpsClientPackAssets.OperatorSkinPath,
+                Does.EndWith("asrc_operator_skin.png"));
+        });
+    }
+
+    [Test]
     public void RifleWaveIsAPlayableMonoPcmAsset()
     {
         byte[] wave = FpsClientPackAssets.CreateRifleWave();

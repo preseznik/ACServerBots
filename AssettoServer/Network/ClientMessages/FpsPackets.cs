@@ -11,6 +11,7 @@ public enum FpsInputButtons : byte
     Sprint = 2,
     Jump = 4,
     Crouch = 8,
+    Reload = 16,
 }
 
 [OnlineEvent(Key = "ASRC_FpsInput", Udp = true)]
@@ -41,6 +42,10 @@ public enum FpsClientDiagnosticFlags : ushort
     DirectRenderReady = 32,
     ThirdPerson = 64,
     LocalAvatarReady = 128,
+    RemoteActorsAvailable = 256,
+    RemoteActorsRendered = 512,
+    ShotEventsReceived = 1024,
+    ShotEffectsRendered = 2048,
 }
 
 [OnlineEvent(Key = "ASRC_FpsClientDiagnostic")]
@@ -70,13 +75,20 @@ public sealed class FpsSnapshotPacket : OnlineEvent<FpsSnapshotPacket>
     [OnlineEventField(Name = "count")] public byte Count;
     [OnlineEventField(Name = "actorIDs", Size = Capacity)] public byte[] ActorIds = new byte[Capacity];
     [OnlineEventField(Name = "flags", Size = Capacity)] public byte[] Flags = new byte[Capacity];
+    [OnlineEventField(Name = "spawnCounts", Size = Capacity)] public uint[] SpawnCounts = new uint[Capacity];
     [OnlineEventField(Name = "positions", Size = Capacity)] public Vector3[] Positions = new Vector3[Capacity];
     [OnlineEventField(Name = "groundYs", Size = Capacity)] public float[] GroundYs = new float[Capacity];
+    // Quantized planar direction (0..254); 255 means no collision constraint. Keeping this
+    // byte-sized is important because CSP silently drops oversized UDP online events.
+    [OnlineEventField(Name = "collisionDirections", Size = Capacity)] public byte[] CollisionDirections = new byte[Capacity];
     [OnlineEventField(Name = "yaws", Size = Capacity)] public float[] Yaws = new float[Capacity];
     [OnlineEventField(Name = "pitches", Size = Capacity)] public float[] Pitches = new float[Capacity];
     [OnlineEventField(Name = "health", Size = Capacity)] public ushort[] Health = new ushort[Capacity];
     [OnlineEventField(Name = "kills", Size = Capacity)] public ushort[] Kills = new ushort[Capacity];
     [OnlineEventField(Name = "deaths", Size = Capacity)] public ushort[] Deaths = new ushort[Capacity];
+    [OnlineEventField(Name = "ammo", Size = Capacity)] public byte[] Ammo = new byte[Capacity];
+    [OnlineEventField(Name = "reserveMagazines", Size = Capacity)] public byte[] ReserveMagazines = new byte[Capacity];
+    [OnlineEventField(Name = "reloadRemaining", Size = Capacity)] public float[] ReloadRemaining = new float[Capacity];
 }
 
 [OnlineEvent(Key = "ASRC_FpsRoster")]
@@ -121,4 +133,6 @@ public sealed class FpsShotPacket : OnlineEvent<FpsShotPacket>
     [OnlineEventField(Name = "origin")] public Vector3 Origin;
     [OnlineEventField(Name = "direction")] public Vector3 Direction;
     [OnlineEventField(Name = "distance")] public float Distance;
+    [OnlineEventField(Name = "impact")] public byte Impact;
+    [OnlineEventField(Name = "targetID")] public byte TargetId = byte.MaxValue;
 }

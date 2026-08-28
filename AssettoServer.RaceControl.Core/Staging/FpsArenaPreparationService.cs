@@ -41,6 +41,7 @@ public sealed class FpsArenaPreparationService
             }
             startInfo.ArgumentList.Add("--fps-arena-output");
             startInfo.ArgumentList.Add(temporary);
+            AddCollisionOverrides(startInfo, preset.Fps.Arena);
 
             using var process = new Process { StartInfo = startInfo };
             process.OutputDataReceived += (_, args) => Report(args.Data);
@@ -69,6 +70,22 @@ public sealed class FpsArenaPreparationService
         finally
         {
             if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
+    internal static void AddCollisionOverrides(ProcessStartInfo startInfo,
+        FpsArenaDefinition? arena)
+    {
+        if (arena is null) return;
+        if (arena.CollisionIncludeMeshes.Count > 0)
+        {
+            startInfo.ArgumentList.Add("--fps-collision-include");
+            startInfo.ArgumentList.Add(string.Join(';', arena.CollisionIncludeMeshes));
+        }
+        if (arena.CollisionExcludeMeshes.Count > 0)
+        {
+            startInfo.ArgumentList.Add("--fps-collision-exclude");
+            startInfo.ArgumentList.Add(string.Join(';', arena.CollisionExcludeMeshes));
         }
     }
 }

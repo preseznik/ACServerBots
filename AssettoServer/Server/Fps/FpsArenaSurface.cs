@@ -73,11 +73,14 @@ internal sealed class FpsArenaSurface
     // kerbs descend smoothly, while larger drops transition into an airborne fall.
     internal const float MaximumStepDown = 0.48f;
     private const float MaximumFallDistance = 100;
-    private const float ActorRadius = 0.35f;
+    // Keep a small visual clearance from walls as well as preventing mathematical
+    // intersection. This avoids the first-person near plane cutting into rough meshes.
+    internal const float ActorRadius = 0.39f;
     private const float StandingHeight = 1.8f;
     private const float CrouchingHeight = 1.15f;
     private const float ProneHeight = 0.65f;
     private const float MaximumSweepStep = 0.08f;
+    private const int MaximumSlideIterations = 3;
     private static readonly float MinimumWalkableNormalY =
         MathF.Cos(MaximumWalkableSlopeDegrees * MathF.PI / 180);
     private readonly SurfaceTriangle[] _triangles;
@@ -119,7 +122,8 @@ internal sealed class FpsArenaSurface
         for (int step = 0; step < steps; step++)
         {
             var candidate = resolved + increment;
-            if (TryCandidate(candidate, groundY, actorHeight, out var next, out float nextGround))
+            if (TryCandidate(candidate, groundY, actorHeight, increment,
+                    out var next, out float nextGround, out _))
             {
                 resolved = next;
                 groundY = nextGround;
@@ -127,24 +131,11 @@ internal sealed class FpsArenaSurface
                 continue;
             }
 
-            bool slid = false;
-            var xOnly = new Vector3(resolved.X + increment.X, resolved.Y, resolved.Z);
-            if (MathF.Abs(increment.X) > 0.0001f
-                && TryCandidate(xOnly, groundY, actorHeight, out next, out nextGround))
-            {
-                resolved = next;
-                groundY = nextGround;
-                moved = slid = true;
-            }
-            var zOnly = new Vector3(resolved.X, resolved.Y, resolved.Z + increment.Z);
-            if (MathF.Abs(increment.Z) > 0.0001f
-                && TryCandidate(zOnly, groundY, actorHeight, out next, out nextGround))
-            {
-                resolved = next;
-                groundY = nextGround;
-                moved = slid = true;
-            }
-            if (!slid) break;
+            if (!TrySlideGround(resolved, increment, groundY, actorHeight,
+                    out next, out nextGround)) break;
+            resolved = next;
+            groundY = nextGround;
+            moved = true;
         }
         return moved || planarDelta.LengthSquared() < 1e-8f;
     }
@@ -161,7 +152,8 @@ internal sealed class FpsArenaSurface
         for (int step = 0; step < steps; step++)
         {
             var candidate = resolved + increment;
-            if (TryAirCandidate(candidate, actorHeight, out float nextGround))
+            if (TryAirCandidate(candidate, actorHeight, increment,
+                    out float nextGround, out _))
             {
                 resolved = candidate;
                 groundY = nextGround;
@@ -169,24 +161,11 @@ internal sealed class FpsArenaSurface
                 continue;
             }
 
-            bool slid = false;
-            var xOnly = new Vector3(resolved.X + increment.X, resolved.Y, resolved.Z);
-            if (MathF.Abs(increment.X) > 0.0001f
-                && TryAirCandidate(xOnly, actorHeight, out nextGround))
-            {
-                resolved = xOnly;
-                groundY = nextGround;
-                moved = slid = true;
-            }
-            var zOnly = new Vector3(resolved.X, resolved.Y, resolved.Z + increment.Z);
-            if (MathF.Abs(increment.Z) > 0.0001f
-                && TryAirCandidate(zOnly, actorHeight, out nextGround))
-            {
-                resolved = zOnly;
-                groundY = nextGround;
-                moved = slid = true;
-            }
-            if (!slid) break;
+            if (!TrySlideAir(resolved, increment, actorHeight,
+                    out var next, out nextGround)) break;
+            resolved = next;
+            groundY = nextGround;
+            moved = true;
         }
         return moved || planarDelta.LengthSquared() < 1e-8f;
     }
@@ -194,6 +173,65 @@ internal sealed class FpsArenaSurface
     public bool TryGetGroundHeight(float x, float z, float referenceY, out float height)
         => TryGetGroundHeight(x, z, referenceY, -MaximumStepDown, MaximumStepHeight,
             out height);
+
+    public bool IsPositionBlocked(Vector3 position, float groundY, float actorHeight) =>
+        TryGetBlockingNormal(position, groundY, actorHeight, Vector3.Zero, out _);
+
+    public bool TryDepenetrate(Vector3 position, float groundY, float actorHeight,
+        out Vector3 resolved, out float resolvedGroundY)
+    {
+        resolved = position;
+        resolvedGroundY = groundY;
+        if (!IsPositionBlocked(position, groundY, actorHeight)) return true;
+
+        const int directions = 16;
+        for (float radius = 0.05f; radius <= 1.25f; radius += 0.05f)
+        for (int direction = 0; direction < directions; direction++)
+        {
+            float angle = direction * MathF.Tau / directions;
+            float x = position.X + MathF.Cos(angle) * radius;
+            float z = position.Z + MathF.Sin(angle) * radius;
+            if (!TryGetGroundHeight(x, z, groundY, -MaximumStepDown,
+                    MaximumStepHeight, out float candidateGround)) continue;
+            var candidate = new Vector3(x, candidateGround, z);
+            if (IsPositionBlocked(candidate, candidateGround, actorHeight)) continue;
+            resolved = candidate;
+            resolvedGroundY = candidateGround;
+            return true;
+        }
+        return false;
+    }
+
+    public bool TryDepenetrateAir(Vector3 position, float actorHeight,
+        out Vector3 resolved, out float resolvedGroundY)
+    {
+        resolved = position;
+        resolvedGroundY = position.Y;
+        if (!TryGetGroundHeight(position.X, position.Z, position.Y, -MaximumFallDistance,
+                SurfaceContactTolerance, out resolvedGroundY))
+            return false;
+        if (!IsPositionBlocked(position, position.Y, actorHeight)) return true;
+
+        // A descending capsule can overlap the side of the ledge it just left. Moving it
+        // back to its last mid-air pose makes gravity and rollback fight forever. Find the
+        // nearest horizontal clearance instead and let the existing vertical step continue.
+        const int directions = 16;
+        for (float radius = 0.05f; radius <= ActorRadius * 2; radius += 0.05f)
+        for (int direction = 0; direction < directions; direction++)
+        {
+            float angle = direction * MathF.Tau / directions;
+            float x = position.X + MathF.Cos(angle) * radius;
+            float z = position.Z + MathF.Sin(angle) * radius;
+            if (!TryGetGroundHeight(x, z, position.Y, -MaximumFallDistance,
+                    SurfaceContactTolerance, out float candidateGround)) continue;
+            var candidate = new Vector3(x, position.Y, z);
+            if (IsPositionBlocked(candidate, position.Y, actorHeight)) continue;
+            resolved = candidate;
+            resolvedGroundY = candidateGround;
+            return true;
+        }
+        return false;
+    }
 
     public bool TryRaycast(Vector3 origin, Vector3 direction, float maximumDistance,
         out float distance)
@@ -285,10 +323,15 @@ internal sealed class FpsArenaSurface
 
     private bool TryGetGroundHeight(float x, float z, float referenceY, float minimumDelta,
         float maximumDelta, out float height)
+        => TryGetGroundHeight(x, z, referenceY, minimumDelta, maximumDelta, out height, out _);
+
+    private bool TryGetGroundHeight(float x, float z, float referenceY, float minimumDelta,
+        float maximumDelta, out float height, out int supportIndex)
     {
         bool found = false;
         float bestHeight = float.NegativeInfinity;
         height = referenceY;
+        supportIndex = -1;
         foreach (int index in Candidates(x, z))
         {
             var item = _triangles[index];
@@ -303,16 +346,73 @@ internal sealed class FpsArenaSurface
             found = true;
             bestHeight = candidate;
             height = candidate;
+            supportIndex = index;
         }
         return found;
     }
 
-    private bool TryCandidate(Vector3 position, float currentGroundY, float actorHeight,
-        out Vector3 resolved,
-        out float groundY)
+    private bool TrySlideGround(Vector3 current, Vector3 increment, float currentGroundY,
+        float actorHeight, out Vector3 resolved, out float groundY)
     {
-        if (!TryGetGroundHeight(position.X, position.Z, currentGroundY, out groundY)
-            || IsBlocked(position, groundY, actorHeight))
+        resolved = current;
+        groundY = currentGroundY;
+        var remaining = increment;
+        for (int iteration = 0; iteration < MaximumSlideIterations; iteration++)
+        {
+            var candidate = resolved + remaining;
+            if (TryCandidate(candidate, groundY, actorHeight, remaining,
+                    out var next, out float nextGround, out var normal))
+            {
+                resolved = next;
+                groundY = nextGround;
+                return true;
+            }
+            if (normal.LengthSquared() < 1e-8f) return false;
+            remaining = ProjectAlongSurface(remaining, normal);
+            if (new Vector2(remaining.X, remaining.Z).LengthSquared() < 1e-8f) return false;
+        }
+        return false;
+    }
+
+    private bool TrySlideAir(Vector3 current, Vector3 increment, float actorHeight,
+        out Vector3 resolved, out float groundY)
+    {
+        resolved = current;
+        groundY = current.Y;
+        var remaining = increment;
+        for (int iteration = 0; iteration < MaximumSlideIterations; iteration++)
+        {
+            var candidate = resolved + remaining;
+            if (TryAirCandidate(candidate, actorHeight, remaining,
+                    out float nextGround, out var normal))
+            {
+                resolved = candidate;
+                groundY = nextGround;
+                return true;
+            }
+            if (normal.LengthSquared() < 1e-8f) return false;
+            remaining = ProjectAlongSurface(remaining, normal);
+            if (new Vector2(remaining.X, remaining.Z).LengthSquared() < 1e-8f) return false;
+        }
+        return false;
+    }
+
+    private static Vector3 ProjectAlongSurface(Vector3 movement, Vector2 normal)
+    {
+        if (normal.LengthSquared() < 1e-8f) return Vector3.Zero;
+        normal = Vector2.Normalize(normal);
+        var planar = new Vector2(movement.X, movement.Z);
+        planar -= normal * Vector2.Dot(planar, normal);
+        return new Vector3(planar.X, movement.Y, planar.Y);
+    }
+
+    private bool TryCandidate(Vector3 position, float currentGroundY, float actorHeight,
+        Vector3 movement, out Vector3 resolved, out float groundY, out Vector2 blockingNormal)
+    {
+        blockingNormal = default;
+        if (!TryGetStepGroundHeight(position, movement, currentGroundY, out groundY)
+            || TryGetBlockingNormal(position, groundY, actorHeight, movement,
+                out blockingNormal))
         {
             resolved = default;
             return false;
@@ -321,17 +421,77 @@ internal sealed class FpsArenaSurface
         return true;
     }
 
-    private bool TryAirCandidate(Vector3 position, float actorHeight, out float groundY)
+    private bool TryGetStepGroundHeight(Vector3 position, Vector3 movement,
+        float currentGroundY, out float groundY)
     {
+        bool found = TryGetGroundHeight(position.X, position.Z, currentGroundY,
+            -MaximumStepDown, MaximumStepHeight, out groundY, out int centerSupport);
+        // Footprint contact can smooth a transition between two reachable supports, but
+        // it must not keep an actor grounded after its centre has left a ledge entirely.
+        if (!found) return false;
+        var planarMovement = new Vector2(movement.X, movement.Z);
+        if (planarMovement.LengthSquared() < 1e-8f) return found;
+
+        // The capsule footprint along its travel corridor participates in a step. The
+        // front edge discovers an ascending tread before the centre penetrates its riser;
+        // the rear edge retains the old tread until the capsule has completely crossed it. Using
+        // only the front edge made narrow walls alternate between two support heights and
+        // made the lowered capsule collide with stair risers while descending.
+        planarMovement = Vector2.Normalize(planarMovement);
+        float probeRadius = ActorRadius - SurfaceContactTolerance * 0.25f;
+        Span<Vector2> directions =
+        [
+            planarMovement,
+            -planarMovement,
+        ];
+        foreach (var direction in directions)
+        {
+            float probeX = position.X + direction.X * probeRadius;
+            float probeZ = position.Z + direction.Y * probeRadius;
+            if (!TryGetGroundHeight(probeX, probeZ, currentGroundY,
+                    -MaximumStepDown, MaximumStepHeight, out float footprintGround,
+                    out int footprintSupport))
+                continue;
+            if (footprintGround > groundY
+                && !SupportsSamePlane(centerSupport, footprintSupport))
+            {
+                groundY = footprintGround;
+            }
+        }
+        return found;
+    }
+
+    private bool SupportsSamePlane(int firstIndex, int secondIndex)
+    {
+        if (firstIndex < 0 || secondIndex < 0) return false;
+        if (firstIndex == secondIndex) return true;
+        var first = _triangles[firstIndex];
+        var second = _triangles[secondIndex];
+        if (MathF.Abs(Vector3.Dot(first.Normal, second.Normal)) < 0.999f) return false;
+        float firstPlane = Vector3.Dot(first.Normal, first.Triangle.A);
+        float secondPlane = Vector3.Dot(first.Normal, second.Triangle.A);
+        return MathF.Abs(firstPlane - secondPlane) < 0.01f;
+    }
+
+    private bool TryAirCandidate(Vector3 position, float actorHeight, Vector3 movement,
+        out float groundY, out Vector2 blockingNormal)
+    {
+        blockingNormal = default;
         if (!TryGetGroundHeight(position.X, position.Z, position.Y, -MaximumFallDistance,
                 SurfaceContactTolerance, out groundY)
-            || IsBlocked(position, position.Y, actorHeight))
+            || TryGetBlockingNormal(position, position.Y, actorHeight, movement,
+                out blockingNormal))
             return false;
         return true;
     }
 
-    private bool IsBlocked(Vector3 position, float groundY, float actorHeight)
+    private bool IsBlocked(Vector3 position, float groundY, float actorHeight) =>
+        TryGetBlockingNormal(position, groundY, actorHeight, Vector3.Zero, out _);
+
+    private bool TryGetBlockingNormal(Vector3 position, float groundY, float actorHeight,
+        Vector3 movement, out Vector2 blockingNormal)
     {
+        blockingNormal = default;
         float baseY = MathF.Max(position.Y, groundY);
         float height = Math.Clamp(actorHeight, ProneHeight, StandingHeight);
         int minX = Cell(position.X - ActorRadius);
@@ -339,6 +499,8 @@ internal sealed class FpsArenaSurface
         int minZ = Cell(position.Z - ActorRadius);
         int maxZ = Cell(position.Z + ActorRadius);
         var checkedTriangles = new HashSet<int>();
+        bool blocked = false;
+        float bestScore = float.NegativeInfinity;
         for (int cellX = minX; cellX <= maxX; cellX++)
         for (int cellZ = minZ; cellZ <= maxZ; cellZ++)
         {
@@ -350,30 +512,78 @@ internal sealed class FpsArenaSurface
                     continue;
                 if (IntersectsCapsule(position.X, position.Z, baseY, height,
                         _triangles[index].Triangle))
-                    return true;
+                    SelectBlockingNormal(_triangles[index], movement, ref blocked,
+                        ref bestScore, ref blockingNormal);
             }
         }
         foreach (int index in _largeTriangles)
         {
+            if (!checkedTriangles.Add(index)) continue;
             if (IsNonBlockingSurface(_triangles[index], position.X, position.Z, baseY)) continue;
             if (IntersectsCapsule(position.X, position.Z, baseY, height,
                     _triangles[index].Triangle))
-                return true;
+                SelectBlockingNormal(_triangles[index], movement, ref blocked,
+                    ref bestScore, ref blockingNormal);
         }
-        return false;
+        return blocked;
     }
 
-    private static bool IsNonBlockingSurface(SurfaceTriangle triangle, float x, float z,
+    private static void SelectBlockingNormal(SurfaceTriangle triangle, Vector3 movement,
+        ref bool blocked, ref float bestScore, ref Vector2 blockingNormal)
+    {
+        blocked = true;
+        var horizontal = new Vector2(triangle.Normal.X, triangle.Normal.Z);
+        if (horizontal.LengthSquared() < 1e-8f) return;
+        horizontal = Vector2.Normalize(horizontal);
+        var planarMovement = new Vector2(movement.X, movement.Z);
+        float score = planarMovement.LengthSquared() < 1e-8f
+            ? 0
+            : MathF.Abs(Vector2.Dot(Vector2.Normalize(planarMovement), horizontal));
+        if (score <= bestScore) return;
+        bestScore = score;
+        blockingNormal = horizontal;
+    }
+
+    private bool IsNonBlockingSurface(SurfaceTriangle triangle, float x, float z,
         float baseY)
     {
-        if (triangle.MaxY <= baseY + MaximumStepHeight + SurfaceContactTolerance)
+        if (triangle.MaxY <= baseY + SurfaceContactTolerance)
             return true;
-        if (!triangle.Walkable) return false;
+        if (!triangle.Walkable)
+        {
+            // Some AC stairs use treads which are shallower than the player capsule and
+            // back every riser down to a retained base floor. A capsule standing on one
+            // tread then overlaps the neighboring vertical face even though the next
+            // tread is a valid reachable support. Ignore only those low faces which have
+            // an actual walkable top inside the footprint; fences and ordinary walls stay
+            // solid because they have no landable surface.
+            float rise = triangle.MaxY - baseY;
+            return rise <= MaximumStepHeight + SurfaceContactTolerance
+                && HasWalkableStepTop(triangle.MaxY, x, z);
+        }
         // Nearby floor triangles often share the same spatial cell but do not contain the
         // actor's exact X/Z point. They are not barriers. A horizontal triangle directly
         // above the capsule, however, is a ceiling and remains solid.
         return !TryHeight(triangle.Triangle, x, z, out float height)
             || height <= baseY + SurfaceContactTolerance;
+    }
+
+    private bool HasWalkableStepTop(float topY, float x, float z)
+    {
+        float maximumDistance = ActorRadius + SurfaceContactTolerance;
+        float maximumDistanceSquared = maximumDistance * maximumDistance;
+        var point = new Vector3(x, topY, z);
+        foreach (int index in Candidates(x, z))
+        {
+            var candidate = _triangles[index];
+            if (!candidate.Walkable) continue;
+            var closest = ClosestPoint(point, candidate.Triangle);
+            if (MathF.Abs(closest.Y - topY) > SurfaceContactTolerance) continue;
+            float dx = closest.X - x;
+            float dz = closest.Z - z;
+            if (dx * dx + dz * dz <= maximumDistanceSquared) return true;
+        }
+        return false;
     }
 
     private static bool IntersectsCapsule(float x, float z, float baseY, float height,

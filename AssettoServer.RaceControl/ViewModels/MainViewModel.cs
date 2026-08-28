@@ -83,6 +83,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private Guid? _pendingLiveCommandId;
     private int? _takeoverSessionId;
     private int _manualInputWriteInProgress;
+    private int _liveTrackGeneration;
     private readonly Task _liveMonitorTask;
 
     public MainViewModel()
@@ -229,9 +230,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsFpsMode => Preset.Mode == EventMode.Fps;
     public string ContentSectionTitle => IsFpsMode ? "Map" : "Circuit";
     public string TrackSelectionLabel => IsFpsMode ? "Arena and layout" : "Track and layout";
+    public string GridTabTitle => IsFpsMode ? "LOBBY SETUP" : "GRID";
     public string GridSectionTitle => IsFpsMode ? "FPS participants" : "Race grid";
+    public string FillGridLabel => IsFpsMode ? "Fill spots" : "Fill pit boxes";
+    public string FillGridToolTip => IsFpsMode
+        ? "Add or remove entries until the lobby matches the prepared arena's participant capacity."
+        : "Add or remove entries until the grid matches the selected layout's pit-box capacity.";
     public string SessionSectionTitle => IsFpsMode ? "DEATHMATCH" : "SESSIONS & RULES";
     public string BotSectionTitle => IsFpsMode ? "FPS BOTS" : "RACE BOTS";
+    public string LiveTabTitle => IsFpsMode ? "LIVE MATCH" : "LIVE RACE";
+    public string LiveSessionTitle => IsFpsMode ? "Current match" : "Race session";
+    public string StartRaceLabel => IsFpsMode ? "START MATCH" : "START RACE";
+    public string StopRaceLabel => IsFpsMode ? "Stop match" : "Stop race";
+    public string RestartRaceLabel => IsFpsMode ? "Restart match" : "Restart race";
+    public string StopServerToolTip => IsFpsMode
+        ? "Gracefully stop the whole AssettoServer process. This is separate from stopping the current match."
+        : "Gracefully stop the whole AssettoServer process. This is separate from stopping the current race session.";
+    public string StartRaceToolTip => IsFpsMode
+        ? "Immediately start the configured deathmatch, even with no human players connected."
+        : "Immediately select the configured race session and begin its normal grid countdown, even with no human players connected.";
+    public string StopRaceToolTip => IsFpsMode
+        ? "End the active match, record its current results, hold bots, and leave the server online."
+        : "End the active race, classify unfinished participants as DNF, hold bots, and leave the server online.";
+    public string RestartRaceToolTip => IsFpsMode
+        ? "Reset the configured deathmatch and start it again."
+        : "Reset the configured race session and start its grid countdown again, regardless of connected-player count.";
     public string SlotModeHelp => IsFpsMode
         ? "Auto = bot until claimed • Bot = unclaimable server bot • Human = player-only • Spectator = camera-only"
         : "Auto = bot until claimed • Fixed = bot only • None = human racer • Spectator = camera-only connection";
@@ -1058,6 +1081,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (Preset.Mode == mode) return;
 
+        InvalidateLiveTrackCache();
         SyncGridToPreset();
         RememberModeDraft(Preset);
         var target = mode == EventMode.Fps ? _fpsDraft : _racingDraft;
@@ -1136,9 +1160,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsFpsMode));
         OnPropertyChanged(nameof(ContentSectionTitle));
         OnPropertyChanged(nameof(TrackSelectionLabel));
+        OnPropertyChanged(nameof(GridTabTitle));
         OnPropertyChanged(nameof(GridSectionTitle));
+        OnPropertyChanged(nameof(FillGridLabel));
+        OnPropertyChanged(nameof(FillGridToolTip));
         OnPropertyChanged(nameof(SessionSectionTitle));
         OnPropertyChanged(nameof(BotSectionTitle));
+        OnPropertyChanged(nameof(LiveTabTitle));
+        OnPropertyChanged(nameof(LiveSessionTitle));
+        OnPropertyChanged(nameof(StartRaceLabel));
+        OnPropertyChanged(nameof(StopRaceLabel));
+        OnPropertyChanged(nameof(RestartRaceLabel));
+        OnPropertyChanged(nameof(StopServerToolTip));
+        OnPropertyChanged(nameof(StartRaceToolTip));
+        OnPropertyChanged(nameof(StopRaceToolTip));
+        OnPropertyChanged(nameof(RestartRaceToolTip));
         OnPropertyChanged(nameof(SlotModeHelp));
         OnPropertyChanged(nameof(SlotModeOptions));
         OnPropertyChanged(nameof(SelectedTrackDetails));
@@ -1280,7 +1316,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             DefaultExt = ".zip",
             AddExtension = true,
             OverwritePrompt = true,
-            FileName = "asrc-fps-compatibility-client-v2.zip",
+            FileName = "asrc-fps-compatibility-client-v4.zip",
         };
         if (dialog.ShowDialog() != true) return;
 
@@ -1289,6 +1325,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             IsBusy = true;
             byte[] rifleViewmodel = FpsClientPackAssets.GetRifleViewmodel();
             byte[] rifleWorldModel = FpsClientPackAssets.GetRifleWorldModel();
+            byte[] rifleDiffuse = FpsClientPackAssets.GetRifleDiffuse();
+            byte[] operatorSkin = FpsClientPackAssets.GetOperatorSkin();
             await using var stream = new FileStream(dialog.FileName, FileMode.Create, FileAccess.Write, FileShare.None,
                 64 * 1024, useAsync: true);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
@@ -1298,7 +1336,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 await JsonSerializer.SerializeAsync(manifestStream, new
                 {
                     protocol = 1,
-                    clientPackVersion = 2,
+                    clientPackVersion = 4,
                     compatibilityGate = true,
                     minimumCspVersion = "0.3.0-preview520",
                     carrierCar = Preset.Fps.CarrierCarId,
@@ -1306,7 +1344,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     weapon = new
                     {
                         id = "asrc_assault_rifle_v1",
-                        ammunition = "infinite",
+                        ammunition = "40-round magazine with four reserves",
                         fireIntervalSeconds = 0.12,
                         damage = 34,
                         rangeMetres = 120,
@@ -1315,7 +1353,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                         viewmodelSha256 = FpsClientPackAssets.Sha256(rifleViewmodel),
                         worldModelPath = FpsClientPackAssets.RifleWorldModelPath,
                         worldModelSha256 = FpsClientPackAssets.Sha256(rifleWorldModel),
+                        diffusePath = FpsClientPackAssets.RifleDiffusePath,
+                        diffuseSha256 = FpsClientPackAssets.Sha256(rifleDiffuse),
                     },
+                    operatorSkinPath = FpsClientPackAssets.OperatorSkinPath,
+                    operatorSkinSha256 = FpsClientPackAssets.Sha256(operatorSkin),
                 }, new JsonSerializerOptions { WriteIndented = true });
             }
             var readmeEntry = archive.CreateEntry("README.txt", CompressionLevel.Optimal);
@@ -1329,12 +1371,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     - The carrier car named in asrc-fps-client.json must be installed.
                     - Join through Content Manager Online > LAN.
 
-                    The server delivers the CSP online script automatically. This prototype uses the
-                    locally installed stock pit-crew model and does not redistribute Kunos assets.
-                    Extract this ZIP into the Assetto Corsa installation root. It installs the
-                    project-owned assault-rifle models under content/objects3D/asrc_fps and its
-                    sound under extension/audio/asrc_fps. Existing files are not replaced outside
-                    those folders.
+                    The server delivers the CSP online script automatically. Extract this ZIP into
+                    the Assetto Corsa installation root. It installs the project-owned assault-rifle
+                    models and operator UV skin under content/objects3D/asrc_fps, plus rifle sound
+                    under extension/audio/asrc_fps. Existing files are not replaced outside those
+                    folders. FPS avatars use the packaged procedural operator, not Kunos assets.
+                    FPS mode requests a 0.03 m camera near clip at runtime. If a CSP build or global
+                    graphics override prevents that request, the client log reports the observed
+                    near-clip value and method so wall clipping is diagnosable.
                     No acs.exe modification or native hook is installed.
                     """);
             }
@@ -1346,6 +1390,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 CompressionLevel.Optimal);
             await using (var rifleWorldModelStream = rifleWorldModelEntry.Open())
                 await rifleWorldModelStream.WriteAsync(rifleWorldModel);
+            var rifleDiffuseEntry = archive.CreateEntry(FpsClientPackAssets.RifleDiffusePath,
+                CompressionLevel.Optimal);
+            await using (var rifleDiffuseStream = rifleDiffuseEntry.Open())
+                await rifleDiffuseStream.WriteAsync(rifleDiffuse);
+            var operatorSkinEntry = archive.CreateEntry(FpsClientPackAssets.OperatorSkinPath,
+                CompressionLevel.Optimal);
+            await using (var operatorSkinStream = operatorSkinEntry.Open())
+                await operatorSkinStream.WriteAsync(operatorSkin);
             var rifleAudioEntry = archive.CreateEntry("extension/audio/asrc_fps/rifle.wav",
                 CompressionLevel.Optimal);
             await using (var rifleAudioStream = rifleAudioEntry.Open())
@@ -1746,6 +1798,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the working server…";
             _lastInstance = await StageAsync();
+            InvalidateLiveTrackCache();
             SelectedPageIndex = 5;
         }
         catch (Exception exception)
@@ -1768,6 +1821,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the new race…";
             _lastInstance = await StageAsync();
+            InvalidateLiveTrackCache();
             SimulationResults = null;
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
@@ -1852,6 +1906,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             bool restartSimulation = _processController.IsSimulation;
             if (restartSimulation)
                 SimulationResults = null;
+            InvalidateLiveTrackCache();
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             await _processController.RestartAsync(
                 _lastInstance.ExecutablePath,
@@ -1886,6 +1941,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the simulation…";
             _lastInstance = await StageAsync();
+            InvalidateLiveTrackCache();
             SimulationResults = null;
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
@@ -1931,7 +1987,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var client = new LiveRaceControlClient(_lastInstance.RootPath);
             _pendingLiveCommandId = await client.SendCommandAsync(command);
-            LiveControlStatus = $"Race {command.ToString().ToLowerInvariant()} requested…";
+            if (command == LiveRaceCommand.Restart)
+                InvalidateLiveTrackCache();
+            string sessionKind = IsFpsMode ? "Match" : "Race";
+            LiveControlStatus = $"{sessionKind} {command.ToString().ToLowerInvariant()} requested…";
         }
         catch (Exception exception)
         {
@@ -2074,7 +2133,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private async Task MonitorLiveRaceAsync(CancellationToken cancellationToken)
     {
         string? observedInstance = null;
-        bool trackLoaded = false;
+        int observedTrackGeneration = -1;
+        var trackCache = new LiveTrackFileCache();
         DateTimeOffset? observedResultsAt = null;
         try
         {
@@ -2083,10 +2143,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 var instance = _lastInstance;
                 if (instance != null)
                 {
-                    if (!instance.RootPath.Equals(observedInstance, StringComparison.OrdinalIgnoreCase))
+                    int trackGeneration = Volatile.Read(ref _liveTrackGeneration);
+                    if (!instance.RootPath.Equals(observedInstance, StringComparison.OrdinalIgnoreCase)
+                        || trackGeneration != observedTrackGeneration)
                     {
                         observedInstance = instance.RootPath;
-                        trackLoaded = false;
+                        observedTrackGeneration = trackGeneration;
+                        trackCache.Invalidate();
                         observedResultsAt = null;
                         RunOnUi(() =>
                         {
@@ -2102,12 +2165,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
                     var client = new LiveRaceControlClient(instance.RootPath);
                     var snapshot = client.TryReadSnapshot();
-                    LiveTrackMap? track = null;
-                    if (!trackLoaded)
-                    {
-                        track = client.TryReadTrack();
-                        trackLoaded = track != null;
-                    }
+                    LiveTrackMap? track = trackCache.TryReadChanged(client);
                     SimulationRaceSummary? results = null;
                     if (snapshot is { IsSimulation: true, ServerRunning: false })
                     {
@@ -2122,6 +2180,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                         RunOnUi(() =>
                         {
                             ApplyLiveUpdate(snapshot, track);
+                            if (track != null)
+                                AppendLog($"[Live] Loaded {track.Track}/{track.Layout} track map with {track.Points.Count} points.");
                             if (results != null)
                                 SimulationResults = results;
                         });
@@ -2136,6 +2196,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
         }
     }
+
+    private void InvalidateLiveTrackCache() => Interlocked.Increment(ref _liveTrackGeneration);
 
     private void ApplyLiveUpdate(LiveRaceSnapshot? snapshot, LiveTrackMap? track)
     {

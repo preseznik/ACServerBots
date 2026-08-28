@@ -47,6 +47,8 @@ public sealed class FpsStorageTests
                 new() { Position = new() { X = -5, Y = 0, Z = 0 }, YawRadians = 1.2 },
                 new() { Position = new() { X = 5, Y = 0, Z = 0 }, YawRadians = -1.2 },
             ],
+            CollisionIncludeMeshes = ["FPS_SOLID_*"],
+            CollisionExcludeMeshes = ["*_FOLIAGE"],
         };
 
         string path = store.Save(expected);
@@ -58,6 +60,25 @@ public sealed class FpsStorageTests
             Assert.That(store.IsPrepared("magione", string.Empty), Is.True);
             Assert.That(actual?.SpawnPoints, Has.Count.EqualTo(2));
             Assert.That(actual?.BoundsMax.Z, Is.EqualTo(30));
+            Assert.That(actual?.PreparationVersion,
+                Is.EqualTo(FpsArenaDefinition.CurrentPreparationVersion));
+            Assert.That(actual?.CollisionIncludeMeshes, Is.EqualTo(new[] { "FPS_SOLID_*" }));
+            Assert.That(actual?.CollisionExcludeMeshes, Is.EqualTo(new[] { "*_FOLIAGE" }));
         });
+    }
+
+    [Test]
+    public void ArenaStore_RejectsSidecarsFromOlderCollisionPreparation()
+    {
+        using var factory = new TestContentFactory();
+        var store = new FpsArenaStore(new RaceControlPaths(factory.DataRoot));
+        store.Save(new FpsArenaDefinition
+        {
+            PreparationVersion = FpsArenaDefinition.CurrentPreparationVersion - 1,
+            TrackId = "legacy",
+            SpawnPoints = [new(), new()],
+        });
+
+        Assert.That(store.IsPrepared("legacy", string.Empty), Is.False);
     }
 }

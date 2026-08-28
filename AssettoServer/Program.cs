@@ -87,6 +87,12 @@ public static class Program
         [Option("fps-geometry-output", Required = false, HelpText = "Optional physical geometry output path used by --prepare-fps-arena")]
         public string FpsGeometryOutput { get; set; } = "";
 
+        [Option("fps-collision-include", Required = false, HelpText = "Semicolon-separated FPS collision mesh include patterns")]
+        public string FpsCollisionInclude { get; set; } = "";
+
+        [Option("fps-collision-exclude", Required = false, HelpText = "Semicolon-separated FPS collision mesh exclude patterns")]
+        public string FpsCollisionExclude { get; set; } = "";
+
         [Option("shutdown-file", Required = false, SetName = "AssettoServer", HelpText = "Gracefully stop when this file is created")]
         public string ShutdownFile { get; set; } = "";
 
@@ -317,9 +323,17 @@ public static class Program
         }
 
         var result = FpsArenaAssetBuilder.Build(options.AssettoCorsaRoot, options.PhysicsTrack,
-            options.PhysicsTrackConfig, options.FpsArenaOutput, options.FpsGeometryOutput);
-        Console.WriteLine($"Prepared FPS arena: {result.SpawnPoints} spawns from {result.TrackTriangles} physical track triangles");
+            options.PhysicsTrackConfig, options.FpsArenaOutput, options.FpsGeometryOutput,
+            SplitPatterns(options.FpsCollisionInclude), SplitPatterns(options.FpsCollisionExclude));
+        Console.WriteLine($"Prepared FPS arena: {result.SpawnPoints} spawns from "
+                          + $"{result.TrackTriangles} collision triangles "
+                          + $"({result.PhysicalTriangles} physical, "
+                          + $"{result.SupplementalTriangles} supplemental) across "
+                          + $"{result.CollisionMeshes} meshes");
     }
+
+    private static IEnumerable<string> SplitPatterns(string value) =>
+        value.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     public static void RestartServer(
         string? preset,

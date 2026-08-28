@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AssettoServer.Server.Ai;
 using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.RaceSimulation;
@@ -334,6 +335,8 @@ public sealed class RaceControlBridge : IHostedService
             // state. EntryCar.Status belongs to a connected client and remains identity for an
             // unclaimed bot slot, which previously left every chase-view car facing world +Z.
             Quaternion orientation = ResolveTelemetryOrientation(ai, car.Status.Rotation);
+            RaceBotVehicleTelemetry drivetrain = ResolveTelemetryDrivetrain(ai,
+                car.Status.Gear, car.Status.EngineRpm);
             Vector3 forward = Vector3.Transform(Vector3.UnitZ, orientation);
             double normalizedPosition = ai != null && _spline is { Points.Length: > 1 }
                 ? ai.Value.SplinePointId / (double)(_spline.Points.Length - 1)
@@ -363,8 +366,8 @@ public sealed class RaceControlBridge : IHostedService
                 forwardY = forward.Y,
                 forwardZ = forward.Z,
                 speedKmh = Math.Sqrt(velocity.X * velocity.X + velocity.Z * velocity.Z) * 3.6,
-                protocolGear = car.Status.Gear,
-                engineRpm = car.Status.EngineRpm,
+                protocolGear = drivetrain.ProtocolGear,
+                engineRpm = drivetrain.EngineRpm,
                 targetSpeedKmh = (ai?.TargetSpeed ?? 0) * 3.6,
                 effectiveTargetSpeedKmh = (physicsTelemetry?.EffectiveTargetSpeedMetersPerSecond ?? 0) * 3.6,
                 courseBoundaryErrorMeters = physicsTelemetry?.CourseBoundaryErrorMeters ?? 0,
@@ -422,6 +425,11 @@ public sealed class RaceControlBridge : IHostedService
     internal static Quaternion ResolveTelemetryOrientation(RaceAiStateSnapshot? ai,
         Vector3 clientRotation) => ai?.Orientation
                                    ?? RacePhysicsMath.FromProtocolRotation(clientRotation);
+
+    internal static RaceBotVehicleTelemetry ResolveTelemetryDrivetrain(RaceAiStateSnapshot? ai,
+        byte clientGear, ushort clientEngineRpm) => ai.HasValue
+        ? new RaceBotVehicleTelemetry(ai.Value.ProtocolGear, ai.Value.EngineRpm)
+        : new RaceBotVehicleTelemetry(clientGear, clientEngineRpm);
 
     private void AtomicWrite(string path, object value)
     {

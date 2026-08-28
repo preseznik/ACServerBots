@@ -262,7 +262,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="GRID">
+            <TabItem Header="{Binding GridTabTitle}">
                 <Grid Margin="24">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -281,8 +281,8 @@
                                     ToolTip="Enable bots and set every grid entry to Auto, allowing a human to claim any slot." />
                             <Button Content="Random skins" Command="{Binding RandomizeSkinsCommand}" Margin="7,0,0,0"
                                     ToolTip="Choose a random installed skin for each entry's selected car." />
-                            <Button Content="Fill pit boxes" Command="{Binding FillGridCommand}" Margin="7,0,0,0"
-                                    ToolTip="Add or remove entries until the grid matches the selected layout's pit-box capacity." />
+                            <Button Content="{Binding FillGridLabel}" Command="{Binding FillGridCommand}" Margin="7,0,0,0"
+                                    ToolTip="{Binding FillGridToolTip}" />
                             <Button Content="Add entry" Command="{Binding AddSlotCommand}" Style="{StaticResource PrimaryButton}" Margin="7,0,0,0"
                                     ToolTip="Append a grid entry based on the selected row, or the last row if none is selected." />
                         </StackPanel>
@@ -924,7 +924,7 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="LIVE RACE">
+            <TabItem Header="{Binding LiveTabTitle}">
                 <Grid Margin="24">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -944,7 +944,7 @@
                                     <Button Content="Start live server" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}"
                                             ToolTip="Validate and stage the current setup, start the network server, and connect this live view." />
                                     <Button Content="Stop server" Command="{Binding StopCommand}" Margin="7,0,0,0"
-                                            ToolTip="Gracefully stop the whole AssettoServer process. This is separate from stopping the current race session." />
+                                            ToolTip="{Binding StopServerToolTip}" />
                                     <Button Content="Restart server" Command="{Binding RestartCommand}" Margin="7,0,0,0"
                                             ToolTip="Restart the current staged server or simulation in the same mode." />
                                 </StackPanel>
@@ -952,14 +952,14 @@
                             </StackPanel>
 
                             <StackPanel Grid.Column="1" Margin="20,0">
-                                <TextBlock Text="Race session" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="{Binding LiveSessionTitle}" Style="{StaticResource SectionTitle}" />
                                 <StackPanel Orientation="Horizontal">
-                                    <Button Content="START RACE" Command="{Binding StartRaceCommand}" Style="{StaticResource PrimaryButton}"
-                                            ToolTip="Immediately select the configured race session and begin its normal grid countdown, even with no human players connected." />
-                                    <Button Content="Stop race" Command="{Binding StopRaceCommand}" Margin="7,0,0,0"
-                                            ToolTip="End the active race, classify unfinished participants as DNF, hold bots, and leave the server online." />
-                                    <Button Content="Restart race" Command="{Binding RestartRaceCommand}" Margin="7,0,0,0"
-                                            ToolTip="Reset the configured race session and start its grid countdown again, regardless of connected-player count." />
+                                    <Button Content="{Binding StartRaceLabel}" Command="{Binding StartRaceCommand}" Style="{StaticResource PrimaryButton}"
+                                            ToolTip="{Binding StartRaceToolTip}" />
+                                    <Button Content="{Binding StopRaceLabel}" Command="{Binding StopRaceCommand}" Margin="7,0,0,0"
+                                            ToolTip="{Binding StopRaceToolTip}" />
+                                    <Button Content="{Binding RestartRaceLabel}" Command="{Binding RestartRaceCommand}" Margin="7,0,0,0"
+                                            ToolTip="{Binding RestartRaceToolTip}" />
                                 </StackPanel>
                                 <TextBlock Text="{Binding LiveControlStatus}" Foreground="{DynamicResource MutedTextBrush}"
                                            TextWrapping="Wrap" Margin="0,10,0,0" />

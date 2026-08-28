@@ -85,6 +85,52 @@ public sealed class LiveRaceControlClientTests
     }
 
     [Test]
+    public void TrackCacheReloadsWhenReusableInstanceReplacesEmptyTrack()
+    {
+        var client = new LiveRaceControlClient(_root);
+        var cache = new LiveTrackFileCache();
+        Directory.CreateDirectory(client.ControlDirectory);
+        File.WriteAllText(client.TrackPath, """
+        {
+          "schemaVersion": 1,
+          "track": "fps_arena",
+          "layout": "",
+          "points": []
+        }
+        """);
+        File.SetLastWriteTimeUtc(client.TrackPath, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        Assert.That(cache.TryReadChanged(client), Is.Null,
+            "An empty FPS map must not poison the reusable instance cache.");
+
+        string replacement = client.TrackPath + ".tmp";
+        File.WriteAllText(replacement, """
+        {
+          "schemaVersion": 1,
+          "track": "ks_nordschleife",
+          "layout": "nordschleife",
+          "points": [
+            { "x": 1, "y": 2, "z": 3, "leftWidth": 5, "rightWidth": 5 },
+            { "x": 4, "y": 2, "z": 6, "leftWidth": 5, "rightWidth": 5 }
+          ]
+        }
+        """);
+        File.Move(replacement, client.TrackPath, true);
+        File.SetLastWriteTimeUtc(client.TrackPath, new DateTime(2026, 1, 1, 0, 0, 1, DateTimeKind.Utc));
+
+        LiveTrackMap? loaded = cache.TryReadChanged(client);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(loaded, Is.Not.Null);
+            Assert.That(loaded!.Track, Is.EqualTo("ks_nordschleife"));
+            Assert.That(loaded.Points, Has.Count.EqualTo(2));
+            Assert.That(cache.TryReadChanged(client), Is.Null,
+                "An unchanged track file should not be parsed every monitor tick.");
+        });
+    }
+
+    [Test]
     public async Task WritesValidatedLiveSimulationTimeScaleCommand()
     {
         var client = new LiveRaceControlClient(_root);

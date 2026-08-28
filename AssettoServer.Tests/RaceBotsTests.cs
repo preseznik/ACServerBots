@@ -437,6 +437,30 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void RaceControlTelemetryUsesAuthoritativeBotDrivetrain()
+    {
+        var ai = default(RaceAiStateSnapshot) with
+        {
+            ProtocolGear = 5,
+            EngineRpm = 6123,
+        };
+
+        RaceBotVehicleTelemetry resolved = RaceControlBridge.ResolveTelemetryDrivetrain(ai,
+            clientGear: 1, clientEngineRpm: 0);
+        RaceBotVehicleTelemetry human = RaceControlBridge.ResolveTelemetryDrivetrain(null,
+            clientGear: 3, clientEngineRpm: 4500);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolved.ProtocolGear, Is.EqualTo(5),
+                "an empty slot-level client status must not report a moving bot as neutral");
+            Assert.That(resolved.EngineRpm, Is.EqualTo(6123));
+            Assert.That(human.ProtocolGear, Is.EqualTo(3));
+            Assert.That(human.EngineRpm, Is.EqualTo(4500));
+        });
+    }
+
+    [Test]
     public void AcStartPoseIsGroundedOnPhysicalTrackSurface()
     {
         var triangles = new[]

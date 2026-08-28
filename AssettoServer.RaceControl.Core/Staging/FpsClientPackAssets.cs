@@ -8,12 +8,22 @@ public static class FpsClientPackAssets
         "content/objects3D/asrc_fps/asrc_assault_rifle_viewmodel.kn5";
     public const string RifleWorldModelPath =
         "content/objects3D/asrc_fps/asrc_assault_rifle_world.kn5";
+    public const string RifleDiffusePath =
+        "content/objects3D/asrc_fps/asrc_rifle_diffuse.png";
+    public const string OperatorSkinPath =
+        "content/objects3D/asrc_fps/asrc_operator_skin.png";
 
     public static byte[] GetRifleViewmodel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_assault_rifle_viewmodel.kn5");
 
     public static byte[] GetRifleWorldModel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_assault_rifle_world.kn5");
+
+    public static byte[] GetRifleDiffuse() => ReadEmbeddedPng(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_rifle_diffuse.png");
+
+    public static byte[] GetOperatorSkin() => ReadEmbeddedPng(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_operator_skin.png");
 
     public static string Sha256(byte[] data) => Convert.ToHexString(
         System.Security.Cryptography.SHA256.HashData(data)).ToLowerInvariant();
@@ -64,6 +74,20 @@ public static class FpsClientPackAssets
         byte[] data = output.ToArray();
         if (data.Length < 1024 || !data.AsSpan(0, 6).SequenceEqual("sc6969"u8))
             throw new InvalidDataException($"Embedded FPS client asset is not a valid KN5: {resourceName}");
+        return data;
+    }
+
+    private static byte[] ReadEmbeddedPng(string resourceName)
+    {
+        using Stream stream = typeof(FpsClientPackAssets).Assembly.GetManifestResourceStream(resourceName)
+                              ?? throw new InvalidOperationException(
+                                  $"Embedded FPS client asset was not found: {resourceName}");
+        using var output = new MemoryStream();
+        stream.CopyTo(output);
+        byte[] data = output.ToArray();
+        ReadOnlySpan<byte> pngMagic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        if (data.Length < 1024 || !data.AsSpan(0, pngMagic.Length).SequenceEqual(pngMagic))
+            throw new InvalidDataException($"Embedded FPS client asset is not a valid PNG: {resourceName}");
         return data;
     }
 }

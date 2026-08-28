@@ -39,6 +39,21 @@ public sealed class LiveRaceControlClient
 
     public LiveRaceSnapshot? TryReadSnapshot() => TryRead<LiveRaceSnapshot>(SnapshotPath);
     public LiveTrackMap? TryReadTrack() => TryRead<LiveTrackMap>(TrackPath);
+    public LiveTrackFileRevision? TryGetTrackRevision()
+    {
+        try
+        {
+            var file = new FileInfo(TrackPath);
+            if (!file.Exists)
+                return null;
+            return new LiveTrackFileRevision(file.Length, file.LastWriteTimeUtc.Ticks);
+        }
+        catch (Exception exception) when (exception is IOException
+                                         or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
     public SimulationRaceSummary? TryReadSimulationSummary() =>
         TryRead<SimulationRaceSummary>(SimulationSummaryPath);
 
@@ -131,6 +146,29 @@ public sealed class LiveRaceControlClient
             return null;
         }
     }
+}
+
+public readonly record struct LiveTrackFileRevision(long Length, long LastWriteTimeUtcTicks);
+
+public sealed class LiveTrackFileCache
+{
+    private LiveTrackFileRevision? _loadedRevision;
+
+    public LiveTrackMap? TryReadChanged(LiveRaceControlClient client)
+    {
+        LiveTrackFileRevision? revision = client.TryGetTrackRevision();
+        if (revision is null || revision == _loadedRevision)
+            return null;
+
+        LiveTrackMap? track = client.TryReadTrack();
+        if (track is null || track.Points.Count < 2)
+            return null;
+
+        _loadedRevision = revision;
+        return track;
+    }
+
+    public void Invalidate() => _loadedRevision = null;
 }
 
 public sealed class LiveRaceSnapshot

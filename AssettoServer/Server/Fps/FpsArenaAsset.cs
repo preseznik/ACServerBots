@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.IO.Enumeration;
 using System.Linq;
 using System.Numerics;
 using System.Text.Json;
@@ -12,12 +13,15 @@ namespace AssettoServer.Server.Fps;
 
 internal sealed class FpsArenaAsset
 {
-    public int PreparationVersion { get; init; } = 1;
+    public const int CurrentPreparationVersion = 2;
+    public int PreparationVersion { get; init; } = CurrentPreparationVersion;
     public required string TrackId { get; init; }
     public required string LayoutId { get; init; }
     public required FpsArenaPoint BoundsMin { get; init; }
     public required FpsArenaPoint BoundsMax { get; init; }
     public required IReadOnlyList<FpsArenaSpawn> SpawnPoints { get; init; }
+    public IReadOnlyList<string> CollisionIncludeMeshes { get; init; } = [];
+    public IReadOnlyList<string> CollisionExcludeMeshes { get; init; } = [];
 }
 
 internal sealed record FpsArenaPoint(float X, float Y, float Z)
@@ -26,27 +30,57 @@ internal sealed record FpsArenaPoint(float X, float Y, float Z)
 }
 
 internal sealed record FpsArenaSpawn(FpsArenaPoint Position, float YawRadians);
-internal sealed record FpsArenaBuildResult(int SpawnPoints, int TrackTriangles);
+internal sealed record FpsArenaBuildResult(int SpawnPoints, int TrackTriangles,
+    int PhysicalTriangles, int SupplementalTriangles, int CollisionMeshes);
 
 internal static class FpsArenaAssetBuilder
 {
     private static readonly Regex GridNodeRegex = new("^AC_START_(\\d+)$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly string[] AutomaticSolidTokens =
+    [
+        "WALL", "BARRIER", "FLOOR", "STAIR", "ROOF", "CEILING", "BUILDING",
+        "HOUSE", "COLUMN", "PILLAR", "FENCE", "RAIL", "DOOR", "ROCK",
+        "PLATFORM", "RAMP",
+    ];
+    private static readonly string[] AutomaticNonSolidTokens =
+    [
+        "GRASS", "TREE", "BUSH", "LEAF", "DECAL", "SHADOW", "SKY", "CLOUD",
+        "LIGHT", "GLOW", "SMOKE", "WATER", "GLASS", "WINDOW", "BANNER", "FLAG",
+        "CROWD", "SPECTATOR", "BILLBOARD", "FX_",
+    ];
 
     public static FpsArenaBuildResult Build(string assettoCorsaRoot, string track,
-        string? layout, string outputPath, string? geometryOutputPath = null)
+        string? layout, string outputPath, string? geometryOutputPath = null,
+        IEnumerable<string>? collisionIncludeMeshes = null,
+        IEnumerable<string>? collisionExcludeMeshes = null)
     {
         string trackRoot = Path.Combine(Path.GetFullPath(assettoCorsaRoot), "content", "tracks", track);
         string modelsIni = string.IsNullOrWhiteSpace(layout)
             ? Path.Combine(trackRoot, "models.ini")
             : Path.Combine(trackRoot, $"models_{layout}.ini");
-        var triangles = new List<Kn5Triangle>();
+        var physicalTriangles = new List<Kn5Triangle>();
+        var supplementalTriangles = new List<Kn5Triangle>();
         var grid = new SortedDictionary<int, RaceGridPose>();
+        string[] includePatterns = NormalizePatterns(collisionIncludeMeshes);
+        string[] excludePatterns = NormalizePatterns(collisionExcludeMeshes);
+        int collisionMeshes = 0;
 
         foreach (string modelFile in RacePhysicsAssetBuilder.ReadModelFiles(modelsIni, trackRoot, track))
         {
-            var model = Kn5CollisionReader.Read(modelFile, RacePhysicsAssetBuilder.IsPhysicalTrackMesh);
-            triangles.AddRange(model.Triangles);
+            bool collisionProxy = IsCollisionProxyFile(modelFile);
+            bool IncludeMesh(string name) => ShouldIncludeMesh(name, collisionProxy,
+                includePatterns, excludePatterns);
+            var model = Kn5CollisionReader.Read(modelFile, IncludeMesh);
+            collisionMeshes += model.MeshRanges.Count;
+            foreach (var range in model.MeshRanges)
+            {
+                var destination = RacePhysicsAssetBuilder.IsPhysicalTrackMesh(range.Name)
+                    ? physicalTriangles
+                    : supplementalTriangles;
+                destination.AddRange(model.Triangles.GetRange(range.TriangleStart,
+                    range.TriangleCount));
+            }
             foreach (var node in model.NamedTransforms)
             {
                 var match = GridNodeRegex.Match(node.Name);
@@ -56,13 +90,13 @@ internal static class FpsArenaAssetBuilder
             }
         }
 
-        if (triangles.Count == 0)
+        if (physicalTriangles.Count == 0)
             throw new InvalidDataException($"No physical track meshes were found in {modelsIni}");
         if (grid.Count < 2)
             throw new InvalidDataException("An FPS arena needs at least two AC_START transforms for safe prototype spawns");
 
         var grounded = grid.Values.Take(32)
-            .Select(pose => RacePhysicsAssetBuilder.GroundGridPose(pose, triangles))
+            .Select(pose => RacePhysicsAssetBuilder.GroundGridPose(pose, physicalTriangles))
             .ToArray();
         var spawns = grounded.Select(pose =>
         {
@@ -86,13 +120,20 @@ internal static class FpsArenaAssetBuilder
             BoundsMin = new FpsArenaPoint(minX, minY, minZ),
             BoundsMax = new FpsArenaPoint(maxX, maxY, maxZ),
             SpawnPoints = spawns,
+            CollisionIncludeMeshes = includePatterns,
+            CollisionExcludeMeshes = excludePatterns,
         };
 
-        var arenaTriangles = RacePhysicsAssetBuilder.DeduplicateTriangles(triangles)
+        var boundedPhysical = RacePhysicsAssetBuilder.DeduplicateTriangles(physicalTriangles)
             .Where(triangle => TouchesBounds(triangle, minX, minY, minZ, maxX, maxY, maxZ))
             .ToArray();
+        var boundedSupplemental = RacePhysicsAssetBuilder.DeduplicateTriangles(supplementalTriangles)
+            .Where(triangle => TouchesBounds(triangle, minX, minY, minZ, maxX, maxY, maxZ))
+            .ToArray();
+        var arenaTriangles = RacePhysicsAssetBuilder.DeduplicateTriangles(
+            boundedPhysical.Concat(boundedSupplemental).ToArray()).ToArray();
         if (arenaTriangles.Length == 0)
-            throw new InvalidDataException("No physical track geometry intersects the prepared FPS arena bounds");
+            throw new InvalidDataException("No collision geometry intersects the prepared FPS arena bounds");
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         File.WriteAllText(outputPath, JsonSerializer.Serialize(asset, new JsonSerializerOptions
@@ -101,7 +142,48 @@ internal static class FpsArenaAssetBuilder
         }));
         if (!string.IsNullOrWhiteSpace(geometryOutputPath))
             new FpsArenaGeometryAsset { Triangles = arenaTriangles }.Save(geometryOutputPath);
-        return new FpsArenaBuildResult(spawns.Length, arenaTriangles.Length);
+        return new FpsArenaBuildResult(spawns.Length, arenaTriangles.Length,
+            boundedPhysical.Length, boundedSupplemental.Length, collisionMeshes);
+    }
+
+    internal static bool ShouldIncludeMesh(string name, bool collisionProxy,
+        IReadOnlyList<string>? includePatterns = null,
+        IReadOnlyList<string>? excludePatterns = null)
+    {
+        if (MatchesAny(name, excludePatterns)) return false;
+        if (RacePhysicsAssetBuilder.IsPhysicalTrackMesh(name)) return true;
+        if (MatchesAny(name, includePatterns)) return true;
+        if (collisionProxy) return true;
+        if (name.StartsWith("FPV_", StringComparison.OrdinalIgnoreCase)) return true;
+        if (AutomaticNonSolidTokens.Any(token => name.Contains(token,
+                StringComparison.OrdinalIgnoreCase))) return false;
+        return AutomaticSolidTokens.Any(token => name.Contains(token,
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsCollisionProxyFile(string path)
+    {
+        string name = Path.GetFileNameWithoutExtension(path);
+        return name.Contains("collision", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("collider", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string[] NormalizePatterns(IEnumerable<string>? patterns) => patterns?
+        .SelectMany(pattern => pattern.Split([';', ','], StringSplitOptions.RemoveEmptyEntries))
+        .Select(pattern => pattern.Trim())
+        .Where(pattern => pattern.Length > 0)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray() ?? [];
+
+    private static bool MatchesAny(string name, IReadOnlyList<string>? patterns)
+    {
+        if (patterns is null) return false;
+        foreach (string pattern in patterns)
+        {
+            if (FileSystemName.MatchesSimpleExpression(pattern, name, ignoreCase: true))
+                return true;
+        }
+        return false;
     }
 
     private static bool TouchesBounds(Kn5Triangle triangle, float minX, float minY, float minZ,

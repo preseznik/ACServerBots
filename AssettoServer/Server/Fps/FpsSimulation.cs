@@ -31,8 +31,14 @@ internal readonly record struct FpsInputCommand(uint Sequence, Vector2 Move, flo
 internal readonly record struct FpsKillEvent(byte KillerId, byte VictimId, ushort KillerKills,
     ushort VictimDeaths);
 internal readonly record struct FpsHitEvent(byte AttackerId, byte VictimId, ushort RemainingHealth);
+internal enum FpsShotImpact : byte
+{
+    None,
+    World,
+    Actor,
+}
 internal readonly record struct FpsShotEvent(byte ShooterId, uint Sequence, Vector3 Origin,
-    Vector3 Direction, float Distance);
+    Vector3 Direction, float Distance, FpsShotImpact Impact, byte TargetId);
 
 internal sealed class FpsActorState
 {
@@ -52,6 +58,10 @@ internal sealed class FpsActorState
     public float RespawnRemaining { get; set; }
     public float FireCooldown { get; set; }
     public float WeaponHeat { get; set; }
+    public int AmmoInMagazine { get; set; }
+    public int ReserveMagazines { get; set; }
+    public float ReloadRemaining { get; set; }
+    public bool ReloadHeld { get; set; }
     public uint ShotSequence { get; set; }
     public uint LastInputSequence { get; set; }
     public bool HasInput { get; set; }
@@ -60,6 +70,8 @@ internal sealed class FpsActorState
     public float GroundY { get; set; }
     public float VerticalVelocity { get; set; }
     public bool JumpHeld { get; set; }
+    public float JumpHeldSeconds { get; set; }
+    public bool TraversalConsumedForJumpHold { get; set; }
     public bool IsGrounded { get; set; }
     public FpsStance Stance { get; set; }
     public bool IsCrouching => Stance == FpsStance.Crouching;
@@ -68,6 +80,12 @@ internal sealed class FpsActorState
     public float CrouchHeldSeconds { get; set; }
     public bool CrouchLatched { get; set; }
     public bool GeometryBlocked { get; set; }
+    public Vector2 CollisionNormal { get; set; }
+    public Vector3 LastSafePosition { get; set; }
+    public float LastSafeGroundY { get; set; }
+    public bool LastSafeWasGrounded { get; set; }
+    public FpsStance LastSafeStance { get; set; }
+    public bool HasLastSafePosition { get; set; }
     public Vector2 HorizontalVelocity { get; set; }
     public bool IsMantling { get; set; }
     public Vector3 MantleStart { get; set; }
@@ -88,15 +106,20 @@ internal sealed class FpsSimulation
     private const float ProneSpeed = 1.8f;
     private const float ProneHoldSeconds = 0.65f;
     private const float MantleDuration = 0.45f;
+    internal const float MantleHoldSeconds = 0.2f;
     private const float AirControlPerSecond = 1.5f;
     private const float JumpSpeed = 7.25f;
     private const float Gravity = 15;
     private const float RifleRange = 120;
     private const float RifleDamage = 34;
     private const float RifleInterval = 0.12f;
+    private const float RifleTargetRadius = 0.42f;
     private const float RifleMaximumSpreadRadians = 0.018f;
     private const float RifleHeatPerShot = 0.18f;
     private const float RifleHeatRecoveryPerSecond = 0.45f;
+    internal const int RifleMagazineCapacity = 40;
+    internal const int RifleInitialReserveMagazines = 4;
+    internal const float RifleReloadSeconds = 1.8f;
     private readonly FpsConfiguration _configuration;
     private readonly Dictionary<byte, FpsActorState> _actors;
     private readonly List<FpsKillEvent> _killEvents = [];
@@ -173,11 +196,11 @@ internal sealed class FpsSimulation
 
     public void Step(float dt)
     {
-        if (MatchState != FpsMatchState.Running || !float.IsFinite(dt) || dt <= 0) return;
-        dt = Math.Min(dt, 0.05f);
         _killEvents.Clear();
         _hitEvents.Clear();
         _shotEvents.Clear();
+        if (MatchState != FpsMatchState.Running || !float.IsFinite(dt) || dt <= 0) return;
+        dt = Math.Min(dt, 0.05f);
         RemainingSeconds = Math.Max(0, RemainingSeconds - dt);
         ElapsedSeconds += dt;
 
@@ -187,8 +210,10 @@ internal sealed class FpsSimulation
             actor.FireCooldown = Math.Max(0, actor.FireCooldown - dt);
             actor.WeaponHeat = Math.Max(0,
                 actor.WeaponHeat - RifleHeatRecoveryPerSecond * dt);
+            StepReload(actor, dt);
             actor.SpawnProtectionRemaining = Math.Max(0, actor.SpawnProtectionRemaining - dt);
             actor.GeometryBlocked = false;
+            actor.CollisionNormal = Vector2.Zero;
             if (actor.Dead)
             {
                 actor.RespawnRemaining -= dt;
@@ -199,12 +224,15 @@ internal sealed class FpsSimulation
             if (actor.IsMantling)
             {
                 StepMantle(actor, dt);
+                if (!actor.IsMantling) ValidateSafePose(actor);
                 continue;
             }
 
+            ValidateSafePose(actor);
             if (actor.HumanControlled) StepHuman(actor, dt);
             else StepBot(actor, dt);
             StepVertical(actor, dt);
+            ValidateSafePose(actor);
         }
 
         SeparateActors();
@@ -215,19 +243,28 @@ internal sealed class FpsSimulation
     private void StepHuman(FpsActorState actor, float dt)
     {
         if (!actor.HasInput) return;
+        bool reload = actor.Input.Buttons.HasFlag(FpsInputButtons.Reload);
+        if (reload && !actor.ReloadHeld) BeginReload(actor);
+        actor.ReloadHeld = reload;
         actor.Yaw = NormalizeAngle(actor.Input.Yaw);
         actor.Pitch = actor.Input.Pitch;
         bool crouch = actor.Input.Buttons.HasFlag(FpsInputButtons.Crouch);
         bool jump = actor.Input.Buttons.HasFlag(FpsInputButtons.Jump);
+        if (!jump) actor.TraversalConsumedForJumpHold = false;
         bool jumpConsumed = UpdateStance(actor, crouch, jump, dt);
         Move(actor, actor.Input.Move, actor.Input.Buttons.HasFlag(FpsInputButtons.Sprint), dt);
         bool jumpStarted = jump && !actor.JumpHeld;
+        actor.JumpHeldSeconds = jump ? actor.JumpHeldSeconds + dt : 0;
         // Traversal is an intentional held-jump action, not a collision recovery. Probe
-        // continuously so a stationary player can mantle what they are looking at and an
-        // airborne player can catch a ledge before the horizontal sweep becomes blocked.
-        if (!jumpConsumed && jump && TryBeginMantle(actor, actor.Input.Move))
+        // only after a deliberate hold so an ordinary tap remains an ordinary jump.
+        // Continue probing while held so an airborne player can still catch a ledge.
+        if (!jumpConsumed && !actor.TraversalConsumedForJumpHold
+            && actor.JumpHeldSeconds >= MantleHoldSeconds
+            && TryBeginMantle(actor, actor.Input.Move))
         {
             actor.JumpHeld = jump;
+            actor.JumpHeldSeconds = 0;
+            actor.TraversalConsumedForJumpHold = true;
             if (actor.Input.Buttons.HasFlag(FpsInputButtons.Fire)) TryFire(actor);
             return;
         }
@@ -348,7 +385,15 @@ internal sealed class FpsSimulation
                 out target, out _))
         {
             arcHeight = 0.18f;
-            finishStance = FpsStance.Crouching;
+            // The crouched capsule is used while crossing the ledge, but a clear landing
+            // must restore the stance the player approached with. Permanently latching a
+            // normal standing player into crouch made every mantle feel like a speed bug
+            // until crouch was tapped again.
+            finishStance = startingStance == FpsStance.Standing
+                           && !_surface.IsPositionBlocked(target, target.Y,
+                               CollisionHeight(FpsStance.Standing))
+                ? FpsStance.Standing
+                : FpsStance.Crouching;
         }
         else if (_surface.TryFindVault(actor.Position, direction, actor.GroundY,
                      out target, out _))
@@ -412,6 +457,14 @@ internal sealed class FpsSimulation
             return;
         }
 
+        if (_surface.IsPositionBlocked(actor.Position, actor.GroundY,
+                CollisionHeight(actor.Stance)))
+        {
+            RestoreSafePose(actor);
+            actor.GeometryBlocked = true;
+            return;
+        }
+
         var previous = actor.Position;
         float actorHeight = CollisionHeight(actor.Stance);
         Vector3 resolved;
@@ -447,6 +500,7 @@ internal sealed class FpsSimulation
         if (!resolvedMove)
         {
             actor.GeometryBlocked = true;
+            actor.CollisionNormal = NormalizedPlanarDelta(actor.Position, desired);
             actor.HorizontalVelocity = Vector2.Zero;
             return;
         }
@@ -455,9 +509,74 @@ internal sealed class FpsSimulation
         float resolvedDistance = Vector2.Distance(new Vector2(previous.X, previous.Z),
             new Vector2(resolved.X, resolved.Z));
         if (requestedDistance > 0.001f && resolvedDistance + 0.01f < requestedDistance)
+        {
             actor.GeometryBlocked = true;
+            actor.CollisionNormal = NormalizedPlanarDelta(resolved, desired);
+        }
         actor.GroundY = groundY;
         actor.Position = actor.IsGrounded ? resolved with { Y = groundY } : resolved;
+        if (actor.IsGrounded) RememberSafePose(actor);
+    }
+
+    private static Vector2 NormalizedPlanarDelta(Vector3 from, Vector3 to)
+    {
+        var delta = new Vector2(to.X - from.X, to.Z - from.Z);
+        return delta.LengthSquared() > 1e-8f ? Vector2.Normalize(delta) : Vector2.Zero;
+    }
+
+    private void ValidateSafePose(FpsActorState actor)
+    {
+        if (_surface is null || actor.Dead || actor.IsMantling) return;
+        float actorHeight = CollisionHeight(actor.Stance);
+        if (!_surface.IsPositionBlocked(actor.Position, actor.GroundY, actorHeight))
+        {
+            if (actor.IsGrounded) RememberSafePose(actor);
+            return;
+        }
+
+        actor.GeometryBlocked = true;
+        if (!actor.IsGrounded
+            && _surface.TryDepenetrateAir(actor.Position, actorHeight,
+                out var resolved, out float groundY))
+        {
+            actor.Position = resolved;
+            actor.GroundY = groundY;
+            return;
+        }
+        RestoreSafePose(actor);
+    }
+
+    private void RestoreSafePose(FpsActorState actor)
+    {
+        if (_surface is null) return;
+        if (actor.HasLastSafePosition
+            && !_surface.IsPositionBlocked(actor.LastSafePosition, actor.LastSafeGroundY,
+                CollisionHeight(actor.LastSafeStance)))
+        {
+            actor.Position = actor.LastSafePosition;
+            actor.GroundY = actor.LastSafeGroundY;
+            actor.IsGrounded = actor.LastSafeWasGrounded;
+            actor.Stance = actor.LastSafeStance;
+        }
+        else if (_surface.TryDepenetrate(actor.Position, actor.GroundY,
+                     CollisionHeight(actor.Stance), out var resolved, out float groundY))
+        {
+            actor.Position = resolved;
+            actor.GroundY = groundY;
+            actor.IsGrounded = true;
+            RememberSafePose(actor);
+        }
+        actor.HorizontalVelocity = Vector2.Zero;
+        actor.VerticalVelocity = 0;
+    }
+
+    private void RememberSafePose(FpsActorState actor)
+    {
+        actor.LastSafePosition = actor.Position;
+        actor.LastSafeGroundY = actor.GroundY;
+        actor.LastSafeWasGrounded = actor.IsGrounded;
+        actor.LastSafeStance = actor.Stance;
+        actor.HasLastSafePosition = true;
     }
 
     private static float CollisionHeight(FpsStance stance) => stance switch
@@ -471,13 +590,19 @@ internal sealed class FpsSimulation
     {
         FpsStance.Prone => 0.42f,
         FpsStance.Crouching => 1.05f,
-        _ => 1.55f,
+        _ => 1.65f,
     };
 
     private void TryFire(FpsActorState attacker)
     {
-        if (attacker.FireCooldown > 0) return;
+        if (attacker.FireCooldown > 0 || attacker.ReloadRemaining > 0) return;
+        if (attacker.AmmoInMagazine <= 0)
+        {
+            BeginReload(attacker);
+            return;
+        }
         attacker.FireCooldown = RifleInterval;
+        attacker.AmmoInMagazine--;
         uint shotSequence = ++attacker.ShotSequence;
         float spread = attacker.WeaponHeat * RifleMaximumSpreadRadians;
         float shotYaw = attacker.Yaw + ShotNoise(attacker.Id, shotSequence, 0xA511E9B3u) * spread;
@@ -490,26 +615,30 @@ internal sealed class FpsSimulation
         var origin = attacker.Position + Vector3.UnitY * EyeHeight(attacker.Stance);
         FpsActorState? hit = null;
         float hitDistance = RifleRange;
+        bool hitWorld = false;
         if (_surface is not null && _surface.TryRaycast(origin, direction, RifleRange,
                 out float surfaceDistance))
+        {
             hitDistance = surfaceDistance;
+            hitWorld = true;
+        }
         foreach (var candidate in _actors.Values)
         {
             if (!candidate.Active || candidate.Dead || candidate.Id == attacker.Id
                 || candidate.SpawnProtectionRemaining > 0) continue;
-            var center = candidate.Position + Vector3.UnitY * (candidate.IsProne ? 0.35f
-                : candidate.IsCrouching ? 0.58f : 0.9f);
-            var toCenter = center - origin;
-            float along = Vector3.Dot(toCenter, direction);
-            if (along is <= 0 or > RifleRange || along >= hitDistance) continue;
-            float radius = 0.48f;
-            if (Vector3.DistanceSquared(origin + direction * along, center) > radius * radius) continue;
+            if (!TryRaycastActorCapsule(origin, direction, candidate.Position,
+                    CollisionHeight(candidate.Stance), out float along)
+                || along <= 0 || along > RifleRange || along >= hitDistance) continue;
             hit = candidate;
             hitDistance = along;
         }
 
         _shotEvents.Add(new FpsShotEvent(attacker.Id, shotSequence, origin, direction,
-            hitDistance));
+            hitDistance, hit is not null ? FpsShotImpact.Actor
+                : hitWorld ? FpsShotImpact.World : FpsShotImpact.None,
+            hit?.Id ?? byte.MaxValue));
+
+        if (attacker.AmmoInMagazine == 0) BeginReload(attacker);
 
         if (hit is null) return;
         hit.Health -= (int)RifleDamage;
@@ -522,6 +651,80 @@ internal sealed class FpsSimulation
         attacker.Kills++;
         attacker.FinalScoreAttainedAtSeconds = ElapsedSeconds;
         _killEvents.Add(new FpsKillEvent(attacker.Id, hit.Id, attacker.Kills, hit.Deaths));
+    }
+
+    private static bool TryRaycastActorCapsule(Vector3 origin, Vector3 direction,
+        Vector3 position, float height, out float distance)
+    {
+        float bestDistance = float.PositiveInfinity;
+        float inset = MathF.Min(RifleTargetRadius, height * 0.5f);
+        float bottomY = position.Y + inset;
+        float topY = position.Y + height - inset;
+        float offsetX = origin.X - position.X;
+        float offsetZ = origin.Z - position.Z;
+        float planarDirectionLengthSquared = direction.X * direction.X
+                                             + direction.Z * direction.Z;
+        if (planarDirectionLengthSquared > 1e-8f)
+        {
+            float b = 2 * (offsetX * direction.X + offsetZ * direction.Z);
+            float c = offsetX * offsetX + offsetZ * offsetZ
+                      - RifleTargetRadius * RifleTargetRadius;
+            float discriminant = b * b - 4 * planarDirectionLengthSquared * c;
+            if (discriminant >= 0)
+            {
+                float root = MathF.Sqrt(discriminant);
+                float denominator = 2 * planarDirectionLengthSquared;
+                SelectCylinderHit((-b - root) / denominator);
+                SelectCylinderHit((-b + root) / denominator);
+            }
+        }
+
+        SelectSphereHit(new Vector3(position.X, bottomY, position.Z));
+        if (topY > bottomY + 1e-5f)
+            SelectSphereHit(new Vector3(position.X, topY, position.Z));
+        distance = bestDistance;
+        return float.IsFinite(bestDistance);
+
+        void SelectCylinderHit(float candidateDistance)
+        {
+            if (candidateDistance < 0 || candidateDistance >= bestDistance) return;
+            float y = origin.Y + direction.Y * candidateDistance;
+            if (y >= bottomY && y <= topY) bestDistance = candidateDistance;
+        }
+
+        void SelectSphereHit(Vector3 center)
+        {
+            var fromCenter = origin - center;
+            float b = Vector3.Dot(fromCenter, direction);
+            float c = fromCenter.LengthSquared() - RifleTargetRadius * RifleTargetRadius;
+            if (c <= 0)
+            {
+                bestDistance = 0;
+                return;
+            }
+            float discriminant = b * b - c;
+            if (discriminant < 0) return;
+            float candidateDistance = -b - MathF.Sqrt(discriminant);
+            if (candidateDistance >= 0 && candidateDistance < bestDistance)
+                bestDistance = candidateDistance;
+        }
+    }
+
+    private static void BeginReload(FpsActorState actor)
+    {
+        if (actor.ReloadRemaining > 0 || actor.AmmoInMagazine >= RifleMagazineCapacity
+            || actor.ReserveMagazines <= 0)
+            return;
+        actor.ReloadRemaining = RifleReloadSeconds;
+    }
+
+    private static void StepReload(FpsActorState actor, float dt)
+    {
+        if (actor.ReloadRemaining <= 0) return;
+        actor.ReloadRemaining = Math.Max(0, actor.ReloadRemaining - dt);
+        if (actor.ReloadRemaining > 0) return;
+        actor.AmmoInMagazine = RifleMagazineCapacity;
+        actor.ReserveMagazines--;
     }
 
     private void Spawn(FpsActorState actor)
@@ -537,6 +740,8 @@ internal sealed class FpsSimulation
         actor.GroundY = groundY;
         actor.VerticalVelocity = 0;
         actor.JumpHeld = false;
+        actor.JumpHeldSeconds = 0;
+        actor.TraversalConsumedForJumpHold = false;
         actor.IsGrounded = true;
         actor.Stance = FpsStance.Standing;
         actor.CrouchHeld = false;
@@ -554,7 +759,23 @@ internal sealed class FpsSimulation
         actor.SpawnProtectionRemaining = _configuration.SpawnProtectionSeconds;
         actor.FireCooldown = 0;
         actor.WeaponHeat = 0;
+        actor.AmmoInMagazine = RifleMagazineCapacity;
+        actor.ReserveMagazines = RifleInitialReserveMagazines;
+        actor.ReloadRemaining = 0;
+        actor.ReloadHeld = false;
         actor.SpawnCount++;
+        actor.HasLastSafePosition = false;
+        bool safe = _surface is null || !_surface.IsPositionBlocked(actor.Position,
+            actor.GroundY, CollisionHeight(actor.Stance));
+        if (!safe && _surface is not null
+            && _surface.TryDepenetrate(actor.Position, actor.GroundY,
+                CollisionHeight(actor.Stance), out var resolved, out float safeGroundY))
+        {
+            actor.Position = resolved;
+            actor.GroundY = safeGroundY;
+            safe = true;
+        }
+        if (safe) RememberSafePose(actor);
     }
 
     private void SeparateActors()

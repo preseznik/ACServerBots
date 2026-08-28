@@ -154,7 +154,7 @@ $serverProcess = Start-Process -FilePath $instance.ExecutablePath -WorkingDirect
     -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
 try {
     if ($FpsGate) {
-        $assetUrl = 'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v4.zip'
+        $assetUrl = 'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v6.zip'
         $assetDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
         $assetArchiveBytes = $null
         $httpClient = [Net.Http.HttpClient]::new()
@@ -398,7 +398,7 @@ if ($combinedLog -notmatch 'Shutdown requested by control file') { throw 'Server
 if ($FpsGate -and $combinedLog -notmatch 'FPS deathmatch world started') {
     throw 'Server log did not confirm the authoritative FPS world startup.'
 }
-if ($FpsGate -and $combinedLog -notmatch '\d+ physical arena triangles') {
+if ($FpsGate -and $combinedLog -notmatch '\d+ (?:physical arena|collision) triangles') {
     throw 'Server log did not confirm loading physical FPS arena geometry.'
 }
 if ($FpsGate) {

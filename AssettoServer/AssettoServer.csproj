@@ -149,6 +149,10 @@
                           LogicalName="AssettoServer.Server.Fps.Assets.asrc_assault_rifle_viewmodel.kn5" />
         <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_assault_rifle_world.kn5"
                           LogicalName="AssettoServer.Server.Fps.Assets.asrc_assault_rifle_world.kn5" />
+        <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_rifle_diffuse.png"
+                          LogicalName="AssettoServer.Server.Fps.Assets.asrc_rifle_diffuse.png" />
+        <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_operator_skin.png"
+                          LogicalName="AssettoServer.Server.Fps.Assets.asrc_operator_skin.png" />
         <None Remove="Assets\logo_42.png" />
         <EmbeddedResource Include="Assets\logo_42.png" />
         <None Remove="Assets\srp-logo-new.png" />

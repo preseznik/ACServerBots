@@ -1,5 +1,6 @@
 ﻿using System.Drawing;
 using AssettoServer.Network.ClientMessages;
+using AssettoServer.Server.Fps;
 // ReSharper disable InconsistentNaming
 
 namespace AssettoServer.Tests;
@@ -36,6 +37,9 @@ public class OnlineEventGeneratorTests
             typeof(FpsShotPacket), typeof(FpsClientDiagnosticPacket),
         ];
         var definitions = packets.Select(OnlineEventGenerator.ParseClientMessage).ToArray();
+        var snapshotDefinition = definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot");
+        int snapshotPayloadBytes = snapshotDefinition.Fields.Sum(field =>
+            Math.Abs(field.Size) * (field.Array ?? 1));
 
         Assert.Multiple(() =>
         {
@@ -50,6 +54,34 @@ public class OnlineEventGeneratorTests
                 Does.Contain("char stage[48]"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Contain($"uint8_t actorIDs[{FpsSnapshotPacket.Capacity}]"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
+                Does.Contain($"uint32_t spawnCounts[{FpsSnapshotPacket.Capacity}]"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
+                Does.Contain($"uint8_t ammo[{FpsSnapshotPacket.Capacity}]"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
+                Does.Contain($"uint8_t collisionDirections[{FpsSnapshotPacket.Capacity}]"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
+                Does.Not.Contain("vec2 collisionNormals"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
+                Does.Contain($"float reloadRemaining[{FpsSnapshotPacket.Capacity}]"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsShot").Structure,
+                Does.Contain("uint8_t impact"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsShot").Structure,
+                Does.Contain("uint8_t targetID"));
+            Assert.That(snapshotPayloadBytes, Is.LessThanOrEqualTo(704),
+                "CSP silently drops oversized UDP online events before invoking the Lua callback");
+        });
+    }
+
+    [Test]
+    public void FpsWorldRoutesOnlineEventsOverTheirDeclaredTransport()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(FpsWorld.UsesUdpTransport<FpsShotPacket>(), Is.True);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsSnapshotPacket>(), Is.True);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsHitPacket>(), Is.False);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsKillPacket>(), Is.False);
         });
     }
 }

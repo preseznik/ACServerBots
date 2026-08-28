@@ -10,5 +10,6 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\Fps\*.kn5" />
+    <EmbeddedResource Include="Assets\Fps\*.png" />
   </ItemGroup>
 </Project>

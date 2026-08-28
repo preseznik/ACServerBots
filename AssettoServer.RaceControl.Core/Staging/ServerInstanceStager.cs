@@ -244,7 +244,12 @@ public sealed class ServerInstanceStager
 
     private string GetFpsGeometryCachePath(RaceControlPreset preset,
         RenderedServerConfiguration rendered) =>
-        CachePath("fps-arena-geometry", GetTrackGeometryInputs(preset, rendered));
+        CachePath("fps-arena-geometry", GetTrackGeometryInputs(preset, rendered),
+        [
+            $"preparation={FpsArenaDefinition.CurrentPreparationVersion}",
+            $"include={string.Join(';', preset.Fps.Arena?.CollisionIncludeMeshes ?? [])}",
+            $"exclude={string.Join(';', preset.Fps.Arena?.CollisionExcludeMeshes ?? [])}",
+        ]);
 
     private static List<string> GetTrackGeometryInputs(RaceControlPreset preset,
         RenderedServerConfiguration rendered)
@@ -274,13 +279,19 @@ public sealed class ServerInstanceStager
         return inputs;
     }
 
-    private string CachePath(string prefix, IEnumerable<string> inputs)
+    private string CachePath(string prefix, IEnumerable<string> inputs,
+        IEnumerable<string>? values = null)
     {
         var keyBuilder = new StringBuilder();
         foreach (var path in inputs.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
         {
             var info = new FileInfo(path);
             keyBuilder.Append(Path.GetFullPath(path)).Append('|').Append(info.Length).Append('|').Append(info.LastWriteTimeUtc.Ticks).AppendLine();
+        }
+        if (values is not null)
+        {
+            foreach (string value in values.Order(StringComparer.Ordinal))
+                keyBuilder.Append("value|").Append(value).AppendLine();
         }
 
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(keyBuilder.ToString()))).ToLowerInvariant();
@@ -380,6 +391,7 @@ public sealed class ServerInstanceStager
         startInfo.ArgumentList.Add(metadataOutput);
         startInfo.ArgumentList.Add("--fps-geometry-output");
         startInfo.ArgumentList.Add(output);
+        FpsArenaPreparationService.AddCollisionOverrides(startInfo, preset.Fps.Arena);
 
         using var process = new Process { StartInfo = startInfo };
         process.OutputDataReceived += (_, args) =>
