@@ -219,6 +219,7 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.ExtraConfiguration, Does.Contain("Fps:"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  KillLimit: 20"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("    GeometryPath: fps-arena-geometry.bin"));
+            Assert.That(rendered.ExtraConfiguration, Does.Contain("    NavigationPath: fps-arena-navigation.bin"));
         });
 
         static FpsArenaDefinition Arena() => new()
@@ -231,6 +232,12 @@ public sealed class ServerConfigurationRendererTests
                 new() { Position = new() { X = -5, Y = 0, Z = 0 } },
                 new() { Position = new() { X = 5, Y = 0, Z = 0 } },
             ],
+            Navigation = new()
+            {
+                NodeCount = 64,
+                ComponentCount = 1,
+                ConnectedSpawnCount = 2,
+            },
         };
     }
 }

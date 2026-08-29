@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using AssettoServer.Server.Ai.Physics;
 
@@ -173,6 +174,24 @@ internal sealed class FpsArenaSurface
     public bool TryGetGroundHeight(float x, float z, float referenceY, out float height)
         => TryGetGroundHeight(x, z, referenceY, -MaximumStepDown, MaximumStepHeight,
             out height);
+
+    internal void CollectWalkableHeights(float x, float z, float minimumY, float maximumY,
+        List<float> heights)
+    {
+        heights.Clear();
+        foreach (int index in Candidates(x, z))
+        {
+            var item = _triangles[index];
+            if (!item.Walkable || x < item.MinX - 0.001f || x > item.MaxX + 0.001f
+                || z < item.MinZ - 0.001f || z > item.MaxZ + 0.001f
+                || !TryHeight(item.Triangle, x, z, out float height)
+                || height < minimumY || height > maximumY)
+                continue;
+            if (heights.Any(existing => MathF.Abs(existing - height) < 0.05f)) continue;
+            heights.Add(height);
+        }
+        heights.Sort();
+    }
 
     public bool IsPositionBlocked(Vector3 position, float groundY, float actorHeight) =>
         TryGetBlockingNormal(position, groundY, actorHeight, Vector3.Zero, out _);

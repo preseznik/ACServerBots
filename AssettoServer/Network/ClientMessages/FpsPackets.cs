@@ -63,6 +63,11 @@ public sealed class FpsClientDiagnosticPacket : OnlineEvent<FpsClientDiagnosticP
     [OnlineEventField(Name = "directDrawPending")] public uint DirectDrawPending;
     [OnlineEventField(Name = "directDrawFailures")] public uint DirectDrawFailures;
     [OnlineEventField(Name = "position")] public Vector3 Position;
+    [OnlineEventField(Name = "remoteActorID")] public byte RemoteActorId = byte.MaxValue;
+    [OnlineEventField(Name = "remoteTarget")] public Vector3 RemoteTarget;
+    [OnlineEventField(Name = "remoteRender")] public Vector3 RemoteRender;
+    [OnlineEventField(Name = "remoteTargetYaw")] public float RemoteTargetYaw;
+    [OnlineEventField(Name = "remoteRenderYaw")] public float RemoteRenderYaw;
     [OnlineEventField(Name = "stage", Size = 48)] public string Stage = string.Empty;
 }
 

@@ -47,6 +47,14 @@ public sealed class FpsStorageTests
                 new() { Position = new() { X = -5, Y = 0, Z = 0 }, YawRadians = 1.2 },
                 new() { Position = new() { X = 5, Y = 0, Z = 0 }, YawRadians = -1.2 },
             ],
+            Navigation = new()
+            {
+                NodeCount = 128,
+                ComponentCount = 1,
+                ConnectedSpawnCount = 2,
+                WalkLinkCount = 512,
+                TraversalLinkCount = 4,
+            },
             CollisionIncludeMeshes = ["FPS_SOLID_*"],
             CollisionExcludeMeshes = ["*_FOLIAGE"],
         };
@@ -64,6 +72,7 @@ public sealed class FpsStorageTests
                 Is.EqualTo(FpsArenaDefinition.CurrentPreparationVersion));
             Assert.That(actual?.CollisionIncludeMeshes, Is.EqualTo(new[] { "FPS_SOLID_*" }));
             Assert.That(actual?.CollisionExcludeMeshes, Is.EqualTo(new[] { "*_FOLIAGE" }));
+            Assert.That(actual?.Navigation.NodeCount, Is.EqualTo(128));
         });
     }
 

@@ -35,7 +35,7 @@ local viewmodelMove = vec2()
 local viewmodelSprint = false
 local viewmodelFrameDt = 1 / 60
 local localMuzzlePosition = vec3()
-local viewmodelPipelineVersion = 'render-camera-v11-textured'
+local viewmodelPipelineVersion = 'render-camera-v12-authoritative-remote-pose'
 local viewmodelLastStage = 'not-started'
 local viewmodelLastStageDetail = ''
 local viewmodelStagesSeen = {}
@@ -260,6 +260,11 @@ local clientDiagnosticEvent = ac.OnlineEvent({
   directDrawPending = ac.StructItem.uint32(),
   directDrawFailures = ac.StructItem.uint32(),
   position = ac.StructItem.vec3(),
+  remoteActorID = ac.StructItem.byte(),
+  remoteTarget = ac.StructItem.vec3(),
+  remoteRender = ac.StructItem.vec3(),
+  remoteTargetYaw = ac.StructItem.float(),
+  remoteRenderYaw = ac.StructItem.float(),
   stage = ac.StructItem.string(48),
 }, function() end)
 
@@ -313,6 +318,13 @@ local snapshotEvent = ac.OnlineEvent({
     end
     if actor.render:lengthSquared() < 0.001 then actor.render:set(actor.target) end
     actor.targetYaw = message.yaws[i]
+    -- Remote actors have no client-side prediction. Keep their visual pose on the
+    -- exact authoritative snapshot so a rendered mannequin can never drift away
+    -- from the server capsule used by hitscan validation.
+    if id ~= localSessionID then
+      actor.render:set(actor.target)
+      actor.yaw = actor.targetYaw
+    end
     actor.pitch = message.pitches[i]
     actor.health = message.health[i]
     actor.kills = message.kills[i]
@@ -495,9 +507,9 @@ local shotEvent = ac.OnlineEvent({
     viewmodelKick = 1
     pitch = math.min(1.45, pitch + 0.011)
   elseif actor ~= nil then
-    local forward = vec3(math.sin(actor.yaw), 0, math.cos(actor.yaw))
+    local forward = vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw))
     local right = vec3(forward.z, 0, -forward.x)
-    muzzleOrigin:set(actor.render + vec3(0, 1.14, 0) + forward * 0.72 + right * 0.20)
+    muzzleOrigin:set(actor.target + vec3(0, 1.14, 0) + forward * 0.72 + right * 0.20)
   end
   local distance = math.clamp(message.distance, 0.05, 120)
   local targetPoint = message.origin + message.direction * distance
@@ -546,7 +558,7 @@ local shotEvent = ac.OnlineEvent({
       world = message.impact == 1,
       targetID = targetActor ~= nil and message.targetID or nil,
       targetSpawnCount = targetActor ~= nil and targetActor.spawnCount or nil,
-      targetOffset = targetActor ~= nil and (point - targetActor.render) or nil,
+      targetOffset = targetActor ~= nil and (point - targetActor.target) or nil,
     }
     if message.impact == 1 then
       if impactSparks ~= nil then impactSparks:emit(point + normal * 0.02, normal * 2.4, 7) end
@@ -1333,25 +1345,40 @@ end
 
 local function drawRemoteActors()
   local visibleActors = 0
+  local directActors = 0
+  remoteRender.actorsDrawn = 0
   for _, actor in pairs(actors) do
     if actor.id ~= localSessionID and bit.band(actor.flags, 1) ~= 0
         and bit.band(actor.flags, 2) == 0 then
       visibleActors = visibleActors + 1
+      if actor.remoteSceneReady then
+        remoteRender.actorsDrawn = remoteRender.actorsDrawn + 1
+      else
+        directActors = directActors + 1
+      end
     end
   end
   remoteRender.actorSnapshotCount = visibleActors
-  remoteRender.actorsDrawn = 0
-  if visibleActors == 0 or not ensureRemoteAvatarTemplate() then return end
+  if directActors == 0 then
+    if remoteRender.actorsDrawn > 0 and not remoteRender.readyLogged then
+      remoteRender.readyLogged = true
+      ac.log(string.format(
+        '[ASRC FPS] persistent remote actor scene rendering ready: drawn=%d visible=%d',
+        remoteRender.actorsDrawn, visibleActors))
+    end
+    return
+  end
+  if not ensureRemoteAvatarTemplate() then return end
 
   render.setBlendMode(render.BlendMode.OpaqueForced)
   render.setCullMode(render.CullMode.None)
   render.setDepthMode(render.DepthMode.Normal)
   for _, actor in pairs(actors) do
     if actor.id ~= localSessionID and bit.band(actor.flags, 1) ~= 0
-        and bit.band(actor.flags, 2) == 0 then
+        and bit.band(actor.flags, 2) == 0 and not actor.remoteSceneReady then
       remoteRender.drawAttempts = remoteRender.drawAttempts + 1
-      render.setTransform(actor.render,
-        vec3(math.sin(actor.yaw), 0, math.cos(actor.yaw)), vec3(0, 1, 0), true)
+      render.setTransform(actor.target,
+        vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw)), vec3(0, 1, 0), true)
       local ok, result = pcall(function()
         return render.mesh(remoteAvatarRenderParams)
       end)
@@ -1486,6 +1513,42 @@ local function updateLocalThirdPersonAvatar(actor)
   return ready
 end
 
+local function updateRemoteAvatar(actor)
+  if actor == nil or actor.id == localSessionID then return false end
+  local ok, err = pcall(function()
+    ensureAvatar(actor)
+    if actor.root == nil or actor.root == false then return end
+    local active = gameplayActive and bit.band(actor.flags, 1) ~= 0
+      and bit.band(actor.flags, 2) == 0
+    actor.root:setVisible(active)
+    if not active then return end
+    actor.root:setPosition(actor.target)
+    actor.root:setOrientation(vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw)),
+      vec3(0, 1, 0))
+    if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
+      actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - (actor.weaponKick or 0) * 0.07))
+      actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
+        vec3(0, 1, 0))
+    end
+  end)
+  if not ok then
+    actor.remoteSceneReady = false
+    if not actor.remoteSceneErrorLogged then
+      actor.remoteSceneErrorLogged = true
+      ac.warn('[ASRC FPS] remote actor scene update failed: actor=' .. tostring(actor.id)
+        .. '; error=' .. tostring(err))
+    end
+    return false
+  end
+  local ready = actor.root ~= nil and actor.root ~= false
+  if ready and not actor.remoteSceneReady then
+    ac.log('[ASRC FPS] persistent remote actor ready: actor=' .. tostring(actor.id)
+      .. '; position=' .. vec3Text(actor.target))
+  end
+  actor.remoteSceneReady = ready
+  return ready
+end
+
 local clientCollisionRadius = 0.40
 local collisionProbeOffsets = {-1, -0.5, 0, 0.5, 1}
 -- Keep the lowest client prediction ray just above the authoritative 48 cm step
@@ -1576,6 +1639,14 @@ function script.update(dt)
   viewmodelServerDiagnosticAccumulator = viewmodelServerDiagnosticAccumulator + dt
   if gameplayActive and (viewmodelLastSentStage ~= viewmodelLastStage
       or viewmodelServerDiagnosticAccumulator >= 5) then
+    local diagnosticRemoteActor = nil
+    for _, candidate in pairs(actors) do
+      if candidate.id ~= localSessionID and bit.band(candidate.flags, 1) ~= 0
+          and bit.band(candidate.flags, 2) == 0
+          and (diagnosticRemoteActor == nil or candidate.id < diagnosticRemoteActor.id) then
+        diagnosticRemoteActor = candidate
+      end
+    end
     local diagnosticFlags = 1
       + (rifleAssetFolder ~= nil and 2 or 0)
       + (viewmodelRoot ~= nil and viewmodelRoot ~= false and 4 or 0)
@@ -1589,7 +1660,7 @@ function script.update(dt)
       + (shotRender.eventsReceived > 0 and 1024 or 0)
       + (shotRender.effectsRendered > 0 and 2048 or 0)
     viewmodelDiagnosticSendOk = clientDiagnosticEvent({
-      pipeline = 10,
+      pipeline = 12,
       flags = diagnosticFlags,
       attempts = viewmodelUpdateAttempts,
       completions = viewmodelUpdateCompletions,
@@ -1601,6 +1672,11 @@ function script.update(dt)
       directDrawPending = viewmodelDirectDrawPending,
       directDrawFailures = viewmodelDirectDrawFailures,
       position = viewmodelLastPosition or vec3(),
+      remoteActorID = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.id or 255,
+      remoteTarget = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.target or vec3(),
+      remoteRender = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.render or vec3(),
+      remoteTargetYaw = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.targetYaw or 0,
+      remoteRenderYaw = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.yaw or 0,
       stage = viewmodelLastStage,
     })
     ac.log('[ASRC FPS] viewmodel diagnostic sent to server: stage=' .. viewmodelLastStage
@@ -1846,13 +1922,14 @@ function script.update(dt)
         localStance, actor.collisionNormal)
       actor.render:add(vec3(resolvedCorrection.x, 0, resolvedCorrection.y))
       actor.render.y = math.lerp(actor.render.y, actor.target.y, blend)
+      actor.yaw = math.lerpAngle(actor.yaw, actor.targetYaw, blend)
     else
-      actor.render:set(math.lerp(actor.render, actor.target, blend))
+      -- The server capsule is authoritative for both visibility and hits. A remote
+      -- pose must therefore be copied, not independently predicted/interpolated.
+      actor.render:set(actor.target)
+      actor.yaw = actor.targetYaw
     end
-    actor.yaw = math.lerpAngle(actor.yaw, actor.targetYaw, blend)
-    if actor.id ~= localSessionID and actor.root ~= nil and actor.root ~= false then
-      actor.root:setVisible(false)
-    end
+    if actor.id ~= localSessionID then updateRemoteAvatar(actor) end
   end
 
   renderDiagnosticAccumulator = renderDiagnosticAccumulator + dt
@@ -1881,6 +1958,25 @@ function script.update(dt)
         viewmodelDirectDrawAttempts, viewmodelDirectDrawPending, viewmodelDirectDrawFailures,
         viewmodelLastStage, viewmodelLastStageDetail,
         viewmodelLastPosition ~= nil and vec3Text(viewmodelLastPosition) or 'nil'))
+      local diagnosticRemoteActor = nil
+      for _, candidate in pairs(actors) do
+        if candidate.id ~= localSessionID and bit.band(candidate.flags, 1) ~= 0
+            and bit.band(candidate.flags, 2) == 0
+            and (diagnosticRemoteActor == nil or candidate.id < diagnosticRemoteActor.id) then
+          diagnosticRemoteActor = candidate
+        end
+      end
+      if diagnosticRemoteActor ~= nil then
+        ac.log(string.format(
+          '[ASRC FPS] remote render state: actor=%s target=%s render=%s error=%.3f targetYaw=%.3f renderYaw=%.3f yawError=%.3f',
+          tostring(diagnosticRemoteActor.id), vec3Text(diagnosticRemoteActor.target),
+          vec3Text(diagnosticRemoteActor.render),
+          (diagnosticRemoteActor.target - diagnosticRemoteActor.render):length(),
+          diagnosticRemoteActor.targetYaw, diagnosticRemoteActor.yaw,
+          math.abs(math.atan2(math.sin(diagnosticRemoteActor.targetYaw
+            - diagnosticRemoteActor.yaw), math.cos(diagnosticRemoteActor.targetYaw
+            - diagnosticRemoteActor.yaw)))))
+      end
     end
   end
 
@@ -1896,7 +1992,7 @@ function script.update(dt)
       local target = actors[impact.targetID]
       remove = target == nil or bit.band(target.flags, 2) ~= 0
         or (impact.targetSpawnCount ~= nil and target.spawnCount ~= impact.targetSpawnCount)
-      if not remove then impact.position:set(target.render + impact.targetOffset) end
+      if not remove then impact.position:set(target.target + impact.targetOffset) end
     end
     if remove then table.remove(impacts, i) end
   end

@@ -54,6 +54,8 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 fps.RuleFor(x => x.Bots.Aggression).InclusiveBetween(0, 1);
                 fps.RuleFor(x => x.Arena.GeometryPath).NotEmpty().When(x => x.Enabled)
                     .WithMessage("FPS arena physical geometry path is required");
+                fps.RuleFor(x => x.Arena.NavigationPath).NotEmpty().When(x => x.Enabled)
+                    .WithMessage("FPS arena navigation path is required");
                 fps.RuleFor(x => x.Arena.SpawnPoints).Must(points => points.Count >= 2)
                     .When(x => x.Enabled).WithMessage("FPS arena needs at least two spawn points");
                 fps.RuleFor(x => x.Arena.BoundsMax.X).GreaterThan(x => x.Arena.BoundsMin.X).When(x => x.Enabled);

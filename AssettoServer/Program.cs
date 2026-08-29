@@ -87,6 +87,9 @@ public static class Program
         [Option("fps-geometry-output", Required = false, HelpText = "Optional physical geometry output path used by --prepare-fps-arena")]
         public string FpsGeometryOutput { get; set; } = "";
 
+        [Option("fps-navigation-output", Required = false, HelpText = "Optional navigation output path used by --prepare-fps-arena")]
+        public string FpsNavigationOutput { get; set; } = "";
+
         [Option("fps-collision-include", Required = false, HelpText = "Semicolon-separated FPS collision mesh include patterns")]
         public string FpsCollisionInclude { get; set; } = "";
 
@@ -324,12 +327,19 @@ public static class Program
 
         var result = FpsArenaAssetBuilder.Build(options.AssettoCorsaRoot, options.PhysicsTrack,
             options.PhysicsTrackConfig, options.FpsArenaOutput, options.FpsGeometryOutput,
+            options.FpsNavigationOutput,
             SplitPatterns(options.FpsCollisionInclude), SplitPatterns(options.FpsCollisionExclude));
         Console.WriteLine($"Prepared FPS arena: {result.SpawnPoints} spawns from "
                           + $"{result.TrackTriangles} collision triangles "
                           + $"({result.PhysicalTriangles} physical, "
                           + $"{result.SupplementalTriangles} supplemental) across "
-                          + $"{result.CollisionMeshes} meshes");
+                          + $"{result.CollisionMeshes} meshes; navigation "
+                          + $"{result.NavigationNodes} nodes in {result.NavigationComponents} components, "
+                          + $"{result.ConnectedNavigationSpawns}/{result.SpawnPoints} connected spawns, "
+                          + $"{result.NavigationWalkLinks} walk links and "
+                          + $"{result.NavigationTraversalLinks} traversal links");
+        if (result.ConnectedNavigationSpawns < result.SpawnPoints)
+            Console.WriteLine($"WARNING: {result.SpawnPoints - result.ConnectedNavigationSpawns} FPS spawn(s) are isolated from the primary navigation component");
     }
 
     private static IEnumerable<string> SplitPatterns(string value) =>

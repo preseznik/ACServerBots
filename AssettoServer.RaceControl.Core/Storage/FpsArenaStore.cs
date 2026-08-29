@@ -44,6 +44,8 @@ public sealed class FpsArenaStore
             {
                 PreparationVersion: FpsArenaDefinition.CurrentPreparationVersion,
                 SpawnPoints.Count: >= 2,
+                Navigation.NodeCount: > 0,
+                Navigation.ConnectedSpawnCount: >= 2,
             };
         }
         catch (Exception exception) when (exception is IOException or JsonException)

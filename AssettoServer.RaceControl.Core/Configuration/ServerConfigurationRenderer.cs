@@ -269,6 +269,7 @@ public sealed class ServerConfigurationRenderer
             Line($"    Health: {fps.Bots.Health}");
             Line("  Arena:");
             Line("    GeometryPath: fps-arena-geometry.bin");
+            Line("    NavigationPath: fps-arena-navigation.bin");
             Point("BoundsMin", arena.BoundsMin, 4);
             Point("BoundsMax", arena.BoundsMax, 4);
             Line("    SpawnPoints:");

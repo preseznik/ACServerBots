@@ -34,23 +34,237 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
-    public void BotSlotsSpawnAsActiveStationaryActors()
+    public void BotSlotsSpawnPursueAndFightAuthoritatively()
     {
-        var simulation = CreateSimulation(FpsSlotRole.Bot, FpsSlotRole.Bot);
+        var simulation = new FpsSimulation(Configuration(difficulty: 1),
+            [new(0, "First", FpsSlotRole.Bot), new(1, "Second", FpsSlotRole.Bot)]);
         var initial = simulation.Actors.OrderBy(actor => actor.Id)
             .Select(actor => actor.Position).ToArray();
+        bool emittedShot = false;
 
-        for (int tick = 0; tick < 40; tick++) simulation.Step(0.05f);
+        for (int tick = 0; tick < 120; tick++)
+        {
+            simulation.Step(0.05f);
+            emittedShot |= simulation.ShotEvents.Count > 0;
+        }
 
         Assert.Multiple(() =>
         {
             Assert.That(simulation.Actors, Has.Count.EqualTo(2));
             Assert.That(simulation.Actors, Has.All.Matches<FpsActorState>(actor =>
-                actor.Active && !actor.HumanControlled && !actor.Dead && actor.SpawnCount == 1));
-            Assert.That(simulation.Actors.OrderBy(actor => actor.Id).Select(actor => actor.Position),
-                Is.EqualTo(initial));
+                actor.Active && !actor.HumanControlled && actor.SpawnCount >= 1));
+            Assert.That(simulation.Actors.OrderBy(actor => actor.Id)
+                    .Select((actor, index) => Vector3.Distance(actor.Position, initial[index]))
+                    .Any(distance => distance > 0.5f), Is.True);
+            Assert.That(emittedShot, Is.True);
+            Assert.That(simulation.Actors.Sum(actor => actor.Kills), Is.GreaterThan(0));
+        });
+    }
+
+    [Test]
+    public void BotRoutesAroundWallAndOnlyDamagesTargetAfterLineOfSight()
+    {
+        var triangles = new List<Kn5Triangle>();
+        triangles.AddRange(FlatFloor(-5, 5, -4, 4, 0));
+        triangles.AddRange(VerticalWall(0, -1.2f, 1.2f, 0, 2.5f));
+        var surface = new FpsArenaSurface(triangles);
+        var spawns = new[]
+        {
+            new FpsSpawnConfiguration { Position = new Vector3(-3, 0, 0) },
+            new FpsSpawnConfiguration { Position = new Vector3(3, 0, 0), YawRadians = MathF.PI },
+        };
+        var navigation = FpsArenaNavigationBuilder.Build(surface,
+            new FpsArenaPoint(-5, -1, -4), new FpsArenaPoint(5, 4, 4),
+            [new(new FpsArenaPoint(-3, 0, 0), 0),
+                new(new FpsArenaPoint(3, 0, 0), MathF.PI)]).Asset;
+        var configuration = new FpsConfiguration
+        {
+            Enabled = true,
+            TimeLimitMinutes = 10,
+            KillLimit = 1,
+            RespawnSeconds = 0.2f,
+            SpawnProtectionSeconds = 0,
+            Bots = new FpsBotConfiguration { Difficulty = 1, Aggression = 0.7f, Health = 100 },
+            Arena = new FpsArenaConfiguration
+            {
+                BoundsMin = new Vector3(-5, -1, -4),
+                BoundsMax = new Vector3(5, 4, 4),
+                SpawnPoints = [.. spawns],
+            },
+        };
+        var simulation = new FpsSimulation(configuration,
+            [new(0, "Hunter", FpsSlotRole.Bot), new(1, "Player", FpsSlotRole.Human)],
+            surface: surface, navigation: navigation);
+        Assert.That(simulation.ClaimHuman(1), Is.True);
+
+        Vector3? firstHitPosition = null;
+        for (int tick = 0; tick < 500 && simulation.MatchState != FpsMatchState.Finished; tick++)
+        {
+            simulation.Step(0.05f);
+            if (firstHitPosition is null && simulation.HitEvents.Count > 0)
+                firstHitPosition = simulation.Actors.Single(actor => actor.Id == 0).Position;
+        }
+
+        var bot = simulation.Actors.Single(actor => actor.Id == 0);
+        var player = simulation.Actors.Single(actor => actor.Id == 1);
+        Assert.Multiple(() =>
+        {
+            Assert.That(bot.Kills, Is.EqualTo(1));
+            Assert.That(player.Deaths, Is.EqualTo(1));
+            Assert.That(firstHitPosition, Is.Not.Null);
+            Assert.That(MathF.Abs(firstHitPosition!.Value.Z), Is.GreaterThan(0.8f),
+                "The bot must route toward an end of the wall before it gains a valid shot.");
+        });
+    }
+
+    [Test]
+    public void BlockedCombatStrafeFallsBackToReachablePath()
+    {
+        var triangles = new List<Kn5Triangle>();
+        triangles.AddRange(FlatFloor(-1, 1, -2, 12, 0));
+        triangles.AddRange(VerticalWall(-0.55f, -2, 12, 0, 2.5f));
+        triangles.AddRange(VerticalWall(0.55f, -2, 12, 0, 2.5f));
+        var nodes = Enumerable.Range(0, 5).Select(index => new FpsNavigationNode
+        {
+            Position = new Vector3(0, 0, index * 2),
+            Component = 0,
+        }).ToArray();
+        for (int index = 0; index < nodes.Length - 1; index++)
+        {
+            nodes[index].Edges.Add(new FpsNavigationEdge(index + 1,
+                FpsNavigationLinkKind.Walk, 2));
+            nodes[index + 1].Edges.Add(new FpsNavigationEdge(index,
+                FpsNavigationLinkKind.Walk, 2));
+        }
+        var navigation = new FpsArenaNavigationAsset
+        {
+            CellSize = 0.6f,
+            Nodes = nodes,
+            SpawnNodes = [0, 4],
+            ComponentCount = 1,
+            PrimaryComponent = 0,
+        };
+        var configuration = Configuration(difficulty: 1, aggression: 1);
+        configuration.Arena.SpawnPoints.Clear();
+        configuration.Arena.SpawnPoints.AddRange(
+        [
+            new FpsSpawnConfiguration { Position = Vector3.Zero },
+            new FpsSpawnConfiguration { Position = new Vector3(0, 0, 8),
+                YawRadians = MathF.PI },
+        ]);
+        var simulation = new FpsSimulation(configuration,
+            [new(0, "Hunter", FpsSlotRole.Bot), new(1, "Target", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(triangles), navigation: navigation);
+        Assert.That(simulation.ClaimHuman(1), Is.True);
+        var hunter = simulation.Actors.Single(actor => actor.Id == 0);
+        var target = simulation.Actors.Single(actor => actor.Id == 1);
+        hunter.BotTargetId = target.Id;
+        hunter.BotReactionRemaining = 0;
+        hunter.BotSearchRemaining = 8;
+        target.Health = 10_000;
+
+        for (int tick = 0; tick < 20; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hunter.Position.Z, Is.GreaterThan(0.5f),
+                "A blocked side-step must not strand a bot in combat mode.");
+            Assert.That(MathF.Abs(hunter.Position.X), Is.LessThan(0.25f));
+            Assert.That(hunter.BotStuckFailures, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void BotDropsTargetWhenAuthoritativePosesAreOnDisconnectedComponents()
+    {
+        var navigation = new FpsArenaNavigationAsset
+        {
+            CellSize = 0.6f,
+            Nodes =
+            [
+                new FpsNavigationNode { Position = Vector3.Zero, Component = 0 },
+                new FpsNavigationNode { Position = new Vector3(3, 0, 0), Component = 1 },
+            ],
+            SpawnNodes = [0, 1],
+            ComponentCount = 2,
+            PrimaryComponent = 0,
+        };
+        var simulation = new FpsSimulation(Configuration(difficulty: 1),
+            [new(0, "Hunter", FpsSlotRole.Bot), new(1, "Target", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(FlatFloor(-5, 5, -5, 5, 0).ToArray()),
+            navigation: navigation);
+        Assert.That(simulation.ClaimHuman(1), Is.True);
+        var hunter = simulation.Actors.Single(actor => actor.Id == 0);
+        var target = simulation.Actors.Single(actor => actor.Id == 1);
+        hunter.Position = Vector3.Zero;
+        hunter.BotTargetId = target.Id;
+        target.Position = new Vector3(3, 0, 0);
+
+        simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hunter.BotTargetId, Is.EqualTo(byte.MaxValue));
             Assert.That(simulation.ShotEvents, Is.Empty);
         });
+    }
+
+    [Test]
+    public void FailedBotPathIsRetriedAtAControlledRate()
+    {
+        var triangles = new List<Kn5Triangle>();
+        triangles.AddRange(FlatFloor(-10, 10, -4, 4, 0));
+        triangles.AddRange(VerticalWall(0, -4, 4, 0, 3));
+        var surface = new FpsArenaSurface(triangles);
+        var navigation = new FpsArenaNavigationAsset
+        {
+            CellSize = 0.6f,
+            Nodes =
+            [
+                new FpsNavigationNode { Position = new Vector3(-4, 0, -1), Component = 0 },
+                new FpsNavigationNode { Position = new Vector3(-4, 0, 1), Component = 0 },
+                new FpsNavigationNode { Position = new Vector3(9, 0, 0), Component = 0 },
+            ],
+            SpawnNodes = [0, 1],
+            ComponentCount = 1,
+            PrimaryComponent = 0,
+        };
+        var configuration = Configuration();
+        configuration.Arena.SpawnPoints.Clear();
+        configuration.Arena.SpawnPoints.AddRange(
+        [
+            new FpsSpawnConfiguration { Position = new Vector3(-4, 0, -1) },
+            new FpsSpawnConfiguration { Position = new Vector3(-4, 0, 1) },
+        ]);
+        var simulation = new FpsSimulation(configuration,
+            [new(0, "Hunter", FpsSlotRole.Bot), new(1, "Target", FpsSlotRole.Human)],
+            surface: surface, navigation: navigation);
+        Assert.That(simulation.ClaimHuman(1), Is.True);
+        var hunter = simulation.Actors.Single(actor => actor.Id == 0);
+        var target = simulation.Actors.Single(actor => actor.Id == 1);
+        hunter.Position = new Vector3(-3, 0, 0);
+        hunter.BotTargetId = target.Id;
+        hunter.BotSearchRemaining = 8;
+        target.Position = new Vector3(9, 0, 0);
+        var sightLine = target.Position + Vector3.UnitY * 0.99f
+                        - (hunter.Position + Vector3.UnitY * 1.65f);
+        Assert.That(surface.TryRaycast(hunter.Position + Vector3.UnitY * 1.65f,
+            Vector3.Normalize(sightLine), sightLine.Length(), out _), Is.True);
+
+        simulation.Step(0.05f);
+        Assert.That(simulation.BotDiagnosticEvents.Count(item =>
+                item.Message.StartsWith("path-failed", StringComparison.Ordinal)), Is.EqualTo(1),
+            string.Join("; ", simulation.BotDiagnosticEvents.Select(item => item.Message)));
+
+        int retries = 0;
+        for (int tick = 0; tick < 10; tick++)
+        {
+            simulation.Step(0.05f);
+            retries += simulation.BotDiagnosticEvents.Count(item =>
+                item.Message.StartsWith("path-failed", StringComparison.Ordinal));
+        }
+        Assert.That(retries, Is.Zero,
+            "An unreachable target must not cause an A* attempt on every 60 Hz tick.");
     }
 
     [Test]
@@ -1421,6 +1635,24 @@ public sealed class FpsSimulationTests
             new(new Vector3(minX, minY, -10), new Vector3(maxX, maxY, 10),
                 new Vector3(maxX, maxY, -10)),
         ];
+    }
+
+    private static IEnumerable<Kn5Triangle> FlatFloor(float minX, float maxX,
+        float minZ, float maxZ, float y)
+    {
+        yield return new Kn5Triangle(new Vector3(minX, y, minZ),
+            new Vector3(minX, y, maxZ), new Vector3(maxX, y, maxZ));
+        yield return new Kn5Triangle(new Vector3(minX, y, minZ),
+            new Vector3(maxX, y, maxZ), new Vector3(maxX, y, minZ));
+    }
+
+    private static IEnumerable<Kn5Triangle> VerticalWall(float x, float minZ,
+        float maxZ, float minY, float maxY)
+    {
+        yield return new Kn5Triangle(new Vector3(x, minY, minZ),
+            new Vector3(x, maxY, minZ), new Vector3(x, maxY, maxZ));
+        yield return new Kn5Triangle(new Vector3(x, minY, minZ),
+            new Vector3(x, maxY, maxZ), new Vector3(x, minY, maxZ));
     }
 
     private static Kn5Triangle[] Incline(float degrees)

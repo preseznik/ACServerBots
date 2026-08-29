@@ -13,13 +13,14 @@ namespace AssettoServer.Server.Fps;
 
 internal sealed class FpsArenaAsset
 {
-    public const int CurrentPreparationVersion = 2;
+    public const int CurrentPreparationVersion = 3;
     public int PreparationVersion { get; init; } = CurrentPreparationVersion;
     public required string TrackId { get; init; }
     public required string LayoutId { get; init; }
     public required FpsArenaPoint BoundsMin { get; init; }
     public required FpsArenaPoint BoundsMax { get; init; }
     public required IReadOnlyList<FpsArenaSpawn> SpawnPoints { get; init; }
+    public required FpsArenaNavigationSummary Navigation { get; init; }
     public IReadOnlyList<string> CollisionIncludeMeshes { get; init; } = [];
     public IReadOnlyList<string> CollisionExcludeMeshes { get; init; } = [];
 }
@@ -30,8 +31,12 @@ internal sealed record FpsArenaPoint(float X, float Y, float Z)
 }
 
 internal sealed record FpsArenaSpawn(FpsArenaPoint Position, float YawRadians);
+internal sealed record FpsArenaNavigationSummary(int Version, float CellSize, int NodeCount,
+    int ComponentCount, int ConnectedSpawnCount, int WalkLinkCount, int TraversalLinkCount);
 internal sealed record FpsArenaBuildResult(int SpawnPoints, int TrackTriangles,
-    int PhysicalTriangles, int SupplementalTriangles, int CollisionMeshes);
+    int PhysicalTriangles, int SupplementalTriangles, int CollisionMeshes,
+    int NavigationNodes, int NavigationComponents, int ConnectedNavigationSpawns,
+    int NavigationWalkLinks, int NavigationTraversalLinks);
 
 internal static class FpsArenaAssetBuilder
 {
@@ -52,6 +57,7 @@ internal static class FpsArenaAssetBuilder
 
     public static FpsArenaBuildResult Build(string assettoCorsaRoot, string track,
         string? layout, string outputPath, string? geometryOutputPath = null,
+        string? navigationOutputPath = null,
         IEnumerable<string>? collisionIncludeMeshes = null,
         IEnumerable<string>? collisionExcludeMeshes = null)
     {
@@ -113,17 +119,6 @@ internal static class FpsArenaAssetBuilder
         float maxZ = grounded.Max(pose => pose.Position.Z) + 45;
         float minY = grounded.Min(pose => pose.Position.Y) - 2;
         float maxY = grounded.Max(pose => pose.Position.Y) + 20;
-        var asset = new FpsArenaAsset
-        {
-            TrackId = track,
-            LayoutId = layout ?? string.Empty,
-            BoundsMin = new FpsArenaPoint(minX, minY, minZ),
-            BoundsMax = new FpsArenaPoint(maxX, maxY, maxZ),
-            SpawnPoints = spawns,
-            CollisionIncludeMeshes = includePatterns,
-            CollisionExcludeMeshes = excludePatterns,
-        };
-
         var boundedPhysical = RacePhysicsAssetBuilder.DeduplicateTriangles(physicalTriangles)
             .Where(triangle => TouchesBounds(triangle, minX, minY, minZ, maxX, maxY, maxZ))
             .ToArray();
@@ -135,6 +130,25 @@ internal static class FpsArenaAssetBuilder
         if (arenaTriangles.Length == 0)
             throw new InvalidDataException("No collision geometry intersects the prepared FPS arena bounds");
 
+        var boundsMin = new FpsArenaPoint(minX, minY, minZ);
+        var boundsMax = new FpsArenaPoint(maxX, maxY, maxZ);
+        var surface = new FpsArenaSurface(arenaTriangles);
+        var navigation = FpsArenaNavigationBuilder.Build(surface, boundsMin, boundsMax, spawns);
+        var asset = new FpsArenaAsset
+        {
+            TrackId = track,
+            LayoutId = layout ?? string.Empty,
+            BoundsMin = boundsMin,
+            BoundsMax = boundsMax,
+            SpawnPoints = spawns,
+            Navigation = new FpsArenaNavigationSummary(FpsArenaNavigationAsset.CurrentVersion,
+                navigation.Asset.CellSize, navigation.Asset.Nodes.Count,
+                navigation.Asset.ComponentCount, navigation.ConnectedSpawnPoints,
+                navigation.WalkLinks, navigation.TraversalLinks),
+            CollisionIncludeMeshes = includePatterns,
+            CollisionExcludeMeshes = excludePatterns,
+        };
+
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         File.WriteAllText(outputPath, JsonSerializer.Serialize(asset, new JsonSerializerOptions
         {
@@ -142,8 +156,12 @@ internal static class FpsArenaAssetBuilder
         }));
         if (!string.IsNullOrWhiteSpace(geometryOutputPath))
             new FpsArenaGeometryAsset { Triangles = arenaTriangles }.Save(geometryOutputPath);
+        if (!string.IsNullOrWhiteSpace(navigationOutputPath))
+            navigation.Asset.Save(navigationOutputPath);
         return new FpsArenaBuildResult(spawns.Length, arenaTriangles.Length,
-            boundedPhysical.Length, boundedSupplemental.Length, collisionMeshes);
+            boundedPhysical.Length, boundedSupplemental.Length, collisionMeshes,
+            navigation.Asset.Nodes.Count, navigation.Asset.ComponentCount,
+            navigation.ConnectedSpawnPoints, navigation.WalkLinks, navigation.TraversalLinks);
     }
 
     internal static bool ShouldIncludeMesh(string name, bool collisionProxy,

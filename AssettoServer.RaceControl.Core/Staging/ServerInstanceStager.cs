@@ -107,20 +107,24 @@ public sealed class ServerInstanceStager
         else if (preset.Mode == EventMode.Fps)
         {
             var geometryOutput = Path.Combine(presetRoot, "fps-arena-geometry.bin");
-            var cachePath = GetFpsGeometryCachePath(preset, rendered);
-            if (File.Exists(cachePath))
+            var navigationOutput = Path.Combine(presetRoot, "fps-arena-navigation.bin");
+            var geometryCachePath = GetFpsAssetCachePath("fps-arena-geometry", preset, rendered);
+            var navigationCachePath = GetFpsAssetCachePath("fps-arena-navigation", preset, rendered);
+            if (File.Exists(geometryCachePath) && File.Exists(navigationCachePath))
             {
-                File.Copy(cachePath, geometryOutput, true);
+                File.Copy(geometryCachePath, geometryOutput, true);
+                File.Copy(navigationCachePath, navigationOutput, true);
                 cacheHit = true;
-                progress?.Report(new("Physics", "Reused prepared FPS arena geometry from the local cache.", 0.9));
+                progress?.Report(new("Physics", "Reused prepared FPS arena geometry and navigation from the local cache.", 0.9));
             }
             else
             {
-                progress?.Report(new("Physics", "Preparing physical FPS arena geometry…", 0.8));
-                await PrepareFpsGeometryAsync(root, preset, rendered, geometryOutput, progress,
-                    cancellationToken);
-                Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-                File.Copy(geometryOutput, cachePath, true);
+                progress?.Report(new("Physics", "Preparing physical FPS arena geometry and navigation…", 0.8));
+                await PrepareFpsGeometryAsync(root, preset, rendered, geometryOutput,
+                    navigationOutput, progress, cancellationToken);
+                Directory.CreateDirectory(Path.GetDirectoryName(geometryCachePath)!);
+                File.Copy(geometryOutput, geometryCachePath, true);
+                File.Copy(navigationOutput, navigationCachePath, true);
             }
         }
 
@@ -242,9 +246,9 @@ public sealed class ServerInstanceStager
         return CachePath("race-physics", inputs);
     }
 
-    private string GetFpsGeometryCachePath(RaceControlPreset preset,
+    private string GetFpsAssetCachePath(string prefix, RaceControlPreset preset,
         RenderedServerConfiguration rendered) =>
-        CachePath("fps-arena-geometry", GetTrackGeometryInputs(preset, rendered),
+        CachePath(prefix, GetTrackGeometryInputs(preset, rendered),
         [
             $"preparation={FpsArenaDefinition.CurrentPreparationVersion}",
             $"include={string.Join(';', preset.Fps.Arena?.CollisionIncludeMeshes ?? [])}",
@@ -364,6 +368,7 @@ public sealed class ServerInstanceStager
         RaceControlPreset preset,
         RenderedServerConfiguration rendered,
         string output,
+        string navigationOutput,
         IProgress<StagingProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -391,6 +396,8 @@ public sealed class ServerInstanceStager
         startInfo.ArgumentList.Add(metadataOutput);
         startInfo.ArgumentList.Add("--fps-geometry-output");
         startInfo.ArgumentList.Add(output);
+        startInfo.ArgumentList.Add("--fps-navigation-output");
+        startInfo.ArgumentList.Add(navigationOutput);
         FpsArenaPreparationService.AddCollisionOverrides(startInfo, preset.Fps.Arena);
 
         using var process = new Process { StartInfo = startInfo };
@@ -410,7 +417,7 @@ public sealed class ServerInstanceStager
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         await process.WaitForExitAsync(cancellationToken);
-        if (process.ExitCode != 0 || !File.Exists(output))
-            throw new InvalidOperationException($"FPS arena geometry preparation failed with exit code {process.ExitCode}.");
+        if (process.ExitCode != 0 || !File.Exists(output) || !File.Exists(navigationOutput))
+            throw new InvalidOperationException($"FPS arena geometry/navigation preparation failed with exit code {process.ExitCode}.");
     }
 }

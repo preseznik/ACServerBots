@@ -190,6 +190,14 @@ public sealed class RaceControlValidator
                           || !arena.LayoutId.Equals(preset.TrackLayoutId, StringComparison.OrdinalIgnoreCase),
             "Fps.Arena", "The prepared FPS arena does not match the selected layout.");
         ErrorIf(messages, arena.SpawnPoints.Count < 2, "Fps.Arena", "The FPS arena needs at least two safe spawn points.");
+        ErrorIf(messages, arena.Navigation.Version != 1 || arena.Navigation.NodeCount <= 0
+                          || arena.Navigation.ComponentCount <= 0
+                          || arena.Navigation.ConnectedSpawnCount < 2,
+            "Fps.Arena", "The FPS arena navigation is missing or has fewer than two connected spawns; prepare it again.");
+        if (arena.Navigation.ConnectedSpawnCount >= 2
+            && arena.Navigation.ConnectedSpawnCount < arena.SpawnPoints.Count)
+            messages.Add(new(ValidationSeverity.Warning, "Fps.Arena",
+                $"{arena.SpawnPoints.Count - arena.Navigation.ConnectedSpawnCount} FPS spawn(s) are isolated from the primary navigation component."));
         ErrorIf(messages, !Finite(arena.BoundsMin) || !Finite(arena.BoundsMax)
                           || arena.BoundsMin.X >= arena.BoundsMax.X
                           || arena.BoundsMin.Y >= arena.BoundsMax.Y

@@ -128,9 +128,14 @@ $instance = $stager.StageAsync($preset, $catalog, $null, [Threading.Cancellation
 Write-Host "Staged $($instance.SlotCount) slots ($($instance.BotSlotCount) bot-capable) at $($instance.RootPath)"
 if ($FpsGate) {
     $fpsGeometry = Join-Path $instance.RootPath 'presets\race-control\fps-arena-geometry.bin'
+    $fpsNavigation = Join-Path $instance.RootPath 'presets\race-control\fps-arena-navigation.bin'
     if (-not (Test-Path -LiteralPath $fpsGeometry -PathType Leaf) -or
         (Get-Item -LiteralPath $fpsGeometry).Length -le 12) {
         throw 'FPS staging did not produce a non-empty physical arena geometry asset.'
+    }
+    if (-not (Test-Path -LiteralPath $fpsNavigation -PathType Leaf) -or
+        (Get-Item -LiteralPath $fpsNavigation).Length -le 24) {
+        throw 'FPS staging did not produce a non-empty arena navigation asset.'
     }
 }
 
@@ -401,11 +406,22 @@ if ($FpsGate -and $combinedLog -notmatch 'FPS deathmatch world started') {
 if ($FpsGate -and $combinedLog -notmatch '\d+ (?:physical arena|collision) triangles') {
     throw 'Server log did not confirm loading physical FPS arena geometry.'
 }
+if ($FpsGate -and $combinedLog -notmatch '\d+ navigation nodes in \d+ components') {
+    throw 'Server log did not confirm loading FPS arena navigation.'
+}
 if ($FpsGate) {
     $initialBotSpawns = @([regex]::Matches($combinedLog,
         'FPS actor initial spawn: actor=\d+, role=(?:Auto|Bot), human=False,'))
     if ($initialBotSpawns.Count -ne $Slots) {
-        throw "FPS world spawned $($initialBotSpawns.Count) stationary bots; expected $Slots."
+        throw "FPS world spawned $($initialBotSpawns.Count) bots; expected $Slots."
+    }
+    $activeBots = @([regex]::Matches($combinedLog,
+        'FPS bot behavior active: actor=\d+,'))
+    if ($activeBots.Count -ne $Slots) {
+        throw "FPS world activated behavior for $($activeBots.Count) bots; expected $Slots."
+    }
+    if ($combinedLog -notmatch 'FPS rifle accepted first shot:') {
+        throw 'FPS bots did not produce an authoritative rifle shot during the gate.'
     }
 }
 if ($VerifyLiveControl -and $combinedLog -notmatch 'Race Control live bridge ready') {
@@ -483,7 +499,7 @@ if ($VerifyMovingBots) {
     }
 }
 if ($FpsGate) {
-    Write-Host "PASS: FPS arena preparation, $Slots stationary bot spawns, isolated authoritative-world startup, and graceful shutdown succeeded."
+    Write-Host "PASS: FPS arena navigation, $Slots active combat bots, authoritative-world startup, rifle fire, and graceful shutdown succeeded."
 } else {
     Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'
 }

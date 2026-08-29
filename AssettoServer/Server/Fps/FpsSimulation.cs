@@ -22,6 +22,17 @@ internal enum FpsStance : byte
     Prone,
 }
 
+internal enum FpsBotMode : byte
+{
+    Acquire,
+    Chase,
+    Search,
+    Strafe,
+    Fire,
+    Reload,
+    Recover,
+}
+
 internal sealed record FpsSimulationSlot(byte Id, string Name, FpsSlotRole Role,
     float? Difficulty = null, float? Aggression = null);
 
@@ -39,6 +50,8 @@ internal enum FpsShotImpact : byte
 }
 internal readonly record struct FpsShotEvent(byte ShooterId, uint Sequence, Vector3 Origin,
     Vector3 Direction, float Distance, FpsShotImpact Impact, byte TargetId);
+internal readonly record struct FpsBotDiagnosticEvent(byte ActorId, FpsBotMode Mode,
+    string Message, bool Warning = false);
 
 internal sealed class FpsActorState
 {
@@ -96,6 +109,23 @@ internal sealed class FpsActorState
     public float Difficulty { get; init; }
     public float Aggression { get; init; }
     public float FinalScoreAttainedAtSeconds { get; set; }
+    public FpsBotMode BotMode { get; set; }
+    public byte BotTargetId { get; set; } = byte.MaxValue;
+    public Vector3 BotLastKnownTargetPosition { get; set; }
+    public float BotTargetVisibleSeconds { get; set; }
+    public float BotSearchRemaining { get; set; }
+    public float BotPlanRemaining { get; set; }
+    public List<FpsNavigationStep> BotPath { get; } = [];
+    public int BotPathIndex { get; set; }
+    public float BotReactionRemaining { get; set; }
+    public int BotBurstShotsRemaining { get; set; }
+    public float BotBurstPauseRemaining { get; set; }
+    public float BotStrafeRemaining { get; set; }
+    public float BotStrafeDirection { get; set; } = 1;
+    public Vector3 BotStuckAnchor { get; set; }
+    public float BotStuckElapsed { get; set; }
+    public int BotStuckFailures { get; set; }
+    public bool BotWantsMovement { get; set; }
 }
 
 internal sealed class FpsSimulation
@@ -114,6 +144,7 @@ internal sealed class FpsSimulation
     private const float RifleDamage = 34;
     private const float RifleInterval = 0.12f;
     private const float RifleTargetRadius = 0.42f;
+    private const float RifleOcclusionEpsilon = 0.02f;
     private const float RifleMaximumSpreadRadians = 0.018f;
     private const float RifleHeatPerShot = 0.18f;
     private const float RifleHeatRecoveryPerSecond = 0.45f;
@@ -125,7 +156,10 @@ internal sealed class FpsSimulation
     private readonly List<FpsKillEvent> _killEvents = [];
     private readonly List<FpsHitEvent> _hitEvents = [];
     private readonly List<FpsShotEvent> _shotEvents = [];
+    private readonly List<FpsBotDiagnosticEvent> _botDiagnosticEvents = [];
     private readonly FpsArenaSurface? _surface;
+    private readonly FpsArenaNavigationAsset? _navigation;
+    private readonly int _seed;
     private int _nextSpawn;
 
     public FpsMatchState MatchState { get; private set; } = FpsMatchState.Running;
@@ -136,13 +170,16 @@ internal sealed class FpsSimulation
     public IReadOnlyList<FpsKillEvent> KillEvents => _killEvents;
     public IReadOnlyList<FpsHitEvent> HitEvents => _hitEvents;
     public IReadOnlyList<FpsShotEvent> ShotEvents => _shotEvents;
+    public IReadOnlyList<FpsBotDiagnosticEvent> BotDiagnosticEvents => _botDiagnosticEvents;
 
     public FpsSimulation(FpsConfiguration configuration, IEnumerable<FpsSimulationSlot> slots,
-        int seed = 1, FpsArenaSurface? surface = null)
+        int seed = 1, FpsArenaSurface? surface = null,
+        FpsArenaNavigationAsset? navigation = null)
     {
         _configuration = configuration;
         _surface = surface;
-        _ = seed;
+        _navigation = navigation;
+        _seed = seed;
         RemainingSeconds = Math.Max(1, configuration.TimeLimitMinutes) * 60;
         _actors = slots.Where(slot => slot.Role != FpsSlotRole.Spectator).ToDictionary(slot => slot.Id,
             slot => new FpsActorState
@@ -199,6 +236,7 @@ internal sealed class FpsSimulation
         _killEvents.Clear();
         _hitEvents.Clear();
         _shotEvents.Clear();
+        _botDiagnosticEvents.Clear();
         if (MatchState != FpsMatchState.Running || !float.IsFinite(dt) || dt <= 0) return;
         dt = Math.Min(dt, 0.05f);
         RemainingSeconds = Math.Max(0, RemainingSeconds - dt);
@@ -418,13 +456,364 @@ internal sealed class FpsSimulation
         return true;
     }
 
-    private static void StepBot(FpsActorState actor, float dt)
+    private void StepBot(FpsActorState actor, float dt)
     {
-        _ = dt;
-        // Compatibility gate: bots must exist in the authoritative snapshots before
-        // navigation and combat are enabled. Keep them deterministic and stationary.
-        actor.HorizontalVelocity = Vector2.Zero;
+        actor.BotPlanRemaining = Math.Max(0, actor.BotPlanRemaining - dt);
+        actor.BotBurstPauseRemaining = Math.Max(0, actor.BotBurstPauseRemaining - dt);
+        actor.BotStrafeRemaining = Math.Max(0, actor.BotStrafeRemaining - dt);
+        var target = GetBotTarget(actor);
+        if (target is null)
+        {
+            target = AcquireBotTarget(actor);
+            if (target is null)
+            {
+                actor.BotMode = FpsBotMode.Acquire;
+                actor.HorizontalVelocity = Vector2.Zero;
+                UpdateBotStuck(actor, dt, false);
+                return;
+            }
+            SetBotTarget(actor, target);
+        }
+        else if (actor.BotPlanRemaining <= 0)
+        {
+            var alternative = AcquireBotTarget(actor);
+            float currentDistance = PlanarDistance(actor.Position, target.Position);
+            float switchThreshold = Lerp(0.7f, 0.9f, actor.Aggression);
+            if (alternative is not null && alternative.Id != target.Id
+                && PlanarDistance(actor.Position, alternative.Position)
+                < currentDistance * switchThreshold)
+            {
+                target = alternative;
+                SetBotTarget(actor, target);
+            }
+        }
+
+        bool visible = HasLineOfSight(actor, target);
+        if (visible)
+        {
+            actor.BotLastKnownTargetPosition = target.Position;
+            actor.BotSearchRemaining = Lerp(2, 8, actor.Aggression);
+            actor.BotTargetVisibleSeconds += dt;
+            actor.BotReactionRemaining = Math.Max(0, actor.BotReactionRemaining - dt);
+        }
+        else
+        {
+            actor.BotTargetVisibleSeconds = 0;
+            actor.BotSearchRemaining = Math.Max(0, actor.BotSearchRemaining - dt);
+            if (actor.BotSearchRemaining <= 0)
+            {
+                actor.BotTargetId = byte.MaxValue;
+                actor.BotPath.Clear();
+                actor.BotMode = FpsBotMode.Acquire;
+                UpdateBotStuck(actor, dt, false);
+                return;
+            }
+        }
+
+        AimBot(actor, target, dt);
+        float distance = PlanarDistance(actor.Position, target.Position);
+        float preferredDistance = Lerp(24, 8, actor.Aggression);
+        bool canFire = visible && actor.BotReactionRemaining <= 0
+                       && target.SpawnProtectionRemaining <= 0
+                       && distance <= RifleRange && BotAimIsReady(actor, target);
+        bool wantsMovement;
+        if (actor.ReloadRemaining > 0)
+        {
+            actor.BotMode = FpsBotMode.Reload;
+            wantsMovement = StrafeBot(actor, target, dt, preferredDistance);
+            if (!wantsMovement)
+            {
+                actor.BotMode = visible ? FpsBotMode.Chase : FpsBotMode.Search;
+                wantsMovement = NavigateBot(actor, visible ? target.Position
+                    : actor.BotLastKnownTargetPosition, dt);
+            }
+        }
+        else if (canFire && distance <= preferredDistance * 1.35f)
+        {
+            actor.BotMode = FpsBotMode.Fire;
+            wantsMovement = StrafeBot(actor, target, dt, preferredDistance);
+            if (!wantsMovement)
+            {
+                actor.BotMode = FpsBotMode.Chase;
+                wantsMovement = NavigateBot(actor, target.Position, dt);
+            }
+            StepBotFire(actor, target);
+        }
+        else
+        {
+            actor.BotMode = visible ? FpsBotMode.Chase : FpsBotMode.Search;
+            wantsMovement = NavigateBot(actor, visible ? target.Position
+                : actor.BotLastKnownTargetPosition, dt);
+            if (canFire) StepBotFire(actor, target);
+        }
+        UpdateBotStuck(actor, dt, wantsMovement);
+    }
+
+    private FpsActorState? GetBotTarget(FpsActorState actor)
+    {
+        if (actor.BotTargetId != byte.MaxValue
+            && _actors.GetValueOrDefault(actor.BotTargetId) is { Active: true, Dead: false } target
+            && IsViableBotTarget(actor, target))
+            return target;
+        actor.BotTargetId = byte.MaxValue;
+        actor.BotPath.Clear();
+        actor.BotPathIndex = 0;
+        return null;
+    }
+
+    private FpsActorState? AcquireBotTarget(FpsActorState actor) => _actors.Values
+        .Where(candidate => candidate.Active && !candidate.Dead && candidate.Id != actor.Id
+                            && IsViableBotTarget(actor, candidate))
+        .OrderBy(candidate => PlanarDistance(actor.Position, candidate.Position))
+        .ThenBy(candidate => candidate.Id)
+        .FirstOrDefault();
+
+    private bool IsViableBotTarget(FpsActorState actor, FpsActorState candidate)
+    {
+        return _navigation is null
+               || _navigation.AreConnected(actor.Position, candidate.Position);
+    }
+
+    private void SetBotTarget(FpsActorState actor, FpsActorState target)
+    {
+        if (actor.BotTargetId == target.Id) return;
+        actor.BotTargetId = target.Id;
+        actor.BotLastKnownTargetPosition = target.Position;
+        actor.BotReactionRemaining = Lerp(0.65f, 0.12f, actor.Difficulty);
+        actor.BotSearchRemaining = Lerp(2, 8, actor.Aggression);
+        actor.BotPlanRemaining = 0;
+        actor.BotPath.Clear();
+        actor.BotPathIndex = 0;
+        _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, FpsBotMode.Acquire,
+            $"target={target.Id}"));
+    }
+
+    private bool HasLineOfSight(FpsActorState actor, FpsActorState target)
+    {
+        return TryGetClearTargetRay(actor, target, out _, out _, out _);
+    }
+
+    private bool TryGetClearTargetRay(FpsActorState actor, FpsActorState target,
+        out Vector3 origin, out Vector3 direction, out float targetDistance)
+    {
+        origin = actor.Position + Vector3.UnitY * EyeHeight(actor.Stance);
+        var targetPoint = target.Position
+            + Vector3.UnitY * (CollisionHeight(target.Stance) * 0.55f);
+        var delta = targetPoint - origin;
+        float centerDistance = delta.Length();
+        if (centerDistance < 0.01f || centerDistance > RifleRange)
+        {
+            direction = Vector3.UnitZ;
+            targetDistance = 0;
+            return false;
+        }
+        direction = delta / centerDistance;
+        if (!TryRaycastActorCapsule(origin, direction, target.Position,
+                CollisionHeight(target.Stance), out targetDistance)
+            || targetDistance > RifleRange)
+            return false;
+        return _surface is null || !_surface.TryRaycast(origin, direction,
+            targetDistance + RifleOcclusionEpsilon, out float worldDistance)
+            || worldDistance + RifleOcclusionEpsilon >= targetDistance;
+    }
+
+    private void AimBot(FpsActorState actor, FpsActorState target, float dt)
+    {
+        var origin = actor.Position + Vector3.UnitY * EyeHeight(actor.Stance);
+        var targetPoint = target.Position
+            + Vector3.UnitY * (CollisionHeight(target.Stance) * 0.55f);
+        var delta = targetPoint - origin;
+        float planar = MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
+        float desiredYaw = MathF.Atan2(delta.X, delta.Z);
+        float desiredPitch = MathF.Atan2(delta.Y, MathF.Max(0.001f, planar));
+        float radiansPerSecond = Lerp(90, 360, actor.Difficulty) * MathF.PI / 180;
+        actor.Yaw = ApproachAngle(actor.Yaw, desiredYaw, radiansPerSecond * dt);
+        actor.Pitch = Math.Clamp(Approach(actor.Pitch, desiredPitch, radiansPerSecond * dt),
+            -1.45f, 1.45f);
+    }
+
+    private static bool BotAimIsReady(FpsActorState actor, FpsActorState target)
+    {
+        var origin = actor.Position + Vector3.UnitY * EyeHeight(actor.Stance);
+        var targetPoint = target.Position
+            + Vector3.UnitY * (CollisionHeight(target.Stance) * 0.55f);
+        var toTarget = targetPoint - origin;
+        if (toTarget.LengthSquared() < 1e-8f) return true;
+        float cosPitch = MathF.Cos(actor.Pitch);
+        var aim = new Vector3(MathF.Sin(actor.Yaw) * cosPitch,
+            MathF.Sin(actor.Pitch), MathF.Cos(actor.Yaw) * cosPitch);
+        float tolerance = Lerp(14, 5, actor.Difficulty) * MathF.PI / 180;
+        return Vector3.Dot(aim, Vector3.Normalize(toTarget)) >= MathF.Cos(tolerance);
+    }
+
+    private bool NavigateBot(FpsActorState actor, Vector3 target, float dt)
+    {
+        if (_navigation is null)
+        {
+            var direct = PlanarDirection(actor.Position, target);
+            if (direct.LengthSquared() < 0.01f) return false;
+            MoveWorld(actor, direct, true, dt);
+            return true;
+        }
+
+        if (actor.BotPath.Count == 0 && actor.BotPlanRemaining > 0) return false;
+        if (actor.BotPlanRemaining <= 0 || actor.BotPathIndex >= actor.BotPath.Count)
+        {
+            actor.BotPlanRemaining = 0.2f;
+            actor.BotPath.Clear();
+            actor.BotPath.AddRange(_navigation.FindPath(actor.Position, target));
+            actor.BotPathIndex = 0;
+            if (actor.BotPath.Count == 0)
+            {
+                _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, actor.BotMode,
+                    $"path-failed target={actor.BotTargetId}"));
+                actor.BotPlanRemaining = 1;
+                return false;
+            }
+        }
+
+        while (actor.BotPathIndex < actor.BotPath.Count
+               && PlanarDistance(actor.Position,
+                   actor.BotPath[actor.BotPathIndex].Position) < 0.42f
+               && MathF.Abs(actor.Position.Y
+                   - actor.BotPath[actor.BotPathIndex].Position.Y) < 0.55f)
+            actor.BotPathIndex++;
+        if (actor.BotPathIndex >= actor.BotPath.Count) return false;
+        var step = actor.BotPath[actor.BotPathIndex];
+        var direction = PlanarDirection(actor.Position, step.Position);
+        if (direction.LengthSquared() < 0.001f) return false;
+
+        if (step.Kind is FpsNavigationLinkKind.Mantle or FpsNavigationLinkKind.Vault
+            && actor.IsGrounded && !actor.IsMantling)
+        {
+            if (!BeginBotTraversal(actor, step))
+            {
+                actor.BotPlanRemaining = 0;
+                actor.BotPath.Clear();
+                _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, actor.BotMode,
+                    $"traversal-failed kind={step.Kind}"));
+                return false;
+            }
+            return true;
+        }
+        if (step.Kind == FpsNavigationLinkKind.Jump && actor.IsGrounded)
+        {
+            actor.VerticalVelocity = JumpSpeed;
+            actor.IsGrounded = false;
+        }
+        MoveWorld(actor, direction, true, dt);
+        return true;
+    }
+
+    private bool BeginBotTraversal(FpsActorState actor, FpsNavigationStep step)
+    {
+        if (_surface is not null && _surface.IsPositionBlocked(step.Position,
+                step.Position.Y, CollisionHeight(FpsStance.Crouching))) return false;
+        actor.IsMantling = true;
+        actor.MantleStart = actor.Position;
+        actor.MantleTarget = step.Position;
+        actor.MantleElapsed = 0;
+        actor.MantleArcHeight = step.Kind == FpsNavigationLinkKind.Vault
+            ? FpsArenaSurface.MaximumVaultHeight : 0.18f;
+        actor.MantleFinishStance = FpsStance.Standing;
         actor.VerticalVelocity = 0;
+        actor.HorizontalVelocity = Vector2.Zero;
+        actor.IsGrounded = false;
+        actor.Stance = FpsStance.Crouching;
+        actor.BotPathIndex++;
+        return true;
+    }
+
+    private bool StrafeBot(FpsActorState actor, FpsActorState target, float dt,
+        float preferredDistance)
+    {
+        if (actor.BotStrafeRemaining <= 0)
+        {
+            uint interval = (uint)Math.Max(0, (int)ElapsedSeconds);
+            actor.BotStrafeDirection = DeterministicNoise(actor.Id, interval, 0x57AFu) >= 0
+                ? 1 : -1;
+            actor.BotStrafeRemaining = Lerp(0.45f, 1.6f, actor.Aggression);
+        }
+        var toTarget = PlanarDirection(actor.Position, target.Position);
+        if (toTarget.LengthSquared() < 0.01f) return false;
+        var movement = new Vector2(toTarget.Y, -toTarget.X) * actor.BotStrafeDirection;
+        float distance = PlanarDistance(actor.Position, target.Position);
+        if (distance > preferredDistance * 1.1f) movement += toTarget * 0.65f;
+        else if (distance < preferredDistance * 0.65f) movement -= toTarget * 0.65f;
+        if (movement.LengthSquared() > 1) movement = Vector2.Normalize(movement);
+        var previousPosition = actor.Position;
+        MoveWorld(actor, movement, actor.Aggression > 0.65f, dt);
+        if (!actor.GeometryBlocked
+            && PlanarDistance(previousPosition, actor.Position) >= 0.02f)
+            return true;
+        actor.BotStrafeDirection *= -1;
+        actor.BotPlanRemaining = 0;
+        actor.BotPath.Clear();
+        actor.BotPathIndex = 0;
+        return false;
+    }
+
+    private void StepBotFire(FpsActorState actor, FpsActorState target)
+    {
+        if (actor.BotBurstPauseRemaining > 0) return;
+        if (actor.BotBurstShotsRemaining <= 0)
+            actor.BotBurstShotsRemaining = Math.Clamp((int)MathF.Round(Lerp(2, 8,
+                actor.Difficulty)), 2, 8);
+        int ammunition = actor.AmmoInMagazine;
+        TryFire(actor, target);
+        if (actor.AmmoInMagazine >= ammunition) return;
+        actor.BotBurstShotsRemaining--;
+        if (actor.BotBurstShotsRemaining > 0) return;
+        actor.BotBurstPauseRemaining = Lerp(0.65f, 0.18f, actor.Difficulty);
+    }
+
+    private void UpdateBotStuck(FpsActorState actor, float dt, bool wantsMovement)
+    {
+        actor.BotWantsMovement = wantsMovement;
+        if (!wantsMovement || actor.IsMantling || !actor.IsGrounded)
+        {
+            actor.BotStuckAnchor = actor.Position;
+            actor.BotStuckElapsed = 0;
+            return;
+        }
+        actor.BotStuckElapsed += dt;
+        if (actor.BotStuckElapsed < 1.5f) return;
+        float movement = PlanarDistance(actor.BotStuckAnchor, actor.Position);
+        actor.BotStuckAnchor = actor.Position;
+        actor.BotStuckElapsed = 0;
+        if (movement >= 0.25f)
+        {
+            actor.BotStuckFailures = 0;
+            return;
+        }
+        actor.BotStuckFailures++;
+        actor.BotMode = FpsBotMode.Recover;
+        actor.BotPlanRemaining = 0;
+        actor.BotPath.Clear();
+        _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, FpsBotMode.Recover,
+            $"stuck-replan attempt={actor.BotStuckFailures}"));
+        if (actor.BotStuckFailures < 3) return;
+        _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, FpsBotMode.Recover,
+            "stuck-respawn", true));
+        Spawn(actor);
+    }
+
+    private void MoveWorld(FpsActorState actor, Vector2 movement, bool sprint, float dt)
+    {
+        if (movement.LengthSquared() > 1) movement = Vector2.Normalize(movement);
+        float speed = actor.IsProne ? ProneSpeed
+            : actor.IsCrouching ? CrouchSpeed : sprint ? SprintSpeed : WalkSpeed;
+        var desiredVelocity = movement * speed;
+        actor.HorizontalVelocity = actor.IsGrounded
+            ? desiredVelocity
+            : Vector2.Lerp(actor.HorizontalVelocity, desiredVelocity,
+                Math.Clamp(AirControlPerSecond * dt, 0, 1));
+        var position = actor.Position
+            + new Vector3(actor.HorizontalVelocity.X, 0, actor.HorizontalVelocity.Y) * dt;
+        var min = _configuration.Arena.BoundsMin;
+        var max = _configuration.Arena.BoundsMax;
+        TryMoveActor(actor, new Vector3(Math.Clamp(position.X, min.X, max.X),
+            actor.Position.Y, Math.Clamp(position.Z, min.Z, max.Z)));
     }
 
     private void Move(FpsActorState actor, Vector2 input, bool sprint, float dt)
@@ -593,7 +982,7 @@ internal sealed class FpsSimulation
         _ => 1.65f,
     };
 
-    private void TryFire(FpsActorState attacker)
+    private void TryFire(FpsActorState attacker, FpsActorState? intendedTarget = null)
     {
         if (attacker.FireCooldown > 0 || attacker.ReloadRemaining > 0) return;
         if (attacker.AmmoInMagazine <= 0)
@@ -605,8 +994,17 @@ internal sealed class FpsSimulation
         attacker.AmmoInMagazine--;
         uint shotSequence = ++attacker.ShotSequence;
         float spread = attacker.WeaponHeat * RifleMaximumSpreadRadians;
-        float shotYaw = attacker.Yaw + ShotNoise(attacker.Id, shotSequence, 0xA511E9B3u) * spread;
-        float shotPitch = attacker.Pitch
+        float baseYaw = attacker.Yaw;
+        float basePitch = attacker.Pitch;
+        if (intendedTarget is not null)
+        {
+            float aimError = Lerp(8, 1.5f, attacker.Difficulty) * MathF.PI / 180;
+            baseYaw += DeterministicNoise(attacker.Id, shotSequence, 0xB071u) * aimError;
+            basePitch += DeterministicNoise(attacker.Id, shotSequence, 0xA19Du)
+                * aimError * 0.65f;
+        }
+        float shotYaw = baseYaw + ShotNoise(attacker.Id, shotSequence, 0xA511E9B3u) * spread;
+        float shotPitch = basePitch
             + ShotNoise(attacker.Id, shotSequence, 0x63D83595u) * spread;
         attacker.WeaponHeat = Math.Min(1, attacker.WeaponHeat + RifleHeatPerShot);
         float cosPitch = MathF.Cos(shotPitch);
@@ -731,7 +1129,7 @@ internal sealed class FpsSimulation
     {
         var spawns = _configuration.Arena.SpawnPoints;
         if (spawns.Count == 0) throw new InvalidOperationException("FPS arena has no spawn points");
-        var spawn = spawns[_nextSpawn++ % spawns.Count];
+        var spawn = ChooseSpawn(actor);
         float groundY = spawn.Position.Y;
         if (_surface is not null)
             _surface.TryGetGroundHeight(spawn.Position.X, spawn.Position.Z, spawn.Position.Y,
@@ -764,6 +1162,21 @@ internal sealed class FpsSimulation
         actor.ReloadRemaining = 0;
         actor.ReloadHeld = false;
         actor.SpawnCount++;
+        actor.BotMode = FpsBotMode.Acquire;
+        actor.BotTargetId = byte.MaxValue;
+        actor.BotTargetVisibleSeconds = 0;
+        actor.BotSearchRemaining = 0;
+        actor.BotPlanRemaining = 0;
+        actor.BotPath.Clear();
+        actor.BotPathIndex = 0;
+        actor.BotReactionRemaining = 0;
+        actor.BotBurstShotsRemaining = 0;
+        actor.BotBurstPauseRemaining = 0;
+        actor.BotStrafeRemaining = 0;
+        actor.BotStuckAnchor = actor.Position;
+        actor.BotStuckElapsed = 0;
+        actor.BotStuckFailures = 0;
+        actor.BotWantsMovement = false;
         actor.HasLastSafePosition = false;
         bool safe = _surface is null || !_surface.IsPositionBlocked(actor.Position,
             actor.GroundY, CollisionHeight(actor.Stance));
@@ -778,6 +1191,64 @@ internal sealed class FpsSimulation
         if (safe) RememberSafePose(actor);
     }
 
+    private FpsSpawnConfiguration ChooseSpawn(FpsActorState actor)
+    {
+        var spawns = _configuration.Arena.SpawnPoints;
+        var opponents = _actors.Values.Where(candidate => candidate.Id != actor.Id
+                                                          && candidate.Active && !candidate.Dead
+                                                          && candidate.SpawnCount > 0).ToArray();
+        if (opponents.Length == 0)
+        {
+            for (int offset = 0; offset < spawns.Count; offset++)
+            {
+                int index = (_nextSpawn + offset) % spawns.Count;
+                if (_navigation is not null && index < _navigation.SpawnNodes.Count
+                    && _navigation.Nodes[_navigation.SpawnNodes[index]].Component
+                    != _navigation.PrimaryComponent)
+                    continue;
+                _nextSpawn = index + 1;
+                return spawns[index];
+            }
+            return spawns[_nextSpawn++ % spawns.Count];
+        }
+        int bestIndex = -1;
+        float bestScore = float.NegativeInfinity;
+        for (int index = 0; index < spawns.Count; index++)
+        {
+            if (_navigation is not null && index < _navigation.SpawnNodes.Count
+                && _navigation.Nodes[_navigation.SpawnNodes[index]].Component
+                != _navigation.PrimaryComponent)
+                continue;
+            var position = spawns[index].Position;
+            float minimumDistance = opponents.Min(opponent =>
+                PlanarDistance(position, opponent.Position));
+            bool visible = opponents.Any(opponent => SpawnHasLineOfSight(position, opponent));
+            float score = minimumDistance + (visible ? 0 : 1000);
+            if (score <= bestScore) continue;
+            bestScore = score;
+            bestIndex = index;
+        }
+        if (bestIndex < 0) bestIndex = _nextSpawn++ % spawns.Count;
+        return spawns[bestIndex];
+    }
+
+    private bool SpawnHasLineOfSight(Vector3 spawn, FpsActorState opponent)
+    {
+        if (_surface is null) return true;
+        var origin = spawn + Vector3.UnitY * EyeHeight(FpsStance.Standing);
+        var targetPoint = opponent.Position
+            + Vector3.UnitY * (CollisionHeight(opponent.Stance) * 0.55f);
+        var delta = targetPoint - origin;
+        float centerDistance = delta.Length();
+        if (centerDistance <= 0.01f) return false;
+        var direction = delta / centerDistance;
+        return TryRaycastActorCapsule(origin, direction, opponent.Position,
+                   CollisionHeight(opponent.Stance), out float targetDistance)
+               && (!_surface.TryRaycast(origin, direction,
+                       targetDistance + RifleOcclusionEpsilon, out float worldDistance)
+                   || worldDistance + RifleOcclusionEpsilon >= targetDistance);
+    }
+
     private void SeparateActors()
     {
         var active = _actors.Values.Where(actor => actor.Active && !actor.Dead).OrderBy(actor => actor.Id).ToArray();
@@ -786,8 +1257,21 @@ internal sealed class FpsSimulation
         {
             var delta = active[j].Position - active[i].Position with { Y = 0 };
             float distance = delta.Length();
-            if (distance is >= 0.7f or < 0.0001f) continue;
-            var correction = delta / distance * ((0.7f - distance) * 0.5f);
+            if (distance >= 0.7f) continue;
+            Vector3 direction;
+            if (distance < 0.0001f)
+            {
+                // Deterministically split exact overlaps. Ignoring this case leaves two
+                // pursuing bots sharing a capsule and aiming vertically at each other.
+                float angle = ((active[i].Id * 31 + active[j].Id * 17) & 15)
+                              * MathF.Tau / 16;
+                direction = new Vector3(MathF.Cos(angle), 0, MathF.Sin(angle));
+            }
+            else
+            {
+                direction = delta / distance;
+            }
+            var correction = direction * ((0.7f - distance) * 0.5f);
             TryMoveActor(active[i], active[i].Position - correction);
             TryMoveActor(active[j], active[j].Position + correction);
         }
@@ -804,6 +1288,36 @@ internal sealed class FpsSimulation
             .Select(actor => actor.Id)
             .FirstOrDefault(byte.MaxValue);
     }
+
+    private float DeterministicNoise(byte actorId, uint interval, uint salt)
+    {
+        uint value = unchecked(interval * 0x9E3779B1u
+                               + (uint)(actorId + 1) * 0x85EBCA6Bu
+                               + (uint)_seed * 0xC2B2AE35u + salt);
+        value ^= value >> 16;
+        value *= 0x7FEB352Du;
+        value ^= value >> 15;
+        value *= 0x846CA68Bu;
+        value ^= value >> 16;
+        return (value & 0x00FFFFFFu) / 8388607.5f - 1;
+    }
+
+    private static Vector2 PlanarDirection(Vector3 from, Vector3 to)
+    {
+        var direction = new Vector2(to.X - from.X, to.Z - from.Z);
+        return direction.LengthSquared() > 1e-8f ? Vector2.Normalize(direction) : Vector2.Zero;
+    }
+
+    private static float PlanarDistance(Vector3 first, Vector3 second) =>
+        Vector2.Distance(new Vector2(first.X, first.Z), new Vector2(second.X, second.Z));
+    private static float Lerp(float first, float second, float amount) =>
+        first + (second - first) * Math.Clamp(amount, 0, 1);
+    private static float Approach(float current, float target, float maximumDelta) =>
+        current < target ? Math.Min(current + maximumDelta, target)
+        : Math.Max(current - maximumDelta, target);
+    private static float ApproachAngle(float current, float target, float maximumDelta) =>
+        NormalizeAngle(current + Math.Clamp(NormalizeAngle(target - current),
+            -maximumDelta, maximumDelta));
 
     private static bool IsNewer(uint sequence, uint previous) =>
         sequence != previous && unchecked(sequence - previous) < 0x80000000u;

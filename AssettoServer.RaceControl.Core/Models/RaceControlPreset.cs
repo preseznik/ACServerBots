@@ -176,7 +176,7 @@ public sealed class FpsBotOptions
 
 public sealed class FpsArenaDefinition
 {
-    public const int CurrentPreparationVersion = 2;
+    public const int CurrentPreparationVersion = 3;
 
     public int PreparationVersion { get; set; } = CurrentPreparationVersion;
     public string TrackId { get; set; } = string.Empty;
@@ -184,8 +184,20 @@ public sealed class FpsArenaDefinition
     public FpsPoint BoundsMin { get; set; } = new();
     public FpsPoint BoundsMax { get; set; } = new();
     public List<FpsSpawnPoint> SpawnPoints { get; set; } = [];
+    public FpsNavigationSummary Navigation { get; set; } = new();
     public List<string> CollisionIncludeMeshes { get; set; } = [];
     public List<string> CollisionExcludeMeshes { get; set; } = [];
+}
+
+public sealed class FpsNavigationSummary
+{
+    public int Version { get; set; } = 1;
+    public double CellSize { get; set; } = 0.6;
+    public int NodeCount { get; set; }
+    public int ComponentCount { get; set; }
+    public int ConnectedSpawnCount { get; set; }
+    public int WalkLinkCount { get; set; }
+    public int TraversalLinkCount { get; set; }
 }
 
 public sealed class FpsSpawnPoint

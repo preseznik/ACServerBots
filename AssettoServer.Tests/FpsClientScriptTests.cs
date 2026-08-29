@@ -101,7 +101,14 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("local function drawRemoteActors()"));
             Assert.That(draw3DDefinition, Does.Contain("drawRemoteActors()"));
             Assert.That(script, Does.Contain("remoteRender.actorSnapshotCount = visibleActors"));
-            Assert.That(script, Does.Contain("render.setTransform(actor.render"));
+            Assert.That(script, Does.Contain("local function updateRemoteAvatar(actor)"));
+            Assert.That(snapshotDefinition, Does.Contain("if id ~= localSessionID then"));
+            Assert.That(snapshotDefinition, Does.Contain("actor.render:set(actor.target)"));
+            Assert.That(script, Does.Contain("actor.root:setPosition(actor.target)"));
+            Assert.That(script, Does.Contain("if actor.id ~= localSessionID then updateRemoteAvatar(actor) end"));
+            Assert.That(script, Does.Contain("and not actor.remoteSceneReady then"));
+            Assert.That(script, Does.Contain("persistent remote actor scene rendering ready:"));
+            Assert.That(script, Does.Contain("render.setTransform(actor.target"));
             Assert.That(script, Does.Contain("return render.mesh(remoteAvatarRenderParams)"));
             Assert.That(script, Does.Contain("direct remote actor rendering ready:"));
             Assert.That(script, Does.Not.Contain("content/objects3D/pitcrew.kn5"));
@@ -151,12 +158,19 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("[ASRC FPS] snapshot heartbeat"));
             Assert.That(script, Does.Contain("[ASRC FPS] input sample"));
             Assert.That(script, Does.Contain("[ASRC FPS] render state"));
+            Assert.That(script, Does.Contain("[ASRC FPS] remote render state"));
             Assert.That(script, Does.Contain("[ASRC FPS] viewmodel render state"));
             Assert.That(script, Does.Contain("[ASRC FPS] viewmodel pipeline:"));
             Assert.That(script, Does.Contain("[ASRC FPS] viewmodel heartbeat:"));
             Assert.That(script, Does.Contain("[ASRC FPS] viewmodel stage:"));
             Assert.That(script, Does.Contain("callbacks=frameBegin:%d,draw3D:%d,drawUI:%d directDraw=%d/%d"));
             Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsClientDiagnostic')"));
+            Assert.That(script, Does.Contain("remoteActorID = ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain("remoteTarget = ac.StructItem.vec3()"));
+            Assert.That(script, Does.Contain("remoteRender = ac.StructItem.vec3()"));
+            Assert.That(updateDefinition, Does.Not.Contain(
+                "actor.render:set(math.lerp(actor.render, actor.target, blend))"));
+            Assert.That(script, Does.Contain("pipeline = 12"));
             Assert.That(script, Does.Contain("viewmodel diagnostic sent to server:"));
             Assert.That(script, Does.Contain("[ASRC FPS] ready sent"));
             Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsShot')"));

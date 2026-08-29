@@ -161,6 +161,12 @@ public sealed class RaceControlValidatorTests
                 new() { Position = new() { X = -5, Y = 0, Z = 0 } },
                 new() { Position = new() { X = 5, Y = 0, Z = 0 } },
             ],
+            Navigation = new()
+            {
+                NodeCount = 64,
+                ComponentCount = 1,
+                ConnectedSpawnCount = 2,
+            },
         };
 
         var result = new RaceControlValidator().Validate(preset, factory.Scan());
@@ -195,12 +201,25 @@ public sealed class RaceControlValidatorTests
             [
                 new() { Position = new() { X = -5, Y = 0, Z = 0 } },
                 new() { Position = new() { X = 5, Y = 0, Z = 0 } },
+                new() { Position = new() { X = 0, Y = 4, Z = 0 } },
             ],
+            Navigation = new()
+            {
+                NodeCount = 64,
+                ComponentCount = 1,
+                ConnectedSpawnCount = 2,
+            },
         };
 
         var result = new RaceControlValidator().Validate(preset, factory.Scan());
 
-        Assert.That(result.IsValid, Is.True,
-            string.Join(Environment.NewLine, result.Messages.Select(message => message.Message)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsValid, Is.True,
+                string.Join(Environment.NewLine, result.Messages.Select(message => message.Message)));
+            Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
+                message.Severity == ValidationSeverity.Warning
+                && message.Message.Contains("isolated", StringComparison.OrdinalIgnoreCase)));
+        });
     }
 }

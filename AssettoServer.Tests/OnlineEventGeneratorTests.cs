@@ -52,6 +52,12 @@ public class OnlineEventGeneratorTests
                 Is.False);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Structure,
                 Does.Contain("char stage[48]"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Structure,
+                Does.Contain("uint8_t remoteActorID"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Structure,
+                Does.Contain("vec3 remoteTarget"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Structure,
+                Does.Contain("vec3 remoteRender"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Contain($"uint8_t actorIDs[{FpsSnapshotPacket.Capacity}]"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
