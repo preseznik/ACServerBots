@@ -183,7 +183,85 @@ local hud = {
   exclusiveSubscription = nil,
   nativePauseMenu = false,
   leaveServerArmed = false,
+  pauseInputLogged = false,
+  pausePage = 'main',
+  controlsErrorLogged = false,
+  controlsContentLogged = false,
+  bindingCapture = nil,
+  bindingCaptureAfter = 0,
+  environmentWeather = 15,
+  environmentTimeSeconds = 13 * 60 * 60,
+  environmentDraftWeather = 15,
+  environmentDraftTimeSeconds = 13 * 60 * 60,
+  environmentDraftReady = false,
 }
+
+hud.bindingDefaults = {
+  fire = ac.KeyIndex.LeftButton,
+  sprint = ac.KeyIndex.LeftShift,
+  crouch = ac.KeyIndex.C,
+  reload = ac.KeyIndex.R,
+  jump = ac.KeyIndex.Space,
+  grenade = ac.KeyIndex.G,
+  melee = ac.KeyIndex.V,
+}
+hud.bindings = ac.storage({
+  fire = hud.bindingDefaults.fire,
+  sprint = hud.bindingDefaults.sprint,
+  crouch = hud.bindingDefaults.crouch,
+  reload = hud.bindingDefaults.reload,
+  jump = hud.bindingDefaults.jump,
+  grenade = hud.bindingDefaults.grenade,
+  melee = hud.bindingDefaults.melee,
+}, 'asrc.fps.bindings.')
+
+hud.bindingCandidates = {
+  { key = ac.KeyIndex.LeftButton, name = 'MOUSE 1' },
+  { key = ac.KeyIndex.RightButton, name = 'MOUSE 2' },
+  { key = ac.KeyIndex.MiddleButton, name = 'MOUSE 3' },
+  { key = ac.KeyIndex.XButton1, name = 'MOUSE 4' },
+  { key = ac.KeyIndex.XButton2, name = 'MOUSE 5' },
+  { key = ac.KeyIndex.Space, name = 'SPACE' },
+  { key = ac.KeyIndex.LeftShift, name = 'LEFT SHIFT' },
+  { key = ac.KeyIndex.RightShift, name = 'RIGHT SHIFT' },
+  { key = ac.KeyIndex.LeftControl, name = 'LEFT CTRL' },
+  { key = ac.KeyIndex.RightControl, name = 'RIGHT CTRL' },
+  { key = ac.KeyIndex.LeftMenu, name = 'LEFT ALT' },
+  { key = ac.KeyIndex.RightMenu, name = 'RIGHT ALT' },
+  { key = ac.KeyIndex.Tab, name = 'TAB' },
+  { key = ac.KeyIndex.Return, name = 'ENTER' },
+  { key = ac.KeyIndex.Back, name = 'BACKSPACE' },
+  { key = ac.KeyIndex.Left, name = 'LEFT ARROW' },
+  { key = ac.KeyIndex.Right, name = 'RIGHT ARROW' },
+  { key = ac.KeyIndex.Up, name = 'UP ARROW' },
+  { key = ac.KeyIndex.Down, name = 'DOWN ARROW' },
+}
+for code = ac.KeyIndex.D0, ac.KeyIndex.D9 do
+  hud.bindingCandidates[#hud.bindingCandidates + 1] = { key = code, name = tostring(code - ac.KeyIndex.D0) }
+end
+for code = ac.KeyIndex.A, ac.KeyIndex.Z do
+  hud.bindingCandidates[#hud.bindingCandidates + 1] = { key = code, name = string.char(code) }
+end
+for code = ac.KeyIndex.F1, ac.KeyIndex.F12 do
+  hud.bindingCandidates[#hud.bindingCandidates + 1] = {
+    key = code, name = 'F' .. tostring(code - ac.KeyIndex.F1 + 1),
+  }
+end
+
+function hud.bindingName(key)
+  for i = 1, #hud.bindingCandidates do
+    if hud.bindingCandidates[i].key == key then return hud.bindingCandidates[i].name end
+  end
+  return 'KEY ' .. tostring(key)
+end
+
+function hud.bindingDown(action, fallback)
+  local key = hud.bindings[action]
+  if key == nil then return fallback end
+  local ok, down = pcall(ac.isKeyDown, key)
+  if not ok then return fallback end
+  return down
+end
 
 pcall(function()
   impactSparks = ac.Particles.Sparks({
@@ -436,6 +514,12 @@ local readyEvent = ac.OnlineEvent({
   protocol = ac.StructItem.uint16(),
 }, function() end)
 
+local environmentRequestEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsEnvironmentRequest'),
+  weatherType = ac.StructItem.byte(),
+  timeOfDaySeconds = ac.StructItem.uint32(),
+}, function() end)
+
 local clientDiagnosticEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsClientDiagnostic'),
   pipeline = ac.StructItem.byte(),
@@ -633,12 +717,16 @@ local matchEvent = ac.OnlineEvent({
   remainingSeconds = ac.StructItem.float(),
   killLimit = ac.StructItem.uint16(),
   winnerID = ac.StructItem.byte(),
+  weatherType = ac.StructItem.byte(),
+  timeOfDaySeconds = ac.StructItem.uint32(),
 }, function(sender, message)
   if sender ~= nil then return end
   matchState = message.state
   remainingSeconds = message.remainingSeconds
   killLimit = message.killLimit
   winnerID = message.winnerID
+  hud.environmentWeather = message.weatherType
+  hud.environmentTimeSeconds = message.timeOfDaySeconds
 end)
 
 clearActorImpacts = function(actorID)
@@ -1803,6 +1891,16 @@ function script.update(dt)
   local sprint = false
   local jumpStarted = false
   gameplayActive = fpsGameplayIsActive()
+  -- The companion HUD can win exclusive UI ownership before this script sees
+  -- a gameplay-mode callback. Reset pause ownership on the simulation state
+  -- transition instead, which is observed by script.update() in either case.
+  if gameplayActive and not previousGameplayActive then
+    hud.nativePauseMenu = false
+    hud.leaveServerArmed = false
+    hud.pauseInputLogged = false
+    hud.pausePage = 'main'
+    hud.controlsContentLogged = false
+  end
   if gameplayActive then previewCamera.everEnteredGameplay = true end
   if gameplayActive and hud.appOwnsHud() and hud.bridge ~= nil then
     persistentCursor = hud.bridge.appPersistentCursor ~= 0
@@ -1957,21 +2055,22 @@ function script.update(dt)
     -- server received movement but never a Fire bit.
     local rawMouseFire = ac.isKeyDown(ac.KeyIndex.LeftButton)
     local uiMouseFire = ac.getUI().isMouseLeftKeyDown or ui.mouseDown(ui.MouseButton.Left)
-    local fire = not cursorUnlocked and (rawMouseFire or uiMouseFire or gamepadFire)
+    local boundFire = hud.bindingDown('fire', rawMouseFire or uiMouseFire)
+    local fire = not cursorUnlocked and (boundFire or gamepadFire)
     if fire and not fireCaptureLogged then
       fireCaptureLogged = true
-      ac.log(string.format('[ASRC FPS] fire input captured: rawMouse=%s uiMouse=%s gamepad=%s',
-        tostring(rawMouseFire), tostring(uiMouseFire), tostring(gamepadFire)))
+      ac.log(string.format(
+        '[ASRC FPS] fire input captured: bound=%s rawMouse=%s uiMouse=%s gamepad=%s',
+        tostring(boundFire), tostring(rawMouseFire), tostring(uiMouseFire),
+        tostring(gamepadFire)))
     end
-    sprint = ac.isKeyDown(ac.KeyIndex.LeftShift) or ac.isKeyDown(ac.KeyIndex.RightShift)
+    sprint = hud.bindingDown('sprint', ac.isKeyDown(ac.KeyIndex.LeftShift))
       or ac.isGamepadButtonPressed(0, ac.GamepadButton.LeftThumb)
     viewmodelMove:set(move)
     viewmodelSprint = sprint
-    local jump = ac.isKeyDown(ac.KeyIndex.Space)
-    local crouch = ac.isKeyDown(ac.KeyIndex.C)
-      or ac.isKeyDown(ac.KeyIndex.LeftControl) or ac.isKeyDown(ac.KeyIndex.RightControl)
-      or ac.isKeyDown(ac.KeyIndex.LeftMenu) or ac.isKeyDown(ac.KeyIndex.RightMenu)
-    local reload = ac.isKeyDown(ac.KeyIndex.R)
+    local jump = hud.bindingDown('jump', ac.isKeyDown(ac.KeyIndex.Space))
+    local crouch = hud.bindingDown('crouch', ac.isKeyDown(ac.KeyIndex.C))
+    local reload = hud.bindingDown('reload', ac.isKeyDown(ac.KeyIndex.R))
     jumpStarted = jump and not jumpWasHeld
     local crouchPressed = crouch and not crouchWasHeld
     local jumpConsumed = false
@@ -2368,10 +2467,141 @@ function script.drawUI()
   end
 end
 
+function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
+  local controls = {
+    { label = 'FIRE', action = 'fire' },
+    { label = 'SPRINT', action = 'sprint' },
+    { label = 'CROUCH / PRONE', action = 'crouch' },
+    { label = 'RELOAD', action = 'reload' },
+    { label = 'JUMP', action = 'jump' },
+    { label = 'GRENADE', action = 'grenade', reserved = true },
+    { label = 'MELEE', action = 'melee', reserved = true },
+  }
+  local left = panelMin + vec2(42, 34) * scale
+
+  if hud.bindingCapture ~= nil and ui.time() >= hud.bindingCaptureAfter then
+    if ac.isKeyPressed(ac.KeyIndex.Escape) then
+      hud.bindingCapture = nil
+    else
+      for i = 1, #hud.bindingCandidates do
+        local candidate = hud.bindingCandidates[i]
+        if ac.isKeyPressed(candidate.key) then
+          hud.bindings[hud.bindingCapture] = candidate.key
+          ac.log(string.format('[ASRC FPS] binding changed: action=%s key=%s',
+            hud.bindingCapture, candidate.name))
+          hud.bindingCapture = nil
+          break
+        end
+      end
+    end
+  end
+
+  ui.setCursor(left)
+  ui.pushFont(ui.Font.Huge)
+  ui.text('FPS CONTROLS')
+  ui.popFont()
+  ui.setCursor(left + vec2(0, 49) * scale)
+  ui.textColored('Select an action, then press a keyboard or mouse button.',
+    rgbm(0.55, 0.76, 0.9, 1))
+
+  for index = 1, #controls do
+    local item = controls[index]
+    local rowY = 91 + (index - 1) * 55
+    ui.setCursor(left + vec2(0, rowY + 12) * scale)
+    ui.text(item.label)
+    if item.reserved then
+      ui.setCursor(left + vec2(175, rowY + 12) * scale)
+      ui.textColored('FUTURE ACTION', rgbm(1, 0.62, 0.25, 1))
+    end
+    local value = hud.bindingCapture == item.action and 'PRESS A KEY…'
+      or hud.bindingName(hud.bindings[item.action])
+    if pauseButton(value, left + vec2(430, rowY) * scale,
+        vec2(300, 40) * scale, false) then
+      hud.bindingCapture = item.action
+      hud.bindingCaptureAfter = ui.time() + 0.25
+    end
+  end
+
+  if pauseButton('RESET DEFAULTS', left + vec2(300, 500) * scale,
+      vec2(190, 42) * scale, false) then
+    for action, key in pairs(hud.bindingDefaults) do hud.bindings[action] = key end
+    hud.bindingCapture = nil
+    ac.log('[ASRC FPS] FPS bindings reset to defaults')
+  end
+  if pauseButton('BACK TO MATCH MENU', left + vec2(0, 500) * scale,
+      vec2(260, 42) * scale, false) then
+    hud.bindingCapture = nil
+    hud.pausePage = 'main'
+  end
+end
+
+function hud.drawEnvironmentMenu(panelMin, panelSize, scale, pauseButton)
+  local weather = {
+    { type = 15, label = 'CLEAR' }, { type = 16, label = 'FEW CLOUDS' },
+    { type = 17, label = 'SCATTERED' }, { type = 18, label = 'BROKEN CLOUDS' },
+    { type = 19, label = 'OVERCAST' }, { type = 20, label = 'FOG' },
+    { type = 21, label = 'MIST' }, { type = 3, label = 'LIGHT DRIZZLE' },
+    { type = 6, label = 'LIGHT RAIN' }, { type = 7, label = 'RAIN' },
+    { type = 8, label = 'HEAVY RAIN' }, { type = 31, label = 'WINDY' },
+  }
+  local left = panelMin + vec2(42, 34) * scale
+  ui.setCursor(left)
+  ui.pushFont(ui.Font.Huge)
+  ui.text('TIME & WEATHER')
+  ui.popFont()
+  ui.setCursor(left + vec2(0, 49) * scale)
+  ui.textColored('Authoritative WeatherFX controls — synchronized to every client.',
+    rgbm(0.55, 0.76, 0.9, 1))
+
+  ui.setCursor(left + vec2(0, 91) * scale)
+  ui.text('TIME OF DAY')
+  local hour = math.floor(hud.environmentDraftTimeSeconds / 3600) % 24
+  if pauseButton('- 1 HOUR', left + vec2(0, 119) * scale,
+      vec2(170, 40) * scale, false) then
+    hud.environmentDraftTimeSeconds = ((hour + 23) % 24) * 3600
+  end
+  ui.setCursor(left + vec2(205, 128) * scale)
+  ui.pushFont(ui.Font.Title)
+  ui.text(string.format('%02d:00', hour))
+  ui.popFont()
+  if pauseButton('+ 1 HOUR', left + vec2(315, 119) * scale,
+      vec2(170, 40) * scale, false) then
+    hud.environmentDraftTimeSeconds = ((hour + 1) % 24) * 3600
+  end
+
+  ui.setCursor(left + vec2(0, 185) * scale)
+  ui.text('WEATHER TYPE')
+  for index = 1, #weather do
+    local item = weather[index]
+    local column = (index - 1) % 3
+    local row = math.floor((index - 1) / 3)
+    local label = hud.environmentDraftWeather == item.type and ('> ' .. item.label) or item.label
+    if pauseButton(label, left + vec2(column * 250, 215 + row * 52) * scale,
+        vec2(230, 40) * scale, false) then
+      hud.environmentDraftWeather = item.type
+    end
+  end
+
+  if pauseButton('APPLY TO MATCH', left + vec2(500, 500) * scale,
+      vec2(230, 42) * scale, false) then
+    environmentRequestEvent({
+      weatherType = hud.environmentDraftWeather,
+      timeOfDaySeconds = hud.environmentDraftTimeSeconds,
+    })
+    ac.log(string.format('[ASRC FPS] environment request sent: weather=%s time=%s',
+      tostring(hud.environmentDraftWeather), tostring(hud.environmentDraftTimeSeconds)))
+  end
+  if pauseButton('BACK TO MATCH MENU', left + vec2(0, 500) * scale,
+      vec2(260, 42) * scale, false) then
+    hud.pausePage = 'main'
+    hud.environmentDraftReady = false
+  end
+end
+
 function hud.drawPauseMenu()
   local size = ui.windowSize()
   local scale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.5)
-  local panelSize = vec2(860, 520) * scale
+  local panelSize = vec2(900, 620) * scale
   local panelMin = (size - panelSize) * 0.5
   local panelMax = panelMin + panelSize
   local left = panelMin + vec2(42, 38) * scale
@@ -2386,6 +2616,44 @@ function hud.drawPauseMenu()
     vec2(dividerX, panelMax.y - 28 * scale), rgbm(0.35, 0.5, 0.62, 0.38),
     math.max(1, scale))
 
+  local mouse = ui.mousePos()
+  if not hud.pauseInputLogged then
+    ac.log(string.format('[ASRC FPS] pause menu active: size=%.0fx%.0f mouse=(%.0f,%.0f)',
+      size.x, size.y, mouse.x, mouse.y))
+    hud.pauseInputLogged = true
+  end
+  local function pauseButton(label, position, dimensions, danger)
+    local p2 = position + dimensions
+    local hovered = mouse.x >= position.x and mouse.x <= p2.x
+      and mouse.y >= position.y and mouse.y <= p2.y
+    local held = hovered and ui.mouseDown(ui.MouseButton.Left)
+    local base = danger and rgbm(0.42, 0.10, 0.08, 0.96) or rgbm(0.10, 0.18, 0.25, 0.96)
+    local hot = danger and rgbm(0.72, 0.18, 0.12, 1) or rgbm(0.18, 0.38, 0.52, 1)
+    ui.drawRectFilled(position, p2, hovered and hot or base, 5 * scale)
+    ui.drawRect(position, p2, hovered and rgbm(0.58, 0.84, 1, 1)
+      or rgbm(0.34, 0.52, 0.66, 0.75), 5 * scale, nil, math.max(1, 1.2 * scale))
+    if held then
+      ui.drawRectFilled(position, p2, rgbm(0, 0, 0, 0.18), 5 * scale)
+    end
+    ui.setCursor(position + vec2(16, 13) * scale)
+    ui.text(label)
+    return hovered and ui.mouseClicked(ui.MouseButton.Left)
+  end
+
+  if hud.pausePage == 'controls' then
+    hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
+    return
+  end
+  if hud.pausePage == 'pure' then
+    if not hud.environmentDraftReady then
+      hud.environmentDraftWeather = hud.environmentWeather
+      hud.environmentDraftTimeSeconds = hud.environmentTimeSeconds
+      hud.environmentDraftReady = true
+    end
+    hud.drawEnvironmentMenu(panelMin, panelSize, scale, pauseButton)
+    return
+  end
+
   ui.setCursor(left)
   ui.pushFont(ui.Font.Huge)
   ui.text('MATCH MENU')
@@ -2396,27 +2664,50 @@ function hud.drawPauseMenu()
   ui.textWrapped('The match continues on the server while this menu is open.')
 
   local buttonSize = vec2(260, 46) * scale
-  ui.setCursor(left + vec2(0, 150) * scale)
-  if ui.button('RETURN TO MATCH', buttonSize) then ac.tryToPause(false) end
-  ui.setCursor(left + vec2(0, 210) * scale)
-  if ui.button('ASSETTO CORSA OPTIONS', buttonSize) then
+  if pauseButton('RETURN TO MATCH', left + vec2(0, 150) * scale, buttonSize, false) then
+    ac.log('[ASRC FPS] pause menu action: return to match')
+    ac.tryToPause(false)
+  end
+  if pauseButton('FPS CONTROLS', left + vec2(0, 205) * scale, buttonSize, false) then
+    ac.log('[ASRC FPS] pause menu action: controls')
+    hud.pausePage = 'controls'
+    hud.leaveServerArmed = false
+    hud.controlsContentLogged = false
+  end
+  if pauseButton('TIME & WEATHER', left + vec2(0, 260) * scale,
+      buttonSize, false) then
+    ac.log('[ASRC FPS] pause menu action: authoritative time and weather')
+    hud.environmentDraftReady = false
+    hud.pausePage = 'pure'
+    hud.leaveServerArmed = false
+  end
+  if pauseButton('ASSETTO CORSA OPTIONS', left + vec2(0, 315) * scale,
+      buttonSize, false) then
+    ac.log('[ASRC FPS] pause menu action: native options')
     hud.nativePauseMenu = true
     hud.leaveServerArmed = false
   end
-  ui.setCursor(left + vec2(0, 270) * scale)
   if not hud.leaveServerArmed then
-    if ui.button('LEAVE SERVER', buttonSize) then hud.leaveServerArmed = true end
+    if pauseButton('LEAVE SERVER', left + vec2(0, 370) * scale, buttonSize, true) then
+      ac.log('[ASRC FPS] pause menu action: arm leave confirmation')
+      hud.leaveServerArmed = true
+    end
   else
+    ui.setCursor(left + vec2(0, 370) * scale)
     ui.textColored('Leave the current server?', rgbm(1, 0.52, 0.35, 1))
-    ui.setCursor(left + vec2(0, 302) * scale)
-    if ui.button('CONFIRM LEAVE', vec2(162, 42) * scale) then
+    if pauseButton('CONFIRM LEAVE', left + vec2(0, 402) * scale,
+        vec2(162, 42) * scale, true) then
+      ac.log('[ASRC FPS] pause menu action: leave server confirmed')
       ac.shutdownAssettoCorsa()
     end
-    ui.sameLine(8 * scale)
-    if ui.button('CANCEL', vec2(90, 42) * scale) then hud.leaveServerArmed = false end
+    if pauseButton('CANCEL', left + vec2(170, 402) * scale,
+        vec2(90, 42) * scale, false) then
+      ac.log('[ASRC FPS] pause menu action: leave cancelled')
+      hud.leaveServerArmed = false
+    end
   end
-  ui.setCursor(left + vec2(0, 402) * scale)
-  ui.textColored('Options opens AC/CSP settings. Resume and pause again to return here.',
+  ui.setCursor(left + vec2(0, 518) * scale)
+  ui.textColored('Match environment changes are synchronized by the server.',
     rgbm(0.62, 0.7, 0.78, 1))
 
   local ranking = {}
@@ -2451,6 +2742,10 @@ function hud.exclusiveCallback(mode)
   if mode ~= 'pause' then
     hud.nativePauseMenu = false
     hud.leaveServerArmed = false
+    hud.pauseInputLogged = false
+    hud.pausePage = 'main'
+    hud.bindingCapture = nil
+    hud.environmentDraftReady = false
   end
   if mode == 'pause' and previewCamera.everEnteredGameplay then
     if hud.nativePauseMenu then return false end

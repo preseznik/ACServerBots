@@ -1213,9 +1213,9 @@
                         </Border>
 
                         <StackPanel Grid.Column="1">
-                            <Border Style="{StaticResource Card}">
+                            <Expander Header="{Binding LiveViewSectionTitle}" IsExpanded="True">
+                                <Border Style="{StaticResource Card}" Margin="0,6,0,0">
                                 <StackPanel>
-                                    <TextBlock Text="{Binding LiveViewSectionTitle}" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="{Binding LiveFocusLabel}" Style="{StaticResource FieldLabel}" />
                                     <ComboBox ItemsSource="{Binding LiveCars}" SelectedItem="{Binding SelectedLiveCar}"
                                               DisplayMemberPath="DisplayName" IsTextSearchEnabled="True"
@@ -1229,11 +1229,12 @@
                                     <TextBlock Text="{Binding LiveZoomMeters, StringFormat={}{0:F0} m}" HorizontalAlignment="Right"
                                                Foreground="{DynamicResource MutedTextBrush}" />
                                 </StackPanel>
-                            </Border>
+                                </Border>
+                            </Expander>
 
-                            <Border Style="{StaticResource Card}">
+                            <Expander Header="{Binding LiveSelectedEntityTitle}" IsExpanded="True" Margin="0,12,0,0">
+                                <Border Style="{StaticResource Card}" Margin="0,6,0,0">
                                 <StackPanel>
-                                    <TextBlock Text="{Binding LiveSelectedEntityTitle}" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="{Binding SelectedLiveCar.Name}" FontSize="17" FontWeight="SemiBold" />
                                     <TextBlock Text="{Binding SelectedLiveCar.Model}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,2,0,12" />
                                     <Grid>
@@ -1287,7 +1288,36 @@
                                         </StackPanel>
                                     </Grid>
                                 </StackPanel>
-                            </Border>
+                                </Border>
+                            </Expander>
+
+                            <Expander Header="Environment" IsExpanded="True" Margin="0,12,0,0">
+                                <Expander.Style>
+                                    <Style TargetType="Expander">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Expander.Style>
+                                <Border Style="{StaticResource Card}" Margin="0,6,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="Weather" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox ItemsSource="{Binding LiveWeatherOptions}"
+                                                  DisplayMemberPath="Label" SelectedValuePath="Type"
+                                                  SelectedValue="{Binding LiveWeatherType, Mode=TwoWay}" />
+                                        <TextBlock Text="Time of day" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                        <ComboBox ItemsSource="{Binding TimeOfDayOptions}"
+                                                  DisplayMemberPath="Label" SelectedValuePath="Hour"
+                                                  SelectedValue="{Binding LiveTimeOfDayHour, Mode=TwoWay}" />
+                                        <Button Content="APPLY TO MATCH" Command="{Binding ApplyLiveEnvironmentCommand}"
+                                                Style="{StaticResource PrimaryButton}" Margin="0,12,0,0"
+                                                ToolTip="Broadcast the selected Pure-compatible WeatherFX type and local track time to every connected client." />
+                                    </StackPanel>
+                                </Border>
+                            </Expander>
 
                             <Border Style="{StaticResource Card}" Margin="0">
                                 <StackPanel>

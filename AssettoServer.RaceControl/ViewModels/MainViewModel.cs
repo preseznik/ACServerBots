@@ -19,6 +19,7 @@ using AssettoServer.RaceControl.Infrastructure;
 namespace AssettoServer.RaceControl.ViewModels;
 
 public sealed record TimeOfDayOption(int Hour, string Label);
+public sealed record LiveWeatherOption(int Type, string Label);
 public sealed record GridPopulationCategoryOption(GridPopulationCategory Value, string Label);
 public sealed record SlotModeOption(SlotMode Value, string Label);
 
@@ -76,6 +77,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _simulationLimitMode = "Minutes";
     private int _simulationLimitValue = 45;
     private double _simulationTimeScale = 10;
+    private int _liveWeatherType = 15;
+    private int _liveTimeOfDayHour = 13;
+    private bool _liveEnvironmentDirty;
+    private Guid? _pendingEnvironmentCommandId;
     private CancellationTokenSource? _simulationTimeScaleUpdateCancellation;
     private SimulationRaceSummary? _simulationResults;
     private bool _showSimulationResults;
@@ -124,6 +129,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Start), CanControlLiveRace);
         StopRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Stop), CanControlLiveRace);
         RestartRaceCommand = new AsyncRelayCommand(() => SendLiveRaceCommandAsync(LiveRaceCommand.Restart), CanControlLiveRace);
+        ApplyLiveEnvironmentCommand = new AsyncRelayCommand(ApplyLiveEnvironmentAsync,
+            () => IsFpsMode && CanControlLiveRace());
         StopGoSelectedBotCommand = new AsyncRelayCommand(StopGoSelectedBotAsync, CanControlSelectedBot);
         TeleportSelectedBotCommand = new AsyncRelayCommand(TeleportSelectedBotAsync, CanControlSelectedBot);
         TakeOverSelectedBotCommand = new AsyncRelayCommand(ToggleSelectedBotTakeoverAsync, CanToggleTakeover);
@@ -193,6 +200,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public IReadOnlyList<TimeOfDayOption> TimeOfDayOptions { get; } = Enumerable.Range(0, 24)
         .Select(hour => new TimeOfDayOption(hour, $"{hour:00}:00"))
         .ToArray();
+    public IReadOnlyList<LiveWeatherOption> LiveWeatherOptions { get; } =
+    [
+        new(15, "Clear"),
+        new(16, "Few clouds"),
+        new(17, "Scattered clouds"),
+        new(18, "Broken clouds"),
+        new(19, "Overcast"),
+        new(20, "Fog"),
+        new(21, "Mist"),
+        new(3, "Light drizzle"),
+        new(6, "Light rain"),
+        new(7, "Rain"),
+        new(8, "Heavy rain"),
+        new(31, "Windy"),
+    ];
     public IReadOnlyList<GridPopulationCategoryOption> GridPopulationCategories { get; } =
     [
         new(GridPopulationCategory.Any, "Any bot-capable car"),
@@ -550,6 +572,26 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    public int LiveWeatherType
+    {
+        get => _liveWeatherType;
+        set
+        {
+            if (SetProperty(ref _liveWeatherType, value))
+                _liveEnvironmentDirty = true;
+        }
+    }
+
+    public int LiveTimeOfDayHour
+    {
+        get => _liveTimeOfDayHour;
+        set
+        {
+            if (SetProperty(ref _liveTimeOfDayHour, Math.Clamp(value, 0, 23)))
+                _liveEnvironmentDirty = true;
+        }
+    }
+
     public string LiveControlStatus
     {
         get => _liveControlStatus;
@@ -725,6 +767,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand StartRaceCommand { get; }
     public AsyncRelayCommand StopRaceCommand { get; }
     public AsyncRelayCommand RestartRaceCommand { get; }
+    public AsyncRelayCommand ApplyLiveEnvironmentCommand { get; }
     public AsyncRelayCommand StopGoSelectedBotCommand { get; }
     public AsyncRelayCommand TeleportSelectedBotCommand { get; }
     public AsyncRelayCommand TakeOverSelectedBotCommand { get; }
@@ -882,6 +925,29 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             default:
                 return RaceControlWebActionResult.Rejected("Unsupported Race Control action.");
         }
+    }
+
+    public async Task<RaceControlWebActionResult> SetWebEnvironmentAsync(
+        RaceControlWebEnvironmentRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsFpsMode || !CanControlLiveRace())
+            return RaceControlWebActionResult.Rejected(
+                "Start an FPS server before changing the match environment.");
+        if (request.WeatherType is < 0 or > 32
+            || request.TimeOfDaySeconds is < 0 or >= 24 * 60 * 60)
+            return RaceControlWebActionResult.Rejected("Weather or time value is invalid.");
+
+        LiveWeatherType = request.WeatherType;
+        LiveTimeOfDayHour = request.TimeOfDaySeconds / 3600;
+        if (_lastInstance is null)
+            return RaceControlWebActionResult.Rejected("No staged server instance is available.");
+        var client = new LiveRaceControlClient(_lastInstance.RootPath);
+        _pendingLiveCommandId = await client.SendFpsEnvironmentAsync(
+            request.WeatherType, request.TimeOfDaySeconds, cancellationToken);
+        _pendingEnvironmentCommandId = _pendingLiveCommandId;
+        LiveControlStatus = "Applying authoritative match environment…";
+        return RaceControlWebActionResult.Success("Match environment update requested.");
     }
 
     public async Task CreateNewEventAsync()
@@ -2004,6 +2070,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    private async Task ApplyLiveEnvironmentAsync()
+    {
+        if (_lastInstance is null)
+            return;
+        try
+        {
+            var client = new LiveRaceControlClient(_lastInstance.RootPath);
+            _pendingLiveCommandId = await client.SendFpsEnvironmentAsync(
+                LiveWeatherType, LiveTimeOfDayHour * 60 * 60);
+            _pendingEnvironmentCommandId = _pendingLiveCommandId;
+            LiveControlStatus = "Applying authoritative match environment…";
+        }
+        catch (Exception exception)
+        {
+            HandleException("Could not change match environment", exception);
+        }
+    }
+
     private async Task StopGoSelectedBotAsync()
     {
         if (SelectedLiveCar is not { IsBot: true } car || _lastInstance is null)
@@ -2214,6 +2298,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         int selectedSessionId = SelectedLiveCar?.SessionId ?? -1;
         LiveSnapshot = snapshot;
+        bool environmentCommandCompleted = _pendingEnvironmentCommandId.HasValue
+                                           && snapshot.LastCommand?.Id == _pendingEnvironmentCommandId.Value;
+        if (environmentCommandCompleted)
+        {
+            _pendingEnvironmentCommandId = null;
+            if (snapshot.LastCommand!.Status == "accepted")
+                _liveEnvironmentDirty = false;
+        }
+        if (snapshot.IsFps && !_liveEnvironmentDirty && !_pendingEnvironmentCommandId.HasValue)
+        {
+            SetProperty(ref _liveWeatherType, snapshot.Environment.WeatherType,
+                nameof(LiveWeatherType));
+            SetProperty(ref _liveTimeOfDayHour, snapshot.Environment.TimeOfDaySeconds / 3600,
+                nameof(LiveTimeOfDayHour));
+        }
         Replace(LiveCars, snapshot.Cars);
         SelectedLiveCar = LiveCars.FirstOrDefault(car => car.SessionId == selectedSessionId)
                           ?? LiveCars.FirstOrDefault(car => car.IsActive)
@@ -2362,6 +2461,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         StartRaceCommand.RaiseCanExecuteChanged();
         StopRaceCommand.RaiseCanExecuteChanged();
         RestartRaceCommand.RaiseCanExecuteChanged();
+        ApplyLiveEnvironmentCommand.RaiseCanExecuteChanged();
         StopGoSelectedBotCommand.RaiseCanExecuteChanged();
         TeleportSelectedBotCommand.RaiseCanExecuteChanged();
         TakeOverSelectedBotCommand.RaiseCanExecuteChanged();

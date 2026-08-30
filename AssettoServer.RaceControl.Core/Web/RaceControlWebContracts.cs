@@ -33,9 +33,13 @@ public sealed record RaceControlWebActionResult(bool Accepted, string Message)
     public static RaceControlWebActionResult Success(string message) => new(true, message);
 }
 
+public sealed record RaceControlWebEnvironmentRequest(int WeatherType, int TimeOfDaySeconds);
+
 public interface IRaceControlWebControl
 {
     RaceControlWebControlState GetState();
     Task<RaceControlWebActionResult> ExecuteAsync(RaceControlWebAction action,
+        CancellationToken cancellationToken = default);
+    Task<RaceControlWebActionResult> SetEnvironmentAsync(RaceControlWebEnvironmentRequest request,
         CancellationToken cancellationToken = default);
 }

@@ -32,7 +32,8 @@ public class OnlineEventGeneratorTests
     {
         Type[] packets =
         [
-            typeof(FpsInputPacket), typeof(FpsReadyPacket), typeof(FpsSnapshotPacket),
+            typeof(FpsInputPacket), typeof(FpsReadyPacket), typeof(FpsEnvironmentRequestPacket),
+            typeof(FpsSnapshotPacket),
             typeof(FpsRosterPacket), typeof(FpsMatchPacket), typeof(FpsKillPacket), typeof(FpsHitPacket),
             typeof(FpsShotPacket), typeof(FpsClientDiagnosticPacket),
         ];

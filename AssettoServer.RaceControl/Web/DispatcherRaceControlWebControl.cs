@@ -24,4 +24,18 @@ public sealed class DispatcherRaceControlWebControl(
             DispatcherPriority.Normal, cancellationToken);
         return await actionTask;
     }
+
+    public async Task<RaceControlWebActionResult> SetEnvironmentAsync(
+        RaceControlWebEnvironmentRequest request, CancellationToken cancellationToken = default)
+    {
+        if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+            return RaceControlWebActionResult.Rejected("Race Control is shutting down.");
+        if (dispatcher.CheckAccess())
+            return await viewModel.SetWebEnvironmentAsync(request, cancellationToken);
+
+        Task<RaceControlWebActionResult> actionTask = await dispatcher.InvokeAsync(
+            () => viewModel.SetWebEnvironmentAsync(request, cancellationToken),
+            DispatcherPriority.Normal, cancellationToken);
+        return await actionTask;
+    }
 }

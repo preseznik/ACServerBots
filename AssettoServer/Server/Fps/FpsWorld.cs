@@ -11,6 +11,8 @@ using AssettoServer.Network.ClientMessages;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Configuration.Kunos;
+using AssettoServer.Server.Weather;
+using AssettoServer.Shared.Weather;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 
@@ -34,6 +36,7 @@ public sealed class FpsWorld : IHostedService
     private readonly ACServerConfiguration _configuration;
     private readonly EntryCarManager _entryCarManager;
     private readonly CSPClientMessageTypeManager _messageTypes;
+    private readonly WeatherManager _weatherManager;
     private FpsSimulation? _simulation;
     private FpsLiveArenaSnapshot? _liveArena;
     private uint _snapshotSequence;
@@ -53,18 +56,21 @@ public sealed class FpsWorld : IHostedService
     private double _simulationMillisecondsTotal;
     private double _simulationMillisecondsMaximum;
     private int _simulationDurationSamples;
+    private long _lastEnvironmentRequestTicks;
 
     public FpsWorld(ACServer server, ACServerConfiguration configuration,
         EntryCarManager entryCarManager, CSPClientMessageTypeManager messageTypes,
-        CSPServerScriptProvider scriptProvider)
+        CSPServerScriptProvider scriptProvider, WeatherManager weatherManager)
     {
         _server = server;
         _configuration = configuration;
         _entryCarManager = entryCarManager;
         _messageTypes = messageTypes;
+        _weatherManager = weatherManager;
         _messageTypes.RegisterOnlineEvent<FpsInputPacket>(OnInput);
         _messageTypes.RegisterOnlineEvent<FpsReadyPacket>(OnReady);
         _messageTypes.RegisterOnlineEvent<FpsClientDiagnosticPacket>(OnClientDiagnostic);
+        _messageTypes.RegisterOnlineEvent<FpsEnvironmentRequestPacket>(OnEnvironmentRequest);
 
         using var script = Assembly.GetExecutingAssembly()
             .GetManifestResourceStream("AssettoServer.Server.Fps.fps.lua")
@@ -313,6 +319,49 @@ public sealed class FpsWorld : IHostedService
         }
     }
 
+    private void OnEnvironmentRequest(ACTcpClient client, FpsEnvironmentRequestPacket packet)
+    {
+        if (client.EntryCar.FpsRole == FpsSlotRole.Spectator)
+            return;
+
+        int controllerSessionId = _entryCarManager.ConnectedCars.Values
+            .Where(entry => entry.FpsRole != FpsSlotRole.Spectator)
+            .Select(entry => (int)entry.SessionId)
+            .DefaultIfEmpty(-1)
+            .Min();
+        if (client.SessionId != controllerSessionId)
+        {
+            client.Logger.Warning(
+                "Rejected FPS environment request from actor {ActorId}; controller actor is {ControllerActorId}",
+                client.SessionId, controllerSessionId);
+            return;
+        }
+
+        long now = Stopwatch.GetTimestamp();
+        if (_lastEnvironmentRequestTicks != 0
+            && Stopwatch.GetElapsedTime(_lastEnvironmentRequestTicks, now) < TimeSpan.FromMilliseconds(250))
+            return;
+        _lastEnvironmentRequestTicks = now;
+
+        var weatherType = (WeatherFxType)packet.WeatherType;
+        bool accepted = packet.TimeOfDaySeconds < 24 * 60 * 60
+                        && _weatherManager.SetRaceControlEnvironment(weatherType,
+                            (int)packet.TimeOfDaySeconds);
+        if (accepted)
+        {
+            client.Logger.Information(
+                "FPS environment changed: weather={WeatherType}, time={TimeOfDaySeconds}",
+                weatherType, packet.TimeOfDaySeconds);
+            BroadcastMatch();
+        }
+        else
+        {
+            client.Logger.Warning(
+                "Rejected invalid FPS environment request: weather={WeatherType}, time={TimeOfDaySeconds}",
+                packet.WeatherType, packet.TimeOfDaySeconds);
+        }
+    }
+
     private void OnUpdate(ACServer sender, EventArgs args)
     {
         lock (_sync)
@@ -552,6 +601,10 @@ public sealed class FpsWorld : IHostedService
             RemainingSeconds = _simulation.RemainingSeconds,
             KillLimit = (ushort)_configuration.Extra.Fps.KillLimit,
             WinnerId = _simulation.WinnerId,
+            WeatherType = (byte)_weatherManager.CurrentWeather.UpcomingType.WeatherFxType,
+            TimeOfDaySeconds = (uint)(_weatherManager.CurrentDateTime.Hour * 3600
+                                      + _weatherManager.CurrentDateTime.Minute * 60
+                                      + _weatherManager.CurrentDateTime.Second),
         });
     }
 

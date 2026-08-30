@@ -21,6 +21,16 @@ const ui = {
   rosterBody: document.getElementById("roster-body"),
   launcherStatus: document.getElementById("launcher-status"),
   sessionControlTitle: document.getElementById("session-control-title"),
+  environmentPanel: document.getElementById("environment-panel"),
+  environmentWeather: document.getElementById("environment-weather"),
+  environmentTime: document.getElementById("environment-time"),
+  applyEnvironment: document.getElementById("apply-environment"),
+  selectedPlayerPanel: document.getElementById("selected-player-panel"),
+  selectedPlayer: document.getElementById("selected-player"),
+  selectedPlayerCaption: document.getElementById("selected-player-caption"),
+  selectedPlayerType: document.getElementById("selected-player-type"),
+  selectedPlayerHealth: document.getElementById("selected-player-health"),
+  selectedPlayerScore: document.getElementById("selected-player-score"),
   toast: document.getElementById("toast"),
 };
 
@@ -29,6 +39,9 @@ let track = null;
 let controlToken = "";
 let actionPending = false;
 let toastTimer = 0;
+let selectedPlayerId = null;
+let environmentDirty = false;
+let pendingEnvironment = null;
 
 document.querySelectorAll(".nav-item").forEach(button => {
   button.addEventListener("click", () => {
@@ -39,8 +52,16 @@ document.querySelectorAll(".nav-item").forEach(button => {
 });
 
 document.querySelectorAll(".action").forEach(button => {
-  button.addEventListener("click", () => executeAction(button.dataset.action));
+  if (button.dataset.action) button.addEventListener("click", () => executeAction(button.dataset.action));
 });
+ui.applyEnvironment.addEventListener("click", executeEnvironment);
+ui.environmentWeather.addEventListener("change", () => { environmentDirty = true; });
+ui.environmentTime.addEventListener("change", () => { environmentDirty = true; });
+ui.selectedPlayer.addEventListener("change", () => {
+  selectedPlayerId = Number(ui.selectedPlayer.value);
+  renderSelectedPlayer(status?.live?.cars || []);
+});
+document.querySelectorAll(".collapsible").forEach(panel => panel.addEventListener("toggle", () => requestAnimationFrame(drawMap)));
 
 new ResizeObserver(drawMap).observe(ui.canvas.parentElement);
 window.addEventListener("resize", drawMap);
@@ -93,6 +114,33 @@ async function executeAction(action) {
   }
 }
 
+async function executeEnvironment() {
+  if (!controlToken || actionPending) return;
+  actionPending = true;
+  renderButtons();
+  const request = {
+    weatherType: Number(ui.environmentWeather.value),
+    timeOfDaySeconds: Number(ui.environmentTime.value),
+  };
+  try {
+    const response = await fetch("/api/v1/environment", {
+      method: "POST",
+      headers: { "X-ASRC-Control": controlToken, "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    const payload = await response.json().catch(() => ({ message: response.statusText }));
+    if (!response.ok) throw new Error(payload.message || "Environment update was rejected.");
+    pendingEnvironment = request;
+    showToast(payload.message || "Environment update requested.");
+    await pollStatus();
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  } finally {
+    actionPending = false;
+    renderButtons();
+  }
+}
+
 function renderStatus() {
   const launcher = status.launcher;
   const live = status.live;
@@ -121,15 +169,37 @@ function renderStatus() {
     ui.metricTargetLabel.textContent = "TARGET";
     ui.metricTarget.textContent = live?.session?.killLimit ? `${live.session.killLimit} KILLS` : "—";
     ui.mapTitle.textContent = "ARENA MAP";
+    ui.environmentPanel.hidden = false;
+    ui.selectedPlayerPanel.hidden = false;
+    const environment = live?.environment;
+    if (environment) {
+      if (pendingEnvironment
+          && environment.weatherType === pendingEnvironment.weatherType
+          && Math.floor(environment.timeOfDaySeconds / 3600)
+             === Math.floor(pendingEnvironment.timeOfDaySeconds / 3600)) {
+        pendingEnvironment = null;
+        environmentDirty = false;
+      }
+      if (!environmentDirty && !pendingEnvironment) {
+        ui.environmentWeather.value = String(environment.weatherType ?? 15);
+        const hourSeconds = Math.floor((environment.timeOfDaySeconds || 0) / 3600) * 3600;
+        if ([...ui.environmentTime.options].some(option => Number(option.value) === hourSeconds)) {
+          ui.environmentTime.value = String(hourSeconds);
+        }
+      }
+    }
   } else {
     ui.metricTimeLabel.textContent = live?.session?.phase === "countdown" ? "COUNTDOWN" : "SERVER TIME";
     ui.metricTime.textContent = formatDuration(live?.session?.phase === "countdown" ? live.session.countdownMilliseconds : live?.simulatedMilliseconds, true);
     ui.metricTargetLabel.textContent = "LAPS";
     ui.metricTarget.textContent = live?.session?.laps || "—";
     ui.mapTitle.textContent = "TRACK MAP";
+    ui.environmentPanel.hidden = true;
+    ui.selectedPlayerPanel.hidden = true;
   }
 
   renderRoster(live?.cars || [], isFps);
+  renderSelectedPlayer(live?.cars || []);
   renderButtons();
   renderSecondaryViews(launcher);
   drawMap();
@@ -146,8 +216,31 @@ function renderButtons() {
     "restart-session": launcher?.canRestartSession,
   };
   document.querySelectorAll(".action").forEach(button => {
-    button.disabled = actionPending || !capabilities[button.dataset.action];
+    if (button.dataset.action) button.disabled = actionPending || !capabilities[button.dataset.action];
   });
+  ui.applyEnvironment.disabled = actionPending
+    || !(status?.live?.isFps && status?.live?.serverRunning);
+}
+
+function renderSelectedPlayer(cars) {
+  const active = cars.filter(car => car.isActive);
+  if (!active.some(car => car.sessionId === selectedPlayerId)) {
+    selectedPlayerId = active[0]?.sessionId ?? null;
+  }
+  const previous = String(selectedPlayerId ?? "");
+  ui.selectedPlayer.replaceChildren();
+  active.forEach(car => {
+    const option = document.createElement("option");
+    option.value = String(car.sessionId);
+    option.textContent = car.name || `Slot ${car.sessionId + 1}`;
+    ui.selectedPlayer.append(option);
+  });
+  ui.selectedPlayer.value = previous;
+  const selected = active.find(car => car.sessionId === selectedPlayerId);
+  ui.selectedPlayerCaption.textContent = selected?.name || "No active player";
+  ui.selectedPlayerType.textContent = selected ? (selected.isBot ? "BOT" : "HUMAN") : "—";
+  ui.selectedPlayerHealth.textContent = selected ? `${Math.max(0, selected.health || 0)}%` : "—";
+  ui.selectedPlayerScore.textContent = selected ? `${selected.kills || 0} / ${selected.deaths || 0}` : "—";
 }
 
 function renderRoster(cars, isFps) {

@@ -88,6 +88,17 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
         _weatherImplementation.SendWeather(CurrentWeather, CurrentDateTime);
     }
 
+    public bool SetRaceControlEnvironment(WeatherFxType weatherType, int timeOfDaySeconds)
+    {
+        if (weatherType is WeatherFxType.None || !Enum.IsDefined(weatherType)
+            || timeOfDaySeconds is < 0 or >= 24 * 60 * 60)
+            return false;
+
+        SetTime(timeOfDaySeconds);
+        SetCspWeather(weatherType, 2);
+        return true;
+    }
+
     public void SendWeather(ACTcpClient? client = null) => _weatherImplementation.SendWeather(CurrentWeather, CurrentDateTime, client);
 
     private void UpdateSunPosition()

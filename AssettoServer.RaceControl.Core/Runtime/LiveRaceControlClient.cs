@@ -69,6 +69,17 @@ public sealed class LiveRaceControlClient
         return await SendCommandAsync("simulation_time_scale", timeScale, null, cancellationToken);
     }
 
+    public async Task<Guid> SendFpsEnvironmentAsync(int weatherType, int timeOfDaySeconds,
+        CancellationToken cancellationToken = default)
+    {
+        if (weatherType is < 0 or > 32)
+            throw new ArgumentOutOfRangeException(nameof(weatherType));
+        if (timeOfDaySeconds is < 0 or >= 24 * 60 * 60)
+            throw new ArgumentOutOfRangeException(nameof(timeOfDaySeconds));
+        return await SendCommandAsync("fps_environment", null, null, cancellationToken,
+            weatherType, timeOfDaySeconds);
+    }
+
     public Task<Guid> SendBotStopAsync(int sessionId, bool stop,
         CancellationToken cancellationToken = default) =>
         SendBotCommandAsync(stop ? "bot_stop" : "bot_go", sessionId, cancellationToken);
@@ -109,7 +120,7 @@ public sealed class LiveRaceControlClient
     }
 
     private async Task<Guid> SendCommandAsync(string command, double? timeScale, int? sessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, int? weatherType = null, int? timeOfDaySeconds = null)
     {
         Directory.CreateDirectory(CommandsDirectory);
         var id = Guid.NewGuid();
@@ -123,6 +134,8 @@ public sealed class LiveRaceControlClient
             requestedAt = DateTimeOffset.UtcNow,
             timeScale,
             sessionId,
+            weatherType,
+            timeOfDaySeconds,
         }, _jsonOptions);
         await File.WriteAllTextAsync(temporary, json, new UTF8Encoding(false), cancellationToken);
         File.Move(temporary, destination);
@@ -185,6 +198,7 @@ public sealed class LiveRaceSnapshot
     public int MaximumSimulatedLaps { get; set; }
     public double TargetRealTimeFactor { get; set; }
     public LiveRaceSession Session { get; set; } = new();
+    public LiveEnvironment Environment { get; set; } = new();
     public LiveRaceCommandResult? LastCommand { get; set; }
     public List<LiveRaceCar> Cars { get; set; } = [];
 
@@ -245,6 +259,13 @@ public sealed class LiveRaceSnapshot
             ? 1
             : Math.Clamp(car.Lap / (double)Session.Laps, 0, 1));
     }
+}
+
+public sealed class LiveEnvironment
+{
+    public int WeatherType { get; set; } = 15;
+    public string WeatherName { get; set; } = "Clear";
+    public int TimeOfDaySeconds { get; set; } = 13 * 60 * 60;
 }
 
 public sealed class LiveRaceSession

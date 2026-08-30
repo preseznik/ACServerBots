@@ -13,6 +13,8 @@ using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.RaceSimulation;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Fps;
+using AssettoServer.Server.Weather;
+using AssettoServer.Shared.Weather;
 using AssettoServer.Shared.Model;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -34,6 +36,7 @@ public sealed class RaceControlBridge : IHostedService
     private readonly RaceSimulationTelemetry? _simulationTelemetry;
     private readonly RaceBotPhysicsWorld? _physicsWorld;
     private readonly FpsWorld? _fpsWorld;
+    private readonly WeatherManager _weatherManager;
     private readonly Stopwatch _wallClock = new();
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private string _controlDirectory = null!;
@@ -51,7 +54,8 @@ public sealed class RaceControlBridge : IHostedService
     private string? _lastCommandMessage;
 
     private sealed record CommandEnvelope(Guid Id, string Command, DateTimeOffset RequestedAt,
-        double? TimeScale = null, int? SessionId = null);
+        double? TimeScale = null, int? SessionId = null, int? WeatherType = null,
+        int? TimeOfDaySeconds = null);
     private sealed record ManualInputEnvelope(long Sequence, int SessionId, float Steering,
         float Throttle, float Brake, DateTimeOffset RequestedAt);
 
@@ -60,6 +64,7 @@ public sealed class RaceControlBridge : IHostedService
         ACServer server,
         SessionManager sessionManager,
         EntryCarManager entryCarManager,
+        WeatherManager weatherManager,
         AiSpline? spline = null,
         RaceSimulationTelemetry? simulationTelemetry = null,
         RaceBotPhysicsWorld? physicsWorld = null,
@@ -74,6 +79,7 @@ public sealed class RaceControlBridge : IHostedService
         _simulationTelemetry = simulationTelemetry;
         _physicsWorld = physicsWorld;
         _fpsWorld = fpsWorld;
+        _weatherManager = weatherManager;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -156,6 +162,8 @@ public sealed class RaceControlBridge : IHostedService
                     "bot_takeover" => TrySetBotMode(command.SessionId, RaceControlBotControlMode.Manual),
                     "bot_release" => TrySetBotMode(command.SessionId, RaceControlBotControlMode.Automatic),
                     "bot_teleport_p1" => TryTeleportBotToP1(command.SessionId),
+                    "fps_environment" => TrySetFpsEnvironment(command.WeatherType,
+                        command.TimeOfDaySeconds),
                     _ => throw new InvalidDataException($"Unknown race command '{command.Command}'"),
                 };
                 _lastCommandStatus = accepted ? "accepted" : "rejected";
@@ -235,6 +243,13 @@ public sealed class RaceControlBridge : IHostedService
             .TryTeleportRaceControlBot(AdvanceSplinePoint(leaderPoint, 12));
     }
 
+    private bool TrySetFpsEnvironment(int? weatherType, int? timeOfDaySeconds) =>
+        _fpsWorld != null
+        && weatherType is >= 0 and <= byte.MaxValue
+        && timeOfDaySeconds is >= 0 and < 24 * 60 * 60
+        && _weatherManager.SetRaceControlEnvironment((WeatherFxType)weatherType.Value,
+            timeOfDaySeconds.Value);
+
     private int AdvanceSplinePoint(int startPoint, float distanceMeters)
     {
         int point = Math.Clamp(startPoint, 0, _spline!.Points.Length - 1);
@@ -261,6 +276,8 @@ public sealed class RaceControlBridge : IHostedService
                 "bot_takeover" => $"Manual control enabled for bot {command.SessionId}.",
                 "bot_release" => $"Manual control released for bot {command.SessionId}.",
                 "bot_teleport_p1" => $"Bot {command.SessionId} teleported ahead of the current leader.",
+                "fps_environment" => $"Environment set to {(WeatherFxType)command.WeatherType!.Value} at "
+                                     + $"{TimeSpan.FromSeconds(command.TimeOfDaySeconds!.Value):hh\\:mm}.",
                 _ => $"Race {command.Command} command accepted.",
             };
         }
@@ -270,6 +287,7 @@ public sealed class RaceControlBridge : IHostedService
             "simulation_time_scale" => "Time acceleration can only be changed during a simulation and must be 1x to 100x.",
             "bot_stop" or "bot_go" or "bot_takeover" or "bot_release" or "bot_teleport_p1" =>
                 "The selected slot is not an active server-controlled race bot.",
+            "fps_environment" => "Environment controls require a running FPS match and valid weather/time values.",
             _ => "No race session is configured.",
         };
     }
@@ -522,6 +540,14 @@ public sealed class RaceControlBridge : IHostedService
             serverRunning,
             isSimulation = false,
             isFps = true,
+            environment = new
+            {
+                weatherType = (int)_weatherManager.CurrentWeather.UpcomingType.WeatherFxType,
+                weatherName = _weatherManager.CurrentWeather.UpcomingType.WeatherFxType.ToString(),
+                timeOfDaySeconds = _weatherManager.CurrentDateTime.Hour * 3600
+                                   + _weatherManager.CurrentDateTime.Minute * 60
+                                   + _weatherManager.CurrentDateTime.Second,
+            },
             simulatedMilliseconds = (long)Math.Round(match.ElapsedSeconds * 1000),
             session = new
             {

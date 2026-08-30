@@ -30,6 +30,13 @@ public sealed class FpsReadyPacket : OnlineEvent<FpsReadyPacket>
     [OnlineEventField(Name = "protocol")] public ushort Protocol = 1;
 }
 
+[OnlineEvent(Key = "ASRC_FpsEnvironmentRequest")]
+public sealed class FpsEnvironmentRequestPacket : OnlineEvent<FpsEnvironmentRequestPacket>
+{
+    [OnlineEventField(Name = "weatherType")] public byte WeatherType;
+    [OnlineEventField(Name = "timeOfDaySeconds")] public uint TimeOfDaySeconds;
+}
+
 [Flags]
 public enum FpsClientDiagnosticFlags : ushort
 {
@@ -111,6 +118,8 @@ public sealed class FpsMatchPacket : OnlineEvent<FpsMatchPacket>
     [OnlineEventField(Name = "remainingSeconds")] public float RemainingSeconds;
     [OnlineEventField(Name = "killLimit")] public ushort KillLimit;
     [OnlineEventField(Name = "winnerID")] public byte WinnerId = byte.MaxValue;
+    [OnlineEventField(Name = "weatherType")] public byte WeatherType;
+    [OnlineEventField(Name = "timeOfDaySeconds")] public uint TimeOfDaySeconds;
 }
 
 [OnlineEvent(Key = "ASRC_FpsKill")]

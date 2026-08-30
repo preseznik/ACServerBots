@@ -205,6 +205,30 @@ public sealed class LiveRaceControlClientTests
     }
 
     [Test]
+    public async Task WritesValidatedFpsEnvironmentCommand()
+    {
+        var client = new LiveRaceControlClient(_root);
+
+        Guid commandId = await client.SendFpsEnvironmentAsync(19, 18 * 60 * 60);
+        string commandPath = Directory.GetFiles(client.CommandsDirectory, "*.json").Single();
+        using var command = JsonDocument.Parse(await File.ReadAllTextAsync(commandPath));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(command.RootElement.GetProperty("id").GetGuid(), Is.EqualTo(commandId));
+            Assert.That(command.RootElement.GetProperty("command").GetString(),
+                Is.EqualTo("fps_environment"));
+            Assert.That(command.RootElement.GetProperty("weatherType").GetInt32(), Is.EqualTo(19));
+            Assert.That(command.RootElement.GetProperty("timeOfDaySeconds").GetInt32(),
+                Is.EqualTo(18 * 60 * 60));
+            Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+                await client.SendFpsEnvironmentAsync(33, 0));
+            Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+                await client.SendFpsEnvironmentAsync(15, 24 * 60 * 60));
+        });
+    }
+
+    [Test]
     public async Task WritesBotControlCommandsAndLatestManualInput()
     {
         var client = new LiveRaceControlClient(_root);

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Http.Json;
 using System.Text.Json;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Runtime;
@@ -71,18 +72,26 @@ public sealed class RaceControlWebServerTests
         string token = status.RootElement.GetProperty("controlToken").GetString()!;
         client.DefaultRequestHeaders.Add("X-ASRC-Control", token);
         var accepted = await client.PostAsync("api/v1/actions/start-session", new ByteArrayContent([]));
+        var environment = await client.PostAsJsonAsync("api/v1/environment",
+            new RaceControlWebEnvironmentRequest(19, 18 * 60 * 60));
 
         Assert.Multiple(() =>
         {
             Assert.That(index, Does.Contain("AssettoServer Race Control"));
             Assert.That(index, Does.Contain("LIVE SESSION"));
+            Assert.That(index, Does.Contain("id=\"environment-panel\""));
+            Assert.That(index, Does.Contain("id=\"selected-player-panel\""));
+            Assert.That(index, Does.Contain("class=\"map-card panel collapsible\""));
             Assert.That(status.RootElement.GetProperty("localOwnerOnly").GetBoolean(), Is.True);
             Assert.That(status.RootElement.GetProperty("live").GetProperty("sequence").GetInt64(), Is.EqualTo(42));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("eventName").GetString(), Is.EqualTo("Test Deathmatch"));
             Assert.That(track.RootElement.GetProperty("track").GetString(), Is.EqualTo("fire_pit"));
             Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
             Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(environment.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(control.LastAction, Is.EqualTo(RaceControlWebAction.StartSession));
+            Assert.That(control.LastEnvironment,
+                Is.EqualTo(new RaceControlWebEnvironmentRequest(19, 18 * 60 * 60)));
         });
     }
 
@@ -98,6 +107,7 @@ public sealed class RaceControlWebServerTests
     private sealed class StubWebControl : IRaceControlWebControl
     {
         public RaceControlWebAction? LastAction { get; private set; }
+        public RaceControlWebEnvironmentRequest? LastEnvironment { get; private set; }
 
         public RaceControlWebControlState GetState() => new(
             "Test Deathmatch", "Test Server", "FPS", "MATCH", "fire_pit", "",
@@ -108,6 +118,14 @@ public sealed class RaceControlWebServerTests
         {
             LastAction = action;
             return Task.FromResult(RaceControlWebActionResult.Success("Accepted."));
+        }
+
+        public Task<RaceControlWebActionResult> SetEnvironmentAsync(
+            RaceControlWebEnvironmentRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastEnvironment = request;
+            return Task.FromResult(RaceControlWebActionResult.Success("Environment accepted."));
         }
     }
 }

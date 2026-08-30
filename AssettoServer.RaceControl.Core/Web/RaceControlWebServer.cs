@@ -77,6 +77,7 @@ public sealed class RaceControlWebServer : IAsyncDisposable
         app.MapGet("/api/v1/status", GetStatus);
         app.MapGet("/api/v1/track", GetTrack);
         app.MapPost("/api/v1/actions/{action}", ExecuteActionAsync);
+        app.MapPost("/api/v1/environment", SetEnvironmentAsync);
 
         await app.StartAsync(cancellationToken);
         _application = app;
@@ -142,6 +143,36 @@ public sealed class RaceControlWebServer : IAsyncDisposable
             _actionLock.Release();
         }
     }
+
+    private async Task<IResult> SetEnvironmentAsync(HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        if (!HasControlToken(context))
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        if (!await _actionLock.WaitAsync(0, cancellationToken))
+            return Results.Conflict(new { message = "Another web action is already running." });
+
+        try
+        {
+            var request = await context.Request.ReadFromJsonAsync<RaceControlWebEnvironmentRequest>(
+                cancellationToken: cancellationToken);
+            if (request is null)
+                return Results.BadRequest(new { message = "Environment request is missing." });
+            RaceControlWebActionResult result = await _control.SetEnvironmentAsync(request,
+                cancellationToken);
+            return result.Accepted ? Results.Ok(result) : Results.Conflict(result);
+        }
+        finally
+        {
+            _actionLock.Release();
+        }
+    }
+
+    private bool HasControlToken(HttpContext context) =>
+        context.Request.Headers.TryGetValue(ControlHeader, out var supplied)
+        && CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(supplied.ToString()),
+            System.Text.Encoding.UTF8.GetBytes(_controlToken));
 
     private static bool TryParseAction(string value, out RaceControlWebAction action)
     {
