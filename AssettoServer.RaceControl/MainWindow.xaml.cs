@@ -9,6 +9,7 @@ using AssettoServer.RaceControl.Infrastructure;
 using AssettoServer.RaceControl.Core.Storage;
 using AssettoServer.RaceControl.Theming;
 using AssettoServer.RaceControl.ViewModels;
+using AssettoServer.RaceControl.Web;
 
 namespace AssettoServer.RaceControl;
 
@@ -27,6 +28,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = _viewModel;
+        RaceControlApp.AttachWebControl(new DispatcherRaceControlWebControl(_viewModel, Dispatcher));
         _takeoverInputTimer = new DispatcherTimer(TimeSpan.FromSeconds(1d / 60d),
             DispatcherPriority.Input, TakeoverInputTimer_Tick, Dispatcher);
         _takeoverInputTimer.Start();
@@ -43,6 +45,7 @@ public partial class MainWindow : Window
         _initialized = true;
         UpdateThemeMenuChecks();
         await _viewModel.InitializeAsync(RaceControlApp.Settings);
+        await RaceControlApp.RestartWebDashboardAsync();
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e) => ThemeManager.ApplyWindowChrome(this);
@@ -102,10 +105,11 @@ public partial class MainWindow : Window
         string previousAcRoot = _viewModel.Preset.AssettoCorsaRoot;
         string previousServerPayload = _viewModel.Preset.ServerPayloadPath;
         var dialog = new SettingsWindow(RaceControlApp.Settings, RaceControlApp.DataRoot,
-            previousAcRoot, previousServerPayload) { Owner = this };
+            previousAcRoot, previousServerPayload, RaceControlApp.WebDashboardStatus) { Owner = this };
         if (dialog.ShowDialog() == true)
         {
             RaceControlApp.ApplySettings(dialog.Settings);
+            await RaceControlApp.RestartWebDashboardAsync();
             UpdateThemeMenuChecks();
             if (!string.Equals(previousServerPayload, dialog.ServerPayloadPath,
                     StringComparison.OrdinalIgnoreCase))
@@ -147,6 +151,24 @@ public partial class MainWindow : Window
         }
 
         Process.Start(new ProcessStartInfo(documentation) { UseShellExecute = true });
+    }
+
+    private async void OpenWebGui_Click(object sender, RoutedEventArgs e)
+    {
+        if (!RaceControlApp.Settings.WebUiEnabled)
+        {
+            MessageBox.Show(this, "Enable the Web GUI in Settings first.",
+                "Web GUI", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        await RaceControlApp.RestartWebDashboardAsync();
+        if (!RaceControlApp.WebDashboardStatus.StartsWith("Listening", StringComparison.Ordinal))
+        {
+            MessageBox.Show(this, RaceControlApp.WebDashboardStatus,
+                "Web GUI", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        Process.Start(new ProcessStartInfo(RaceControlApp.WebDashboardUrl) { UseShellExecute = true });
     }
 
     private void About_Click(object sender, RoutedEventArgs e)

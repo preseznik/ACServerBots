@@ -72,6 +72,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\race-control.md') -Destination $documentationRoot -Force
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\race-bots.md') -Destination $documentationRoot -Force
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\fps-client-rendering.md') -Destination $documentationRoot -Force
 
     $runningFromOutput = @(Get-Process -Name 'AssettoServer Race Control' -ErrorAction SilentlyContinue | Where-Object {
         try { $_.Path -and [IO.Path]::GetFullPath($_.Path).StartsWith($appOutput, [StringComparison]::OrdinalIgnoreCase) }

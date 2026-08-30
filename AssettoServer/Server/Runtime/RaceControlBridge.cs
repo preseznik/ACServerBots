@@ -12,6 +12,7 @@ using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.RaceSimulation;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Fps;
 using AssettoServer.Shared.Model;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -32,6 +33,7 @@ public sealed class RaceControlBridge : IHostedService
     private readonly AiSpline? _spline;
     private readonly RaceSimulationTelemetry? _simulationTelemetry;
     private readonly RaceBotPhysicsWorld? _physicsWorld;
+    private readonly FpsWorld? _fpsWorld;
     private readonly Stopwatch _wallClock = new();
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private string _controlDirectory = null!;
@@ -60,7 +62,8 @@ public sealed class RaceControlBridge : IHostedService
         EntryCarManager entryCarManager,
         AiSpline? spline = null,
         RaceSimulationTelemetry? simulationTelemetry = null,
-        RaceBotPhysicsWorld? physicsWorld = null)
+        RaceBotPhysicsWorld? physicsWorld = null,
+        FpsWorld? fpsWorld = null)
     {
         _configuration = configuration;
         _runtimeOptions = runtimeOptions;
@@ -70,6 +73,7 @@ public sealed class RaceControlBridge : IHostedService
         _spline = spline;
         _simulationTelemetry = simulationTelemetry;
         _physicsWorld = physicsWorld;
+        _fpsWorld = fpsWorld;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -272,6 +276,26 @@ public sealed class RaceControlBridge : IHostedService
 
     private void WriteTrack()
     {
+        FpsLiveArenaSnapshot? fpsArena = _fpsWorld?.GetLiveArenaSnapshot();
+        if (fpsArena != null)
+        {
+            AtomicWrite(Path.Combine(_controlDirectory, "track.json"), new
+            {
+                schemaVersion = 2,
+                track = _configuration.Server.Track,
+                layout = _configuration.Server.TrackConfig,
+                isFpsArena = true,
+                minimumX = fpsArena.BoundsMin.X,
+                maximumX = fpsArena.BoundsMax.X,
+                minimumZ = fpsArena.BoundsMin.Z,
+                maximumZ = fpsArena.BoundsMax.Z,
+                arenaCellSize = fpsArena.CellSize,
+                arenaCells = fpsArena.Cells.Select(cell => new { x = cell.X, z = cell.Y }),
+                points = Array.Empty<object>(),
+            });
+            return;
+        }
+
         if (_spline == null)
         {
             AtomicWrite(Path.Combine(_controlDirectory, "track.json"), new
@@ -312,6 +336,13 @@ public sealed class RaceControlBridge : IHostedService
 
     private void WriteSnapshot(bool serverRunning)
     {
+        FpsLiveMatchSnapshot? fpsMatch = _fpsWorld?.GetLiveMatchSnapshot();
+        if (fpsMatch != null)
+        {
+            WriteFpsSnapshot(fpsMatch, serverRunning);
+            return;
+        }
+
         long now = _sessionManager.ServerTimeMilliseconds;
         var session = _sessionManager.CurrentSession;
         string phase = session.IsStoppedByRaceControl ? "stopped"
@@ -410,6 +441,100 @@ public sealed class RaceControlBridge : IHostedService
                 countdownMilliseconds = Math.Max(0, session.StartTimeMilliseconds - now),
                 timeLeftMilliseconds = session.TimeLeftMilliseconds,
                 laps = session.Configuration.Laps,
+            },
+            lastCommand = _lastCommandId == null ? null : new
+            {
+                id = _lastCommandId,
+                command = _lastCommand,
+                status = _lastCommandStatus,
+                message = _lastCommandMessage,
+            },
+            cars,
+        });
+    }
+
+    private void WriteFpsSnapshot(FpsLiveMatchSnapshot match, bool serverRunning)
+    {
+        var ranking = match.Actors
+            .Where(actor => actor.Active)
+            .OrderByDescending(actor => actor.Kills)
+            .ThenBy(actor => actor.Deaths)
+            .ThenBy(actor => actor.Id)
+            .Select((actor, index) => (actor.Id, Position: index + 1))
+            .ToDictionary(item => item.Id, item => item.Position);
+        var cars = match.Actors.Select(actor =>
+        {
+            Vector3 forward = new(MathF.Sin(actor.Yaw), 0, MathF.Cos(actor.Yaw));
+            float halfYaw = actor.Yaw * 0.5f;
+            int? position = ranking.TryGetValue(actor.Id, out int rankedPosition)
+                ? rankedPosition
+                : null;
+            return new
+            {
+                sessionId = (int)actor.Id,
+                name = actor.Name,
+                model = "FPS Operator",
+                skin = string.Empty,
+                isBot = actor.IsBot,
+                isConnected = actor.Active && !actor.IsBot,
+                isActive = actor.Active && !actor.Dead,
+                x = actor.Position.X,
+                y = actor.Position.Y,
+                z = actor.Position.Z,
+                velocityX = actor.Velocity.X,
+                velocityY = actor.Velocity.Y,
+                velocityZ = actor.Velocity.Z,
+                headingRadians = actor.Yaw + MathF.PI * 0.5f,
+                orientationX = 0,
+                orientationY = MathF.Sin(halfYaw),
+                orientationZ = 0,
+                orientationW = MathF.Cos(halfYaw),
+                forwardX = forward.X,
+                forwardY = forward.Y,
+                forwardZ = forward.Z,
+                speedKmh = Math.Sqrt(actor.Velocity.X * actor.Velocity.X
+                                     + actor.Velocity.Z * actor.Velocity.Z) * 3.6,
+                protocolGear = 1,
+                engineRpm = 0,
+                normalizedPosition = 0,
+                lap = 0,
+                racePosition = position,
+                isDnf = actor.Dead,
+                hasFinished = match.State == FpsMatchState.Finished,
+                controlMode = actor.IsBot ? "automatic" : "human",
+                health = actor.Health,
+                kills = actor.Kills,
+                deaths = actor.Deaths,
+            };
+        }).ToArray();
+        string phase = match.State switch
+        {
+            FpsMatchState.Waiting => "waiting",
+            FpsMatchState.Finished => "finished",
+            _ => "running",
+        };
+
+        AtomicWrite(_snapshotPath, new
+        {
+            schemaVersion = 2,
+            sequence = ++_sequence,
+            capturedAt = DateTimeOffset.UtcNow,
+            serverRunning,
+            isSimulation = false,
+            isFps = true,
+            simulatedMilliseconds = (long)Math.Round(match.ElapsedSeconds * 1000),
+            session = new
+            {
+                index = 0,
+                name = "Current match",
+                type = "Deathmatch",
+                phase,
+                startTimeMilliseconds = 0,
+                countdownMilliseconds = 0,
+                timeLeftMilliseconds = (int)Math.Max(0, Math.Round(match.RemainingSeconds * 1000)),
+                laps = 0,
+                killLimit = match.KillLimit,
+                winnerId = match.WinnerId,
             },
             lastCommand = _lastCommandId == null ? null : new
             {

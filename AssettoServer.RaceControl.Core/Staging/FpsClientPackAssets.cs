@@ -12,6 +12,8 @@ public static class FpsClientPackAssets
         "content/objects3D/asrc_fps/asrc_rifle_diffuse.png";
     public const string OperatorSkinPath =
         "content/objects3D/asrc_fps/asrc_operator_skin.png";
+    public const string HudManifestPath = "apps/lua/asrc_fps_hud/manifest.ini";
+    public const string HudScriptPath = "apps/lua/asrc_fps_hud/asrc_fps_hud.lua";
 
     public static byte[] GetRifleViewmodel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_assault_rifle_viewmodel.kn5");
@@ -24,6 +26,12 @@ public static class FpsClientPackAssets
 
     public static byte[] GetOperatorSkin() => ReadEmbeddedPng(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_operator_skin.png");
+
+    public static byte[] GetHudManifest() => ReadEmbeddedText(
+        "AssettoServer.RaceControl.Core.Assets.Fps.Hud.manifest.ini");
+
+    public static byte[] GetHudScript() => ReadEmbeddedText(
+        "AssettoServer.RaceControl.Core.Assets.Fps.Hud.asrc_fps_hud.lua");
 
     public static string Sha256(byte[] data) => Convert.ToHexString(
         System.Security.Cryptography.SHA256.HashData(data)).ToLowerInvariant();
@@ -88,6 +96,19 @@ public static class FpsClientPackAssets
         ReadOnlySpan<byte> pngMagic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
         if (data.Length < 1024 || !data.AsSpan(0, pngMagic.Length).SequenceEqual(pngMagic))
             throw new InvalidDataException($"Embedded FPS client asset is not a valid PNG: {resourceName}");
+        return data;
+    }
+
+    private static byte[] ReadEmbeddedText(string resourceName)
+    {
+        using Stream stream = typeof(FpsClientPackAssets).Assembly.GetManifestResourceStream(resourceName)
+                              ?? throw new InvalidOperationException(
+                                  $"Embedded FPS client asset was not found: {resourceName}");
+        using var output = new MemoryStream();
+        stream.CopyTo(output);
+        byte[] data = output.ToArray();
+        if (data.Length < 32 || data.Any(value => value == 0))
+            throw new InvalidDataException($"Embedded FPS client text asset is invalid: {resourceName}");
         return data;
     }
 }

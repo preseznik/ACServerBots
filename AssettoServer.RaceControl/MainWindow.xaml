@@ -40,6 +40,7 @@
                     <MenuItem x:Name="ThemeDarkMenuItem" Header="_Dark" IsCheckable="True" Click="ThemeMenu_Click" Tag="Dark" />
                 </MenuItem>
                 <Separator />
+                <MenuItem Header="Open _Web GUI" Click="OpenWebGui_Click" />
                 <MenuItem Header="_Settings…" Click="Settings_Click" InputGestureText="Ctrl+," />
             </MenuItem>
             <MenuItem Header="_Server">
@@ -61,6 +62,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
@@ -86,7 +88,9 @@
                     <Button Content="STAGE &amp; START" Command="{Binding LaunchCommand}" Style="{StaticResource PrimaryButton}" Padding="20,8"
                             ToolTip="Validate the setup, create a fresh standalone instance, and start its server." />
                 </StackPanel>
-                <Button Grid.Column="4" Content="&#xE713;" Style="{StaticResource IconButton}" Click="Settings_Click"
+                <Button Grid.Column="4" Content="WEB GUI" Click="OpenWebGui_Click" Margin="10,0,0,0" VerticalAlignment="Center"
+                        ToolTip="Open the auto-started browser dashboard." />
+                <Button Grid.Column="5" Content="&#xE713;" Style="{StaticResource IconButton}" Click="Settings_Click"
                         ToolTip="Settings" Margin="10,0,0,0" VerticalAlignment="Center" />
             </Grid>
         </Border>
@@ -1033,7 +1037,7 @@
                                                            SelectedSessionId="{Binding SelectedLiveCarSessionId, Mode=TwoWay}"
                                                            FullTrack="{Binding FullTrackView, Mode=TwoWay}"
                                                            ZoomMeters="{Binding LiveZoomMeters, Mode=TwoWay}"
-                                                           ToolTip="Click a car marker to select it. Use the mouse wheel to zoom in or out; the camera, slider, and selected-car details stay synchronized.">
+                                                           ToolTip="Click a participant marker to select it. Use the mouse wheel to zoom in or out; the view, slider, and selected-participant details stay synchronized.">
                                     <controls:LiveRaceViewport.Style>
                                         <Style TargetType="controls:LiveRaceViewport">
                                             <Setter Property="Visibility" Value="Visible" />
@@ -1211,14 +1215,14 @@
                         <StackPanel Grid.Column="1">
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
-                                    <TextBlock Text="Camera" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="Focus car" Style="{StaticResource FieldLabel}" />
+                                    <TextBlock Text="{Binding LiveViewSectionTitle}" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="{Binding LiveFocusLabel}" Style="{StaticResource FieldLabel}" />
                                     <ComboBox ItemsSource="{Binding LiveCars}" SelectedItem="{Binding SelectedLiveCar}"
                                               DisplayMemberPath="DisplayName" IsTextSearchEnabled="True"
-                                              ToolTip="Choose the car followed by the close top-down camera." />
-                                    <CheckBox Content="Full track view" IsChecked="{Binding FullTrackView}"
+                                              ToolTip="Choose the participant followed by the close top-down view." />
+                                    <CheckBox Content="{Binding LiveFullViewLabel}" IsChecked="{Binding FullTrackView}"
                                               Margin="0,12,0,0"
-                                              ToolTip="Show the complete AI centerline and every active car. Clear this option to follow the selected car." />
+                                              ToolTip="Show the complete map and every active participant. Clear this option to follow the selected participant." />
                                     <TextBlock Text="Follow-view width" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
                                     <Slider Minimum="50" Maximum="600" TickFrequency="25" IsSnapToTickEnabled="False"
                                             Value="{Binding LiveZoomMeters}" ToolTip="World-space width, in metres, around the selected car when full-track view is disabled." />
@@ -1229,10 +1233,20 @@
 
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
-                                    <TextBlock Text="Selected car" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="{Binding LiveSelectedEntityTitle}" Style="{StaticResource SectionTitle}" />
                                     <TextBlock Text="{Binding SelectedLiveCar.Name}" FontSize="17" FontWeight="SemiBold" />
                                     <TextBlock Text="{Binding SelectedLiveCar.Model}" Foreground="{DynamicResource MutedTextBrush}" Margin="0,2,0,12" />
                                     <Grid>
+                                        <Grid.Style>
+                                            <Style TargetType="Grid">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Grid.Style>
                                         <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
                                         <StackPanel>
                                             <TextBlock Text="TYPE" Style="{StaticResource FieldLabel}" />
@@ -1247,15 +1261,40 @@
                                             <TextBlock Text="{Binding SelectedLiveCar.Lap}" FontWeight="SemiBold" />
                                         </StackPanel>
                                     </Grid>
+                                    <Grid>
+                                        <Grid.Style>
+                                            <Style TargetType="Grid">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Grid.Style>
+                                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="TYPE" Style="{StaticResource FieldLabel}" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.Kind}" FontWeight="SemiBold" />
+                                            <TextBlock Text="KILLS" Style="{StaticResource FieldLabel}" Margin="0,12,0,0" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.Kills}" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="HEALTH" Style="{StaticResource FieldLabel}" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.Health}" FontWeight="SemiBold" />
+                                            <TextBlock Text="DEATHS" Style="{StaticResource FieldLabel}" Margin="0,12,0,0" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.Deaths}" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Grid>
                                 </StackPanel>
                             </Border>
 
                             <Border Style="{StaticResource Card}" Margin="0">
                                 <StackPanel>
                                     <TextBlock Text="Legend" Style="{StaticResource SectionTitle}" />
-                                    <StackPanel Orientation="Horizontal"><Ellipse Width="9" Height="9" Fill="{DynamicResource AccentBrush}" Margin="0,0,8,0" /><TextBlock Text="Race bot" /></StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0"><Ellipse Width="9" Height="9" Fill="{DynamicResource InfoBrush}" Margin="0,0,8,0" /><TextBlock Text="Human driver" /></StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0"><Ellipse Width="9" Height="9" Fill="{DynamicResource WarningBrush}" Margin="0,0,8,0" /><TextBlock Text="Selected car" /></StackPanel>
+                                    <StackPanel Orientation="Horizontal"><Ellipse Width="9" Height="9" Fill="{DynamicResource AccentBrush}" Margin="0,0,8,0" /><TextBlock Text="{Binding LiveBotLegend}" /></StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0"><Ellipse Width="9" Height="9" Fill="{DynamicResource InfoBrush}" Margin="0,0,8,0" /><TextBlock Text="{Binding LiveHumanLegend}" /></StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0"><Ellipse Width="9" Height="9" Fill="{DynamicResource WarningBrush}" Margin="0,0,8,0" /><TextBlock Text="{Binding LiveSelectedLegend}" /></StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

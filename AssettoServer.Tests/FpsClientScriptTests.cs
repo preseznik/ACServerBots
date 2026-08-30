@@ -24,15 +24,24 @@ public sealed class FpsClientScriptTests
         int updateStart = script.IndexOf("function script.update(dt)", StringComparison.Ordinal);
         int frameBeginStart = script.IndexOf("function script.frameBegin", StringComparison.Ordinal);
         int draw3DStart = script.IndexOf("function script.draw3D", StringComparison.Ordinal);
-        int directDrawStart = script.IndexOf("local function drawDirectRifleViewmodel",
+        int nativeSceneStart = script.IndexOf("local function updateNativeRifleViewmodel",
+            StringComparison.Ordinal);
+        int remoteSceneStart = script.IndexOf("local function updateRemoteActors",
             StringComparison.Ordinal);
         int localCollisionStart = script.IndexOf("local function localTrackProbeMovement",
             StringComparison.Ordinal);
         string updateDefinition = script[updateStart..frameBeginStart];
+        int nativeSceneServiceStart = updateDefinition.IndexOf("ensureLocalViewmodel()",
+            StringComparison.Ordinal);
+        int inputCaptureStart = updateDefinition.IndexOf("scoreboardHeld = ac.isKeyDown",
+            StringComparison.Ordinal);
+        int predictionStart = updateDefinition.IndexOf("local forward = vec2",
+            StringComparison.Ordinal);
         string frameBeginDefinition = script[frameBeginStart..draw3DStart];
         int drawUiStart = script.IndexOf("function script.drawUI", StringComparison.Ordinal);
         string draw3DDefinition = script[draw3DStart..drawUiStart];
-        string directDrawDefinition = script[directDrawStart..localCollisionStart];
+        string nativeSceneDefinition = script[nativeSceneStart..localCollisionStart];
+        string nativeRifleDefinition = script[nativeSceneStart..remoteSceneStart];
 
         Assert.Multiple(() =>
         {
@@ -60,6 +69,15 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("releaseFpsCamera()"));
             Assert.That(script, Does.Contain("camera, cameraError = ac.grabCamera"));
             Assert.That(script, Does.Contain("camera.ownShare = 1"));
+            Assert.That(script, Does.Contain("local previewCamera = {"));
+            Assert.That(script, Does.Contain("state.isInMainMenu or not state.isSessionStarted"));
+            Assert.That(script, Does.Contain("previewCamera.everEnteredGameplay then return false"));
+            Assert.That(script, Does.Contain("local focus = actor.target + vec3(0, 1.25, 0)"));
+            Assert.That(script, Does.Contain("physics.raycastTrack(focus, direction, distance"));
+            Assert.That(script, Does.Contain("pre-Drive arena camera locked:"));
+            Assert.That(updateDefinition, Does.Contain("previewCamera.apply(localActor)"));
+            Assert.That(frameBeginDefinition, Does.Contain("previewCamera.isEligible(localActor)"));
+            Assert.That(frameBeginDefinition, Does.Contain("previewCamera.apply(localActor)"));
             Assert.That(script, Does.Contain("fpsNearClip = 0.03"));
             Assert.That(script, Does.Contain("ac.overrideCameraClipPlanes(fpsNearClip, nil)"));
             Assert.That(script, Does.Contain("params.clipNear = fpsNearClip"));
@@ -79,38 +97,49 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("first-person camera clearance engaged:"));
             Assert.That(script, Does.Contain("cameraCorrections=%d"));
             Assert.That(updateDefinition, Does.Not.Contain("updateRifleViewmodel(dt"));
-            Assert.That(directDrawDefinition, Does.Contain(
-                "updateRifleViewmodel(viewmodelFrameDt, actor, viewmodelMove, viewmodelSprint)"));
-            Assert.That(draw3DDefinition, Does.Contain("drawDirectRifleViewmodel()"));
+            Assert.That(nativeSceneDefinition, Does.Contain(
+                "updateRifleViewmodel(dt, actor, viewmodelMove, viewmodelSprint)"));
+            Assert.That(script, Does.Not.Contain("render.on('main.root.opaque', function()"));
+            Assert.That(script, Does.Contain("root:setMotionStencil(1)"));
+            Assert.That(script, Does.Contain("model:setMotionStencil(1)"));
+            Assert.That(draw3DDefinition, Does.Not.Contain("updateNativeRifleViewmodel"));
             Assert.That(script, Does.Contain("ac.KeyIndex.F6"));
             Assert.That(script, Does.Contain("third-person over-shoulder"));
             Assert.That(script, Does.Contain("physics.raycastTrack(focus, direction, distance"));
             Assert.That(script, Does.Contain("actor.root:setVisible(active and thirdPersonEnabled)"));
             Assert.That(script, Does.Contain(
-                "render.setTransform(viewmodelRenderPosition, viewmodelRenderLook, viewmodelRenderUp, true)"));
-            Assert.That(script, Does.Contain("ac.getCameraPosition():clone()"));
-            Assert.That(script, Does.Contain("ac.getCameraForward():clone()"));
-            Assert.That(script, Does.Contain("ac.getCameraUp():clone()"));
+                "viewmodelHolder:setPosition(viewmodelRenderPosition + ac.getSim().originShift)"));
+            Assert.That(script, Does.Contain(
+                "viewmodelHolder:setOrientation(viewmodelRenderLook, viewmodelRenderUp)"));
+            Assert.That(script, Does.Contain("local cameraPosition = camera.transform.position:clone()"));
+            Assert.That(script, Does.Contain("local look = camera.transform.look:clone()"));
+            Assert.That(script, Does.Contain("local up = camera.transform.up:clone()"));
             Assert.That(script, Does.Contain("actor.root:setOrientation(vec3(math.sin(yaw)"));
             Assert.That(script, Does.Contain("groundYs = ac.StructItem.array"));
             Assert.That(script, Does.Contain("collisionDirections = ac.StructItem.array(ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("collisionDirection / 254 * math.pi * 2"));
-            Assert.That(script, Does.Contain("updateLocalThirdPersonAvatar(localActor)"));
+            Assert.That(updateDefinition, Does.Contain(
+                "updateLocalThirdPersonAvatar(localActor, true)"));
             Assert.That(script, Does.Contain("local third-person avatar ready:"));
             Assert.That(script, Does.Contain("procedural-skinned-operator"));
-            Assert.That(script, Does.Contain("local function drawRemoteActors()"));
-            Assert.That(draw3DDefinition, Does.Contain("drawRemoteActors()"));
+            Assert.That(script, Does.Contain("local function updateRemoteActors(dt)"));
+            Assert.That(updateDefinition, Does.Contain("updateRemoteActors(dt)"));
+            Assert.That(nativeSceneDefinition, Does.Contain(
+                "if active then ensureAvatar(actor) end"));
+            Assert.That(nativeSceneServiceStart, Is.GreaterThanOrEqualTo(0));
+            Assert.That(nativeSceneServiceStart, Is.LessThan(inputCaptureStart),
+                "CSP can interrupt the tail of online-script updates; native scene servicing must run early.");
+            Assert.That(nativeSceneServiceStart, Is.LessThan(predictionStart),
+                "Native scene servicing must precede the expensive prediction/collision pass.");
+            Assert.That(frameBeginDefinition, Does.Not.Contain("updateRemoteActors"));
+            Assert.That(draw3DDefinition, Does.Not.Contain("updateRemoteActors"));
             Assert.That(script, Does.Contain("remoteRender.actorSnapshotCount = visibleActors"));
-            Assert.That(script, Does.Contain("local function updateRemoteAvatar(actor)"));
-            Assert.That(snapshotDefinition, Does.Contain("if id ~= localSessionID then"));
-            Assert.That(snapshotDefinition, Does.Contain("actor.render:set(actor.target)"));
-            Assert.That(script, Does.Contain("actor.root:setPosition(actor.target)"));
-            Assert.That(script, Does.Contain("if actor.id ~= localSessionID then updateRemoteAvatar(actor) end"));
-            Assert.That(script, Does.Contain("and not actor.remoteSceneReady then"));
-            Assert.That(script, Does.Contain("persistent remote actor scene rendering ready:"));
-            Assert.That(script, Does.Contain("render.setTransform(actor.target"));
-            Assert.That(script, Does.Contain("return render.mesh(remoteAvatarRenderParams)"));
-            Assert.That(script, Does.Contain("direct remote actor rendering ready:"));
+            Assert.That(script, Does.Contain(
+                "actor.root:setPosition(actor.render + ac.getSim().originShift)"));
+            Assert.That(script, Does.Contain("actor.root:setVisible(true, false)"));
+            Assert.That(script, Does.Contain("if resetMotion then actor.root:clearMotion() end"));
+            Assert.That(script, Does.Not.Contain("remoteAvatarRenderParams"));
+            Assert.That(script, Does.Contain("native remote actor scene ready:"));
             Assert.That(script, Does.Not.Contain("content/objects3D/pitcrew.kn5"));
             Assert.That(script, Does.Contain("'quickPitsMenu'"));
             Assert.That(script, Does.Contain("ac.disableQuickMenuPitstop(true)"));
@@ -168,9 +197,17 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("remoteActorID = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("remoteTarget = ac.StructItem.vec3()"));
             Assert.That(script, Does.Contain("remoteRender = ac.StructItem.vec3()"));
-            Assert.That(updateDefinition, Does.Not.Contain(
-                "actor.render:set(math.lerp(actor.render, actor.target, blend))"));
-            Assert.That(script, Does.Contain("pipeline = 12"));
+            Assert.That(script, Does.Contain(
+                "diagnosticRemoteActor.root:getPosition() - ac.getSim().originShift"));
+            Assert.That(nativeSceneDefinition, Does.Contain(
+                "actor.render:set(math.lerp(actor.render, actor.target, poseBlend))"));
+            Assert.That(nativeSceneDefinition, Does.Contain("math.exp(-dt * 40)"));
+            Assert.That(script, Does.Contain("local function lerpAngle(current, target, mix)"));
+            Assert.That(script, Does.Contain(
+                "local delta = (target - current + math.pi) % (math.pi * 2) - math.pi"));
+            Assert.That(script, Does.Not.Contain("math.lerpAngle"));
+            Assert.That(script, Does.Contain("pipeline = 21"));
+            Assert.That(script, Does.Contain("native-scene-v21-angle-lerp-fix"));
             Assert.That(script, Does.Contain("viewmodel diagnostic sent to server:"));
             Assert.That(script, Does.Contain("[ASRC FPS] ready sent"));
             Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsShot')"));
@@ -189,20 +226,30 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("rifle assets cached:"));
             Assert.That(script, Does.Contain("forceRenderableOn = true"));
             Assert.That(script, Does.Contain("cached assault-rifle viewmodel loaded:"));
-            Assert.That(script, Does.Contain("createNode('ASRC_FPS_VIEWMODEL_HOLDER', false)"));
-            Assert.That(script, Does.Contain("model:setDepthMode(render.DepthMode.Off)"));
+            Assert.That(script, Does.Contain(
+                "createBoundingSphereNode('ASRC_FPS_VIEWMODEL_HOLDER', 2)"));
+            Assert.That(script, Does.Contain("model:setDepthMode(render.DepthMode.Normal)"));
             Assert.That(script, Does.Contain("viewmodelRoot:getLocalAABB()"));
             Assert.That(script, Does.Not.Contain("viewmodelRoot:getChildrenCount()"));
-            Assert.That(script, Does.Not.Contain("viewmodelHolder:setPosition(position)"));
-            Assert.That(script, Does.Not.Contain("viewmodelHolder:setOrientation(look, up)"));
+            Assert.That(script, Does.Contain("viewmodelHolder:setPosition(viewmodelRenderPosition"));
+            Assert.That(script, Does.Contain("viewmodelHolder:setOrientation(viewmodelRenderLook"));
             Assert.That(script, Does.Not.Contain("viewmodelRoot:setPosition(position)"));
             Assert.That(script, Does.Contain("viewmodelRenderPosition = position:clone()"));
             Assert.That(script, Does.Contain("viewmodelRenderLook = look:clone()"));
             Assert.That(script, Does.Contain("viewmodelRenderUp = up:clone()"));
             Assert.That(script, Does.Not.Contain("render.setTransform(viewmodelRenderTransform, true)"));
-            Assert.That(script, Does.Contain("return render.mesh(viewmodelRenderParams)"));
-            Assert.That(script, Does.Contain("render.setDepthMode(render.DepthMode.Off)"));
-            Assert.That(script, Does.Contain("direct assault-rifle viewmodel draw completed"));
+            Assert.That(script, Does.Not.Contain("viewmodelRenderParams"));
+            Assert.That(nativeSceneDefinition, Does.Contain("viewmodelHolder:clearMotion()"));
+            Assert.That(nativeSceneDefinition, Does.Contain("native-scene:deferred"));
+            Assert.That(frameBeginDefinition, Does.Not.Contain("ensureLocalViewmodel()"));
+            Assert.That(nativeRifleDefinition, Does.Not.Contain("ensureLocalViewmodel()"));
+            Assert.That(updateDefinition, Does.Contain(
+                "updateLocalThirdPersonAvatar(localActor, true)"));
+            Assert.That(frameBeginDefinition, Does.Contain(
+                "updateLocalThirdPersonAvatar(localActor, false)"));
+            Assert.That(frameBeginDefinition,
+                Does.Contain("updateNativeRifleViewmodel(viewmodelFrameDt)"));
+            Assert.That(script, Does.Contain("native assault-rifle viewmodel scene ready"));
             Assert.That(script, Does.Contain("cached rifle viewmodel failed:"));
             Assert.That(script, Does.Contain("FPS RIFLE ASSET DOWNLOAD FAILED - CHECK SERVER HTTP PORT"));
             Assert.That(script, Does.Not.Contain("clientAssetPath(rifleViewmodelRelativePath)"));
@@ -239,18 +286,41 @@ public sealed class FpsClientScriptTests
             Assert.That(snapshotDefinition, Does.Contain("spawnCounts = ac.StructItem.array"));
             Assert.That(snapshotDefinition, Does.Contain("remote actor respawn reconciled:"));
             Assert.That(shotDefinition, Does.Contain("impact = ac.StructItem.byte()"));
-            Assert.That(script, Does.Contain("textures = { txDiffuse = rifleDiffusePath }"));
-            Assert.That(script, Does.Contain("textures = { txDiffuse = operatorSkinPath }"));
+            Assert.That(script, Does.Contain("model:setMaterialTexture('txDiffuse', rifleDiffusePath)"));
+            Assert.That(script, Does.Contain("mesh:setMaterialTexture('txDiffuse', texturePath)"));
             Assert.That(script, Does.Contain("local operatorUV ="));
             Assert.That(script, Does.Contain("operatorUV.torso"));
             Assert.That(script, Does.Contain("operatorUV.pants"));
             Assert.That(script, Does.Contain("operatorUV.boot"));
             Assert.That(script, Does.Contain("procedural-skinned-operator"));
-            Assert.That(script, Does.Contain("txDiffuse.SampleLevel(samLinear, pin.Tex, 0)"));
             Assert.That(script, Does.Contain("RELOADING  %.1fs"));
             Assert.That(script, Does.Contain("%02d  |  %d MAGS"));
             Assert.That(script, Does.Not.Contain("ASSAULT RIFLE  |  INFINITE"));
             Assert.That(script, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v1')"));
+            Assert.That(script, Does.Contain("capacity = 32"));
+            Assert.That(script, Does.Contain("appHeartbeat = ac.StructItem.float()"));
+            Assert.That(script, Does.Contain("function hud.appOwnsHud()"));
+            Assert.That(script, Does.Contain("age >= -0.1 and age <= 0.5"));
+            Assert.That(script, Does.Contain("function hud.hasRadarLineOfSight"));
+            Assert.That(script, Does.Contain("distance > 40"));
+            Assert.That(script, Does.Contain("hud.radarReveal[message.shooterID] = effectClock + 2"));
+            Assert.That(script, Does.Contain("bit.band(actor.flags, 8) == 0"));
+            Assert.That(script, Does.Contain("hud.radarReveal[id] = nil"));
+            Assert.That(script, Does.Contain("function hud.exclusiveCallback(mode)"));
+            Assert.That(script, Does.Contain("ui.onExclusiveHUD(hud.exclusiveCallback, true)"));
+            Assert.That(script, Does.Contain("hud.drawingFallback = true"));
+            Assert.That(script, Does.Contain("if mode == 'pause' and previewCamera.everEnteredGameplay"));
+            Assert.That(script, Does.Contain("function hud.drawPauseMenu()"));
+            Assert.That(script, Does.Contain("MATCH MENU"));
+            Assert.That(script, Does.Contain("DEATHMATCH  •  LIVE SERVER"));
+            Assert.That(script, Does.Contain("RETURN TO MATCH"));
+            Assert.That(script, Does.Contain("ac.tryToPause(false)"));
+            Assert.That(script, Does.Contain("ASSETTO CORSA OPTIONS"));
+            Assert.That(script, Does.Contain("if hud.nativePauseMenu then return false end"));
+            Assert.That(script, Does.Contain("CONFIRM LEAVE"));
+            Assert.That(script, Does.Contain("ac.shutdownAssettoCorsa()"));
+            Assert.That(script, Does.Contain("hud.publish(dt)"));
         });
     }
 }

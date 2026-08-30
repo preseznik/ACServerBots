@@ -161,7 +161,7 @@ public sealed class LiveTrackFileCache
             return null;
 
         LiveTrackMap? track = client.TryReadTrack();
-        if (track is null || track.Points.Count < 2)
+        if (track is null || (track.Points.Count < 2 && !track.HasFpsArena))
             return null;
 
         _loadedRevision = revision;
@@ -178,6 +178,7 @@ public sealed class LiveRaceSnapshot
     public DateTimeOffset CapturedAt { get; set; }
     public bool ServerRunning { get; set; }
     public bool IsSimulation { get; set; }
+    public bool IsFps { get; set; }
     public long SimulatedMilliseconds { get; set; }
     public double RealTimeFactor { get; set; }
     public long MaximumSimulatedMilliseconds { get; set; }
@@ -256,6 +257,8 @@ public sealed class LiveRaceSession
     public long CountdownMilliseconds { get; set; }
     public int TimeLeftMilliseconds { get; set; }
     public int Laps { get; set; }
+    public int KillLimit { get; set; }
+    public byte WinnerId { get; set; } = byte.MaxValue;
 }
 
 public sealed class LiveRaceCommandResult
@@ -303,6 +306,9 @@ public sealed class LiveRaceCar
     public float ManualSteering { get; set; }
     public float ManualThrottle { get; set; }
     public float ManualBrake { get; set; }
+    public int Health { get; set; }
+    public int Kills { get; set; }
+    public int Deaths { get; set; }
 
     public string DisplayName => $"{SessionId + 1}. {Name} — {Model}";
     public string GearDisplay => ProtocolGear switch
@@ -322,6 +328,22 @@ public sealed class LiveTrackMap
     public string Track { get; set; } = string.Empty;
     public string Layout { get; set; } = string.Empty;
     public List<LiveTrackPoint> Points { get; set; } = [];
+    public bool IsFpsArena { get; set; }
+    public float MinimumX { get; set; }
+    public float MaximumX { get; set; }
+    public float MinimumZ { get; set; }
+    public float MaximumZ { get; set; }
+    public float ArenaCellSize { get; set; }
+    public List<LiveArenaCell> ArenaCells { get; set; } = [];
+
+    public bool HasFpsArena => IsFpsArena && MaximumX > MinimumX && MaximumZ > MinimumZ
+                               && ArenaCellSize > 0 && ArenaCells.Count > 0;
+}
+
+public sealed class LiveArenaCell
+{
+    public float X { get; set; }
+    public float Z { get; set; }
 }
 
 public sealed class LiveTrackPoint

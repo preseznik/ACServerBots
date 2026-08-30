@@ -11,6 +11,37 @@ namespace AssettoServer.Tests;
 public sealed class FpsSimulationTests
 {
     [Test]
+    public void LiveMatchSnapshotUsesAuthoritativeActorsAndNames()
+    {
+        var simulation = new FpsSimulation(Configuration(difficulty: 0.4f),
+            [new(0, "Arena Bot", FpsSlotRole.Bot), new(1, "Human Player", FpsSlotRole.Human)]);
+        Assert.That(simulation.ClaimHuman(1), Is.True);
+        Assert.That(simulation.ApplyInput(1, new FpsInputCommand(1, Vector2.UnitY, 0.5f, 0,
+            FpsInputButtons.Sprint)), Is.True);
+        for (int tick = 0; tick < 12; tick++) simulation.Step(0.05f);
+
+        FpsLiveMatchSnapshot snapshot = FpsWorld.CreateLiveMatchSnapshot(simulation, 25);
+        FpsLiveActorSnapshot bot = snapshot.Actors.Single(actor => actor.Id == 0);
+        FpsLiveActorSnapshot human = snapshot.Actors.Single(actor => actor.Id == 1);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(snapshot.KillLimit, Is.EqualTo(25));
+            Assert.That(snapshot.RemainingSeconds, Is.LessThan(600));
+            Assert.That(bot.Name, Is.EqualTo("Arena Bot"));
+            Assert.That(bot.IsBot, Is.True);
+            Assert.That(bot.Position,
+                Is.EqualTo(simulation.Actors.Single(actor => actor.Id == 0).Position));
+            Assert.That(human.Name, Is.EqualTo("Human Player"));
+            Assert.That(human.IsBot, Is.False);
+            Assert.That(human.Active, Is.True);
+            Assert.That(human.Velocity.LengthSquared(), Is.GreaterThan(0));
+            Assert.That(human.Position,
+                Is.EqualTo(simulation.Actors.Single(actor => actor.Id == 1).Position));
+        });
+    }
+
+    [Test]
     public void SnapshotCollisionDirectionUsesCompactSentinelAndPreservesDirection()
     {
         Assert.That(FpsWorld.EncodeCollisionDirection(Vector2.Zero), Is.EqualTo(byte.MaxValue));
@@ -1618,6 +1649,98 @@ public sealed class FpsSimulationTests
             Assert.That(first[0].Aggression, Is.InRange(0.35f, 0.65f));
             Assert.That(first[1].Difficulty, Is.EqualTo(0.99f));
             Assert.That(first[1].Aggression, Is.EqualTo(0.12f));
+        });
+    }
+
+    [Test]
+    public void LowDifficultyCombatHasSlowAcquisitionWideErrorAndShortBursts()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(FpsSimulation.BotReactionDelaySeconds(0.1f),
+                Is.EqualTo(1.272f).Within(0.001f));
+            Assert.That(FpsSimulation.BotAimErrorDegrees(0.1f),
+                Is.EqualTo(16.35f).Within(0.001f));
+            Assert.That(FpsSimulation.BotTrackingDegreesPerSecond(0.1f),
+                Is.EqualTo(76.5f).Within(0.001f));
+            Assert.That(FpsSimulation.BotBurstShotCount(0.1f), Is.EqualTo(2));
+            Assert.That(FpsSimulation.BotBurstPauseSeconds(0.1f),
+                Is.EqualTo(1.278f).Within(0.001f));
+            Assert.That(FpsSimulation.BotMovementSpeedScale(0.1f),
+                Is.EqualTo(0.505f).Within(0.001f));
+            Assert.That(FpsSimulation.BotMovementSpeedScale(1), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void LowDifficultyBotFiresAndHitsMateriallyLessThanHighDifficultyBot()
+    {
+        (int Shots, int Hits) Run(float difficulty)
+        {
+            var simulation = new FpsSimulation(Configuration(difficulty: difficulty),
+            [
+                new(0, "Bot", FpsSlotRole.Bot),
+                new(1, "Target", FpsSlotRole.Human),
+            ]);
+            Assert.That(simulation.ClaimHuman(1), Is.True);
+            var bot = simulation.Actors.Single(actor => actor.Id == 0);
+            var target = simulation.Actors.Single(actor => actor.Id == 1);
+            bot.Position = Vector3.Zero;
+            bot.Yaw = 0;
+            bot.BotTargetId = target.Id;
+            bot.BotReactionRemaining = 0;
+            bot.BotSearchRemaining = 8;
+            target.Position = new Vector3(0, 0, 20);
+            target.Health = 10_000;
+            int shots = 0;
+            int hits = 0;
+            for (int tick = 0; tick < 400; tick++)
+            {
+                simulation.Step(0.05f);
+                shots += simulation.ShotEvents.Count;
+                hits += simulation.HitEvents.Count;
+            }
+            return (shots, hits);
+        }
+
+        var low = Run(0.1f);
+        var high = Run(1);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(low.Shots, Is.LessThan(high.Shots * 0.5f));
+            Assert.That(low.Hits, Is.LessThan(high.Hits * 0.35f));
+        });
+    }
+
+    [Test]
+    public void LowDifficultyBotMovesMateriallySlowerThanHighDifficultyBot()
+    {
+        float Run(float difficulty)
+        {
+            var simulation = new FpsSimulation(Configuration(difficulty: difficulty),
+            [
+                new(0, "Bot", FpsSlotRole.Bot),
+                new(1, "Target", FpsSlotRole.Human),
+            ]);
+            Assert.That(simulation.ClaimHuman(1), Is.True);
+            var bot = simulation.Actors.Single(actor => actor.Id == 0);
+            var target = simulation.Actors.Single(actor => actor.Id == 1);
+            bot.Position = Vector3.Zero;
+            bot.BotTargetId = target.Id;
+            bot.BotReactionRemaining = 10;
+            target.Position = new Vector3(0, 0, 30);
+            for (int tick = 0; tick < 20; tick++) simulation.Step(0.05f);
+            return new Vector2(bot.Position.X, bot.Position.Z).Length();
+        }
+
+        float lowDistance = Run(0.1f);
+        float highDistance = Run(1);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lowDistance, Is.LessThan(highDistance * 0.6f));
+            Assert.That(highDistance, Is.GreaterThan(7));
         });
     }
 

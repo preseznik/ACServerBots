@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Threading;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Storage;
+using AssettoServer.RaceControl.Core.Web;
 using AssettoServer.RaceControl.Theming;
 
 namespace AssettoServer.RaceControl;
@@ -13,9 +14,15 @@ public partial class App : Application
 {
     private readonly RaceControlPaths _paths = new();
     private ApplicationSettingsStore? _settingsStore;
+    private readonly SemaphoreSlim _webServerLock = new(1, 1);
+    private IRaceControlWebControl? _webControl;
+    private RaceControlWebServer? _webServer;
 
     public ApplicationSettings Settings { get; private set; } = new();
     public string DataRoot => _paths.DataRoot;
+    public string WebDashboardStatus { get; private set; } = "Not started";
+    public string WebDashboardUrl => new RaceControlWebServerOptions(
+        Settings.WebUiEnabled, Settings.WebUiBindAddress, Settings.WebUiPort).BrowserUrl;
 
     static App()
     {
@@ -39,6 +46,80 @@ public partial class App : Application
     }
 
     public void SaveSettings() => _settingsStore?.Save(Settings);
+
+    public void AttachWebControl(IRaceControlWebControl control) => _webControl = control;
+
+    public async Task RestartWebDashboardAsync(CancellationToken cancellationToken = default)
+    {
+        await _webServerLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_webServer is not null)
+            {
+                await _webServer.DisposeAsync();
+                _webServer = null;
+            }
+
+            if (!Settings.WebUiEnabled)
+            {
+                WebDashboardStatus = "Disabled";
+                LogWebDashboard("Web GUI disabled in application settings.");
+                return;
+            }
+            if (_webControl is null)
+            {
+                WebDashboardStatus = "Waiting for launcher";
+                return;
+            }
+
+            var options = new RaceControlWebServerOptions(true,
+                Settings.WebUiBindAddress, Settings.WebUiPort);
+            var server = new RaceControlWebServer(options, _paths, _webControl, LogWebDashboard);
+            try
+            {
+                await server.StartAsync(cancellationToken);
+                _webServer = server;
+                WebDashboardStatus = $"Listening at {server.BrowserUrl}";
+            }
+            catch (Exception exception)
+            {
+                await server.DisposeAsync();
+                WebDashboardStatus = $"Could not start: {exception.Message}";
+                LogWebDashboard($"ERROR: {WebDashboardStatus}");
+            }
+        }
+        finally
+        {
+            _webServerLock.Release();
+        }
+    }
+
+    private void LogWebDashboard(string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(_paths.LogsDirectory);
+            File.AppendAllText(Path.Combine(_paths.LogsDirectory, "web-gui.log"),
+                $"[{DateTimeOffset.Now:O}] {message}{Environment.NewLine}");
+        }
+        catch (IOException)
+        {
+            // Web diagnostics must never take down the desktop launcher.
+        }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            _webServer?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        finally
+        {
+            _webServerLock.Dispose();
+            base.OnExit(e);
+        }
+    }
 
     private static Assembly? ResolveLocalizedAssembly(AssemblyLoadContext context, AssemblyName assemblyName)
     {

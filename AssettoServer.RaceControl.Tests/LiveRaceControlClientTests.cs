@@ -131,6 +131,60 @@ public sealed class LiveRaceControlClientTests
     }
 
     [Test]
+    public void ReadsAuthoritativeFpsPlayersAndPreparedArenaCells()
+    {
+        var client = new LiveRaceControlClient(_root);
+        var cache = new LiveTrackFileCache();
+        Directory.CreateDirectory(client.ControlDirectory);
+        File.WriteAllText(client.SnapshotPath, """
+        {
+          "schemaVersion": 2,
+          "sequence": 19,
+          "serverRunning": true,
+          "isFps": true,
+          "session": { "name": "Current match", "type": "Deathmatch", "phase": "running",
+            "timeLeftMilliseconds": 119000, "killLimit": 20 },
+          "cars": [{ "sessionId": 3, "name": "Operative 04", "model": "FPS Operator",
+            "isBot": true, "isActive": true, "x": 12.5, "y": 3, "z": -8,
+            "headingRadians": 1.5, "health": 66, "kills": 7, "deaths": 2 }]
+        }
+        """);
+        File.WriteAllText(client.TrackPath, """
+        {
+          "schemaVersion": 2,
+          "track": "fire_pit",
+          "layout": "",
+          "isFpsArena": true,
+          "minimumX": -57.3,
+          "maximumX": 57.5,
+          "minimumZ": -57.85,
+          "maximumZ": 57.55,
+          "arenaCellSize": 0.6,
+          "arenaCells": [{ "x": 1.2, "z": 2.4 }, { "x": 1.8, "z": 2.4 }],
+          "points": []
+        }
+        """);
+
+        LiveRaceSnapshot? snapshot = client.TryReadSnapshot();
+        LiveTrackMap? arena = cache.TryReadChanged(client);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(snapshot, Is.Not.Null);
+            Assert.That(snapshot!.IsFps, Is.True);
+            Assert.That(snapshot.Session.KillLimit, Is.EqualTo(20));
+            Assert.That(snapshot.Cars.Single().Name, Is.EqualTo("Operative 04"));
+            Assert.That(snapshot.Cars.Single().Health, Is.EqualTo(66));
+            Assert.That(snapshot.Cars.Single().Kills, Is.EqualTo(7));
+            Assert.That(snapshot.Cars.Single().Deaths, Is.EqualTo(2));
+            Assert.That(arena, Is.Not.Null);
+            Assert.That(arena!.HasFpsArena, Is.True);
+            Assert.That(arena.ArenaCells, Has.Count.EqualTo(2));
+            Assert.That(arena.MinimumX, Is.EqualTo(-57.3f));
+        });
+    }
+
+    [Test]
     public async Task WritesValidatedLiveSimulationTimeScaleCommand()
     {
         var client = new LiveRaceControlClient(_root);

@@ -144,7 +144,7 @@ $stderr = Join-Path $instance.RootPath 'acceptance-stderr.log'
 $arguments = @('--preset', $instance.PresetName, '--shutdown-file', $instance.ShutdownFilePath)
 $liveClient = $null
 $expectedSimulationTimeScale = $SimulationTimeScale
-if ($VerifyLiveControl) {
+if ($VerifyLiveControl -or $FpsGate) {
     $liveClient = [AssettoServer.RaceControl.Core.Runtime.LiveRaceControlClient]::new($instance.RootPath)
     $arguments += @('--race-control-directory', $liveClient.ControlDirectory)
 }
@@ -158,6 +158,16 @@ if ($SimulateRace) {
 $serverProcess = Start-Process -FilePath $instance.ExecutablePath -WorkingDirectory $instance.RootPath `
     -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
 try {
+    function Wait-LiveState([scriptblock] $Condition, [string] $Description) {
+        $deadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        while ([DateTimeOffset]::UtcNow -lt $deadline) {
+            $state = $liveClient.TryReadSnapshot()
+            if ($null -ne $state -and (& $Condition $state)) { return $state }
+            Start-Sleep -Milliseconds 100
+        }
+        throw "Timed out waiting for live Race Control state: $Description"
+    }
+
     if ($FpsGate) {
         $assetUrl = 'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v6.zip'
         $assetDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
@@ -188,19 +198,47 @@ try {
             throw "FPS server did not expose a valid CSP asset archive at $assetUrl"
         }
         Write-Host "Verified CSP rifle asset archive endpoint ($($assetArchiveBytes.Length) bytes)."
+
+        $fpsState = Wait-LiveState { param($state)
+            $namedActors = @($state.Cars | Where-Object {
+                $_.IsActive -and -not [string]::IsNullOrWhiteSpace($_.Name)
+            })
+            $state.ServerRunning -and $state.IsFps -and $namedActors.Count -eq $Slots
+        } 'authoritative FPS actors with names'
+
+        $trackDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        $fpsTrack = $null
+        while ([DateTimeOffset]::UtcNow -lt $trackDeadline -and $null -eq $fpsTrack) {
+            $candidate = $liveClient.TryReadTrack()
+            if ($null -ne $candidate -and $candidate.HasFpsArena -and $candidate.ArenaCells.Count -gt 0) {
+                $fpsTrack = $candidate
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if ($null -eq $fpsTrack) {
+            throw 'Live Match did not expose a prepared FPS arena map.'
+        }
+
+        $initialPositions = @{}
+        foreach ($actor in $fpsState.Cars) {
+            if ($actor.IsActive) { $initialPositions[[int]$actor.SessionId] = @([double]$actor.X, [double]$actor.Z) }
+        }
+        [void](Wait-LiveState { param($state)
+            foreach ($actor in $state.Cars) {
+                $initial = $initialPositions[[int]$actor.SessionId]
+                if ($actor.IsActive -and $null -ne $initial -and
+                    ([Math]::Abs([double]$actor.X - $initial[0]) -gt 0.05 -or
+                     [Math]::Abs([double]$actor.Z - $initial[1]) -gt 0.05)) {
+                    return $true
+                }
+            }
+            return $false
+        } 'moving authoritative FPS actor coordinates')
+        Write-Host "Verified Live Match arena map ($($fpsTrack.ArenaCells.Count) cells) and $Slots named moving actors."
     }
 
     if ($VerifyLiveControl) {
-        function Wait-LiveState([scriptblock] $Condition, [string] $Description) {
-            $deadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
-            while ([DateTimeOffset]::UtcNow -lt $deadline) {
-                $state = $liveClient.TryReadSnapshot()
-                if ($null -ne $state -and (& $Condition $state)) { return $state }
-                Start-Sleep -Milliseconds 100
-            }
-            throw "Timed out waiting for live Race Control state: $Description"
-        }
-
         $initialState = Wait-LiveState { param($state) $state.ServerRunning -and $state.Cars.Count -eq $Slots } 'initial snapshot'
         if ($SimulateRace -and -not $initialState.IsSimulation) {
             throw 'Live snapshot did not identify the accelerated simulation mode.'
@@ -424,7 +462,7 @@ if ($FpsGate) {
         throw 'FPS bots did not produce an authoritative rifle shot during the gate.'
     }
 }
-if ($VerifyLiveControl -and $combinedLog -notmatch 'Race Control live bridge ready') {
+if (($VerifyLiveControl -or $FpsGate) -and $combinedLog -notmatch 'Race Control live bridge ready') {
     throw 'Server log did not confirm the Race Control live bridge.'
 }
 if ($VerifyMovingBots) {
@@ -499,7 +537,7 @@ if ($VerifyMovingBots) {
     }
 }
 if ($FpsGate) {
-    Write-Host "PASS: FPS arena navigation, $Slots active combat bots, authoritative-world startup, rifle fire, and graceful shutdown succeeded."
+    Write-Host "PASS: FPS arena navigation, $Slots named moving actors in Live Match, authoritative-world startup, rifle fire, and graceful shutdown succeeded."
 } else {
     Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'
 }

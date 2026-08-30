@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14.0</LangVersion>
+    <RootNamespace>ACEditor.Core</RootNamespace>
+    <EgoPssgEditorRoot Condition="'$(EgoPssgEditorRoot)' == ''">$([System.Environment]::GetEnvironmentVariable('EGO_PSSG_EDITOR_ROOT'))</EgoPssgEditorRoot>
+    <EgoPssgEditorRoot Condition="'$(EgoPssgEditorRoot)' == '' and Exists('F:\Tools 3rd Party\Ego PSSG Editor\SharpGLTF.Toolkit.dll')">F:\Tools 3rd Party\Ego PSSG Editor</EgoPssgEditorRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="EgoEngineLibrary" Condition="Exists('$(EgoPssgEditorRoot)\EgoEngineLibrary.dll')">
+      <HintPath>$(EgoPssgEditorRoot)\EgoEngineLibrary.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SharpGLTF.Core" Condition="Exists('$(EgoPssgEditorRoot)\SharpGLTF.Core.dll')">
+      <HintPath>$(EgoPssgEditorRoot)\SharpGLTF.Core.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SharpGLTF.Toolkit" Condition="Exists('$(EgoPssgEditorRoot)\SharpGLTF.Toolkit.dll')">
+      <HintPath>$(EgoPssgEditorRoot)\SharpGLTF.Toolkit.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="ValidateSharpGltf" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(EgoPssgEditorRoot)\EgoEngineLibrary.dll')"
+           Text="EgoEngineLibrary.dll was not found. Set EGO_PSSG_EDITOR_ROOT to the pinned Ego PSSG Editor 12.1.1 directory." />
+    <Error Condition="!Exists('$(EgoPssgEditorRoot)\SharpGLTF.Toolkit.dll')"
+           Text="SharpGLTF.Toolkit.dll was not found. Set EGO_PSSG_EDITOR_ROOT to the pinned Ego PSSG Editor 12.1.1 directory." />
+  </Target>
+</Project>

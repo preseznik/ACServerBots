@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ACEditor.Core\ACEditor.Core.csproj" />
+  <Project Path="ACEditor.App\ACEditor.App.csproj" />
+  <Project Path="ACEditor.Tests\ACEditor.Tests.csproj" />
+</Solution>

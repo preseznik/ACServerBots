@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AssettoServer Race Control</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><strong>ASSETTO<span>SERVER</span></strong><b>RACE CONTROL</b></div>
+      <div class="connection">
+        <span id="server-indicator" class="indicator"></span>
+        <strong id="server-state">CONNECTING</strong>
+        <span class="divider"></span>
+        <code id="web-address">127.0.0.1:8772</code>
+      </div>
+    </header>
+
+    <aside class="sidebar" aria-label="Primary navigation">
+      <button class="nav-item" data-view="overview"><span aria-hidden="true">◫</span>OVERVIEW</button>
+      <button class="nav-item active" data-view="live"><span aria-hidden="true">◉</span>LIVE SESSION</button>
+      <button class="nav-item" data-view="presets"><span aria-hidden="true">▱</span>PRESETS</button>
+      <button class="nav-item" data-view="players"><span aria-hidden="true">♙</span>PLAYERS <small>LATER</small></button>
+      <button class="nav-item" data-view="settings"><span aria-hidden="true">⚙</span>SETTINGS</button>
+      <p class="owner-note">Local owner access<br>Accounts and roles planned</p>
+    </aside>
+
+    <main class="workspace">
+      <section id="view-live" class="view active">
+        <div class="page-heading">
+          <div><p class="eyebrow">AUTHORITATIVE SERVER STATE</p><h1 id="live-title">LIVE SESSION</h1></div>
+          <p id="updated-at" class="muted">Waiting for telemetry…</p>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric"><span>CURRENT SESSION</span><strong id="metric-session">—</strong></article>
+          <article class="metric"><span>TRACK / ARENA</span><strong id="metric-track">—</strong></article>
+          <article class="metric"><span id="metric-time-label">SERVER TIME</span><strong id="metric-time">—</strong></article>
+          <article class="metric"><span id="metric-target-label">LAPS</span><strong id="metric-target">—</strong></article>
+          <article class="metric"><span>ACTIVE</span><strong id="metric-active">0</strong></article>
+        </div>
+
+        <div class="live-layout">
+          <div class="map-card panel">
+            <div class="panel-heading"><h2 id="map-title">LIVE MAP</h2><span id="map-caption">No track data</span></div>
+            <div class="map-wrap"><canvas id="live-map" aria-label="Top-down live session map"></canvas><div id="map-empty" class="empty-state">Start or stage a server to load its map.</div></div>
+          </div>
+
+          <aside class="controls panel">
+            <div class="control-group">
+              <h2>SERVER CONTROL</h2>
+              <button class="action primary" data-action="launch-server">START SERVER</button>
+              <button class="action" data-action="stop-server">STOP SERVER</button>
+              <button class="action" data-action="restart-server">RESTART SERVER</button>
+            </div>
+            <div class="control-group">
+              <h2 id="session-control-title">SESSION CONTROL</h2>
+              <button class="action primary" data-action="start-session">START SESSION</button>
+              <button class="action" data-action="stop-session">STOP SESSION</button>
+              <button class="action" data-action="restart-session">RESTART SESSION</button>
+            </div>
+            <p id="launcher-status" class="control-status">Connecting to the desktop launcher…</p>
+          </aside>
+        </div>
+
+        <section class="roster panel">
+          <div class="panel-heading"><h2>PARTICIPANTS</h2><span id="roster-caption">0 active</span></div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>RANK</th><th>PLAYER / DRIVER</th><th>TYPE</th><th>HEALTH / SPEED</th><th>K / LAP</th><th>D / POS</th><th>STATUS</th></tr></thead>
+              <tbody id="roster-body"><tr><td colspan="7" class="table-empty">No live participants.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-overview" class="view">
+        <div class="page-heading"><div><p class="eyebrow">LAUNCHER</p><h1>OVERVIEW</h1></div></div>
+        <div class="overview-grid">
+          <article class="panel detail-card"><h2>CURRENT EVENT</h2><dl><dt>Name</dt><dd id="overview-event">—</dd><dt>Mode</dt><dd id="overview-mode">—</dd><dt>Server</dt><dd id="overview-server">—</dd><dt>Location</dt><dd id="overview-track">—</dd></dl></article>
+          <article class="panel detail-card"><h2>WEB CONTROL</h2><p>This first web release provides live state and safe local-owner controls. Event authoring remains in the desktop launcher.</p><p class="muted">The browser updates from the same server-authored telemetry used by the desktop Live Session view.</p></article>
+        </div>
+      </section>
+
+      <section id="view-presets" class="view">
+        <div class="page-heading"><div><p class="eyebrow">CONFIGURATION</p><h1>PRESETS</h1></div></div>
+        <article class="panel placeholder"><h2>DESKTOP-AUTHORED FOR NOW</h2><p>The current event is visible here, while creating and editing presets remains in the desktop launcher for this release.</p><dl><dt>Current preset</dt><dd id="preset-name">—</dd><dt>Mode</dt><dd id="preset-mode">—</dd><dt>Track / arena</dt><dd id="preset-track">—</dd></dl></article>
+      </section>
+
+      <section id="view-players" class="view">
+        <div class="page-heading"><div><p class="eyebrow">PLANNED</p><h1>PLAYERS &amp; ROLES</h1></div></div>
+        <article class="panel placeholder"><h2>ACCOUNT FOUNDATION IS NEXT</h2><p>Future releases will add login, user profiles, admin and user roles, and role-appropriate links for joining the current server.</p><p class="muted">Until that exists, the web listener defaults to this machine only and exposes local-owner controls.</p></article>
+      </section>
+
+      <section id="view-settings" class="view">
+        <div class="page-heading"><div><p class="eyebrow">WEB GUI</p><h1>SETTINGS</h1></div></div>
+        <article class="panel placeholder"><h2>LISTENER</h2><dl><dt>Address</dt><dd id="settings-address">—</dd><dt>Access model</dt><dd>Local owner</dd><dt>API</dt><dd>Version 1</dd></dl><p>Enablement, bind address, and port are configured in the desktop launcher under <strong>Settings → Web GUI</strong>. Changes restart this listener without changing the game-server ports.</p></article>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14.0</LangVersion>
+    <UseWPF>true</UseWPF>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>ACEditor.Tests</RootNamespace>
+    <EgoPssgEditorRoot Condition="'$(EgoPssgEditorRoot)' == ''">$([System.Environment]::GetEnvironmentVariable('EGO_PSSG_EDITOR_ROOT'))</EgoPssgEditorRoot>
+    <EgoPssgEditorRoot Condition="'$(EgoPssgEditorRoot)' == '' and Exists('F:\Tools 3rd Party\Ego PSSG Editor\EgoEngineLibrary.dll')">F:\Tools 3rd Party\Ego PSSG Editor</EgoPssgEditorRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="EgoEngineLibrary" Condition="Exists('$(EgoPssgEditorRoot)\EgoEngineLibrary.dll')">
+      <HintPath>$(EgoPssgEditorRoot)\EgoEngineLibrary.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <ProjectReference Include="..\ACEditor.App\ACEditor.App.csproj" />
+    <ProjectReference Include="..\ACEditor.Core\ACEditor.Core.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
+    <PackageReference Include="NUnit" Version="4.5.1" />
+    <PackageReference Include="NUnit3TestAdapter" Version="6.1.0" />
+    <PackageReference Include="NUnit.Analyzers" Version="4.12.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

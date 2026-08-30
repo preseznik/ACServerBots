@@ -1,0 +1,312 @@
+<Window x:Class="ACEditor.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ACEditor.App.Controls"
+        xmlns:models="clr-namespace:ACEditor.Core.Models;assembly=ACEditor.Core"
+        Title="AC Editor" Width="1600" Height="940" MinWidth="1120" MinHeight="700"
+        WindowStartupLocation="CenterScreen" UseLayoutRounding="True"
+        Background="{DynamicResource WindowBrush}" Foreground="{DynamicResource TextBrush}"
+        FontFamily="Segoe UI" FontSize="12">
+  <Window.Resources>
+    <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    <Style x:Key="ViewportModeButtonStyle" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="Background" Value="{DynamicResource PanelAltBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Margin" Value="1" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="ModeBorder" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="2"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ModeBorder" Property="Background" Value="{DynamicResource HoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="ModeBorder" Property="Background" Value="{DynamicResource SelectionBrush}" />
+                <Setter TargetName="ModeBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource SelectionTextBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <HierarchicalDataTemplate DataType="{x:Type models:TrackNode}" ItemsSource="{Binding Children}">
+      <StackPanel Orientation="Horizontal">
+        <TextBlock Text="◆" Foreground="{DynamicResource CyanBrush}" Margin="0,0,6,0" />
+        <TextBlock Text="{Binding Name}" />
+        <TextBlock Text="  🔒" Visibility="{Binding IsLocked, Converter={StaticResource BoolToVisibility}}" />
+      </StackPanel>
+    </HierarchicalDataTemplate>
+  </Window.Resources>
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="28" />
+      <RowDefinition Height="44" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="210" />
+      <RowDefinition Height="25" />
+    </Grid.RowDefinitions>
+
+    <Menu Grid.Row="0">
+      <MenuItem Header="_File">
+        <MenuItem Header="_Import Track Folder…" Click="ImportTrack_Click" />
+        <MenuItem Header="_Open Project…" Click="OpenProject_Click" />
+        <Separator />
+        <MenuItem Header="_Save Project" Click="SaveProject_Click" />
+        <MenuItem Header="Save Project _As…" Click="SaveProjectAs_Click" />
+        <Separator />
+        <MenuItem Header="E_xit" Click="Exit_Click" />
+      </MenuItem>
+      <MenuItem Header="_Edit">
+        <MenuItem Header="_Undo" Click="Undo_Click" InputGestureText="Ctrl+Z" />
+        <MenuItem Header="_Redo" Click="Redo_Click" InputGestureText="Ctrl+Y" />
+      </MenuItem>
+      <MenuItem Header="_Build">
+        <MenuItem Header="Build Staged Copy…" Click="BuildStage_Click" />
+        <MenuItem Header="Open Last Staged Folder" Click="OpenStage_Click" />
+        <MenuItem Header="Publish with Backup…" Click="Publish_Click" />
+      </MenuItem>
+      <MenuItem Header="_Tools">
+        <MenuItem Header="Open staged track in ksEditor" Click="KsEditor_Click" />
+        <Separator />
+        <MenuItem Header="_Settings…" Click="Settings_Click" />
+      </MenuItem>
+    </Menu>
+
+    <Border Grid.Row="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1">
+      <DockPanel Margin="7,4">
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+          <Button Content="Import Track" Click="ImportTrack_Click" />
+          <Button Content="Save .acedit" Click="SaveProject_Click" IsEnabled="{Binding HasProject}" />
+          <Border Width="1" Margin="8,4" Background="{DynamicResource BorderBrush}" />
+          <Button Content="↶" ToolTip="Undo" Click="Undo_Click" />
+          <Button Content="↷" ToolTip="Redo" Click="Redo_Click" />
+          <Border Width="1" Margin="8,4" Background="{DynamicResource BorderBrush}" />
+          <Button Content="Move" IsEnabled="False" ToolTip="Transform writing is gated on a verified native encoder" />
+          <Button Content="Rotate" IsEnabled="False" ToolTip="Transform writing is gated on a verified native encoder" />
+          <Button Content="Scale" IsEnabled="False" ToolTip="Transform writing is gated on a verified native encoder" />
+          <Button Content="Local" />
+          <Button Content="Perspective" />
+          <Border Width="1" Margin="8,4" Background="{DynamicResource BorderBrush}" />
+          <Button Content="⚙ Settings" Click="Settings_Click" ToolTip="Appearance and tool paths" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <TextBlock Text="Canonical  RH · Y-up · metres" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="8" />
+          <Button Content="Build Staged Copy" Style="{StaticResource AccentButtonStyle}" Click="BuildStage_Click" IsEnabled="{Binding HasProject}" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Grid Grid.Row="2">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="285" MinWidth="220" />
+        <ColumnDefinition Width="5" />
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="5" />
+        <ColumnDefinition Width="315" MinWidth="260" />
+      </Grid.ColumnDefinitions>
+
+      <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
+        <TabControl>
+          <TabItem Header="Scene">
+            <TreeView ItemsSource="{Binding Project.Scene.Roots}" SelectedItemChanged="SceneTree_SelectedItemChanged" Margin="6" />
+          </TabItem>
+          <TabItem Header="Routes">
+            <ListBox ItemsSource="{Binding Project.Routes}" DisplayMemberPath="DisplayName" Background="Transparent" BorderThickness="0" Margin="6" />
+          </TabItem>
+          <TabItem Header="Files">
+            <ListBox ItemsSource="{Binding Project.SourceArtifacts}" Background="Transparent" BorderThickness="0" Margin="6">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <StackPanel Margin="3,4">
+                    <TextBlock Text="{Binding RelativePath}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding WriteDisposition}" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </TabItem>
+        </TabControl>
+      </Border>
+
+      <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource SplitterBrush}" />
+      <TabControl Grid.Column="2" x:Name="WorkspaceTabs">
+        <TabItem Header="3D Scene">
+          <Grid>
+            <controls:TrackViewport x:Name="SceneViewport" Project="{Binding Project}" Revision="{Binding SceneRevision}"
+                                    TextureRevision="{Binding TextureRevision}"
+                                    SelectedNode="{Binding SelectedNode, Mode=TwoWay}" RenderMode="TexturedLit"
+                                    ActiveLayout="{Binding SelectedLayout}" />
+            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12" Background="{DynamicResource ViewportHintBrush}" Padding="8,5" CornerRadius="3">
+              <TextBlock Text="LMB select · RMB orbit · MMB pan · Wheel zoom" Foreground="{DynamicResource MutedBrush}" />
+            </Border>
+            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12"
+                    Background="{DynamicResource ViewportHintBrush}" Padding="5" CornerRadius="3">
+              <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="Render" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="4,0,6,0" />
+                  <RadioButton Content="Wireframe" Tag="Wireframe" GroupName="ViewportRenderMode"
+                               ToolTip="Mesh edges only" Style="{StaticResource ViewportModeButtonStyle}" Checked="ViewportMode_Checked" />
+                  <RadioButton Content="Filled" Tag="Filled" GroupName="ViewportRenderMode"
+                               ToolTip="Unlit material-ID colours" Style="{StaticResource ViewportModeButtonStyle}" Checked="ViewportMode_Checked" />
+                  <RadioButton Content="Textured" Tag="Textured" GroupName="ViewportRenderMode"
+                               ToolTip="Imported diffuse textures without lighting" Style="{StaticResource ViewportModeButtonStyle}" Checked="ViewportMode_Checked" />
+                  <RadioButton Content="Lit" Tag="Lit" GroupName="ViewportRenderMode"
+                               ToolTip="Material-ID colours with directional lighting" Style="{StaticResource ViewportModeButtonStyle}" Checked="ViewportMode_Checked" />
+                  <RadioButton Content="Textured + Lit" Tag="TexturedLit" GroupName="ViewportRenderMode" IsChecked="True"
+                               ToolTip="Imported diffuse textures with directional lighting"
+                               Style="{StaticResource ViewportModeButtonStyle}" Checked="ViewportMode_Checked" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,5,1,0">
+                  <TextBlock Text="Layout" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="4,0,6,0" />
+                  <ComboBox Width="190" ItemsSource="{Binding AvailableLayouts}"
+                            SelectedItem="{Binding SelectedLayout, Mode=TwoWay}" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </TabItem>
+        <TabItem Header="Route &amp; AI">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="150" /></Grid.RowDefinitions>
+            <controls:TrackViewport Project="{Binding Project}" Revision="{Binding SceneRevision}" RouteOnly="True"
+                                    Orthographic="True" ActiveLayout="{Binding SelectedLayout}" />
+            <Border Grid.Row="1" Background="{DynamicResource DataSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="10">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="130" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <TextBlock Text="Elevation profile" Foreground="{DynamicResource MutedBrush}" />
+                <controls:RouteElevationProfile Grid.Column="1" Project="{Binding Project}" />
+              </Grid>
+            </Border>
+          </Grid>
+        </TabItem>
+        <TabItem Header="Materials &amp; Collision">
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="250" /></Grid.ColumnDefinitions>
+            <controls:TrackViewport Project="{Binding Project}" Revision="{Binding SceneRevision}" CollisionOverlay="True"
+                                    TextureRevision="{Binding TextureRevision}"
+                                    ActiveLayout="{Binding SelectedLayout}" />
+            <Border Grid.Column="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1,0,0,0" Padding="8">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="2*" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="3*" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="MATERIALS" Foreground="{DynamicResource MutedBrush}" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <ListBox Grid.Row="1" ItemsSource="{Binding Project.Scene.Materials}" DisplayMemberPath="Name"
+                         Background="Transparent" BorderThickness="0" />
+                <TextBlock Grid.Row="2" Text="PSSG TEXTURES" Foreground="{DynamicResource MutedBrush}"
+                           FontWeight="SemiBold" Margin="0,10,0,6" />
+                <ListBox Grid.Row="3" ItemsSource="{Binding Project.Scene.Textures}"
+                         SelectedItem="{Binding SelectedTexture, Mode=TwoWay}" DisplayMemberPath="Name"
+                         Background="Transparent" BorderThickness="0" />
+                <StackPanel Grid.Row="4" Margin="0,8,0,0">
+                  <TextBlock Text="{Binding SelectedTexture.SourcePath}" TextWrapping="Wrap"
+                             Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                  <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                    <TextBlock Text="{Binding SelectedTexture.Format, StringFormat='Format: {0}'}" Margin="0,0,8,0" />
+                    <TextBlock Text="{Binding SelectedTexture.Width, StringFormat='Width: {0}'}" Margin="0,0,8,0" />
+                    <TextBlock Text="{Binding SelectedTexture.Height, StringFormat='Height: {0}'}" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
+                    <Button Content="Export DDS…" Click="ExportPssgTexture_Click"
+                            IsEnabled="{Binding CanExportSelectedTexture}" />
+                    <Button Content="Replace DDS…" Click="ReplacePssgTexture_Click"
+                            IsEnabled="{Binding CanReplaceSelectedPssgTexture}" />
+                  </StackPanel>
+                  <TextBlock Text="Replacement is written only to Build Staged Copy and reopened before acceptance."
+                             TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,5,0,0" />
+                </StackPanel>
+              </Grid>
+            </Border>
+          </Grid>
+        </TabItem>
+        <TabItem Header="Validate &amp; Publish">
+          <Grid Margin="16">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <StackPanel>
+              <TextBlock Text="Source → Staged Copy" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="Installed game data stays read-only. Build and inspect a complete staged copy before publishing." Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,14" />
+            </StackPanel>
+            <Grid Grid.Row="1">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <GroupBox Header="Validation checklist">
+                <ListBox ItemsSource="{Binding Problems}" Background="Transparent" BorderThickness="0">
+                  <ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Message}" TextWrapping="Wrap" Margin="4" /></DataTemplate></ListBox.ItemTemplate>
+                </ListBox>
+              </GroupBox>
+              <GroupBox Grid.Column="2" Header="Output manifest">
+                <ListBox ItemsSource="{Binding Project.SourceArtifacts}" DisplayMemberPath="RelativePath" Background="Transparent" BorderThickness="0" />
+              </GroupBox>
+            </Grid>
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+              <Button Content="Build Staged Copy" Click="BuildStage_Click" />
+              <Button Content="Open Folder" Click="OpenStage_Click" />
+              <Button Content="Publish with Backup" Style="{StaticResource AccentButtonStyle}" Click="Publish_Click" />
+            </StackPanel>
+          </Grid>
+        </TabItem>
+      </TabControl>
+      <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource SplitterBrush}" />
+
+      <Border Grid.Column="4" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1,0,0,0">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="12">
+            <TextBlock Text="INSPECTOR" Foreground="{DynamicResource MutedBrush}" FontWeight="SemiBold" />
+            <TextBlock Text="Name" Margin="0,12,0,4" />
+            <TextBox Text="{Binding SelectedName, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding HasProject}" />
+            <TextBlock Text="Ownership" Margin="0,12,0,4" />
+            <TextBox Text="{Binding SelectedOwnership, Mode=OneWay}" IsReadOnly="True" />
+            <TextBlock Text="Source file" Margin="0,12,0,4" />
+            <TextBox Text="{Binding SelectedSource, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" />
+            <CheckBox Content="Visible" IsChecked="{Binding SelectedVisible}" Margin="0,12" />
+            <Separator Margin="0,4,0,12" />
+            <TextBlock Text="TRANSFORM" Foreground="{DynamicResource MutedBrush}" FontWeight="SemiBold" />
+            <UniformGrid Columns="4" Margin="0,8,0,0">
+              <TextBlock Text="X" VerticalAlignment="Center" /><TextBox Text="{Binding SelectedNode.Transform.M41, Mode=OneWay, StringFormat=F3}" IsReadOnly="True" Margin="2" />
+              <TextBlock Text="Y" VerticalAlignment="Center" /><TextBox Text="{Binding SelectedNode.Transform.M42, Mode=OneWay, StringFormat=F3}" IsReadOnly="True" Margin="2" />
+              <TextBlock Text="Z" VerticalAlignment="Center" /><TextBox Text="{Binding SelectedNode.Transform.M43, Mode=OneWay, StringFormat=F3}" IsReadOnly="True" Margin="2" />
+              <TextBlock Text="LOD" VerticalAlignment="Center" /><TextBox Text="{Binding SelectedNode.Lod, Mode=OneWay}" IsReadOnly="True" Margin="2" />
+            </UniformGrid>
+            <Separator Margin="0,14,0,12" />
+            <TextBlock Text="SOURCE SAFETY" Foreground="{DynamicResource MutedBrush}" FontWeight="SemiBold" />
+            <TextBlock Text="Unknown records remain visible and locked. Save writes only the .acedit project; source data is never overwritten." TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,7,0,0" />
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+
+    <TabControl Grid.Row="3">
+      <TabItem Header="Problems">
+        <DataGrid ItemsSource="{Binding Problems}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" BorderThickness="0" GridLinesVisibility="Horizontal">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="90" />
+            <DataGridTextColumn Header="Code" Binding="{Binding Code}" Width="170" />
+            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" />
+            <DataGridTextColumn Header="Source" Binding="{Binding SourcePath}" Width="280" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </TabItem>
+      <TabItem Header="Jobs">
+        <ListBox ItemsSource="{Binding Jobs}" Background="{DynamicResource DataSurfaceBrush}" BorderThickness="0" />
+      </TabItem>
+    </TabControl>
+
+    <Border Grid.Row="4" Background="{DynamicResource MenuBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
+      <Grid Margin="8,0">
+        <TextBlock Text="{Binding Status}" VerticalAlignment="Center" />
+        <ProgressBar Width="180" Height="5" HorizontalAlignment="Right" VerticalAlignment="Center" Minimum="0" Maximum="100" Value="{Binding Progress, Mode=OneWay}" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

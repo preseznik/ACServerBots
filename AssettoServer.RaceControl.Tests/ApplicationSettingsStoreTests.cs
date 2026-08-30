@@ -21,6 +21,9 @@ public sealed class ApplicationSettingsStoreTests
             CompactGridRows = true,
             AssettoCorsaRoot = @"C:\Games\Assetto Corsa",
             ServerPayloadPath = @"C:\Servers\AssettoServer",
+            WebUiEnabled = true,
+            WebUiBindAddress = "192.168.1.25",
+            WebUiPort = 8872,
         };
 
         store.Save(settings);
@@ -35,6 +38,25 @@ public sealed class ApplicationSettingsStoreTests
             Assert.That(loaded.CompactGridRows, Is.True);
             Assert.That(loaded.AssettoCorsaRoot, Is.EqualTo(@"C:\Games\Assetto Corsa"));
             Assert.That(loaded.ServerPayloadPath, Is.EqualTo(@"C:\Servers\AssettoServer"));
+            Assert.That(loaded.WebUiEnabled, Is.True);
+            Assert.That(loaded.WebUiBindAddress, Is.EqualTo("192.168.1.25"));
+            Assert.That(loaded.WebUiPort, Is.EqualTo(8872));
+        });
+    }
+
+    [Test]
+    public void Defaults_EnableLoopbackWebGui()
+    {
+        using var factory = new TestContentFactory();
+        var store = new ApplicationSettingsStore(new RaceControlPaths(factory.DataRoot));
+
+        var loaded = store.Load();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(loaded.WebUiEnabled, Is.True);
+            Assert.That(loaded.WebUiBindAddress, Is.EqualTo("127.0.0.1"));
+            Assert.That(loaded.WebUiPort, Is.EqualTo(8772));
         });
     }
 }

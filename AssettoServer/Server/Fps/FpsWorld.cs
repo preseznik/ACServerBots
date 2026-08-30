@@ -16,6 +16,17 @@ using Serilog;
 
 namespace AssettoServer.Server.Fps;
 
+internal readonly record struct FpsLiveActorSnapshot(byte Id, string Name, bool IsBot,
+    bool Active, bool Dead, Vector3 Position, Vector3 Velocity, float Yaw, int Health,
+    ushort Kills, ushort Deaths);
+
+internal sealed record FpsLiveMatchSnapshot(FpsMatchState State, float ElapsedSeconds,
+    float RemainingSeconds, int KillLimit, byte WinnerId,
+    IReadOnlyList<FpsLiveActorSnapshot> Actors);
+
+internal sealed record FpsLiveArenaSnapshot(Vector3 BoundsMin, Vector3 BoundsMax,
+    float CellSize, IReadOnlyList<Vector2> Cells);
+
 public sealed class FpsWorld : IHostedService
 {
     private readonly object _sync = new();
@@ -24,6 +35,7 @@ public sealed class FpsWorld : IHostedService
     private readonly EntryCarManager _entryCarManager;
     private readonly CSPClientMessageTypeManager _messageTypes;
     private FpsSimulation? _simulation;
+    private FpsLiveArenaSnapshot? _liveArena;
     private uint _snapshotSequence;
     private int _snapshotTicks;
     private int _matchTicks;
@@ -84,6 +96,12 @@ public sealed class FpsWorld : IHostedService
                 entry.AiAggression is >= 0 and <= 1 ? entry.AiAggression : null));
         _simulation = new FpsSimulation(_configuration.Extra.Fps, slots, surface: surface,
             navigation: navigation);
+        _liveArena = new FpsLiveArenaSnapshot(
+            _configuration.Extra.Fps.Arena.BoundsMin,
+            _configuration.Extra.Fps.Arena.BoundsMax,
+            navigation.CellSize,
+            navigation.Nodes.Select(node => new Vector2(node.Position.X, node.Position.Z))
+                .Distinct().OrderBy(cell => cell.Y).ThenBy(cell => cell.X).ToArray());
         _server.Update += OnUpdate;
         _entryCarManager.ClientConnected += OnClientConnected;
         _entryCarManager.ClientDisconnected += OnClientDisconnected;
@@ -110,6 +128,37 @@ public sealed class FpsWorld : IHostedService
         _entryCarManager.ClientConnected -= OnClientConnected;
         _entryCarManager.ClientDisconnected -= OnClientDisconnected;
         return Task.CompletedTask;
+    }
+
+    internal FpsLiveArenaSnapshot? GetLiveArenaSnapshot() => _liveArena;
+
+    internal FpsLiveMatchSnapshot? GetLiveMatchSnapshot()
+    {
+        lock (_sync)
+            return _simulation is null
+                ? null
+                : CreateLiveMatchSnapshot(_simulation, _configuration.Extra.Fps.KillLimit);
+    }
+
+    internal static FpsLiveMatchSnapshot CreateLiveMatchSnapshot(FpsSimulation simulation,
+        int killLimit)
+    {
+        var actors = simulation.Actors.OrderBy(actor => actor.Id).Select(actor =>
+            new FpsLiveActorSnapshot(
+                actor.Id,
+                actor.Name,
+                actor.Active && !actor.HumanControlled,
+                actor.Active,
+                actor.Dead,
+                actor.Position,
+                new Vector3(actor.HorizontalVelocity.X, actor.VerticalVelocity,
+                    actor.HorizontalVelocity.Y),
+                actor.Yaw,
+                Math.Max(0, actor.Health),
+                actor.Kills,
+                actor.Deaths)).ToArray();
+        return new FpsLiveMatchSnapshot(simulation.MatchState, simulation.ElapsedSeconds,
+            simulation.RemainingSeconds, killLimit, simulation.WinnerId, actors);
     }
 
     private void OnClientConnected(ACTcpClient client, EventArgs args)

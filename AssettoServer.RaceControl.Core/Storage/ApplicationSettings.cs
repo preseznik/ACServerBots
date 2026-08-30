@@ -22,6 +22,9 @@ public sealed class ApplicationSettings
     public bool CompactGridRows { get; set; }
     public string AssettoCorsaRoot { get; set; } = string.Empty;
     public string ServerPayloadPath { get; set; } = string.Empty;
+    public bool WebUiEnabled { get; set; } = true;
+    public string WebUiBindAddress { get; set; } = "127.0.0.1";
+    public int WebUiPort { get; set; } = 8772;
 
     public ApplicationSettings Copy() => new()
     {
@@ -34,6 +37,9 @@ public sealed class ApplicationSettings
         CompactGridRows = CompactGridRows,
         AssettoCorsaRoot = AssettoCorsaRoot,
         ServerPayloadPath = ServerPayloadPath,
+        WebUiEnabled = WebUiEnabled,
+        WebUiBindAddress = WebUiBindAddress,
+        WebUiPort = WebUiPort,
     };
 }
 

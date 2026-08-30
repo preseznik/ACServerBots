@@ -31,6 +31,10 @@ public sealed class LiveRaceViewport : FrameworkElement
         new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
     private readonly List<CarHitTarget> _carHitTargets = [];
+    private LiveTrackMap? _arenaGeometryTrack;
+    private Size _arenaGeometrySize;
+    private WorldBounds _arenaGeometryBounds;
+    private StreamGeometry? _arenaGeometry;
 
     public LiveRaceViewport()
     {
@@ -106,7 +110,7 @@ public sealed class LiveRaceViewport : FrameworkElement
             ActualWidth * 0.5 + (x - bounds.CenterX) * scale,
             ActualHeight * 0.5 + (z - bounds.CenterZ) * scale);
 
-        DrawTrack(drawingContext, Map, scale);
+        DrawTrack(drawingContext, Map, scale, bounds);
         foreach (var car in activeCars.Where(car => car.SessionId != SelectedSessionId))
             DrawCar(drawingContext, car, Map, selected: false);
         if (selected != null)
@@ -185,6 +189,12 @@ public sealed class LiveRaceViewport : FrameworkElement
             return true;
         }
 
+        if (Track is { HasFpsArena: true } fpsArena)
+        {
+            bounds = new WorldBounds(fpsArena.MinimumX, fpsArena.MaximumX,
+                fpsArena.MinimumZ, fpsArena.MaximumZ).Expand(2);
+            return true;
+        }
         if (Track is { Points.Count: > 1 })
         {
             bounds = WorldBounds.From(Track.Points.Select(point => (point.X, point.Z)));
@@ -201,8 +211,14 @@ public sealed class LiveRaceViewport : FrameworkElement
         return false;
     }
 
-    private void DrawTrack(DrawingContext drawingContext, Func<float, float, Point> map, double scale)
+    private void DrawTrack(DrawingContext drawingContext, Func<float, float, Point> map,
+        double scale, WorldBounds bounds)
     {
+        if (Track is { HasFpsArena: true } arena)
+        {
+            DrawArena(drawingContext, arena, map, scale, bounds);
+            return;
+        }
         if (Track is not { Points.Count: > 1 })
             return;
         var geometry = new StreamGeometry();
@@ -218,6 +234,44 @@ public sealed class LiveRaceViewport : FrameworkElement
         double roadPixels = Math.Clamp(averageWidth * scale, 3, 30);
         drawingContext.DrawGeometry(null, new Pen(Brush("PanelRaisedBrush", Brushes.DarkSlateGray), roadPixels), geometry);
         drawingContext.DrawGeometry(null, new Pen(Brush("BorderBrush", Brushes.Gray), 1), geometry);
+    }
+
+    private void DrawArena(DrawingContext drawingContext, LiveTrackMap arena,
+        Func<float, float, Point> map, double scale, WorldBounds bounds)
+    {
+        if (_arenaGeometry is null || !ReferenceEquals(_arenaGeometryTrack, arena)
+                                   || _arenaGeometrySize != RenderSize
+                                   || _arenaGeometryBounds != bounds)
+        {
+            var geometry = new StreamGeometry();
+            double halfCell = Math.Max(0.75, arena.ArenaCellSize * scale * 0.5);
+            using (var context = geometry.Open())
+            {
+                foreach (var cell in arena.ArenaCells)
+                {
+                    Point center = map(cell.X, cell.Z);
+                    context.BeginFigure(center + new Vector(-halfCell, -halfCell), true, true);
+                    context.LineTo(center + new Vector(halfCell, -halfCell), false, false);
+                    context.LineTo(center + new Vector(halfCell, halfCell), false, false);
+                    context.LineTo(center + new Vector(-halfCell, halfCell), false, false);
+                }
+            }
+            geometry.Freeze();
+            _arenaGeometry = geometry;
+            _arenaGeometryTrack = arena;
+            _arenaGeometrySize = RenderSize;
+            _arenaGeometryBounds = bounds;
+        }
+
+        drawingContext.PushOpacity(0.42);
+        drawingContext.DrawGeometry(Brush("PanelRaisedBrush", Brushes.DarkSlateGray), null,
+            _arenaGeometry);
+        drawingContext.Pop();
+        Point first = map(arena.MinimumX, arena.MinimumZ);
+        Point second = map(arena.MaximumX, arena.MaximumZ);
+        var outline = new Rect(new Point(Math.Min(first.X, second.X), Math.Min(first.Y, second.Y)),
+            new Point(Math.Max(first.X, second.X), Math.Max(first.Y, second.Y)));
+        drawingContext.DrawRectangle(null, new Pen(Brush("BorderBrush", Brushes.Gray), 1), outline);
     }
 
     private void DrawChaseView(DrawingContext drawingContext, IReadOnlyList<LiveRaceCar> cars,
@@ -372,10 +426,11 @@ public sealed class LiveRaceViewport : FrameworkElement
         drawingContext.DrawGeometry(fill, new Pen(Brush("TextBrush", Brushes.White), selected ? 2 : 1), geometry);
         _carHitTargets.Add(new CarHitTarget(car.SessionId, center));
 
-        if (selected || !FullTrack)
+        if (selected || !FullTrack || Snapshot?.IsFps == true)
         {
             string position = car.RacePosition.HasValue ? $"P{car.RacePosition}  " : string.Empty;
-            DrawText(drawingContext, $"{position}{car.Name}", center + new Vector(12, -22),
+            string score = Snapshot?.IsFps == true ? $"  {car.Kills}/{car.Deaths}" : string.Empty;
+            DrawText(drawingContext, $"{position}{car.Name}{score}", center + new Vector(12, -22),
                 Brush("TextBrush", Brushes.White), selected ? 13 : 11);
         }
     }

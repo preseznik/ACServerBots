@@ -491,6 +491,9 @@ internal sealed class FpsSimulation
         bool visible = HasLineOfSight(actor, target);
         if (visible)
         {
+            if (actor.BotTargetVisibleSeconds <= 0)
+                actor.BotReactionRemaining = Math.Max(actor.BotReactionRemaining,
+                    BotReactionDelaySeconds(actor.Difficulty));
             actor.BotLastKnownTargetPosition = target.Position;
             actor.BotSearchRemaining = Lerp(2, 8, actor.Aggression);
             actor.BotTargetVisibleSeconds += dt;
@@ -510,7 +513,8 @@ internal sealed class FpsSimulation
             }
         }
 
-        AimBot(actor, target, dt);
+        AimBot(actor, visible ? target.Position : actor.BotLastKnownTargetPosition,
+            visible ? target.Stance : FpsStance.Standing, dt);
         float distance = PlanarDistance(actor.Position, target.Position);
         float preferredDistance = Lerp(24, 8, actor.Aggression);
         bool canFire = visible && actor.BotReactionRemaining <= 0
@@ -579,7 +583,7 @@ internal sealed class FpsSimulation
         if (actor.BotTargetId == target.Id) return;
         actor.BotTargetId = target.Id;
         actor.BotLastKnownTargetPosition = target.Position;
-        actor.BotReactionRemaining = Lerp(0.65f, 0.12f, actor.Difficulty);
+        actor.BotReactionRemaining = BotReactionDelaySeconds(actor.Difficulty);
         actor.BotSearchRemaining = Lerp(2, 8, actor.Aggression);
         actor.BotPlanRemaining = 0;
         actor.BotPath.Clear();
@@ -617,16 +621,18 @@ internal sealed class FpsSimulation
             || worldDistance + RifleOcclusionEpsilon >= targetDistance;
     }
 
-    private void AimBot(FpsActorState actor, FpsActorState target, float dt)
+    private void AimBot(FpsActorState actor, Vector3 targetPosition, FpsStance targetStance,
+        float dt)
     {
         var origin = actor.Position + Vector3.UnitY * EyeHeight(actor.Stance);
-        var targetPoint = target.Position
-            + Vector3.UnitY * (CollisionHeight(target.Stance) * 0.55f);
+        var targetPoint = targetPosition
+            + Vector3.UnitY * (CollisionHeight(targetStance) * 0.55f);
         var delta = targetPoint - origin;
         float planar = MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
         float desiredYaw = MathF.Atan2(delta.X, delta.Z);
         float desiredPitch = MathF.Atan2(delta.Y, MathF.Max(0.001f, planar));
-        float radiansPerSecond = Lerp(90, 360, actor.Difficulty) * MathF.PI / 180;
+        float radiansPerSecond = BotTrackingDegreesPerSecond(actor.Difficulty)
+                                 * MathF.PI / 180;
         actor.Yaw = ApproachAngle(actor.Yaw, desiredYaw, radiansPerSecond * dt);
         actor.Pitch = Math.Clamp(Approach(actor.Pitch, desiredPitch, radiansPerSecond * dt),
             -1.45f, 1.45f);
@@ -757,14 +763,13 @@ internal sealed class FpsSimulation
     {
         if (actor.BotBurstPauseRemaining > 0) return;
         if (actor.BotBurstShotsRemaining <= 0)
-            actor.BotBurstShotsRemaining = Math.Clamp((int)MathF.Round(Lerp(2, 8,
-                actor.Difficulty)), 2, 8);
+            actor.BotBurstShotsRemaining = BotBurstShotCount(actor.Difficulty);
         int ammunition = actor.AmmoInMagazine;
         TryFire(actor, target);
         if (actor.AmmoInMagazine >= ammunition) return;
         actor.BotBurstShotsRemaining--;
         if (actor.BotBurstShotsRemaining > 0) return;
-        actor.BotBurstPauseRemaining = Lerp(0.65f, 0.18f, actor.Difficulty);
+        actor.BotBurstPauseRemaining = BotBurstPauseSeconds(actor.Difficulty);
     }
 
     private void UpdateBotStuck(FpsActorState actor, float dt, bool wantsMovement)
@@ -803,6 +808,7 @@ internal sealed class FpsSimulation
         if (movement.LengthSquared() > 1) movement = Vector2.Normalize(movement);
         float speed = actor.IsProne ? ProneSpeed
             : actor.IsCrouching ? CrouchSpeed : sprint ? SprintSpeed : WalkSpeed;
+        speed *= BotMovementSpeedScale(actor.Difficulty);
         var desiredVelocity = movement * speed;
         actor.HorizontalVelocity = actor.IsGrounded
             ? desiredVelocity
@@ -998,7 +1004,7 @@ internal sealed class FpsSimulation
         float basePitch = attacker.Pitch;
         if (intendedTarget is not null)
         {
-            float aimError = Lerp(8, 1.5f, attacker.Difficulty) * MathF.PI / 180;
+            float aimError = BotAimErrorDegrees(attacker.Difficulty) * MathF.PI / 180;
             baseYaw += DeterministicNoise(attacker.Id, shotSequence, 0xB071u) * aimError;
             basePitch += DeterministicNoise(attacker.Id, shotSequence, 0xA19Du)
                 * aimError * 0.65f;
@@ -1312,6 +1318,18 @@ internal sealed class FpsSimulation
         Vector2.Distance(new Vector2(first.X, first.Z), new Vector2(second.X, second.Z));
     private static float Lerp(float first, float second, float amount) =>
         first + (second - first) * Math.Clamp(amount, 0, 1);
+    internal static float BotReactionDelaySeconds(float difficulty) =>
+        Lerp(1.4f, 0.12f, difficulty);
+    internal static float BotAimErrorDegrees(float difficulty) =>
+        Lerp(18, 1.5f, difficulty);
+    internal static float BotTrackingDegreesPerSecond(float difficulty) =>
+        Lerp(45, 360, difficulty);
+    internal static int BotBurstShotCount(float difficulty) =>
+        Math.Clamp((int)MathF.Round(Lerp(1, 8, difficulty)), 1, 8);
+    internal static float BotBurstPauseSeconds(float difficulty) =>
+        Lerp(1.4f, 0.18f, difficulty);
+    internal static float BotMovementSpeedScale(float difficulty) =>
+        Lerp(0.45f, 1, difficulty);
     private static float Approach(float current, float target, float maximumDelta) =>
         current < target ? Math.Min(current + maximumDelta, target)
         : Math.Max(current - maximumDelta, target);

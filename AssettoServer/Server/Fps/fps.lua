@@ -35,7 +35,7 @@ local viewmodelMove = vec2()
 local viewmodelSprint = false
 local viewmodelFrameDt = 1 / 60
 local localMuzzlePosition = vec3()
-local viewmodelPipelineVersion = 'render-camera-v12-authoritative-remote-pose'
+local viewmodelPipelineVersion = 'native-scene-v21-angle-lerp-fix'
 local viewmodelLastStage = 'not-started'
 local viewmodelLastStageDetail = ''
 local viewmodelStagesSeen = {}
@@ -49,7 +49,6 @@ local viewmodelLastPosition = nil
 local viewmodelRenderPosition = nil
 local viewmodelRenderLook = nil
 local viewmodelRenderUp = nil
-local viewmodelRenderParams = nil
 local viewmodelDirectDrawAttempts = 0
 local viewmodelDirectDrawCompletions = 0
 local viewmodelDirectDrawPending = 0
@@ -61,9 +60,6 @@ local viewmodelDiagnosticSendOk = true
 local rifleAudioFallbackLogged = false
 local clientPackError = nil
 local remoteRifleFallbackLogged = false
-local remoteAvatarTemplateHolder = nil
-local remoteAvatarTemplateRoot = nil
-local remoteAvatarRenderParams = nil
 local remoteRender = {
   actorSnapshotCount = 0,
   actorsDrawn = 0,
@@ -138,6 +134,14 @@ local persistentCursor = false
 local cursorUnlocked = false
 local camera = nil
 local cameraError = nil
+local previewCamera = {
+  everEnteredGameplay = false,
+  locked = false,
+  actorID = nil,
+  spawnCount = nil,
+  position = vec3(),
+  look = vec3(0, -0.2, 1),
+}
 local fpsNearClip = 0.03
 local fpsClipPlaneApplied = false
 local fpsClipPlaneMethod = 'not-applied'
@@ -162,6 +166,24 @@ local requestRifleAssets
 local playRifleSound
 local impactSparks = nil
 local impactSmoke = nil
+local hud = {
+  protocol = 1,
+  capacity = 32,
+  killFeedCapacity = 6,
+  bridge = nil,
+  bridgeError = nil,
+  bridgeMismatchLogged = false,
+  onlineSequence = 0,
+  publishAccumulator = 0,
+  radarAccumulator = 0,
+  radarReveal = {},
+  radarVisible = {},
+  actorScratch = {},
+  drawingFallback = false,
+  exclusiveSubscription = nil,
+  nativePauseMenu = false,
+  leaveServerArmed = false,
+}
 
 pcall(function()
   impactSparks = ac.Particles.Sparks({
@@ -175,8 +197,176 @@ pcall(function()
   })
 end)
 
+function hud.connect()
+  local ok, result = pcall(function()
+    return ac.connect({
+      ac.StructItem.key('asrc.fps.hud.v1'),
+      protocol = ac.StructItem.uint16(),
+      onlineSequence = ac.StructItem.uint32(),
+      onlineHeartbeat = ac.StructItem.float(),
+      appProtocol = ac.StructItem.uint16(),
+      appHeartbeat = ac.StructItem.float(),
+      gameplayActive = ac.StructItem.byte(),
+      localActorID = ac.StructItem.byte(),
+      localHealth = ac.StructItem.uint16(),
+      localAmmo = ac.StructItem.byte(),
+      localReserveMagazines = ac.StructItem.byte(),
+      localReloadRemaining = ac.StructItem.float(),
+      localKills = ac.StructItem.uint16(),
+      localDeaths = ac.StructItem.uint16(),
+      viewYaw = ac.StructItem.float(),
+      matchState = ac.StructItem.byte(),
+      remainingSeconds = ac.StructItem.float(),
+      killLimit = ac.StructItem.uint16(),
+      winnerID = ac.StructItem.byte(),
+      scoreboardHeld = ac.StructItem.byte(),
+      cursorUnlocked = ac.StructItem.byte(),
+      persistentCursor = ac.StructItem.byte(),
+      appPersistentCursor = ac.StructItem.byte(),
+      hitMarkerRemaining = ac.StructItem.float(),
+      linkState = ac.StructItem.byte(),
+      clientError = ac.StructItem.string(128),
+      actorCount = ac.StructItem.byte(),
+      actorIDs = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
+      actorFlags = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
+      radarFlags = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
+      actorPositions = ac.StructItem.array(ac.StructItem.vec3(), hud.capacity),
+      actorYaws = ac.StructItem.array(ac.StructItem.float(), hud.capacity),
+      actorHealth = ac.StructItem.array(ac.StructItem.uint16(), hud.capacity),
+      actorKills = ac.StructItem.array(ac.StructItem.uint16(), hud.capacity),
+      actorDeaths = ac.StructItem.array(ac.StructItem.uint16(), hud.capacity),
+      actorNames = ac.StructItem.array(ac.StructItem.string(32), hud.capacity),
+      killFeedCount = ac.StructItem.byte(),
+      killFeed = ac.StructItem.array(ac.StructItem.string(72), hud.killFeedCapacity),
+    }, false, ac.SharedNamespace.Shared)
+  end)
+  if ok then
+    hud.bridge = result
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v1')
+  else
+    hud.bridgeError = tostring(result)
+    ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
+      .. hud.bridgeError)
+  end
+end
+
+function hud.appOwnsHud()
+  if hud.bridge == nil or hud.bridge.appProtocol ~= hud.protocol then
+    if hud.bridge ~= nil and hud.bridge.appProtocol ~= 0
+        and not hud.bridgeMismatchLogged then
+      hud.bridgeMismatchLogged = true
+      ac.warn(string.format('[ASRC FPS] HUD app bridge mismatch: online=%d app=%d',
+        hud.protocol, hud.bridge.appProtocol))
+    end
+    return false
+  end
+  local age = ui.time() - hud.bridge.appHeartbeat
+  return age >= -0.1 and age <= 0.5
+end
+
+function hud.hasRadarLineOfSight(localActor, targetActor)
+  local origin = localActor.target + vec3(0, 1.45, 0)
+  local target = targetActor.target + vec3(0, 1.1, 0)
+  local offset = target - origin
+  local distance = offset:length()
+  if distance < 0.01 or distance > 40 then return false end
+  local direction = offset / distance
+  local hitPoint, hitNormal = vec3(), vec3()
+  local hit = physics.raycastTrack(origin, direction, distance, hitPoint, hitNormal, false, false)
+  return hit < 0 or hit >= distance - 0.2
+end
+
+function hud.updateRadar(localActor)
+  table.clear(hud.radarVisible)
+  if localActor == nil then return end
+  for id, actor in pairs(actors) do
+    if id ~= localSessionID and bit.band(actor.flags, 1) ~= 0
+        and bit.band(actor.flags, 2) == 0 and bit.band(actor.flags, 8) == 0 then
+      local inRange = (actor.target - localActor.target):lengthSquared() <= 40 * 40
+      if inRange then
+        local shotReveal = (hud.radarReveal[id] or 0) > effectClock
+        if shotReveal or hud.hasRadarLineOfSight(localActor, actor) then
+          hud.radarVisible[id] = shotReveal and 2 or 1
+        end
+      end
+    end
+  end
+end
+
+function hud.publish(dt)
+  if hud.bridge == nil then return end
+  local now = ui.time()
+  hud.bridge.protocol = hud.protocol
+  hud.bridge.onlineHeartbeat = now
+  hud.bridge.gameplayActive = gameplayActive and 1 or 0
+  hud.publishAccumulator = hud.publishAccumulator + dt
+  hud.radarAccumulator = hud.radarAccumulator + dt
+  if hud.publishAccumulator < 0.05 then return end
+  hud.publishAccumulator = hud.publishAccumulator - 0.05
+  local localActor = actors[localSessionID]
+  if hud.radarAccumulator >= 0.1 then
+    hud.radarAccumulator = hud.radarAccumulator % 0.1
+    hud.updateRadar(localActor)
+  end
+
+  hud.onlineSequence = hud.onlineSequence + 1
+  hud.bridge.onlineSequence = hud.onlineSequence
+  hud.bridge.localActorID = localSessionID
+  hud.bridge.localHealth = localActor ~= nil and localActor.health or 0
+  hud.bridge.localAmmo = localActor ~= nil and localActor.ammo or 0
+  hud.bridge.localReserveMagazines = localActor ~= nil and localActor.reserveMagazines or 0
+  hud.bridge.localReloadRemaining = localActor ~= nil and localActor.reloadRemaining or 0
+  hud.bridge.localKills = localActor ~= nil and localActor.kills or 0
+  hud.bridge.localDeaths = localActor ~= nil and localActor.deaths or 0
+  hud.bridge.viewYaw = yaw
+  hud.bridge.matchState = matchState
+  hud.bridge.remainingSeconds = remainingSeconds
+  hud.bridge.killLimit = killLimit
+  hud.bridge.winnerID = winnerID
+  hud.bridge.scoreboardHeld = scoreboardHeld and 1 or 0
+  hud.bridge.cursorUnlocked = cursorUnlocked and 1 or 0
+  hud.bridge.persistentCursor = persistentCursor and 1 or 0
+  hud.bridge.hitMarkerRemaining = math.max(0, hitMarkerUntil - effectClock)
+  hud.bridge.linkState = localActor == nil and 0 or inputSendOk and 1 or 2
+  hud.bridge.clientError = clientPackError or ''
+
+  table.clear(hud.actorScratch)
+  for _, actor in pairs(actors) do
+    if bit.band(actor.flags, 1) ~= 0 then hud.actorScratch[#hud.actorScratch + 1] = actor end
+  end
+  table.sort(hud.actorScratch, function(left, right) return left.id < right.id end)
+  local actorCount = math.min(hud.capacity, #hud.actorScratch)
+  hud.bridge.actorCount = actorCount
+  for index = 0, actorCount - 1 do
+    local actor = hud.actorScratch[index + 1]
+    hud.bridge.actorIDs[index] = actor.id
+    hud.bridge.actorFlags[index] = actor.flags
+    hud.bridge.radarFlags[index] = hud.radarVisible[actor.id] or 0
+    hud.bridge.actorPositions[index] = actor.target
+    hud.bridge.actorYaws[index] = actor.targetYaw
+    hud.bridge.actorHealth[index] = actor.health
+    hud.bridge.actorKills[index] = actor.kills
+    hud.bridge.actorDeaths[index] = actor.deaths
+    hud.bridge.actorNames[index] = string.sub(names[actor.id] or ('Operative ' .. actor.id), 1, 32)
+  end
+
+  local feedStart = math.max(1, #killFeed - hud.killFeedCapacity + 1)
+  local feedCount = math.min(hud.killFeedCapacity, #killFeed)
+  hud.bridge.killFeedCount = feedCount
+  for index = 0, feedCount - 1 do
+    hud.bridge.killFeed[index] = string.sub(killFeed[feedStart + index].text, 1, 72)
+  end
+end
+
+hud.connect()
+
 local function vec3Text(value)
   return string.format('(%.3f, %.3f, %.3f)', value.x, value.y, value.z)
+end
+
+local function lerpAngle(current, target, mix)
+  local delta = (target - current + math.pi) % (math.pi * 2) - math.pi
+  return current + delta * mix
 end
 
 local function markViewmodelStage(stage, detail)
@@ -202,7 +392,7 @@ end
 
 ac.log(string.format('[ASRC FPS] script loaded: session=%s carIndex=%s cameraActive=%s cameraError=%s',
   tostring(localSessionID), tostring(car.index),
-  'false', 'not acquired until Drive'))
+  'false', 'awaiting arena preview or Drive'))
 ac.log(string.format('[ASRC FPS] client asset paths: root=%s remoteArchive=%s audio=%s',
   tostring(assettoRoot), rifleAssetArchivePath, rifleAudioPath))
 ac.log('[ASRC FPS] viewmodel pipeline: ' .. viewmodelPipelineVersion)
@@ -318,13 +508,6 @@ local snapshotEvent = ac.OnlineEvent({
     end
     if actor.render:lengthSquared() < 0.001 then actor.render:set(actor.target) end
     actor.targetYaw = message.yaws[i]
-    -- Remote actors have no client-side prediction. Keep their visual pose on the
-    -- exact authoritative snapshot so a rendered mannequin can never drift away
-    -- from the server capsule used by hitscan validation.
-    if id ~= localSessionID then
-      actor.render:set(actor.target)
-      actor.yaw = actor.targetYaw
-    end
     actor.pitch = message.pitches[i]
     actor.health = message.health[i]
     actor.kills = message.kills[i]
@@ -339,6 +522,8 @@ local snapshotEvent = ac.OnlineEvent({
     local isDead = bit.band(actor.flags, 2) ~= 0
     if clearActorImpacts ~= nil and (spawnChanged or (not wasDead and isDead)) then
       clearActorImpacts(id)
+      hud.radarReveal[id] = nil
+      hud.radarVisible[id] = nil
     end
     if spawnChanged then
       actor.render:set(actor.target)
@@ -436,6 +621,8 @@ local rosterEvent = ac.OnlineEvent({
 }, function(sender, message)
   if sender ~= nil then return end
   names[message.actorID] = message.name
+  hud.radarReveal[message.actorID] = nil
+  hud.radarVisible[message.actorID] = nil
   local actor = actors[message.actorID]
   if actor ~= nil then actor.role = message.role end
 end)
@@ -500,6 +687,9 @@ local shotEvent = ac.OnlineEvent({
 }, function(sender, message)
   if sender ~= nil then return end
   shotRender.eventsReceived = shotRender.eventsReceived + 1
+  if message.shooterID ~= localSessionID then
+    hud.radarReveal[message.shooterID] = effectClock + 2
+  end
   local actor = actors[message.shooterID]
   local muzzleOrigin = message.origin:clone()
   if message.shooterID == localSessionID and localMuzzlePosition:lengthSquared() > 0.001 then
@@ -784,49 +974,6 @@ createRifleModel = function(parent, prefix, includeArms)
   return root
 end
 
-local function ensureRemoteAvatarTemplate()
-  if remoteAvatarRenderParams ~= nil then return remoteAvatarRenderParams ~= false end
-  if rifleAssetFolder == nil then
-    requestRifleAssets()
-    return false
-  end
-  local ok, result = pcall(function()
-    remoteAvatarTemplateHolder = carsRoot:createNode('ASRC_FPS_REMOTE_AVATAR_HOLDER', false)
-    if remoteAvatarTemplateHolder == nil then error('remote avatar holder could not be created') end
-    remoteAvatarTemplateRoot = remoteAvatarTemplateHolder:createNode('ASRC_FPS_REMOTE_AVATAR', false)
-    if remoteAvatarTemplateRoot == nil then error('remote avatar root could not be created') end
-    createOperatorBody(remoteAvatarTemplateRoot, 'ASRC_FPS_REMOTE')
-    createRifleModel(remoteAvatarTemplateRoot, 'ASRC_FPS_REMOTE_WEAPON', false)
-    remoteAvatarTemplateRoot:setShadows(false)
-    remoteAvatarTemplateHolder:setVisible(false)
-    return {
-      mesh = remoteAvatarTemplateRoot,
-      async = true,
-      cacheKey = 0x41535243,
-      textures = { txDiffuse = operatorSkinPath },
-      values = {
-        gBaseColor = rgbm(1, 1, 1, 1),
-      },
-      shader = [[
-        float4 main(PS_IN pin) {
-          float3 albedo = txDiffuse.SampleLevel(samLinear, pin.Tex, 0).rgb;
-          float diffuse = 0.34 + 0.66 * saturate(dot(normalize(pin.NormalW),
-            normalize(float3(-0.35, 0.8, -0.25))));
-          return pin.ApplyFog(float4(albedo * gBaseColor.rgb * diffuse * gWhiteRefPoint, 1));
-        }
-      ]],
-    }
-  end)
-  if not ok then
-    remoteAvatarRenderParams = false
-    ac.warn('[ASRC FPS] direct remote avatar template failed: ' .. tostring(result))
-    return false
-  end
-  remoteAvatarRenderParams = result
-  ac.log('[ASRC FPS] direct remote avatar template ready')
-  return true
-end
-
 local function getRifleAssetArchiveUrl()
   local serverIP = ac.getServerIP()
   local serverHttpPort = ac.getServerPortHTTP()
@@ -871,7 +1018,6 @@ requestRifleAssets = function()
     operatorSkinPath = folder .. '/' .. operatorSkinFileName
     clientPackError = nil
     viewmodelRoot = nil
-    viewmodelRenderParams = nil
     ac.log('[ASRC FPS] rifle assets cached: folder=' .. folder
       .. '; viewmodel=' .. rifleViewmodelPath .. '; world=' .. rifleWorldModelPath
       .. '; rifleTexture=' .. rifleDiffusePath .. '; operatorSkin=' .. operatorSkinPath)
@@ -887,10 +1033,10 @@ local function ensureLocalViewmodel()
   end
   markViewmodelStage('load-requested', rifleViewmodelPath)
   local ok, result = pcall(function()
-    -- A first-person weapon is always close to the active camera. An ordinary
-    -- node avoids the world-space frustum assumptions of car bounding nodes.
+    -- carsRoot expects dynamic children to be bounding-sphere nodes. Attaching an
+    -- ordinary node here can crash CSP when the native renderer first traverses it.
     markViewmodelStage('holder-create:begin')
-    viewmodelHolder = carsRoot:createNode('ASRC_FPS_VIEWMODEL_HOLDER', false)
+    viewmodelHolder = carsRoot:createBoundingSphereNode('ASRC_FPS_VIEWMODEL_HOLDER', 2)
     if viewmodelHolder == nil then error('viewmodel holder could not be created') end
     markViewmodelStage('holder-create:complete')
     markViewmodelStage('kn5-load:begin', rifleViewmodelPath)
@@ -904,7 +1050,9 @@ local function ensureLocalViewmodel()
     model:setShadows(false)
     model:setVisible(true, false)
     model:setCullMode(render.CullMode.None)
-    model:setDepthMode(render.DepthMode.Off)
+    model:setDepthMode(render.DepthMode.Normal)
+    model:setMotionStencil(1)
+    pcall(function() model:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
     markViewmodelStage('model-configure:complete')
     return model
   end)
@@ -933,24 +1081,7 @@ local function ensureLocalViewmodel()
   ac.log('[ASRC FPS] cached assault-rifle viewmodel loaded: ' .. rifleViewmodelPath
     .. '; bounds=' .. (boundsOk and (vec3Text(boundsMin) .. '..' .. vec3Text(boundsMax)
       .. '; meshes=' .. tostring(meshCount)) or ('unavailable: ' .. tostring(boundsMin))))
-  viewmodelRenderParams = {
-    mesh = viewmodelRoot,
-    async = true,
-    cacheKey = 0x41535238,
-    textures = { txDiffuse = rifleDiffusePath },
-    values = {
-      gBaseColor = rgbm(1, 1, 1, 1),
-    },
-    shader = [[
-      float4 main(PS_IN pin) {
-        float3 albedo = txDiffuse.SampleLevel(samLinear, pin.Tex, 0).rgb;
-        float diffuse = 0.32 + 0.68 * saturate(dot(normalize(pin.NormalW),
-          normalize(float3(-0.35, 0.8, -0.25))));
-        return float4(albedo * gBaseColor.rgb * diffuse * gWhiteRefPoint, 1);
-      }
-    ]],
-  }
-  markViewmodelStage('direct-render:configured', 'textured lit KN5 render pass')
+  markViewmodelStage('native-scene:configured', 'dynamic KN5 scene node')
   return true
 end
 
@@ -1019,7 +1150,10 @@ local function ensureAvatar(actor)
     local root = carsRoot:createBoundingSphereNode('ASRC_FPS_' .. actor.id, 1.5)
     createOperatorBody(root, 'ASRC_FPS_OPERATOR_' .. actor.id)
     root:setVirtualCarFlag(true)
+    root:setMotionStencil(1)
+    root:setVisible(false, false)
     actor.root = root
+    actor.nativeScenePrepared = false
     actor.avatarKind = 'procedural-skinned-operator'
   end
   if actor.root == false or actor.weaponRoot ~= nil then return end
@@ -1133,6 +1267,57 @@ local function acquireFpsCamera()
   camera.cameraRestoreThreshold = 0.5
   applyFpsClipPlane()
   ac.log('[ASRC FPS] FPS camera acquired with full ownership')
+  return true
+end
+
+function previewCamera.isEligible(actor)
+  if actor == nil or previewCamera.everEnteredGameplay then return false end
+  local state = ac.getSim()
+  local awaitingDrive = state.isInMainMenu or not state.isSessionStarted
+  return awaitingDrive and not state.isReplayActive and not state.isLookingAtSessionResults
+    and bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
+end
+
+function previewCamera.lockToActor(actor)
+  local forward = vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw))
+  local right = vec3(forward.z, 0, -forward.x)
+  local focus = actor.target + vec3(0, 1.25, 0)
+  local desired = focus - forward * 5.5 + right * 1.8 + vec3(0, 3.2, 0)
+  local offset = desired - focus
+  local distance = offset:length()
+  if distance > 0.001 then
+    local direction = offset / distance
+    local normal = vec3()
+    local hit = physics.raycastTrack(focus, direction, distance, nil, normal, false, false)
+    if hit >= 0 and hit < distance then
+      desired = focus + direction * math.max(0.75, hit - 0.25)
+    end
+  end
+  local look = focus - desired
+  if look:lengthSquared() <= 0.001 then return false end
+  look:normalize()
+  previewCamera.position:set(desired)
+  previewCamera.look:set(look)
+  previewCamera.actorID = actor.id
+  previewCamera.spawnCount = actor.spawnCount
+  previewCamera.locked = true
+  ac.log(string.format(
+    '[ASRC FPS] pre-Drive arena camera locked: actor=%s spawn=%s position=%s focus=%s',
+    tostring(actor.id), tostring(actor.spawnCount), vec3Text(desired), vec3Text(focus)))
+  return true
+end
+
+function previewCamera.apply(actor)
+  if camera == nil or not camera:active() then return false end
+  if not previewCamera.locked or previewCamera.actorID ~= actor.id
+      or previewCamera.spawnCount ~= actor.spawnCount then
+    if not previewCamera.lockToActor(actor) then return false end
+  end
+  camera.ownShare = 1
+  camera.fov = 68
+  camera.transform.position = previewCamera.position
+  camera.transform.look = previewCamera.look
+  camera.transform.up = vec3(0, 1, 0)
   return true
 end
 
@@ -1252,19 +1437,19 @@ end
 
 local function updateRifleViewmodel(dt, actor, move, sprint)
   viewmodelUpdateAttempts = viewmodelUpdateAttempts + 1
-  if not ensureLocalViewmodel() then return end
+  if viewmodelRoot == nil or viewmodelRoot == false then return end
   local visible = gameplayActive and actor ~= nil and bit.band(actor.flags, 1) ~= 0
     and bit.band(actor.flags, 2) == 0 and not cursorUnlocked and not thirdPersonEnabled
   if not visible or camera == nil or not camera:active() then return end
   viewmodelKick = viewmodelKick * math.exp(-dt * 17)
   local moving = move:lengthSquared() > 0.01
   if moving then viewmodelBobTime = viewmodelBobTime + dt * (sprint and 12 or 8) end
-  -- The grabbed camera transform is a request which CSP applies later in the frame. Draw
-  -- callbacks must anchor viewmodels to the renderer's actual camera pose instead.
-  local cameraPosition = ac.getCameraPosition():clone()
-  local look = ac.getCameraForward():clone()
-  local up = ac.getCameraUp():clone()
-  if look:lengthSquared() < 0.001 then look:set(camera.transform.look) else look:normalize() end
+  -- Camera and weapon scene transforms are submitted together in frameBegin. Keeping
+  -- both on the requested grabbed-camera pose lets CSP calculate matching motion vectors.
+  local cameraPosition = camera.transform.position:clone()
+  local look = camera.transform.look:clone()
+  local up = camera.transform.up:clone()
+  if look:lengthSquared() < 0.001 then look:set(0, 0, 1) else look:normalize() end
   if up:lengthSquared() < 0.001 then up:set(0, 1, 0) else up:normalize() end
   local right = vec3(look.z, 0, -look.x)
   if right:lengthSquared() < 0.001 then right:set(1, 0, 0) else right:normalize() end
@@ -1289,120 +1474,135 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   viewmodelRenderUp = up:clone()
   localMuzzlePosition:set(position + look * 0.99 + up * 0.02)
   viewmodelUpdateCompletions = viewmodelUpdateCompletions + 1
-  if not viewmodelStagesSeen['direct-transform:ready'] then
-    markViewmodelStage('direct-transform:ready', vec3Text(position))
+  if not viewmodelStagesSeen['native-transform:ready'] then
+    markViewmodelStage('native-transform:ready', vec3Text(position))
   end
 end
 
-local function drawDirectRifleViewmodel()
+local function updateNativeRifleViewmodel(dt)
   local actor = actors[localSessionID]
-  if actor == nil or bit.band(actor.flags, 1) == 0 or bit.band(actor.flags, 2) ~= 0
-      or cursorUnlocked or thirdPersonEnabled or camera == nil or not camera:active() then return end
+  local visible = actor ~= nil and bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
+    and not cursorUnlocked and not thirdPersonEnabled and camera ~= nil and camera:active()
+  if not visible then
+    if viewmodelHolder ~= nil then viewmodelHolder:setVisible(false, false) end
+    return
+  end
 
-  -- Scene operations later in script.update can be interrupted by CSP for some tracks.
-  -- Prepare the first-person pose here so rendering never depends on reaching that tail.
-  updateRifleViewmodel(viewmodelFrameDt, actor, viewmodelMove, viewmodelSprint)
-  if viewmodelRenderParams == nil or viewmodelRenderPosition == nil
+  updateRifleViewmodel(dt, actor, viewmodelMove, viewmodelSprint)
+  if viewmodelHolder == nil or viewmodelRoot == nil or viewmodelRoot == false
+      or viewmodelRenderPosition == nil
       or viewmodelRenderLook == nil or viewmodelRenderUp == nil then return end
 
   viewmodelDirectDrawAttempts = viewmodelDirectDrawAttempts + 1
-  -- Camera coordinates are world-space while CSP renders in a shifting graphics origin.
-  -- Apply that origin explicitly so the viewmodel remains rigidly attached to the view.
-  render.setTransform(viewmodelRenderPosition, viewmodelRenderLook, viewmodelRenderUp, true)
-  render.setBlendMode(render.BlendMode.OpaqueForced)
-  render.setCullMode(render.CullMode.None)
-  render.setDepthMode(render.DepthMode.Off)
   local ok, result = pcall(function()
-    return render.mesh(viewmodelRenderParams)
+    -- SceneReference positions use graphics space. Server snapshots and grabbed-camera
+    -- transforms use world space, so apply CSP's current floating-origin offset.
+    viewmodelHolder:setPosition(viewmodelRenderPosition + ac.getSim().originShift)
+    viewmodelHolder:setOrientation(viewmodelRenderLook, viewmodelRenderUp)
+    if not viewmodelStagesSeen['native-scene:deferred'] then
+      viewmodelHolder:setVisible(false, false)
+      viewmodelHolder:clearMotion()
+      viewmodelDirectDrawPending = viewmodelDirectDrawPending + 1
+      markViewmodelStage('native-scene:deferred', 'waiting one update before first visibility')
+      return false
+    end
+    viewmodelHolder:setVisible(true, false)
+    if viewmodelDirectDrawCompletions == 0 then viewmodelHolder:clearMotion() end
   end)
-  render.setDepthMode(render.DepthMode.Normal)
-  render.setCullMode(render.CullMode.Back)
-  render.setBlendMode(render.BlendMode.Opaque)
-  render.setTransform(vec3(), vec3(0, 0, 1), vec3(0, 1, 0))
 
   if not ok then
     viewmodelDirectDrawFailures = viewmodelDirectDrawFailures + 1
-    markViewmodelStage('direct-render:failed', result)
-    clientPackError = 'FPS RIFLE DIRECT RENDER FAILED - CHECK LIVE LOG'
+    markViewmodelStage('native-scene:failed', result)
+    clientPackError = 'FPS RIFLE SCENE UPDATE FAILED - CHECK LIVE LOG'
     if not viewmodelDirectRenderFailureLogged then
       viewmodelDirectRenderFailureLogged = true
-      ac.warn('[ASRC FPS] direct rifle render failed: ' .. tostring(result))
+      ac.warn('[ASRC FPS] native rifle scene update failed: ' .. tostring(result))
     end
-  elseif result == false then
-    viewmodelDirectDrawPending = viewmodelDirectDrawPending + 1
-    if not viewmodelStagesSeen['direct-render:shader-pending'] then
-      markViewmodelStage('direct-render:shader-pending')
-    end
-  else
+  elseif result ~= false then
     viewmodelDirectDrawCompletions = viewmodelDirectDrawCompletions + 1
     clientPackError = nil
-    if not viewmodelStagesSeen['direct-render:ready'] then
-      markViewmodelStage('direct-render:ready', 'first mesh draw completed')
-      ac.log('[ASRC FPS] direct assault-rifle viewmodel draw completed')
+    if not viewmodelStagesSeen['native-scene:ready'] then
+      markViewmodelStage('native-scene:ready', 'motion-tracked scene node visible')
+      ac.log('[ASRC FPS] native assault-rifle viewmodel scene ready')
     end
   end
 end
 
-local function drawRemoteActors()
+local function updateRemoteActors(dt)
   local visibleActors = 0
-  local directActors = 0
   remoteRender.actorsDrawn = 0
   for _, actor in pairs(actors) do
     if actor.id ~= localSessionID and bit.band(actor.flags, 1) ~= 0
         and bit.band(actor.flags, 2) == 0 then
       visibleActors = visibleActors + 1
-      if actor.remoteSceneReady then
-        remoteRender.actorsDrawn = remoteRender.actorsDrawn + 1
-      else
-        directActors = directActors + 1
-      end
     end
   end
   remoteRender.actorSnapshotCount = visibleActors
-  if directActors == 0 then
-    if remoteRender.actorsDrawn > 0 and not remoteRender.readyLogged then
-      remoteRender.readyLogged = true
-      ac.log(string.format(
-        '[ASRC FPS] persistent remote actor scene rendering ready: drawn=%d visible=%d',
-        remoteRender.actorsDrawn, visibleActors))
-    end
-    return
-  end
-  if not ensureRemoteAvatarTemplate() then return end
-
-  render.setBlendMode(render.BlendMode.OpaqueForced)
-  render.setCullMode(render.CullMode.None)
-  render.setDepthMode(render.DepthMode.Normal)
   for _, actor in pairs(actors) do
-    if actor.id ~= localSessionID and bit.band(actor.flags, 1) ~= 0
-        and bit.band(actor.flags, 2) == 0 and not actor.remoteSceneReady then
+    if actor.id ~= localSessionID then
+      local active = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
       remoteRender.drawAttempts = remoteRender.drawAttempts + 1
-      render.setTransform(actor.target,
-        vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw)), vec3(0, 1, 0), true)
       local ok, result = pcall(function()
-        return render.mesh(remoteAvatarRenderParams)
+        -- CSP can stop an online-script update once its time budget is exhausted.
+        -- Creation and movement must stay in the same per-actor pass: a separate
+        -- preparation pass can complete while every transform update is skipped.
+        if active then ensureAvatar(actor) end
+        if actor.root == nil or actor.root == false then return active and false or nil end
+        if not active then
+          actor.root:setVisible(false, false)
+          actor.nativeSceneVisible = false
+          return nil
+        end
+        local resetMotion = not actor.nativeSceneVisible
+          or actor.nativeSceneSpawnCount ~= actor.spawnCount
+        local renderError = actor.target - actor.render
+        if resetMotion or renderError:lengthSquared() > 2.25 then
+          actor.render:set(actor.target)
+          actor.yaw = actor.targetYaw
+        else
+          local poseBlend = 1 - math.exp(-dt * 40)
+          actor.render:set(math.lerp(actor.render, actor.target, poseBlend))
+          actor.yaw = lerpAngle(actor.yaw, actor.targetYaw, poseBlend)
+        end
+        actor.root:setPosition(actor.render + ac.getSim().originShift)
+        actor.root:setOrientation(vec3(math.sin(actor.yaw), 0,
+          math.cos(actor.yaw)), vec3(0, 1, 0))
+        actor.weaponKick = (actor.weaponKick or 0) * math.exp(-dt * 15)
+        if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
+          actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - (actor.weaponKick or 0) * 0.07))
+          actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
+            vec3(0, 1, 0))
+        end
+        if actor.nativeScenePrepared == false then
+          actor.root:setVisible(false, false)
+          actor.root:clearMotion()
+          actor.nativeScenePrepared = true
+          return false
+        end
+        actor.root:setVisible(true, false)
+        if resetMotion then actor.root:clearMotion() end
+        actor.nativeSceneVisible = true
+        actor.nativeSceneSpawnCount = actor.spawnCount
+        return true
       end)
       if not ok then
         remoteRender.drawFailures = remoteRender.drawFailures + 1
         if not remoteRender.failureLogged then
           remoteRender.failureLogged = true
-          ac.warn('[ASRC FPS] direct remote avatar draw failed: ' .. tostring(result))
+          ac.warn('[ASRC FPS] native remote avatar scene update failed: ' .. tostring(result))
         end
       elseif result == false then
         remoteRender.drawPending = remoteRender.drawPending + 1
-      else
+      elseif result then
         remoteRender.drawCompletions = remoteRender.drawCompletions + 1
         remoteRender.actorsDrawn = remoteRender.actorsDrawn + 1
       end
     end
   end
-  render.setTransform(vec3(), vec3(0, 0, 1), vec3(0, 1, 0))
-  render.setCullMode(render.CullMode.Back)
-  render.setBlendMode(render.BlendMode.Opaque)
 
   if remoteRender.actorsDrawn > 0 and not remoteRender.readyLogged then
     remoteRender.readyLogged = true
-    ac.log(string.format('[ASRC FPS] direct remote actor rendering ready: drawn=%d visible=%d',
+    ac.log(string.format('[ASRC FPS] native remote actor scene ready: drawn=%d visible=%d',
       remoteRender.actorsDrawn, visibleActors))
   end
 end
@@ -1472,10 +1672,13 @@ local function drawDirectShotEffects()
   end
 end
 
-local function updateLocalThirdPersonAvatar(actor)
+local function updateLocalThirdPersonAvatar(actor, prepareOnly)
   if actor == nil then return false end
   local ok, err = pcall(function()
-    ensureAvatar(actor)
+    if prepareOnly then
+      ensureAvatar(actor)
+      return
+    end
     if actor.root == nil or actor.root == false then return end
     local active = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
     actor.root:setVisible(active and thirdPersonEnabled)
@@ -1486,7 +1689,7 @@ local function updateLocalThirdPersonAvatar(actor)
     if bit.band(actor.flags, 16) ~= 0 and actor.target.y > avatarPosition.y then
       avatarPosition.y = actor.target.y
     end
-    actor.root:setPosition(avatarPosition)
+    actor.root:setPosition(avatarPosition + ac.getSim().originShift)
     -- Local mouse yaw is immediate; replicated yaw is intentionally delayed by snapshots.
     -- Using it here made the shoulder camera orbit a body still facing its old direction.
     actor.root:setOrientation(vec3(math.sin(yaw), 0, math.cos(yaw)), vec3(0, 1, 0))
@@ -1510,42 +1713,6 @@ local function updateLocalThirdPersonAvatar(actor)
     ac.log('[ASRC FPS] local third-person avatar ready: kind=' .. localAvatarKind)
   end
   localAvatarReady = ready
-  return ready
-end
-
-local function updateRemoteAvatar(actor)
-  if actor == nil or actor.id == localSessionID then return false end
-  local ok, err = pcall(function()
-    ensureAvatar(actor)
-    if actor.root == nil or actor.root == false then return end
-    local active = gameplayActive and bit.band(actor.flags, 1) ~= 0
-      and bit.band(actor.flags, 2) == 0
-    actor.root:setVisible(active)
-    if not active then return end
-    actor.root:setPosition(actor.target)
-    actor.root:setOrientation(vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw)),
-      vec3(0, 1, 0))
-    if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
-      actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - (actor.weaponKick or 0) * 0.07))
-      actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
-        vec3(0, 1, 0))
-    end
-  end)
-  if not ok then
-    actor.remoteSceneReady = false
-    if not actor.remoteSceneErrorLogged then
-      actor.remoteSceneErrorLogged = true
-      ac.warn('[ASRC FPS] remote actor scene update failed: actor=' .. tostring(actor.id)
-        .. '; error=' .. tostring(err))
-    end
-    return false
-  end
-  local ready = actor.root ~= nil and actor.root ~= false
-  if ready and not actor.remoteSceneReady then
-    ac.log('[ASRC FPS] persistent remote actor ready: actor=' .. tostring(actor.id)
-      .. '; position=' .. vec3Text(actor.target))
-  end
-  actor.remoteSceneReady = ready
   return ready
 end
 
@@ -1636,6 +1803,10 @@ function script.update(dt)
   local sprint = false
   local jumpStarted = false
   gameplayActive = fpsGameplayIsActive()
+  if gameplayActive then previewCamera.everEnteredGameplay = true end
+  if gameplayActive and hud.appOwnsHud() and hud.bridge ~= nil then
+    persistentCursor = hud.bridge.appPersistentCursor ~= 0
+  end
   viewmodelServerDiagnosticAccumulator = viewmodelServerDiagnosticAccumulator + dt
   if gameplayActive and (viewmodelLastSentStage ~= viewmodelLastStage
       or viewmodelServerDiagnosticAccumulator >= 5) then
@@ -1659,8 +1830,17 @@ function script.update(dt)
       + (remoteRender.actorsDrawn > 0 and 512 or 0)
       + (shotRender.eventsReceived > 0 and 1024 or 0)
       + (shotRender.effectsRendered > 0 and 2048 or 0)
+    local diagnosticRemoteRender = diagnosticRemoteActor ~= nil
+      and diagnosticRemoteActor.render or vec3()
+    if diagnosticRemoteActor ~= nil and diagnosticRemoteActor.root ~= nil
+        and diagnosticRemoteActor.root ~= false then
+      local sceneOk, scenePosition = pcall(function()
+        return diagnosticRemoteActor.root:getPosition() - ac.getSim().originShift
+      end)
+      if sceneOk then diagnosticRemoteRender = scenePosition end
+    end
     viewmodelDiagnosticSendOk = clientDiagnosticEvent({
-      pipeline = 12,
+      pipeline = 21,
       flags = diagnosticFlags,
       attempts = viewmodelUpdateAttempts,
       completions = viewmodelUpdateCompletions,
@@ -1674,7 +1854,7 @@ function script.update(dt)
       position = viewmodelLastPosition or vec3(),
       remoteActorID = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.id or 255,
       remoteTarget = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.target or vec3(),
-      remoteRender = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.render or vec3(),
+      remoteRender = diagnosticRemoteRender,
       remoteTargetYaw = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.targetYaw or 0,
       remoteRenderYaw = diagnosticRemoteActor ~= nil and diagnosticRemoteActor.yaw or 0,
       stage = viewmodelLastStage,
@@ -1726,6 +1906,17 @@ function script.update(dt)
     else
       cameraRetryAccumulator = 0
     end
+
+    -- Some tracks can exhaust CSP's online-script update budget before reaching the
+    -- tail of this callback. Service persistent scene nodes immediately after camera
+    -- acquisition so models and remote poses cannot be skipped while input/collision
+    -- work continues. CSP commits world-node transforms from script.update(), while the
+    -- camera-relative rifle remains in frameBegin() to stay synchronized with the view.
+    if localActor ~= nil and camera ~= nil and camera:active() then
+      ensureLocalViewmodel()
+      updateLocalThirdPersonAvatar(localActor, true)
+    end
+    updateRemoteActors(dt)
 
     -- Main/pits/results UI was excluded above. Once gameplay is active, FPS
     -- owns the pointer even if a third-party app incorrectly asks for it.
@@ -1846,9 +2037,19 @@ function script.update(dt)
     end
   else
     -- Stopping accessMouseDelta() releases and restores the cursor shortly;
-    -- releasing the camera also returns controller/menu ownership to AC.
+    -- camera ownership is retained only for the initial arena preview. It does not
+    -- capture input or suppress AC's pre-Drive menu.
     physics.setCarNoInput(false)
-    releaseFpsCamera()
+    if previewCamera.isEligible(localActor) then
+      if acquireFpsCamera() then previewCamera.apply(localActor) end
+    else
+      releaseFpsCamera()
+    end
+    if viewmodelHolder ~= nil then viewmodelHolder:setVisible(false, false) end
+    for _, actor in pairs(actors) do
+      if actor.root ~= nil and actor.root ~= false then actor.root:setVisible(false, false) end
+      actor.nativeSceneVisible = false
+    end
     sendAccumulator = 0
     inputDiagnosticAccumulator = 0
     inputWasActive = false
@@ -1922,14 +2123,8 @@ function script.update(dt)
         localStance, actor.collisionNormal)
       actor.render:add(vec3(resolvedCorrection.x, 0, resolvedCorrection.y))
       actor.render.y = math.lerp(actor.render.y, actor.target.y, blend)
-      actor.yaw = math.lerpAngle(actor.yaw, actor.targetYaw, blend)
-    else
-      -- The server capsule is authoritative for both visibility and hits. A remote
-      -- pose must therefore be copied, not independently predicted/interpolated.
-      actor.render:set(actor.target)
-      actor.yaw = actor.targetYaw
+      actor.yaw = lerpAngle(actor.yaw, actor.targetYaw, blend)
     end
-    if actor.id ~= localSessionID then updateRemoteAvatar(actor) end
   end
 
   renderDiagnosticAccumulator = renderDiagnosticAccumulator + dt
@@ -2011,48 +2206,35 @@ function script.update(dt)
       table.remove(rifleSounds, i)
     end
   end
-  for _, actor in pairs(actors) do
-    actor.weaponKick = (actor.weaponKick or 0) * math.exp(-dt * 15)
-    if actor.id ~= localSessionID and actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
-      local weaponOk, weaponError = pcall(function()
-        actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - actor.weaponKick * 0.07))
-        actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
-          vec3(0, 1, 0))
-      end)
-      if not weaponOk and not actor.weaponSceneErrorLogged then
-        actor.weaponSceneErrorLogged = true
-        ac.warn('[ASRC FPS] avatar weapon scene update failed: actor=' .. tostring(actor.id)
-          .. '; error=' .. tostring(weaponError))
-      end
-    end
-  end
   for i = #killFeed, 1, -1 do
     killFeed[i].ttl = killFeed[i].ttl - dt
     if killFeed[i].ttl <= 0 then table.remove(killFeed, i) end
   end
+  hud.publish(dt)
 end
 
 function script.frameBegin(dt, gameDT)
   viewmodelFrameBeginCalls = viewmodelFrameBeginCalls + 1
   viewmodelFrameDt = math.max(0.001, math.min(dt, 0.05))
-  if not fpsGameplayIsActive() then return end
   local localActor = actors[localSessionID]
-  if localActor ~= nil and acquireFpsCamera() then
+  if fpsGameplayIsActive() and localActor ~= nil and acquireFpsCamera() then
     applyFpsCamera(localActor, viewmodelFrameDt)
-    ensureLocalViewmodel()
-    updateLocalThirdPersonAvatar(localActor)
+    localActor.weaponKick = (localActor.weaponKick or 0) * math.exp(-viewmodelFrameDt * 15)
+    updateLocalThirdPersonAvatar(localActor, false)
+    updateNativeRifleViewmodel(viewmodelFrameDt)
+  elseif previewCamera.isEligible(localActor) and acquireFpsCamera() then
+    previewCamera.apply(localActor)
   end
 end
 
 function script.draw3D()
   viewmodelDraw3DCalls = viewmodelDraw3DCalls + 1
   if not gameplayActive then return end
-  drawRemoteActors()
-  drawDirectRifleViewmodel()
   drawDirectShotEffects()
 end
 
 function script.drawUI()
+  if hud.exclusiveSubscription ~= nil and not hud.drawingFallback then return end
   viewmodelDrawUICalls = viewmodelDrawUICalls + 1
   if not gameplayActive then return end
   local size = ui.windowSize()
@@ -2184,6 +2366,114 @@ function script.drawUI()
         names[rankedActor.id] or ('Player ' .. rankedActor.id), rankedActor.kills, rankedActor.deaths))
     end
   end
+end
+
+function hud.drawPauseMenu()
+  local size = ui.windowSize()
+  local scale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.5)
+  local panelSize = vec2(860, 520) * scale
+  local panelMin = (size - panelSize) * 0.5
+  local panelMax = panelMin + panelSize
+  local left = panelMin + vec2(42, 38) * scale
+  local dividerX = panelMin.x + 350 * scale
+  ui.captureMouse(true)
+  ui.setMouseCursor(ui.MouseCursor.Arrow)
+  ui.drawRectFilled(vec2(), size, rgbm(0.008, 0.012, 0.018, 0.7))
+  ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.035, 0.05, 0.97), 10 * scale)
+  ui.drawRect(panelMin, panelMax, rgbm(0.42, 0.62, 0.78, 0.7), 10 * scale, nil,
+    math.max(1, 1.5 * scale))
+  ui.drawLine(vec2(dividerX, panelMin.y + 28 * scale),
+    vec2(dividerX, panelMax.y - 28 * scale), rgbm(0.35, 0.5, 0.62, 0.38),
+    math.max(1, scale))
+
+  ui.setCursor(left)
+  ui.pushFont(ui.Font.Huge)
+  ui.text('MATCH MENU')
+  ui.popFont()
+  ui.setCursor(left + vec2(0, 58) * scale)
+  ui.textColored('DEATHMATCH  •  LIVE SERVER', rgbm(0.46, 0.78, 0.95, 1))
+  ui.setCursor(left + vec2(0, 92) * scale)
+  ui.textWrapped('The match continues on the server while this menu is open.')
+
+  local buttonSize = vec2(260, 46) * scale
+  ui.setCursor(left + vec2(0, 150) * scale)
+  if ui.button('RETURN TO MATCH', buttonSize) then ac.tryToPause(false) end
+  ui.setCursor(left + vec2(0, 210) * scale)
+  if ui.button('ASSETTO CORSA OPTIONS', buttonSize) then
+    hud.nativePauseMenu = true
+    hud.leaveServerArmed = false
+  end
+  ui.setCursor(left + vec2(0, 270) * scale)
+  if not hud.leaveServerArmed then
+    if ui.button('LEAVE SERVER', buttonSize) then hud.leaveServerArmed = true end
+  else
+    ui.textColored('Leave the current server?', rgbm(1, 0.52, 0.35, 1))
+    ui.setCursor(left + vec2(0, 302) * scale)
+    if ui.button('CONFIRM LEAVE', vec2(162, 42) * scale) then
+      ac.shutdownAssettoCorsa()
+    end
+    ui.sameLine(8 * scale)
+    if ui.button('CANCEL', vec2(90, 42) * scale) then hud.leaveServerArmed = false end
+  end
+  ui.setCursor(left + vec2(0, 402) * scale)
+  ui.textColored('Options opens AC/CSP settings. Resume and pause again to return here.',
+    rgbm(0.62, 0.7, 0.78, 1))
+
+  local ranking = {}
+  for _, actor in pairs(actors) do
+    if bit.band(actor.flags, 1) ~= 0 then ranking[#ranking + 1] = actor end
+  end
+  table.sort(ranking, function(a, b)
+    if a.kills ~= b.kills then return a.kills > b.kills end
+    if a.deaths ~= b.deaths then return a.deaths < b.deaths end
+    return a.id < b.id
+  end)
+  local right = vec2(dividerX + 34 * scale, panelMin.y + 42 * scale)
+  ui.setCursor(right)
+  ui.pushFont(ui.Font.Title)
+  ui.text('CURRENT MATCH')
+  ui.popFont()
+  ui.setCursor(right + vec2(0, 40) * scale)
+  ui.text(string.format('%02d:%02d remaining  •  target %d kills',
+    math.floor(remainingSeconds / 60), math.floor(remainingSeconds % 60), killLimit))
+  ui.setCursor(right + vec2(0, 78) * scale)
+  ui.textColored('POS   OPERATIVE                 K     D    HP', rgbm(0.55, 0.7, 0.8, 1))
+  for place = 1, math.min(10, #ranking) do
+    local actor = ranking[place]
+    ui.setCursor(right + vec2(0, 80 + place * 31) * scale)
+    local marker = actor.id == localSessionID and '>' or ' '
+    ui.text(string.format('%s%2d   %-22s %3d   %3d   %3d', marker, place,
+      names[actor.id] or ('Operative ' .. actor.id), actor.kills, actor.deaths, actor.health))
+  end
+end
+
+function hud.exclusiveCallback(mode)
+  if mode ~= 'pause' then
+    hud.nativePauseMenu = false
+    hud.leaveServerArmed = false
+  end
+  if mode == 'pause' and previewCamera.everEnteredGameplay then
+    if hud.nativePauseMenu then return false end
+    hud.drawPauseMenu()
+    return true
+  end
+  if mode ~= 'game' or not gameplayActive then return false end
+  if hud.appOwnsHud() then return false end
+  hud.drawingFallback = true
+  script.drawUI()
+  hud.drawingFallback = false
+  return true
+end
+
+hud.exclusiveOk, hud.exclusiveSubscription = pcall(function()
+  return ui.onExclusiveHUD(hud.exclusiveCallback, true)
+end)
+if not hud.exclusiveOk then
+  ac.warn('[ASRC FPS] exclusive HUD unavailable; using script.drawUI fallback: '
+    .. tostring(hud.exclusiveSubscription))
+  hud.exclusiveSubscription = nil
+else
+  ac.log('[ASRC FPS] exclusive online HUD fallback registered')
 end
 
 local readySent = readyEvent({ protocol = 1 })
