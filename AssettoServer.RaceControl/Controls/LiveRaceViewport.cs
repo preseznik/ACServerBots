@@ -429,7 +429,9 @@ public sealed class LiveRaceViewport : FrameworkElement
         if (selected || !FullTrack || Snapshot?.IsFps == true)
         {
             string position = car.RacePosition.HasValue ? $"P{car.RacePosition}  " : string.Empty;
-            string score = Snapshot?.IsFps == true ? $"  {car.Kills}/{car.Deaths}" : string.Empty;
+            string score = Snapshot?.IsFps == true
+                ? $"  {car.Score} pts  {car.Kills}/{car.Deaths}"
+                : string.Empty;
             DrawText(drawingContext, $"{position}{car.Name}{score}", center + new Vector(12, -22),
                 Brush("TextBrush", Brushes.White), selected ? 13 : 11);
         }

@@ -1279,6 +1279,8 @@
                                             <TextBlock Text="{Binding SelectedLiveCar.Kind}" FontWeight="SemiBold" />
                                             <TextBlock Text="KILLS" Style="{StaticResource FieldLabel}" Margin="0,12,0,0" />
                                             <TextBlock Text="{Binding SelectedLiveCar.Kills}" FontWeight="SemiBold" />
+                                            <TextBlock Text="SCORE" Style="{StaticResource FieldLabel}" Margin="0,12,0,0" />
+                                            <TextBlock Text="{Binding SelectedLiveCar.Score}" FontWeight="SemiBold" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="1">
                                             <TextBlock Text="HEALTH" Style="{StaticResource FieldLabel}" />

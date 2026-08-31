@@ -167,9 +167,11 @@ local playRifleSound
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 1,
+  protocol = 2,
   capacity = 32,
   killFeedCapacity = 6,
+  awardPopupCapacity = 4,
+  awardPopups = {},
   bridge = nil,
   bridgeError = nil,
   bridgeMismatchLogged = false,
@@ -278,7 +280,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v1'),
+      ac.StructItem.key('asrc.fps.hud.v2'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -292,6 +294,7 @@ function hud.connect()
       localReloadRemaining = ac.StructItem.float(),
       localKills = ac.StructItem.uint16(),
       localDeaths = ac.StructItem.uint16(),
+      localScore = ac.StructItem.uint32(),
       viewYaw = ac.StructItem.float(),
       matchState = ac.StructItem.byte(),
       remainingSeconds = ac.StructItem.float(),
@@ -313,14 +316,18 @@ function hud.connect()
       actorHealth = ac.StructItem.array(ac.StructItem.uint16(), hud.capacity),
       actorKills = ac.StructItem.array(ac.StructItem.uint16(), hud.capacity),
       actorDeaths = ac.StructItem.array(ac.StructItem.uint16(), hud.capacity),
+      actorScores = ac.StructItem.array(ac.StructItem.uint32(), hud.capacity),
       actorNames = ac.StructItem.array(ac.StructItem.string(32), hud.capacity),
       killFeedCount = ac.StructItem.byte(),
       killFeed = ac.StructItem.array(ac.StructItem.string(72), hud.killFeedCapacity),
+      awardPopupCount = ac.StructItem.byte(),
+      awardPopupTexts = ac.StructItem.array(ac.StructItem.string(64), hud.awardPopupCapacity),
+      awardPopupAlphas = ac.StructItem.array(ac.StructItem.float(), hud.awardPopupCapacity),
     }, false, ac.SharedNamespace.Shared)
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v1')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v2')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -396,6 +403,7 @@ function hud.publish(dt)
   hud.bridge.localReloadRemaining = localActor ~= nil and localActor.reloadRemaining or 0
   hud.bridge.localKills = localActor ~= nil and localActor.kills or 0
   hud.bridge.localDeaths = localActor ~= nil and localActor.deaths or 0
+  hud.bridge.localScore = localActor ~= nil and localActor.score or 0
   hud.bridge.viewYaw = yaw
   hud.bridge.matchState = matchState
   hud.bridge.remainingSeconds = remainingSeconds
@@ -425,6 +433,7 @@ function hud.publish(dt)
     hud.bridge.actorHealth[index] = actor.health
     hud.bridge.actorKills[index] = actor.kills
     hud.bridge.actorDeaths[index] = actor.deaths
+    hud.bridge.actorScores[index] = actor.score
     hud.bridge.actorNames[index] = string.sub(names[actor.id] or ('Operative ' .. actor.id), 1, 32)
   end
 
@@ -433,6 +442,13 @@ function hud.publish(dt)
   hud.bridge.killFeedCount = feedCount
   for index = 0, feedCount - 1 do
     hud.bridge.killFeed[index] = string.sub(killFeed[feedStart + index].text, 1, 72)
+  end
+  local popupCount = math.min(hud.awardPopupCapacity, #hud.awardPopups)
+  hud.bridge.awardPopupCount = popupCount
+  for index = 0, popupCount - 1 do
+    local popup = hud.awardPopups[index + 1]
+    hud.bridge.awardPopupTexts[index] = string.sub(popup.text, 1, 64)
+    hud.bridge.awardPopupAlphas[index] = math.min(1, popup.age / 0.15, popup.ttl / 0.4)
   end
 end
 
@@ -574,7 +590,7 @@ local snapshotEvent = ac.OnlineEvent({
       actor = {
         id = id, target = vec3(), render = vec3(), yaw = 0, targetYaw = 0,
         collisionNormal = vec2(),
-        pitch = 0, health = 0, kills = 0, deaths = 0, flags = 0,
+        pitch = 0, health = 0, kills = 0, deaths = 0, score = 0, flags = 0,
         ammo = 0, reserveMagazines = 0, reloadRemaining = 0, spawnCount = nil,
       }
       actors[id] = actor
@@ -761,6 +777,41 @@ local hitEvent = ac.OnlineEvent({
   if sender == nil and message.attackerID == localSessionID then
     hitMarkerUntil = effectClock + 0.16
   end
+end)
+
+local awardEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsAward'),
+  actorID = ac.StructItem.byte(),
+  victimID = ac.StructItem.byte(),
+  points = ac.StructItem.uint16(),
+  totalScore = ac.StructItem.uint32(),
+  flags = ac.StructItem.byte(),
+}, function(sender, message)
+  if sender ~= nil then return end
+  local actor = actors[message.actorID]
+  if actor == nil then
+    actor = {
+      id = message.actorID, target = vec3(), render = vec3(), yaw = 0, targetYaw = 0,
+      collisionNormal = vec2(), pitch = 0, health = 0, kills = 0, deaths = 0,
+      score = 0, flags = 0, ammo = 0, reserveMagazines = 0, reloadRemaining = 0,
+      spawnCount = nil,
+    }
+    actors[message.actorID] = actor
+  end
+  actor.score = message.totalScore
+  if message.actorID ~= localSessionID or message.points == 0 then return end
+  local labels = { string.format('+%d', message.points) }
+  if bit.band(message.flags, 1) ~= 0 then
+    labels[#labels + 1] = 'KILL'
+  elseif bit.band(message.flags, 2) ~= 0 then
+    labels[#labels + 1] = 'ASSIST'
+  end
+  if bit.band(message.flags, 4) ~= 0 then labels[#labels + 1] = 'HEADSHOT' end
+  if bit.band(message.flags, 8) ~= 0 then labels[#labels + 1] = 'ONE SHOT' end
+  hud.awardPopups[#hud.awardPopups + 1] = {
+    text = table.concat(labels, '  '), age = 0, ttl = 2.6,
+  }
+  while #hud.awardPopups > hud.awardPopupCapacity do table.remove(hud.awardPopups, 1) end
 end)
 
 local shotEvent = ac.OnlineEvent({
@@ -2309,7 +2360,25 @@ function script.update(dt)
     killFeed[i].ttl = killFeed[i].ttl - dt
     if killFeed[i].ttl <= 0 then table.remove(killFeed, i) end
   end
+  for i = #hud.awardPopups, 1, -1 do
+    local popup = hud.awardPopups[i]
+    popup.age = popup.age + dt
+    popup.ttl = popup.ttl - dt
+    if popup.ttl <= 0 then table.remove(hud.awardPopups, i) end
+  end
   hud.publish(dt)
+end
+
+function hud.drawAwardPopups(center)
+  if cursorUnlocked then return end
+  for i = 1, #hud.awardPopups do
+    local popup = hud.awardPopups[i]
+    local alpha = math.min(1, popup.age / 0.15, popup.ttl / 0.4)
+    ui.setCursor(center + vec2(34, -86 + (i - 1) * 25))
+    ui.pushFont(ui.Font.Title)
+    ui.textColored(popup.text, rgbm(1, 0.78, 0.22, alpha))
+    ui.popFont()
+  end
 end
 
 function script.frameBegin(dt, gameDT)
@@ -2359,6 +2428,7 @@ function script.drawUI()
     ui.drawLine(center + vec2(8, -8), center + vec2(3, -3), c, 3)
     ui.drawLine(center + vec2(-8, 8), center + vec2(-3, 3), c, 3)
   end
+  hud.drawAwardPopups(center)
 
   local actor = actors[localSessionID]
   if clientPackError ~= nil then
@@ -2370,7 +2440,8 @@ function script.drawUI()
   ui.setCursor(vec2(28, size.y - 94))
   ui.pushFont(ui.Font.Title)
   ui.text(string.format('HEALTH  %d', actor and actor.health or 0))
-  ui.text(string.format('K %d   D %d', actor and actor.kills or 0, actor and actor.deaths or 0))
+  ui.text(string.format('K %d   D %d   SCORE %d', actor and actor.kills or 0,
+    actor and actor.deaths or 0, actor and actor.score or 0))
   ui.popFont()
   ui.textColored(actor == nil and 'LINK: WAITING FOR PLAYER STATE'
       or (inputSendOk and 'LINK: ACTIVE' or 'LINK: INPUT SEND BLOCKED'),
@@ -2418,13 +2489,13 @@ function script.drawUI()
     ui.text('DEATHMATCH SCOREBOARD')
     ui.popFont()
     ui.setCursor(panelMin + vec2(28, 66))
-    ui.text('POS   PLAYER                         KILLS   DEATHS   HEALTH')
+    ui.text('POS   PLAYER                    SCORE   KILLS   DEATHS   HEALTH')
     for i = 1, math.min(16, #ranking) do
       local rankedActor = ranking[i]
       ui.setCursor(panelMin + vec2(28, 70 + i * 27))
-      ui.text(string.format('%2d    %-28s   %3d      %3d      %3d', i,
-        names[rankedActor.id] or ('Player ' .. rankedActor.id), rankedActor.kills,
-        rankedActor.deaths, rankedActor.health))
+      ui.text(string.format('%2d    %-24s   %5d    %3d      %3d      %3d', i,
+        names[rankedActor.id] or ('Player ' .. rankedActor.id), rankedActor.score,
+        rankedActor.kills, rankedActor.deaths, rankedActor.health))
     end
     ui.transparentWindow('asrc-fps-scoreboard-controls', panelMin + vec2(20, 505),
       vec2(740, 48), true, true, function()
@@ -2440,8 +2511,9 @@ function script.drawUI()
     ui.text('DEATHMATCH')
     for i = 1, math.min(8, #ranking) do
       local rankedActor = ranking[i]
-      ui.text(string.format('%2d  %-18s  %2d / %2d', i,
-        names[rankedActor.id] or ('Player ' .. rankedActor.id), rankedActor.kills, rankedActor.deaths))
+      ui.text(string.format('%2d  %-16s  %4d  %2d / %2d', i,
+        names[rankedActor.id] or ('Player ' .. rankedActor.id), rankedActor.score,
+        rankedActor.kills, rankedActor.deaths))
     end
   end
   if persistentCursor and not scoreboardHeld then

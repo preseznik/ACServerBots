@@ -48,8 +48,8 @@ in a live Fire Pit match: visible bot models now follow and face their authorita
 
 ## Hybrid HUD ownership
 
-Client pack version 6 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
-script publishes presentation state through the local shared structure `asrc.fps.hud.v1`; no gameplay
+Client pack version 7 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+script publishes presentation state through the local shared structure `asrc.fps.hud.v2`; no gameplay
 packet or server protocol changes are involved.
 
 While both sides exchange a current version-1 heartbeat, the app draws the modular FPS HUD through

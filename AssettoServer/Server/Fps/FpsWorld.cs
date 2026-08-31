@@ -20,7 +20,7 @@ namespace AssettoServer.Server.Fps;
 
 internal readonly record struct FpsLiveActorSnapshot(byte Id, string Name, bool IsBot,
     bool Active, bool Dead, Vector3 Position, Vector3 Velocity, float Yaw, int Health,
-    ushort Kills, ushort Deaths);
+    ushort Kills, ushort Deaths, uint Score);
 
 internal sealed record FpsLiveMatchSnapshot(FpsMatchState State, float ElapsedSeconds,
     float RemainingSeconds, int KillLimit, byte WinnerId,
@@ -162,7 +162,8 @@ public sealed class FpsWorld : IHostedService
                 actor.Yaw,
                 Math.Max(0, actor.Health),
                 actor.Kills,
-                actor.Deaths)).ToArray();
+                actor.Deaths,
+                actor.Score)).ToArray();
         return new FpsLiveMatchSnapshot(simulation.MatchState, simulation.ElapsedSeconds,
             simulation.RemainingSeconds, killLimit, simulation.WinnerId, actors);
     }
@@ -316,6 +317,14 @@ public sealed class FpsWorld : IHostedService
             }
             SendMatch(client);
             SendSnapshots(client);
+            foreach (var actor in _simulation.Actors.OrderBy(actor => actor.Id))
+            {
+                client.SendPacket(new FpsAwardPacket
+                {
+                    ActorId = actor.Id,
+                    TotalScore = actor.Score,
+                });
+            }
         }
     }
 
@@ -431,6 +440,17 @@ public sealed class FpsWorld : IHostedService
                     VictimId = kill.VictimId,
                     KillerKills = kill.KillerKills,
                     VictimDeaths = kill.VictimDeaths,
+                });
+            }
+            foreach (var award in _simulation.AwardEvents)
+            {
+                Broadcast(new FpsAwardPacket
+                {
+                    ActorId = award.ActorId,
+                    VictimId = award.VictimId,
+                    Points = award.Points,
+                    TotalScore = award.TotalScore,
+                    Flags = (byte)award.Flags,
                 });
             }
 

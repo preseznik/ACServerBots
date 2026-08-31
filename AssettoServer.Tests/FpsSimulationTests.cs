@@ -38,6 +38,76 @@ public sealed class FpsSimulationTests
             Assert.That(human.Velocity.LengthSquared(), Is.GreaterThan(0));
             Assert.That(human.Position,
                 Is.EqualTo(simulation.Actors.Single(actor => actor.Id == 1).Position));
+            Assert.That(human.Score, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void KillAndAssistScoresAreAwardedOncePerVictimLife()
+    {
+        var simulation = new FpsSimulation(Configuration(),
+        [
+            new(0, "Assistant", FpsSlotRole.Human),
+            new(1, "Killer", FpsSlotRole.Human),
+            new(2, "Victim", FpsSlotRole.Human),
+        ]);
+        simulation.ClaimHuman(0);
+        simulation.ClaimHuman(1);
+        simulation.ClaimHuman(2);
+        var actors = simulation.Actors.ToDictionary(actor => actor.Id);
+        actors[0].Position = new Vector3(1, 0, 0);
+        actors[1].Position = new Vector3(-1, 0, 0);
+        actors[2].Position = new Vector3(0, 0, 5);
+
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero,
+            MathF.Atan2(-1, 5), 0,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+        simulation.ApplyInput(1, new FpsInputCommand(1, Vector2.Zero,
+            MathF.Atan2(1, 5), 0,
+            FpsInputButtons.Fire));
+        for (int tick = 0; tick < 6 && !actors[2].Dead; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actors[0].Score, Is.EqualTo(50));
+            Assert.That(actors[1].Score, Is.EqualTo(100));
+            Assert.That(simulation.AwardEvents, Has.Count.EqualTo(2));
+            Assert.That(simulation.AwardEvents.Single(item => item.ActorId == 0).Flags,
+                Is.EqualTo(FpsAwardFlags.Assist));
+            Assert.That(simulation.AwardEvents.Single(item => item.ActorId == 1).Flags
+                        & FpsAwardFlags.Kill, Is.EqualTo(FpsAwardFlags.Kill));
+        });
+    }
+
+    [Test]
+    public void FullHealthLethalHeadshotReportsSpecialAwards()
+    {
+        var configuration = Configuration(health: 30);
+        var simulation = new FpsSimulation(configuration,
+        [
+            new(0, "Shooter", FpsSlotRole.Human),
+            new(1, "Victim", FpsSlotRole.Human),
+        ]);
+        simulation.ClaimHuman(0);
+        simulation.ClaimHuman(1);
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire));
+
+        simulation.Step(0.05f);
+
+        var award = simulation.AwardEvents.Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(award.Points, Is.EqualTo(100));
+            Assert.That(award.TotalScore, Is.EqualTo(100));
+            Assert.That(award.Flags & FpsAwardFlags.Kill, Is.EqualTo(FpsAwardFlags.Kill));
+            Assert.That(award.Flags & FpsAwardFlags.Headshot,
+                Is.EqualTo(FpsAwardFlags.Headshot));
+            Assert.That(award.Flags & FpsAwardFlags.OneShot,
+                Is.EqualTo(FpsAwardFlags.OneShot));
         });
     }
 
@@ -1313,6 +1383,41 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void HeldJumpNeverMovesCapsuleThroughClosedCrate()
+    {
+        const float crateHeight = 1.55f;
+        var triangles = FlatFloor(-5, 5, -5, 5, 0).ToList();
+        triangles.AddRange(ClosedBox(0, 2, -1, 1, crateHeight));
+        var surface = new FpsArenaSurface(triangles);
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Crate jumper", FpsSlotRole.Human)], surface: surface);
+        simulation.ClaimHuman(0);
+        var actor = simulation.Actors.Single();
+        actor.Position = new Vector3(-0.5f, 0, 0);
+        actor.GroundY = 0;
+        simulation.ApplyInput(0, new FpsInputCommand(1, new Vector2(1, 0), 0, 0,
+            FpsInputButtons.Jump));
+
+        bool reachedCrateTop = false;
+        for (int tick = 0; tick < 20; tick++)
+        {
+            simulation.Step(0.05f);
+            float height = actor.Stance switch
+            {
+                FpsStance.Prone => 0.65f,
+                FpsStance.Crouching => 1.15f,
+                _ => 1.8f,
+            };
+            Assert.That(surface.IsPositionBlocked(actor.Position, actor.GroundY, height),
+                Is.False, $"Tick {tick} placed the capsule inside the closed crate");
+            reachedCrateTop |= actor.IsGrounded
+                               && MathF.Abs(actor.Position.Y - crateHeight) < 0.01f;
+        }
+        Assert.That(reachedCrateTop, Is.True,
+            "Collision-safe traversal must still land on the crate");
+    }
+
+    [Test]
     public void JumpReachesAboveOneAndAHalfMetres()
     {
         var simulation = new FpsSimulation(Configuration(),
@@ -1457,6 +1562,7 @@ public sealed class FpsSimulationTests
             Assert.That(simulation.ShotEvents.Single().TargetId, Is.EqualTo(1));
             Assert.That(simulation.HitEvents, Has.Count.EqualTo(1));
             Assert.That(simulation.KillEvents, Has.Count.EqualTo(1));
+            Assert.That(simulation.AwardEvents, Has.Count.EqualTo(1));
         });
 
         simulation.Step(0.05f);
@@ -1465,6 +1571,7 @@ public sealed class FpsSimulationTests
             Assert.That(simulation.ShotEvents, Is.Empty);
             Assert.That(simulation.HitEvents, Is.Empty);
             Assert.That(simulation.KillEvents, Is.Empty);
+            Assert.That(simulation.AwardEvents, Is.Empty);
         });
     }
 
@@ -1778,6 +1885,27 @@ public sealed class FpsSimulationTests
             new Vector3(x, maxY, maxZ), new Vector3(x, minY, maxZ));
     }
 
+    private static IEnumerable<Kn5Triangle> ClosedBox(float minX, float maxX,
+        float minZ, float maxZ, float maxY)
+    {
+        yield return new Kn5Triangle(new Vector3(minX, maxY, minZ),
+            new Vector3(minX, maxY, maxZ), new Vector3(maxX, maxY, maxZ));
+        yield return new Kn5Triangle(new Vector3(minX, maxY, minZ),
+            new Vector3(maxX, maxY, maxZ), new Vector3(maxX, maxY, minZ));
+        foreach (var triangle in VerticalWall(minX, minZ, maxZ, 0, maxY))
+            yield return triangle;
+        foreach (var triangle in VerticalWall(maxX, minZ, maxZ, 0, maxY))
+            yield return triangle;
+        yield return new Kn5Triangle(new Vector3(minX, 0, minZ),
+            new Vector3(maxX, maxY, minZ), new Vector3(minX, maxY, minZ));
+        yield return new Kn5Triangle(new Vector3(minX, 0, minZ),
+            new Vector3(maxX, 0, minZ), new Vector3(maxX, maxY, minZ));
+        yield return new Kn5Triangle(new Vector3(minX, 0, maxZ),
+            new Vector3(minX, maxY, maxZ), new Vector3(maxX, maxY, maxZ));
+        yield return new Kn5Triangle(new Vector3(minX, 0, maxZ),
+            new Vector3(maxX, maxY, maxZ), new Vector3(maxX, 0, maxZ));
+    }
+
     private static Kn5Triangle[] Incline(float degrees)
     {
         float grade = MathF.Tan(degrees * MathF.PI / 180);
@@ -1832,7 +1960,8 @@ public sealed class FpsSimulationTests
     }
 
     private static FpsConfiguration Configuration(int killLimit = 20, float difficulty = 0,
-        float difficultyVariance = 0, float aggression = 0, float aggressionVariance = 0) => new()
+        float difficultyVariance = 0, float aggression = 0, float aggressionVariance = 0,
+        int health = 100) => new()
     {
         Enabled = true,
         TimeLimitMinutes = 10,
@@ -1841,7 +1970,7 @@ public sealed class FpsSimulationTests
         SpawnProtectionSeconds = 0,
         Bots = new FpsBotConfiguration
         {
-            Health = 100,
+            Health = health,
             Difficulty = difficulty,
             DifficultyVariancePercent = difficultyVariance,
             Aggression = aggression,

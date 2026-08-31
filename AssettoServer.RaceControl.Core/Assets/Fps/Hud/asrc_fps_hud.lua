@@ -5,11 +5,12 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 1
+local bridgeProtocol = 2
 local actorCapacity = 32
 local killFeedCapacity = 6
+local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v1'),
+  ac.StructItem.key('asrc.fps.hud.v2'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -23,6 +24,7 @@ local bridge = ac.connect({
   localReloadRemaining = ac.StructItem.float(),
   localKills = ac.StructItem.uint16(),
   localDeaths = ac.StructItem.uint16(),
+  localScore = ac.StructItem.uint32(),
   viewYaw = ac.StructItem.float(),
   matchState = ac.StructItem.byte(),
   remainingSeconds = ac.StructItem.float(),
@@ -44,9 +46,13 @@ local bridge = ac.connect({
   actorHealth = ac.StructItem.array(ac.StructItem.uint16(), actorCapacity),
   actorKills = ac.StructItem.array(ac.StructItem.uint16(), actorCapacity),
   actorDeaths = ac.StructItem.array(ac.StructItem.uint16(), actorCapacity),
+  actorScores = ac.StructItem.array(ac.StructItem.uint32(), actorCapacity),
   actorNames = ac.StructItem.array(ac.StructItem.string(32), actorCapacity),
   killFeedCount = ac.StructItem.byte(),
   killFeed = ac.StructItem.array(ac.StructItem.string(72), killFeedCapacity),
+  awardPopupCount = ac.StructItem.byte(),
+  awardPopupTexts = ac.StructItem.array(ac.StructItem.string(64), awardPopupCapacity),
+  awardPopupAlphas = ac.StructItem.array(ac.StructItem.float(), awardPopupCapacity),
 }, false, ac.SharedNamespace.Shared)
 
 local ranking = {}
@@ -150,8 +156,8 @@ local function drawCompactRanking(scale, margin)
   for place = 1, rows do
     local index = ranking[place]
     ui.setCursor(vec2(margin + 12 * scale, top + (10 + place * 23) * scale))
-    ui.text(string.format('%2d  %-20s  %2d / %2d', place, actorName(index),
-      bridge.actorKills[index], bridge.actorDeaths[index]))
+    ui.text(string.format('%2d  %-16s  %4d  %2d/%2d', place, actorName(index),
+      bridge.actorScores[index], bridge.actorKills[index], bridge.actorDeaths[index]))
   end
 end
 
@@ -164,7 +170,8 @@ local function drawStatusWidgets(size, scale, margin)
   ui.pushFont(ui.Font.Title)
   local healthColor = bridge.localHealth <= 25 and rgbm(1, 0.2, 0.16, 1) or rgbm.colors.white
   ui.textColored(string.format('HEALTH  %d', bridge.localHealth), healthColor)
-  ui.text(string.format('K %d   D %d', bridge.localKills, bridge.localDeaths))
+  ui.text(string.format('K %d   D %d   SCORE %d', bridge.localKills, bridge.localDeaths,
+    bridge.localScore))
   ui.popFont()
   local linkText = bridge.linkState == 1 and 'LINK: ACTIVE'
     or bridge.linkState == 2 and 'LINK: INPUT SEND BLOCKED' or 'LINK: WAITING FOR PLAYER STATE'
@@ -222,6 +229,18 @@ local function drawAim(size, scale)
   end
 end
 
+local function drawAwards(size, scale)
+  if bridge.cursorUnlocked ~= 0 then return end
+  local center = size * 0.5
+  for index = 0, math.min(awardPopupCapacity, bridge.awardPopupCount) - 1 do
+    local alpha = math.clamp(bridge.awardPopupAlphas[index], 0, 1)
+    ui.setCursor(center + vec2(34, -86 + index * 25) * scale)
+    ui.pushFont(ui.Font.Title)
+    ui.textColored(bridgeString(bridge.awardPopupTexts[index]), rgbm(1, 0.78, 0.22, alpha))
+    ui.popFont()
+  end
+end
+
 local function drawScoreboard(size, scale)
   if bridge.scoreboardHeld == 0 then return end
   local center = size * 0.5
@@ -233,12 +252,13 @@ local function drawScoreboard(size, scale)
   ui.text('DEATHMATCH SCOREBOARD')
   ui.popFont()
   ui.setCursor(p1 + vec2(28, 66) * scale)
-  ui.text('POS   PLAYER                         KILLS   DEATHS   HEALTH')
+  ui.text('POS   PLAYER                    SCORE   KILLS   DEATHS   HEALTH')
   for place = 1, math.min(16, #ranking) do
     local index = ranking[place]
     ui.setCursor(p1 + vec2(28, 70 + place * 27) * scale)
-    ui.text(string.format('%2d    %-28s   %3d      %3d      %3d', place, actorName(index),
-      bridge.actorKills[index], bridge.actorDeaths[index], bridge.actorHealth[index]))
+    ui.text(string.format('%2d    %-24s   %5d    %3d      %3d      %3d', place,
+      actorName(index), bridge.actorScores[index], bridge.actorKills[index],
+      bridge.actorDeaths[index], bridge.actorHealth[index]))
   end
   ui.transparentWindow('asrc-fps-hud-scoreboard-controls', p1 + vec2(20, 505) * scale,
     vec2(740, 48) * scale, true, true, function()
@@ -268,8 +288,8 @@ local function drawCompletion(size, scale)
   ui.text('Winner: ' .. winner)
   for place = 1, math.min(8, #ranking) do
     local index = ranking[place]
-    ui.text(string.format('%2d. %-22s  %3d kills  %3d deaths', place, actorName(index),
-      bridge.actorKills[index], bridge.actorDeaths[index]))
+    ui.text(string.format('%2d. %-20s  %5d pts  %3d K  %3d D', place, actorName(index),
+      bridge.actorScores[index], bridge.actorKills[index], bridge.actorDeaths[index]))
   end
 end
 
@@ -287,6 +307,7 @@ local function drawHud()
   drawStatusWidgets(size, scale, margin)
   drawMatchAndFeed(size, scale, margin)
   drawAim(size, scale)
+  drawAwards(size, scale)
   drawScoreboard(size, scale)
   drawCompletion(size, scale)
   local clientError = bridgeString(bridge.clientError)

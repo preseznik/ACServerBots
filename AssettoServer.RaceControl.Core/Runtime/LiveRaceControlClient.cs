@@ -330,6 +330,7 @@ public sealed class LiveRaceCar
     public int Health { get; set; }
     public int Kills { get; set; }
     public int Deaths { get; set; }
+    public uint Score { get; set; }
 
     public string DisplayName => $"{SessionId + 1}. {Name} — {Model}";
     public string GearDisplay => ProtocolGear switch

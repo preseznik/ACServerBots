@@ -42,6 +42,17 @@ internal readonly record struct FpsInputCommand(uint Sequence, Vector2 Move, flo
 internal readonly record struct FpsKillEvent(byte KillerId, byte VictimId, ushort KillerKills,
     ushort VictimDeaths);
 internal readonly record struct FpsHitEvent(byte AttackerId, byte VictimId, ushort RemainingHealth);
+[Flags]
+internal enum FpsAwardFlags : byte
+{
+    None = 0,
+    Kill = 1 << 0,
+    Assist = 1 << 1,
+    Headshot = 1 << 2,
+    OneShot = 1 << 3,
+}
+internal readonly record struct FpsAwardEvent(byte ActorId, byte VictimId, ushort Points,
+    uint TotalScore, FpsAwardFlags Flags);
 internal enum FpsShotImpact : byte
 {
     None,
@@ -64,6 +75,8 @@ internal sealed class FpsActorState
     public int Health { get; set; }
     public ushort Kills { get; set; }
     public ushort Deaths { get; set; }
+    public uint Score { get; set; }
+    public HashSet<byte> DamageContributors { get; } = [];
     public bool Active { get; set; }
     public bool HumanControlled { get; set; }
     public bool Dead { get; set; }
@@ -156,6 +169,7 @@ internal sealed class FpsSimulation
     private readonly List<FpsKillEvent> _killEvents = [];
     private readonly List<FpsHitEvent> _hitEvents = [];
     private readonly List<FpsShotEvent> _shotEvents = [];
+    private readonly List<FpsAwardEvent> _awardEvents = [];
     private readonly List<FpsBotDiagnosticEvent> _botDiagnosticEvents = [];
     private readonly FpsArenaSurface? _surface;
     private readonly FpsArenaNavigationAsset? _navigation;
@@ -170,6 +184,7 @@ internal sealed class FpsSimulation
     public IReadOnlyList<FpsKillEvent> KillEvents => _killEvents;
     public IReadOnlyList<FpsHitEvent> HitEvents => _hitEvents;
     public IReadOnlyList<FpsShotEvent> ShotEvents => _shotEvents;
+    public IReadOnlyList<FpsAwardEvent> AwardEvents => _awardEvents;
     public IReadOnlyList<FpsBotDiagnosticEvent> BotDiagnosticEvents => _botDiagnosticEvents;
 
     public FpsSimulation(FpsConfiguration configuration, IEnumerable<FpsSimulationSlot> slots,
@@ -236,6 +251,7 @@ internal sealed class FpsSimulation
         _killEvents.Clear();
         _hitEvents.Clear();
         _shotEvents.Clear();
+        _awardEvents.Clear();
         _botDiagnosticEvents.Clear();
         if (MatchState != FpsMatchState.Running || !float.IsFinite(dt) || dt <= 0) return;
         dt = Math.Min(dt, 0.05f);
@@ -388,13 +404,20 @@ internal sealed class FpsSimulation
         actor.Position = actor.Position with { Y = y };
     }
 
-    private static void StepMantle(FpsActorState actor, float dt)
+    private void StepMantle(FpsActorState actor, float dt)
     {
         actor.MantleElapsed += dt;
         float t = Math.Clamp(actor.MantleElapsed / MantleDuration, 0, 1);
-        float smooth = t * t * (3 - 2 * t);
-        actor.Position = Vector3.Lerp(actor.MantleStart, actor.MantleTarget, smooth)
-            + Vector3.UnitY * (MathF.Sin(t * MathF.PI) * actor.MantleArcHeight);
+        var candidate = TraversalPosition(actor.MantleStart, actor.MantleTarget,
+            actor.MantleArcHeight, t);
+        if (_surface is not null && _surface.IsPositionBlocked(candidate, candidate.Y,
+                CollisionHeight(FpsStance.Crouching)))
+        {
+            actor.IsMantling = false;
+            RestoreSafePose(actor);
+            return;
+        }
+        actor.Position = candidate;
         if (t < 1) return;
         actor.Position = actor.MantleTarget;
         actor.GroundY = actor.MantleTarget.Y;
@@ -443,6 +466,7 @@ internal sealed class FpsSimulation
         {
             return false;
         }
+        if (!IsTraversalPathClear(actor.Position, target, arcHeight)) return false;
         actor.IsMantling = true;
         actor.MantleStart = actor.Position;
         actor.MantleTarget = target;
@@ -455,6 +479,38 @@ internal sealed class FpsSimulation
         actor.Stance = FpsStance.Crouching;
         return true;
     }
+
+    private bool IsTraversalPathClear(Vector3 start, Vector3 target, float arcHeight)
+    {
+        if (_surface is null) return true;
+        const int samples = 32;
+        for (int sample = 1; sample <= samples; sample++)
+        {
+            var candidate = TraversalPosition(start, target, arcHeight,
+                sample / (float)samples);
+            if (_surface.IsPositionBlocked(candidate, candidate.Y,
+                    CollisionHeight(FpsStance.Crouching)))
+                return false;
+        }
+        return true;
+    }
+
+    private static Vector3 TraversalPosition(Vector3 start, Vector3 target,
+        float arcHeight, float t)
+    {
+        // Lift beside the obstacle, cross only with the feet above its top, then lower.
+        // A diagonal lerp cuts the capsule through closed crates and thick ledges.
+        float lift = SmoothStep(Math.Clamp(t / 0.4f, 0, 1));
+        float transfer = SmoothStep(Math.Clamp((t - 0.35f) / 0.3f, 0, 1));
+        float lower = SmoothStep(Math.Clamp((t - 0.65f) / 0.35f, 0, 1));
+        var position = Vector3.Lerp(start, target, transfer);
+        float clearanceY = MathF.Max(start.Y, target.Y) + arcHeight;
+        float y = start.Y + (clearanceY - start.Y) * lift;
+        y += (target.Y - y) * lower;
+        return position with { Y = y };
+    }
+
+    private static float SmoothStep(float value) => value * value * (3 - 2 * value);
 
     private void StepBot(FpsActorState actor, float dt)
     {
@@ -613,7 +669,7 @@ internal sealed class FpsSimulation
         }
         direction = delta / centerDistance;
         if (!TryRaycastActorCapsule(origin, direction, target.Position,
-                CollisionHeight(target.Stance), out targetDistance)
+                CollisionHeight(target.Stance), out targetDistance, out _)
             || targetDistance > RifleRange)
             return false;
         return _surface is null || !_surface.TryRaycast(origin, direction,
@@ -715,12 +771,14 @@ internal sealed class FpsSimulation
     {
         if (_surface is not null && _surface.IsPositionBlocked(step.Position,
                 step.Position.Y, CollisionHeight(FpsStance.Crouching))) return false;
+        float arcHeight = step.Kind == FpsNavigationLinkKind.Vault
+            ? FpsArenaSurface.MaximumVaultHeight : 0.18f;
+        if (!IsTraversalPathClear(actor.Position, step.Position, arcHeight)) return false;
         actor.IsMantling = true;
         actor.MantleStart = actor.Position;
         actor.MantleTarget = step.Position;
         actor.MantleElapsed = 0;
-        actor.MantleArcHeight = step.Kind == FpsNavigationLinkKind.Vault
-            ? FpsArenaSurface.MaximumVaultHeight : 0.18f;
+        actor.MantleArcHeight = arcHeight;
         actor.MantleFinishStance = FpsStance.Standing;
         actor.VerticalVelocity = 0;
         actor.HorizontalVelocity = Vector2.Zero;
@@ -1018,6 +1076,7 @@ internal sealed class FpsSimulation
             MathF.Sin(shotPitch), MathF.Cos(shotYaw) * cosPitch));
         var origin = attacker.Position + Vector3.UnitY * EyeHeight(attacker.Stance);
         FpsActorState? hit = null;
+        float hitHeightRatio = 0;
         float hitDistance = RifleRange;
         bool hitWorld = false;
         if (_surface is not null && _surface.TryRaycast(origin, direction, RifleRange,
@@ -1031,10 +1090,12 @@ internal sealed class FpsSimulation
             if (!candidate.Active || candidate.Dead || candidate.Id == attacker.Id
                 || candidate.SpawnProtectionRemaining > 0) continue;
             if (!TryRaycastActorCapsule(origin, direction, candidate.Position,
-                    CollisionHeight(candidate.Stance), out float along)
+                    CollisionHeight(candidate.Stance), out float along,
+                    out float candidateHeightRatio)
                 || along <= 0 || along > RifleRange || along >= hitDistance) continue;
             hit = candidate;
             hitDistance = along;
+            hitHeightRatio = candidateHeightRatio;
         }
 
         _shotEvents.Add(new FpsShotEvent(attacker.Id, shotSequence, origin, direction,
@@ -1045,6 +1106,8 @@ internal sealed class FpsSimulation
         if (attacker.AmmoInMagazine == 0) BeginReload(attacker);
 
         if (hit is null) return;
+        int healthBefore = hit.Health;
+        hit.DamageContributors.Add(attacker.Id);
         hit.Health -= (int)RifleDamage;
         _hitEvents.Add(new FpsHitEvent(attacker.Id, hit.Id, (ushort)Math.Max(0, hit.Health)));
         if (hit.Health > 0) return;
@@ -1053,12 +1116,29 @@ internal sealed class FpsSimulation
         hit.RespawnRemaining = _configuration.RespawnSeconds;
         hit.Deaths++;
         attacker.Kills++;
+        attacker.Score += 100;
         attacker.FinalScoreAttainedAtSeconds = ElapsedSeconds;
         _killEvents.Add(new FpsKillEvent(attacker.Id, hit.Id, attacker.Kills, hit.Deaths));
+        var killFlags = FpsAwardFlags.Kill;
+        if (hitHeightRatio >= 0.8f) killFlags |= FpsAwardFlags.Headshot;
+        if (healthBefore == _configuration.Bots.Health && RifleDamage >= healthBefore)
+            killFlags |= FpsAwardFlags.OneShot;
+        _awardEvents.Add(new FpsAwardEvent(attacker.Id, hit.Id, 100, attacker.Score,
+            killFlags));
+        foreach (byte contributorId in hit.DamageContributors
+                     .Where(id => id != attacker.Id).OrderBy(id => id))
+        {
+            if (!_actors.TryGetValue(contributorId, out var contributor)
+                || !contributor.Active) continue;
+            contributor.Score += 50;
+            _awardEvents.Add(new FpsAwardEvent(contributor.Id, hit.Id, 50,
+                contributor.Score, FpsAwardFlags.Assist));
+        }
+        hit.DamageContributors.Clear();
     }
 
     private static bool TryRaycastActorCapsule(Vector3 origin, Vector3 direction,
-        Vector3 position, float height, out float distance)
+        Vector3 position, float height, out float distance, out float hitHeightRatio)
     {
         float bestDistance = float.PositiveInfinity;
         float inset = MathF.Min(RifleTargetRadius, height * 0.5f);
@@ -1087,6 +1167,9 @@ internal sealed class FpsSimulation
         if (topY > bottomY + 1e-5f)
             SelectSphereHit(new Vector3(position.X, topY, position.Z));
         distance = bestDistance;
+        hitHeightRatio = float.IsFinite(bestDistance)
+            ? Math.Clamp((origin.Y + direction.Y * bestDistance - position.Y) / height, 0, 1)
+            : 0;
         return float.IsFinite(bestDistance);
 
         void SelectCylinderHit(float candidateDistance)
@@ -1167,6 +1250,7 @@ internal sealed class FpsSimulation
         actor.ReserveMagazines = RifleInitialReserveMagazines;
         actor.ReloadRemaining = 0;
         actor.ReloadHeld = false;
+        actor.DamageContributors.Clear();
         actor.SpawnCount++;
         actor.BotMode = FpsBotMode.Acquire;
         actor.BotTargetId = byte.MaxValue;
@@ -1249,7 +1333,7 @@ internal sealed class FpsSimulation
         if (centerDistance <= 0.01f) return false;
         var direction = delta / centerDistance;
         return TryRaycastActorCapsule(origin, direction, opponent.Position,
-                   CollisionHeight(opponent.Stance), out float targetDistance)
+                   CollisionHeight(opponent.Stance), out float targetDistance, out _)
                && (!_surface.TryRaycast(origin, direction,
                        targetDistance + RifleOcclusionEpsilon, out float worldDistance)
                    || worldDistance + RifleOcclusionEpsilon >= targetDistance);

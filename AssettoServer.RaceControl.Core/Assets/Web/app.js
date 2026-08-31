@@ -240,7 +240,8 @@ function renderSelectedPlayer(cars) {
   ui.selectedPlayerCaption.textContent = selected?.name || "No active player";
   ui.selectedPlayerType.textContent = selected ? (selected.isBot ? "BOT" : "HUMAN") : "—";
   ui.selectedPlayerHealth.textContent = selected ? `${Math.max(0, selected.health || 0)}%` : "—";
-  ui.selectedPlayerScore.textContent = selected ? `${selected.kills || 0} / ${selected.deaths || 0}` : "—";
+  ui.selectedPlayerScore.textContent = selected
+    ? `${selected.score || 0} / ${selected.kills || 0} / ${selected.deaths || 0}` : "—";
 }
 
 function renderRoster(cars, isFps) {
@@ -253,7 +254,7 @@ function renderRoster(cars, isFps) {
   if (!active.length) {
     const row = ui.rosterBody.insertRow();
     const cell = row.insertCell();
-    cell.colSpan = 7;
+    cell.colSpan = 8;
     cell.className = "table-empty";
     cell.textContent = "No live participants.";
     return;
@@ -267,6 +268,7 @@ function renderRoster(cars, isFps) {
     addCell(row, car.isBot ? "BOT" : car.isConnected ? "HUMAN" : "PLAYER");
     if (isFps) addHealthCell(row, car.health);
     else addCell(row, `${Math.round(car.speedKmh || 0)} km/h`);
+    addCell(row, isFps ? String(car.score || 0) : "—");
     addCell(row, isFps ? String(car.kills || 0) : String(car.lap || 0));
     addCell(row, isFps ? String(car.deaths || 0) : String(car.racePosition ?? "—"));
     const state = isFps ? (car.health > 0 ? "ALIVE" : "RESPAWNING") : car.isDnf ? "DNF" : car.hasFinished ? "FINISHED" : "ACTIVE";

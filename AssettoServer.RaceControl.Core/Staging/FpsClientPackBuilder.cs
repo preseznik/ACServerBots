@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 6;
-    public const int BridgeProtocol = 1;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v6.zip";
+    public const int ClientPackVersion = 7;
+    public const int BridgeProtocol = 2;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v7.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -53,7 +53,7 @@ public static class FpsClientPackBuilder
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v1",
+                    bridge = "asrc.fps.hud.v2",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),

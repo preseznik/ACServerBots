@@ -81,7 +81,9 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(manifest, Does.Contain("NAME = ASRC FPS HUD"));
             Assert.That(manifest, Does.Contain("LAZY = NONE"));
             Assert.That(manifest, Does.Contain("IN_GAME = appOverlay"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v1')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v2')"));
+            Assert.That(script, Does.Contain("awardPopupTexts"));
+            Assert.That(script, Does.Contain("actorScores"));
             Assert.That(script, Does.Contain("actorCapacity = 32"));
             Assert.That(script, Does.Contain("ui.onExclusiveHUD(exclusiveHud, true)"));
             Assert.That(script, Does.Contain("mode ~= 'game'"));
@@ -99,7 +101,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV6ContainsCorrectedHudAndOnlyProjectOwnedPayloadPaths()
+    public async Task ClientPackV7ContainsScoringHudAndOnlyProjectOwnedPayloadPaths()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -109,9 +111,10 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(6));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(7));
+            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(2));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v6.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v7.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
@@ -131,10 +134,10 @@ public sealed class FpsClientPackAssetsTests
         JsonElement hud = root.GetProperty("hud");
         Assert.Multiple(() =>
         {
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(6));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(7));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
-            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v1"));
-            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(1));
+            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v2"));
+            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(2));
             Assert.That(hud.GetProperty("onlineFallback").GetBoolean(), Is.True);
             Assert.That(hud.GetProperty("manifestSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(

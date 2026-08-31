@@ -139,6 +139,16 @@ public sealed class FpsHitPacket : OnlineEvent<FpsHitPacket>
     [OnlineEventField(Name = "remainingHealth")] public ushort RemainingHealth;
 }
 
+[OnlineEvent(Key = "ASRC_FpsAward")]
+public sealed class FpsAwardPacket : OnlineEvent<FpsAwardPacket>
+{
+    [OnlineEventField(Name = "actorID")] public byte ActorId;
+    [OnlineEventField(Name = "victimID")] public byte VictimId = byte.MaxValue;
+    [OnlineEventField(Name = "points")] public ushort Points;
+    [OnlineEventField(Name = "totalScore")] public uint TotalScore;
+    [OnlineEventField(Name = "flags")] public byte Flags;
+}
+
 [OnlineEvent(Key = "ASRC_FpsShot", Udp = true)]
 public sealed class FpsShotPacket : OnlineEvent<FpsShotPacket>
 {

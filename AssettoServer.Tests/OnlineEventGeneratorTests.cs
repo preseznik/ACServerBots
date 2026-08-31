@@ -35,7 +35,7 @@ public class OnlineEventGeneratorTests
             typeof(FpsInputPacket), typeof(FpsReadyPacket), typeof(FpsEnvironmentRequestPacket),
             typeof(FpsSnapshotPacket),
             typeof(FpsRosterPacket), typeof(FpsMatchPacket), typeof(FpsKillPacket), typeof(FpsHitPacket),
-            typeof(FpsShotPacket), typeof(FpsClientDiagnosticPacket),
+            typeof(FpsAwardPacket), typeof(FpsShotPacket), typeof(FpsClientDiagnosticPacket),
         ];
         var definitions = packets.Select(OnlineEventGenerator.ParseClientMessage).ToArray();
         var snapshotDefinition = definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot");
@@ -49,6 +49,10 @@ public class OnlineEventGeneratorTests
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsInput").Udp, Is.True);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Udp, Is.True);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsKill").Udp, Is.False);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsAward").Udp,
+                Is.False);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsAward").Structure,
+                Does.Contain("uint32_t totalScore"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Udp,
                 Is.False);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Structure,
@@ -89,6 +93,7 @@ public class OnlineEventGeneratorTests
             Assert.That(FpsWorld.UsesUdpTransport<FpsSnapshotPacket>(), Is.True);
             Assert.That(FpsWorld.UsesUdpTransport<FpsHitPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsKillPacket>(), Is.False);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsAwardPacket>(), Is.False);
         });
     }
 }

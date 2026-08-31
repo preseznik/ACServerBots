@@ -523,6 +523,7 @@ public sealed class RaceControlBridge : IHostedService
                 health = actor.Health,
                 kills = actor.Kills,
                 deaths = actor.Deaths,
+                score = actor.Score,
             };
         }).ToArray();
         string phase = match.State switch

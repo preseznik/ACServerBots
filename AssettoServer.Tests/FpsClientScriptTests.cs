@@ -297,7 +297,11 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("%02d  |  %d MAGS"));
             Assert.That(script, Does.Not.Contain("ASSAULT RIFLE  |  INFINITE"));
             Assert.That(script, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v1')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v2')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsAward')"));
+            Assert.That(script, Does.Contain("awardPopupTexts"));
+            Assert.That(script, Does.Contain("HEADSHOT"));
+            Assert.That(script, Does.Contain("ONE SHOT"));
             Assert.That(script, Does.Contain("capacity = 32"));
             Assert.That(script, Does.Contain("appHeartbeat = ac.StructItem.float()"));
             Assert.That(script, Does.Contain("function hud.appOwnsHud()"));
