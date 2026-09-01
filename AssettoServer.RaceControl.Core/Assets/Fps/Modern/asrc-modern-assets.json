@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "theme": "Modern",
+  "redistributionRightsConfirmedByUser": true,
+  "sources": {
+    "operator": "FPS/Characters/army-officer",
+    "viewmodelAndWorldWeapon": "FPS/Weapons/fps-animated-carbine",
+    "m4a1Used": false
+  },
+  "exporter": {
+    "kn5": "repository-pinned blender_assetto_corsa_tools with ASRC SkinnedMesh extension",
+    "ksanimSourceRevision": "920bac087de1caad32ae63725dc6fa302c9b9c18",
+    "license": "GPL-3.0-or-later"
+  },
+  "operator": {
+    "file": "asrc_modern_operator_carbine.kn5",
+    "triangles": 36322,
+    "materials": 4,
+    "bones": 68,
+    "clips": [
+      "aim_idle",
+      "aim_up",
+      "aim_down",
+      "walk_forward",
+      "walk_backward",
+      "strafe_left",
+      "strafe_right",
+      "sprint",
+      "crouch_idle",
+      "crouch_move",
+      "prone_idle",
+      "prone_crawl",
+      "jump_start",
+      "airborne",
+      "land",
+      "mantle",
+      "vault",
+      "fire",
+      "reload",
+      "death"
+    ]
+  },
+  "viewmodel": {
+    "file": "asrc_modern_carbine_viewmodel.kn5",
+    "triangles": 25111,
+    "materials": 3,
+    "bones": 50,
+    "clips": [
+      "idle",
+      "fire",
+      "reload",
+      "reload_empty",
+      "equip",
+      "sprint"
+    ],
+    "redDotCoreDiameterPixels": 14,
+    "redDotTextureSizePixels": 512
+  },
+  "pickup": {
+    "file": "asrc_modern_carbine_pickup.kn5",
+    "triangles": 6000,
+    "materials": 1
+  },
+  "files": {
+    "asrc_modern_carbine_equip.ksanim": "c5392500974b233c62045d3692430c155aa2d7cb7efcbd0113d4485dee01cb6b",
+    "asrc_modern_carbine_fire.ksanim": "66cdbf8739fed3f08f763c47fbff5679458418b3afc55de6f0b493f356bcd8ad",
+    "asrc_modern_carbine_idle.ksanim": "a3bc66fa9f47e6e04eb9ab8495a6ac693894acd1db8c551c7285545515a1d114",
+    "asrc_modern_carbine_pickup.kn5": "98cc2a70c48267599f3ee792ad51b2c4f5c0bb0ef9565c196426aae2f964030d",
+    "asrc_modern_carbine_reload.ksanim": "72ab80c73c7703ee115f392f58193dffd8a856283c2baec874e97112335cb2d5",
+    "asrc_modern_carbine_reload_empty.ksanim": "535a888ff30af28dc870f9c41f4f2f9d4269096c532bb3439d0b9e2cbb537fc0",
+    "asrc_modern_carbine_sprint.ksanim": "a3bc66fa9f47e6e04eb9ab8495a6ac693894acd1db8c551c7285545515a1d114",
+    "asrc_modern_carbine_viewmodel.kn5": "751ee8eec86f2a353019bd58115c6650993fdc942cde29743c68be7de75ec53c",
+    "asrc_modern_operator_aim_down.ksanim": "1740fcab511d0bbaa00e22cf0be59a16afc9afa0a6914fc1b3e825f69890b772",
+    "asrc_modern_operator_aim_idle.ksanim": "7b1a5756840344f2b2385bbaf69f49dd0327782f5495c4dfd9dc31caeeac1f45",
+    "asrc_modern_operator_aim_up.ksanim": "c7c30d00de2edd1bd3775edd7f07fe199935a7a66edb8deb0d6a13e6c83172e1",
+    "asrc_modern_operator_airborne.ksanim": "cde99eddbf7d1a4b4cefa40061e371a01fbf294b1132b11a294995bfb524abe9",
+    "asrc_modern_operator_carbine.kn5": "a04eeee46c2554e3910aeaa6fe91c2c61bdb5754072b18ab56cc4135138656b2",
+    "asrc_modern_operator_crouch_idle.ksanim": "4b8dd47c614cda6fb3ae6cbcc226411fdca045f20f88504e4d8e0f3ef0dc451a",
+    "asrc_modern_operator_crouch_move.ksanim": "ad8b91aa161de3b76f9269ee9373fb3cf5c2d72373b0b65032ab7b5256e815bd",
+    "asrc_modern_operator_death.ksanim": "2dfdbb39357b121e84c4102bb113b51d07a9e5c08367419350c92a2c9a06720c",
+    "asrc_modern_operator_fire.ksanim": "a04154a20820686a9432f14a92716becaa1cacc8f2199148a2dd420db77f5472",
+    "asrc_modern_operator_jump_start.ksanim": "f58203b27fe60846990e15d32ddddf35ffd2a9715bcd3fa7c1284ba1ac748bf4",
+    "asrc_modern_operator_land.ksanim": "dbf86f0c7cee75860e31afd4cd08b6a7082b61511c39b3bfe4d38afb1c8b30f1",
+    "asrc_modern_operator_mantle.ksanim": "f3a6642beacfa428d99bb0799ce83da6880bc98fb0edbcfdf9c68b89e36e2d72",
+    "asrc_modern_operator_prone_crawl.ksanim": "49accaa5c736953aec0000bcc002503dfbd23051e23bdf997df5fcb464cc4005",
+    "asrc_modern_operator_prone_idle.ksanim": "8cb2f9f65a47c52b7aaaad1d19f8d94a3f142e957646263261ef8895c9847051",
+    "asrc_modern_operator_reload.ksanim": "e63f5b2ab5ac7ad7fd97075cc0151f41af8b06102bd8a89d4dd364ee8b55f86f",
+    "asrc_modern_operator_sprint.ksanim": "a4bb2ad607f128a5f716ff839eeac4220124f93053db5737c2ea45e97b035047",
+    "asrc_modern_operator_strafe_left.ksanim": "8fbb3470f34f07a1867c2526e0fd27c6e1be3d82cf3ad3229383a48c2cb34d91",
+    "asrc_modern_operator_strafe_right.ksanim": "78dcdfc0b7b645198e78ddfb9c2c20d1cfd78cd14a723d903e7ee45099d08c05",
+    "asrc_modern_operator_vault.ksanim": "d55e0ce57264c165d6afc79cf2ab5825605d45c0ef3e0b72aedae68fa4a61f2d",
+    "asrc_modern_operator_walk_backward.ksanim": "80804ca7bb4243c78bb462055d7b06d4c0ba5cd3e96da5af931725f3929e767b",
+    "asrc_modern_operator_walk_forward.ksanim": "1c2a22baf5f74058d64c556b592689e824bc24ea90b92d38b98489a7e9f39770"
+  },
+  "validation": {
+    "status": "passed",
+    "kn5": "bone matrices, indices, normalized weights, shaders, textures and budgets",
+    "ksanim": "track compatibility, rifle-ready grip, finite frames and planar root lock",
+    "operatorSkinnedMeshes": 4,
+    "viewmodelSkinnedMeshes": 3,
+    "viewmodelWeaponSkinnedMeshes": 1,
+    "viewmodelOpticSkinnedMeshes": 1,
+    "pickupRigidMeshes": 1,
+    "stancePosesValidated": true,
+    "deathCollapseValidated": true,
+    "uniqueNodeNames": true
+  }
+}

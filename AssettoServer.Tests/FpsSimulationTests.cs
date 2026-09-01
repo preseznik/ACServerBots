@@ -112,6 +112,63 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void DeathDropsAuthoritativeRiflePickupThatGrantsOneReserveMagazine()
+    {
+        var simulation = new FpsSimulation(Configuration(health: 30),
+        [
+            new(0, "Shooter", FpsSlotRole.Human),
+            new(1, "Victim", FpsSlotRole.Human),
+            new(2, "Collector", FpsSlotRole.Human),
+        ]);
+        simulation.ClaimHuman(0);
+        simulation.ClaimHuman(1);
+        simulation.ClaimHuman(2);
+        var actors = simulation.Actors.ToDictionary(actor => actor.Id);
+        actors[0].Position = Vector3.Zero;
+        actors[1].Position = new Vector3(0, 0, 5);
+        actors[1].GroundY = 0;
+        actors[2].Position = new Vector3(5, 0, 0);
+        actors[2].ReserveMagazines = 2;
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire));
+
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+
+        var pickup = simulation.Pickups.Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(actors[1].Dead, Is.True);
+            Assert.That(pickup.WeaponType, Is.EqualTo(FpsWeaponType.AssaultRifle));
+            Assert.That(pickup.DroppedByActorId, Is.EqualTo(1));
+            Assert.That(pickup.Position, Is.EqualTo(new Vector3(0, 0, 5)));
+            Assert.That(simulation.PickupEvents.Single().State,
+                Is.EqualTo(FpsPickupState.Spawned));
+        });
+
+        actors[2].Position = pickup.Position;
+        for (int tick = 0; tick < 8 && simulation.Pickups.Count > 0; tick++)
+            simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.Pickups, Is.Empty);
+            Assert.That(actors[2].ReserveMagazines, Is.EqualTo(3));
+            Assert.That(simulation.PickupEvents.Single().State,
+                Is.EqualTo(FpsPickupState.Removed));
+            Assert.That(simulation.PickupEvents.Single().CollectorId, Is.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public void RifleReserveMagazineCapRemainsFourIncludingPickups()
+    {
+        Assert.That(FpsSimulation.RifleInitialReserveMagazines, Is.EqualTo(4));
+        Assert.That(FpsSimulation.RifleMaximumReserveMagazines, Is.EqualTo(4));
+    }
+
+    [Test]
     public void SnapshotCollisionDirectionUsesCompactSentinelAndPreservesDirection()
     {
         Assert.That(FpsWorld.EncodeCollisionDirection(Vector2.Zero), Is.EqualTo(byte.MaxValue));
@@ -1604,6 +1661,41 @@ public sealed class FpsSimulationTests
             Assert.That(second.Sequence, Is.EqualTo(2));
             Assert.That(second.Direction, Is.Not.EqualTo(first.Direction),
                 "Sustained automatic fire should accumulate server-side spread");
+        });
+    }
+
+    [Test]
+    public void AimDownSightsTightensAuthoritativeSustainedFireSpread()
+    {
+        FpsShotEvent SecondShot(FpsInputButtons buttons)
+        {
+            var simulation = new FpsSimulation(Configuration(),
+                [new(0, "Shooter", FpsSlotRole.Human)]);
+            simulation.ClaimHuman(0);
+            simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+                buttons | FpsInputButtons.Fire));
+            simulation.Step(0.05f);
+            for (int tick = 0; tick < 4; tick++)
+            {
+                simulation.Step(0.05f);
+                if (simulation.ShotEvents.Count > 0) return simulation.ShotEvents.Single();
+            }
+            Assert.Fail("Expected a second automatic-rifle shot");
+            return default;
+        }
+
+        var hip = SecondShot(FpsInputButtons.None);
+        var aimed = SecondShot(FpsInputButtons.Aim);
+        float hipDeviation = MathF.Sqrt(hip.Direction.X * hip.Direction.X
+            + hip.Direction.Y * hip.Direction.Y);
+        float aimedDeviation = MathF.Sqrt(aimed.Direction.X * aimed.Direction.X
+            + aimed.Direction.Y * aimed.Direction.Y);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hip.Sequence, Is.EqualTo(2));
+            Assert.That(aimed.Sequence, Is.EqualTo(2));
+            Assert.That(aimedDeviation, Is.LessThan(hipDeviation * 0.4f));
         });
     }
 

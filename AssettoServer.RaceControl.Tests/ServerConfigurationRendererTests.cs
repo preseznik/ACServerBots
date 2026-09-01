@@ -195,6 +195,7 @@ public sealed class ServerConfigurationRendererTests
         preset.Fps.CarrierCarId = "carrier";
         preset.Fps.TimeLimitMinutes = 10;
         preset.Fps.KillLimit = 20;
+        preset.Fps.Theme = FpsVisualTheme.Modern;
         preset.Fps.Arena = Arena();
         preset.Grid[0].Mode = SlotMode.Auto;
         preset.Grid[1].Mode = SlotMode.Fixed;
@@ -217,6 +218,7 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.EntryList.Get("CAR_0", "AI"), Is.EqualTo("none"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("MinimumCSPVersion: 4053"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("Fps:"));
+            Assert.That(rendered.ExtraConfiguration, Does.Contain("  Theme: Modern"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  KillLimit: 20"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("    GeometryPath: fps-arena-geometry.bin"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("    NavigationPath: fps-arena-navigation.bin"));

@@ -81,7 +81,9 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(manifest, Does.Contain("NAME = ASRC FPS HUD"));
             Assert.That(manifest, Does.Contain("LAZY = NONE"));
             Assert.That(manifest, Does.Contain("IN_GAME = appOverlay"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v2')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v3')"));
+            Assert.That(script, Does.Contain("adsActive = ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain("if bridge.adsActive == 0 then"));
             Assert.That(script, Does.Contain("awardPopupTexts"));
             Assert.That(script, Does.Contain("actorScores"));
             Assert.That(script, Does.Contain("actorCapacity = 32"));
@@ -101,7 +103,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV7ContainsScoringHudAndOnlyProjectOwnedPayloadPaths()
+    public async Task ClientPackV15ContainsBothThemesAndOnlyProjectOwnedPayloadPaths()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -111,17 +113,25 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(7));
-            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(2));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(15));
+            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(3));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v7.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v15.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudScriptPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.RifleViewmodelPath));
             Assert.That(entries.Keys, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
-            Assert.That(entries.Count, Is.EqualTo(9));
+            Assert.That(entries.Keys, Does.Contain(
+                $"{FpsClientPackAssets.ModernAssetDirectory}asrc_modern_operator_carbine.kn5"));
+            Assert.That(entries.Keys, Does.Contain(
+                $"{FpsClientPackAssets.ModernAssetDirectory}asrc_modern_carbine_viewmodel.kn5"));
+            Assert.That(entries.Keys, Does.Contain(
+                $"{FpsClientPackAssets.ModernAssetDirectory}asrc_modern_carbine_pickup.kn5"));
+            Assert.That(entries.Keys.Count(path => path.StartsWith(
+                FpsClientPackAssets.ModernAssetDirectory, StringComparison.Ordinal)),
+                Is.GreaterThanOrEqualTo(30));
         });
 
         foreach (string path in entries.Keys.Where(path => path is not "asrc-fps-client.json"
@@ -134,10 +144,15 @@ public sealed class FpsClientPackAssetsTests
         JsonElement hud = root.GetProperty("hud");
         Assert.Multiple(() =>
         {
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(7));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(15));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
-            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v2"));
-            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(2));
+            Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),
+                Is.EqualTo("Blocks"));
+            Assert.That(root.GetProperty("visualThemes").GetProperty("available")
+                .EnumerateArray().Select(value => value.GetString()),
+                Is.EqualTo(new[] { "Blocks", "Modern" }));
+            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v3"));
+            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(3));
             Assert.That(hud.GetProperty("onlineFallback").GetBoolean(), Is.True);
             Assert.That(hud.GetProperty("manifestSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(
@@ -145,6 +160,65 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(hud.GetProperty("scriptSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(
                     ReadEntry(entries[FpsClientPackAssets.HudScriptPath]))));
+        });
+    }
+
+    [Test]
+    public void ModernAssets_AreCompleteAndWithinProjectOwnedDirectory()
+    {
+        IReadOnlyList<(string Path, byte[] Data)> assets = FpsClientPackAssets.GetModernAssets();
+        byte[] manifestData = assets.Single(asset => asset.Path.EndsWith(
+            "asrc-modern-assets.json", StringComparison.Ordinal)).Data;
+        using JsonDocument manifest = JsonDocument.Parse(manifestData);
+        JsonElement root = manifest.RootElement;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(assets, Has.Count.GreaterThanOrEqualTo(30));
+            Assert.That(assets.Select(asset => asset.Path), Has.Some.EndsWith(
+                "asrc_modern_operator_carbine.kn5"));
+            Assert.That(assets.Select(asset => asset.Path), Has.Some.EndsWith(
+                "asrc_modern_carbine_viewmodel.kn5"));
+            Assert.That(assets.Select(asset => asset.Path), Has.Some.EndsWith(
+                "asrc_modern_carbine_pickup.kn5"));
+            Assert.That(assets.Count(asset => asset.Path.EndsWith(".ksanim",
+                StringComparison.OrdinalIgnoreCase)), Is.EqualTo(26));
+            foreach ((string path, byte[] data) in assets)
+            {
+                Assert.That(path, Does.StartWith(FpsClientPackAssets.ModernAssetDirectory));
+                Assert.That(data, Has.Length.GreaterThan(32), path);
+                Assert.DoesNotThrow(() => FpsClientPackBuilder.ValidateProjectOwnedPath(path));
+            }
+            Assert.That(root.GetProperty("redistributionRightsConfirmedByUser").GetBoolean(),
+                Is.True);
+            Assert.That(root.GetProperty("sources").GetProperty("m4a1Used").GetBoolean(),
+                Is.False);
+            Assert.That(root.GetProperty("validation").GetProperty("status").GetString(),
+                Is.EqualTo("passed"));
+            Assert.That(root.GetProperty("validation").GetProperty("stancePosesValidated")
+                .GetBoolean(), Is.True);
+            Assert.That(root.GetProperty("validation").GetProperty("deathCollapseValidated")
+                .GetBoolean(), Is.True);
+            Assert.That(root.GetProperty("validation").GetProperty("viewmodelSkinnedMeshes").GetInt32(),
+                Is.GreaterThanOrEqualTo(3));
+            Assert.That(root.GetProperty("validation").GetProperty("viewmodelWeaponSkinnedMeshes").GetInt32(),
+                Is.EqualTo(1));
+            Assert.That(root.GetProperty("validation").GetProperty("viewmodelOpticSkinnedMeshes").GetInt32(),
+                Is.EqualTo(1));
+            Assert.That(root.GetProperty("validation").GetProperty("uniqueNodeNames").GetBoolean(),
+                Is.True);
+            Assert.That(root.GetProperty("operator").GetProperty("triangles").GetInt32(),
+                Is.LessThanOrEqualTo(40_000));
+            Assert.That(root.GetProperty("operator").GetProperty("materials").GetInt32(),
+                Is.LessThanOrEqualTo(4));
+            Assert.That(root.GetProperty("viewmodel").GetProperty("triangles").GetInt32(),
+                Is.LessThanOrEqualTo(30_000));
+            Assert.That(root.GetProperty("viewmodel").GetProperty("materials").GetInt32(),
+                Is.LessThanOrEqualTo(3));
+            Assert.That(root.GetProperty("viewmodel").GetProperty(
+                "redDotCoreDiameterPixels").GetInt32(), Is.EqualTo(14));
+            Assert.That(root.GetProperty("viewmodel").GetProperty(
+                "redDotTextureSizePixels").GetInt32(), Is.EqualTo(512));
         });
     }
 

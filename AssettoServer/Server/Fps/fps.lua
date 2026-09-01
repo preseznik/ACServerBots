@@ -5,6 +5,56 @@ This program is free software: you can redistribute it and/or modify it under th
 ]]
 
 local capacity = 16
+local fpsVisual = {
+  requested = '__ASRC_FPS_THEME__',
+  modern = false,
+  active = 'Blocks',
+  error = nil,
+  adsInput = 0,
+  ads = 0,
+  thirdPersonDistance = 3.2,
+  thirdPersonDistanceTarget = 3.2,
+  thirdPersonDistanceMin = 1.25,
+  thirdPersonDistanceMax = 7.0,
+  thirdPersonZoomStep = 0.4,
+  carrierControlsOverride = nil,
+  carrierControlsOverrideErrorLogged = false,
+  viewmodelFireUntil = 0,
+  viewmodelEquipUntil = 0,
+  corpseLifetime = 3.75,
+  corpseFallSeconds = 0.72,
+  pickups = {},
+  operatorClips = {
+    aim_idle = 'asrc_modern_operator_aim_idle.ksanim',
+    aim_up = 'asrc_modern_operator_aim_up.ksanim',
+    aim_down = 'asrc_modern_operator_aim_down.ksanim',
+    walk_forward = 'asrc_modern_operator_walk_forward.ksanim',
+    walk_backward = 'asrc_modern_operator_walk_backward.ksanim',
+    strafe_left = 'asrc_modern_operator_strafe_left.ksanim',
+    strafe_right = 'asrc_modern_operator_strafe_right.ksanim',
+    sprint = 'asrc_modern_operator_sprint.ksanim',
+    crouch_idle = 'asrc_modern_operator_crouch_idle.ksanim',
+    crouch_move = 'asrc_modern_operator_crouch_move.ksanim',
+    prone_idle = 'asrc_modern_operator_prone_idle.ksanim',
+    prone_crawl = 'asrc_modern_operator_prone_crawl.ksanim',
+    jump_start = 'asrc_modern_operator_jump_start.ksanim',
+    airborne = 'asrc_modern_operator_airborne.ksanim',
+    land = 'asrc_modern_operator_land.ksanim',
+    mantle = 'asrc_modern_operator_mantle.ksanim',
+    vault = 'asrc_modern_operator_vault.ksanim',
+    fire = 'asrc_modern_operator_fire.ksanim',
+    reload = 'asrc_modern_operator_reload.ksanim',
+    death = 'asrc_modern_operator_death.ksanim',
+  },
+  viewmodelClips = {
+    idle = 'asrc_modern_carbine_idle.ksanim',
+    fire = 'asrc_modern_carbine_fire.ksanim',
+    reload = 'asrc_modern_carbine_reload.ksanim',
+    reload_empty = 'asrc_modern_carbine_reload_empty.ksanim',
+    equip = 'asrc_modern_carbine_equip.ksanim',
+    sprint = 'asrc_modern_carbine_sprint.ksanim',
+  },
+}
 local actors = {}
 local names = {}
 local localSessionID = car.sessionID
@@ -100,6 +150,20 @@ local rifleViewmodelPath = nil
 local rifleWorldModelPath = nil
 local rifleDiffusePath = nil
 local operatorSkinPath = nil
+fpsVisual.pickupFileName = rifleWorldModelFileName
+fpsVisual.pickupPath = nil
+if fpsVisual.requested == 'Modern' then
+  fpsVisual.modern = true
+  fpsVisual.active = 'Modern'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v7.zip'
+  rifleViewmodelFileName = 'asrc_modern_carbine_viewmodel.kn5'
+  rifleWorldModelFileName = 'asrc_modern_operator_carbine.kn5'
+  fpsVisual.pickupFileName = 'asrc_modern_carbine_pickup.kn5'
+  rifleDiffuseFileName = nil
+  operatorSkinFileName = nil
+elseif fpsVisual.requested ~= 'Blocks' then
+  fpsVisual.error = 'INVALID FPS THEME - USING BLOCKS'
+end
 local inputSendOk = true
 local gameplayActive = false
 local previousGameplayActive = nil
@@ -142,7 +206,10 @@ local previewCamera = {
   position = vec3(),
   look = vec3(0, -0.2, 1),
 }
-local fpsNearClip = 0.03
+-- A perspective camera cannot use a literal zero near plane. Keep it effectively
+-- on the camera surface so close viewmodel geometry exits behind the view instead
+-- of exposing a visible receiver/stock cross-section.
+local fpsNearClip = 0.0001
 local fpsClipPlaneApplied = false
 local fpsClipPlaneMethod = 'not-applied'
 local fpsOriginalCarCameraClipNear = {}
@@ -167,7 +234,7 @@ local playRifleSound
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 2,
+  protocol = 3,
   capacity = 32,
   killFeedCapacity = 6,
   awardPopupCapacity = 4,
@@ -280,7 +347,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v2'),
+      ac.StructItem.key('asrc.fps.hud.v3'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -305,6 +372,7 @@ function hud.connect()
       persistentCursor = ac.StructItem.byte(),
       appPersistentCursor = ac.StructItem.byte(),
       hitMarkerRemaining = ac.StructItem.float(),
+      adsActive = ac.StructItem.byte(),
       linkState = ac.StructItem.byte(),
       clientError = ac.StructItem.string(128),
       actorCount = ac.StructItem.byte(),
@@ -327,7 +395,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v2')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v3')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -413,6 +481,7 @@ function hud.publish(dt)
   hud.bridge.cursorUnlocked = cursorUnlocked and 1 or 0
   hud.bridge.persistentCursor = persistentCursor and 1 or 0
   hud.bridge.hitMarkerRemaining = math.max(0, hitMarkerUntil - effectClock)
+  hud.bridge.adsActive = fpsVisual.ads > 0.05 and 1 or 0
   hud.bridge.linkState = localActor == nil and 0 or inputSendOk and 1 or 2
   hud.bridge.clientError = clientPackError or ''
 
@@ -463,6 +532,101 @@ local function lerpAngle(current, target, mix)
   return current + delta * mix
 end
 
+function fpsVisual.smoothstep01(value)
+  value = math.clamp(value, 0, 1)
+  return value * value * (3 - 2 * value)
+end
+
+function fpsVisual.clearActorCorpse(actor)
+  actor.corpseStarted = nil
+  actor.corpseAnchor = nil
+  actor.corpseVelocity = nil
+  actor.corpseGroundY = nil
+  actor.corpseYaw = nil
+  actor.corpseFallSign = nil
+end
+
+function fpsVisual.setActorWeaponVisible(actor, visible)
+  if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
+    actor.weaponRoot:setVisible(visible, false)
+  end
+  if actor.weaponMesh ~= nil and actor.weaponMesh ~= false then
+    actor.weaponMesh:setVisible(visible, false)
+  end
+end
+
+function fpsVisual.beginActorCorpse(actor)
+  if actor.corpseStarted ~= nil then return end
+  local velocity = vec3()
+  if actor.animationLastPosition ~= nil then
+    velocity:set((actor.render - actor.animationLastPosition)
+      / math.max(viewmodelFrameDt, 1 / 120))
+    local horizontalSpeed = math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z)
+    if horizontalSpeed > 4.5 then
+      local scale = 4.5 / horizontalSpeed
+      velocity.x = velocity.x * scale
+      velocity.z = velocity.z * scale
+    end
+    velocity.y = math.clamp(velocity.y, -6, 3)
+  end
+  actor.corpseStarted = effectClock
+  actor.corpseAnchor = actor.render:clone()
+  actor.corpseVelocity = velocity
+  actor.corpseGroundY = actor.groundY ~= nil
+    and math.min(actor.groundY, actor.corpseAnchor.y) or actor.corpseAnchor.y
+  actor.corpseYaw = actor.yaw
+  actor.corpseFallSign = (actor.id + (actor.deaths or 0)) % 2 == 0 and 1 or -1
+  actor.animationDeathStarted = effectClock
+end
+
+function fpsVisual.actorSceneActive(actor)
+  if bit.band(actor.flags, 1) == 0 then return false end
+  if bit.band(actor.flags, 2) == 0 then return true end
+  if actor.corpseStarted == nil then return true end
+  return effectClock - actor.corpseStarted < fpsVisual.corpseLifetime
+end
+
+function fpsVisual.actorScenePose(actor)
+  local forward = vec3(math.sin(actor.yaw), 0, math.cos(actor.yaw))
+  local up = vec3(0, 1, 0)
+  if bit.band(actor.flags, 2) == 0 then
+    if actor.corpseStarted ~= nil then fpsVisual.clearActorCorpse(actor) end
+    return actor.render, forward, up, true
+  end
+  fpsVisual.beginActorCorpse(actor)
+  local age = math.max(0, effectClock - actor.corpseStarted)
+  if age >= fpsVisual.corpseLifetime then return actor.render, forward, up, false end
+
+  -- CSP does not expose a safe per-bone ragdoll for dynamically loaded skinned KN5s.
+  -- Preserve the authored limb collapse and pivot the complete operator at its feet.
+  -- The previous 18-degree tip was barely visible; this reaches a full prone pose,
+  -- retains death momentum and adds a small deterministic roll before settling.
+  local anchor = actor.corpseAnchor or actor.render
+  local velocity = actor.corpseVelocity or vec3()
+  local drag = 2.4
+  local travel = (1 - math.exp(-age * drag)) / drag
+  local position = anchor:clone()
+  position.x = position.x + velocity.x * travel
+  position.z = position.z + velocity.z * travel
+  position.y = math.max(actor.corpseGroundY or anchor.y,
+    anchor.y + velocity.y * age - 4.905 * age * age)
+
+  local fall = fpsVisual.smoothstep01(age / fpsVisual.corpseFallSeconds)
+  local settleAge = math.max(0, age - fpsVisual.corpseFallSeconds)
+  local settle = math.sin(settleAge * 15) * math.exp(-settleAge * 8) * math.rad(3)
+  local angle = (fall * math.rad(84) + settle) * (actor.corpseFallSign or 1)
+  local roll = fpsVisual.smoothstep01(math.clamp((age - 0.16) / 0.62, 0, 1))
+    * math.rad(((actor.id * 17 + (actor.deaths or 0) * 11) % 2 == 0) and 11 or -11)
+  local baseForward = vec3(math.sin(actor.corpseYaw or actor.yaw), 0,
+    math.cos(actor.corpseYaw or actor.yaw))
+  local cosine, sine = math.cos(angle), math.sin(angle)
+  local baseRight = vec3(baseForward.z, 0, -baseForward.x)
+  forward:set(baseForward * cosine + vec3(0, 1, 0) * sine)
+  local fallenUp = vec3(0, 1, 0) * cosine - baseForward * sine
+  up:set(fallenUp * math.cos(roll) + baseRight * math.sin(roll))
+  return position, forward, up, true
+end
+
 local function markViewmodelStage(stage, detail)
   viewmodelLastStage = stage
   viewmodelLastStageDetail = detail == nil and '' or tostring(detail)
@@ -490,6 +654,8 @@ ac.log(string.format('[ASRC FPS] script loaded: session=%s carIndex=%s cameraAct
 ac.log(string.format('[ASRC FPS] client asset paths: root=%s remoteArchive=%s audio=%s',
   tostring(assettoRoot), rifleAssetArchivePath, rifleAudioPath))
 ac.log('[ASRC FPS] viewmodel pipeline: ' .. viewmodelPipelineVersion)
+ac.log('[ASRC FPS] visual theme requested=' .. fpsVisual.requested
+  .. '; active=' .. fpsVisual.active)
 
 -- FPS has its own match clock, scoreboard and damage display. In particular,
 -- the stock leaderboard assumes the local AC car is driving a normal timed
@@ -500,6 +666,39 @@ ac.disableExtraHUDElements({
 }, true)
 ac.disableQuickMenuPitstop(true)
 physics.setGentleStop(car.index, true)
+
+-- setCarNoInput() remains the primary carrier lock. The explicit controls
+-- override also consumes trigger/pedal input on CSP builds which continue to
+-- evaluate the underlying AC controls while the FPS actor owns input.
+do
+  local ok, result = pcall(function() return ac.overrideCarControls() end)
+  if ok then
+    fpsVisual.carrierControlsOverride = result
+  else
+    ac.warn('[ASRC FPS] carrier controls override unavailable; using game-rule lock: '
+      .. tostring(result))
+  end
+end
+
+local function setCarrierInputSuppressed(suppressed)
+  if fpsVisual.carrierControlsOverride == nil then return end
+  local ok, err = pcall(function()
+    fpsVisual.carrierControlsOverride.combineAxis = not suppressed
+    fpsVisual.carrierControlsOverride.steer = suppressed and 0 or math.huge
+    fpsVisual.carrierControlsOverride.gas = 0
+    fpsVisual.carrierControlsOverride.brake = 0
+    fpsVisual.carrierControlsOverride.handbrake = suppressed and 1 or 0
+    fpsVisual.carrierControlsOverride.clutch = 1
+  end)
+  if not ok then
+    fpsVisual.carrierControlsOverride = nil
+    if not fpsVisual.carrierControlsOverrideErrorLogged then
+      fpsVisual.carrierControlsOverrideErrorLogged = true
+      ac.warn('[ASRC FPS] carrier controls override failed; using game-rule lock: '
+        .. tostring(err))
+    end
+  end
+end
 
 local function hideCarrierCars()
   for i = 0, sim.carsCount - 1 do
@@ -564,6 +763,7 @@ local snapshotEvent = ac.OnlineEvent({
   count = ac.StructItem.byte(),
   actorIDs = ac.StructItem.array(ac.StructItem.byte(), capacity),
   flags = ac.StructItem.array(ac.StructItem.byte(), capacity),
+  actionStates = ac.StructItem.uint32(),
   spawnCounts = ac.StructItem.array(ac.StructItem.uint32(), capacity),
   positions = ac.StructItem.array(ac.StructItem.vec3(), capacity),
   groundYs = ac.StructItem.array(ac.StructItem.float(), capacity),
@@ -591,7 +791,8 @@ local snapshotEvent = ac.OnlineEvent({
         id = id, target = vec3(), render = vec3(), yaw = 0, targetYaw = 0,
         collisionNormal = vec2(),
         pitch = 0, health = 0, kills = 0, deaths = 0, score = 0, flags = 0,
-        ammo = 0, reserveMagazines = 0, reloadRemaining = 0, spawnCount = nil,
+        actionState = 0, ammo = 0, reserveMagazines = 0, reloadRemaining = 0,
+        spawnCount = nil,
       }
       actors[id] = actor
     end
@@ -616,6 +817,8 @@ local snapshotEvent = ac.OnlineEvent({
     actor.reserveMagazines = message.reserveMagazines[i]
     actor.reloadRemaining = message.reloadRemaining[i]
     actor.flags = message.flags[i]
+    actor.actionState = (bit.band(message.actionStates, bit.lshift(1, i)) ~= 0 and 1 or 0)
+      + (bit.band(message.actionStates, bit.lshift(1, capacity + i)) ~= 0 and 2 or 0)
     actor.spawnCount = message.spawnCounts[i]
     local spawnChanged = previousSpawnCount ~= nil and previousSpawnCount ~= actor.spawnCount
     local wasDead = bit.band(previousFlags, 2) ~= 0
@@ -626,13 +829,29 @@ local snapshotEvent = ac.OnlineEvent({
       hud.radarVisible[id] = nil
     end
     if spawnChanged then
+      fpsVisual.clearActorCorpse(actor)
       actor.render:set(actor.target)
       actor.yaw = actor.targetYaw
       actor.weaponKick = 0
+      actor.animationClip = nil
+      actor.animationPreviousClip = nil
+      actor.animationLastPosition = nil
+      actor.animationDeathStarted = nil
+      actor.animationPhase = 0
+      actor.animationWasGrounded = nil
+      actor.animationJumpStarted = nil
+      actor.animationLanded = nil
+      actor.animationActionState = nil
+      actor.animationTraversalStarted = nil
       hitMarkerUntil = effectClock
       ac.log(string.format(
         '[ASRC FPS] remote actor respawn reconciled: actor=%s spawn=%s position=%s',
         tostring(id), tostring(actor.spawnCount), vec3Text(actor.target)))
+    end
+    if not wasDead and isDead then
+      fpsVisual.beginActorCorpse(actor)
+    elseif wasDead and not isDead then
+      fpsVisual.clearActorCorpse(actor)
     end
     if id == localSessionID then
       if not localActorSnapshotLogged then
@@ -794,7 +1013,7 @@ local awardEvent = ac.OnlineEvent({
       id = message.actorID, target = vec3(), render = vec3(), yaw = 0, targetYaw = 0,
       collisionNormal = vec2(), pitch = 0, health = 0, kills = 0, deaths = 0,
       score = 0, flags = 0, ammo = 0, reserveMagazines = 0, reloadRemaining = 0,
-      spawnCount = nil,
+      actionState = 0, spawnCount = nil,
     }
     actors[message.actorID] = actor
   end
@@ -812,6 +1031,37 @@ local awardEvent = ac.OnlineEvent({
     text = table.concat(labels, '  '), age = 0, ttl = 2.6,
   }
   while #hud.awardPopups > hud.awardPopupCapacity do table.remove(hud.awardPopups, 1) end
+end)
+
+fpsVisual.pickupEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsPickup'),
+  pickupID = ac.StructItem.uint32(),
+  state = ac.StructItem.byte(),
+  weaponType = ac.StructItem.byte(),
+  collectorID = ac.StructItem.byte(),
+  position = ac.StructItem.vec3(),
+}, function(sender, message)
+  if sender ~= nil then return end
+  local existing = fpsVisual.pickups[message.pickupID]
+  if existing ~= nil and existing.root ~= nil then
+    pcall(function() existing.root:dispose() end)
+  end
+  fpsVisual.pickups[message.pickupID] = nil
+  if message.state == 1 then
+    fpsVisual.pickups[message.pickupID] = {
+      id = message.pickupID,
+      weaponType = message.weaponType,
+      position = message.position:clone(),
+      bornAt = effectClock,
+      root = nil,
+      model = nil,
+    }
+  elseif message.collectorID == localSessionID then
+    hud.awardPopups[#hud.awardPopups + 1] = {
+      text = '+1 MAGAZINE', age = 0, ttl = 2.2,
+    }
+    while #hud.awardPopups > hud.awardPopupCapacity do table.remove(hud.awardPopups, 1) end
+  end
 end)
 
 local shotEvent = ac.OnlineEvent({
@@ -834,8 +1084,11 @@ local shotEvent = ac.OnlineEvent({
   if message.shooterID == localSessionID and localMuzzlePosition:lengthSquared() > 0.001 then
     muzzleOrigin:set(localMuzzlePosition)
     viewmodelKick = 1
-    pitch = math.min(1.45, pitch + 0.011)
+    fpsVisual.viewmodelFireUntil = effectClock + 0.12
+    local cameraRecoilScale = math.lerp(1, 0.45, fpsVisual.ads)
+    pitch = math.min(1.45, pitch + 0.011 * cameraRecoilScale)
   elseif actor ~= nil then
+    actor.animationFireUntil = effectClock + 0.12
     local forward = vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw))
     local right = vec3(forward.z, 0, -forward.x)
     muzzleOrigin:set(actor.target + vec3(0, 1.14, 0) + forward * 0.72 + right * 0.20)
@@ -1113,6 +1366,58 @@ createRifleModel = function(parent, prefix, includeArms)
   return root
 end
 
+function fpsVisual.asset(fileName)
+  return rifleAssetFolder ~= nil and fileName ~= nil
+    and (rifleAssetFolder .. '/' .. fileName) or nil
+end
+
+function fpsVisual.fallback(reason)
+  if not fpsVisual.modern then return end
+  fpsVisual.modern = false
+  fpsVisual.active = 'Blocks'
+  fpsVisual.error = 'MODERN THEME FAILED - BLOCKS FALLBACK: ' .. tostring(reason)
+  clientPackError = fpsVisual.error
+  markViewmodelStage('modern-fallback', reason)
+  if viewmodelHolder ~= nil then pcall(function() viewmodelHolder:dispose() end) end
+  viewmodelHolder = nil
+  viewmodelRoot = nil
+  rifleAssetFolder = nil
+  rifleAssetsLoading = false
+  rifleAssetsFailed = false
+  rifleAssetWaitLogged = false
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v6.zip'
+  rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
+  rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
+  fpsVisual.pickupFileName = rifleWorldModelFileName
+  rifleDiffuseFileName = 'asrc_rifle_diffuse.png'
+  operatorSkinFileName = 'asrc_operator_skin.png'
+  rifleViewmodelPath = nil
+  rifleWorldModelPath = nil
+  rifleDiffusePath = nil
+  operatorSkinPath = nil
+  fpsVisual.pickupPath = nil
+  for _, actor in pairs(actors) do
+    if actor.root ~= nil and actor.root ~= false then
+      pcall(function() actor.root:dispose() end)
+    end
+    actor.root = nil
+    actor.weaponRoot = nil
+    actor.modernModel = nil
+    actor.weaponMesh = nil
+    actor.nativeScenePrepared = false
+    actor.nativeSceneVisible = false
+  end
+  for _, pickup in pairs(fpsVisual.pickups) do
+    if pickup.root ~= nil and pickup.root ~= false then
+      pcall(function() pickup.root:dispose() end)
+    end
+    pickup.root = nil
+    pickup.model = nil
+  end
+  localAvatarReady = false
+  ac.warn('[ASRC FPS] ' .. fpsVisual.error)
+end
+
 local function getRifleAssetArchiveUrl()
   local serverIP = ac.getServerIP()
   local serverHttpPort = ac.getServerPortHTTP()
@@ -1143,6 +1448,10 @@ requestRifleAssets = function()
   }, function(err, folder)
     rifleAssetsLoading = false
     if (err ~= nil and err ~= '') or folder == nil or folder == '' then
+      if fpsVisual.modern then
+        fpsVisual.fallback('asset download: ' .. tostring(err))
+        return
+      end
       rifleAssetsFailed = true
       clientPackError = 'FPS RIFLE ASSET DOWNLOAD FAILED - CHECK SERVER HTTP PORT'
       ac.warn('[ASRC FPS] remote rifle asset download failed: error=' .. tostring(err)
@@ -1153,13 +1462,16 @@ requestRifleAssets = function()
     rifleAssetFolder = folder
     rifleViewmodelPath = folder .. '/' .. rifleViewmodelFileName
     rifleWorldModelPath = folder .. '/' .. rifleWorldModelFileName
-    rifleDiffusePath = folder .. '/' .. rifleDiffuseFileName
-    operatorSkinPath = folder .. '/' .. operatorSkinFileName
-    clientPackError = nil
+    rifleDiffusePath = rifleDiffuseFileName ~= nil and (folder .. '/' .. rifleDiffuseFileName) or nil
+    operatorSkinPath = operatorSkinFileName ~= nil and (folder .. '/' .. operatorSkinFileName) or nil
+    fpsVisual.pickupPath = folder .. '/' .. fpsVisual.pickupFileName
+    clientPackError = fpsVisual.error
     viewmodelRoot = nil
     ac.log('[ASRC FPS] rifle assets cached: folder=' .. folder
       .. '; viewmodel=' .. rifleViewmodelPath .. '; world=' .. rifleWorldModelPath
-      .. '; rifleTexture=' .. rifleDiffusePath .. '; operatorSkin=' .. operatorSkinPath)
+      .. '; rifleTexture=' .. tostring(rifleDiffusePath)
+      .. '; operatorSkin=' .. tostring(operatorSkinPath)
+      .. '; theme=' .. fpsVisual.active)
   end)
 end
 
@@ -1191,15 +1503,27 @@ local function ensureLocalViewmodel()
     model:setCullMode(render.CullMode.None)
     model:setDepthMode(render.DepthMode.Normal)
     model:setMotionStencil(1)
-    pcall(function() model:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
+    if rifleDiffusePath ~= nil then
+      pcall(function() model:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
+    end
+    if fpsVisual.modern then
+      model:setAnimation(fpsVisual.asset(fpsVisual.viewmodelClips.equip), 0, true)
+      fpsVisual.viewmodelEquipUntil = effectClock + 0.55
+    end
     markViewmodelStage('model-configure:complete')
     return model
   end)
   if not ok then
     if viewmodelHolder ~= nil then viewmodelHolder:dispose() end
     viewmodelHolder = nil
+    if fpsVisual.modern then
+      viewmodelRoot = nil
+      fpsVisual.fallback('viewmodel load: ' .. tostring(result))
+      return false
+    end
     viewmodelRoot = false
-    clientPackError = 'FPS RIFLE MODEL ERROR - CACHED VIEWMODEL COULD NOT BE LOADED'
+    clientPackError = fpsVisual.error
+      or 'FPS RIFLE MODEL ERROR - CACHED VIEWMODEL COULD NOT BE LOADED'
     ac.warn('[ASRC FPS] cached rifle viewmodel failed: ' .. tostring(result)
       .. '; cached path ' .. rifleViewmodelPath .. '; using 2D fallback')
     return false
@@ -1208,6 +1532,10 @@ local function ensureLocalViewmodel()
   if not runViewmodelStage('holder-initial-hide', function()
     viewmodelHolder:setVisible(false)
   end) then
+    if fpsVisual.modern then
+      fpsVisual.fallback('viewmodel holder initialization')
+      return false
+    end
     clientPackError = 'FPS RIFLE MODEL ERROR - VIEWMODEL HOLDER COULD NOT BE HIDDEN'
     return false
   end
@@ -1287,13 +1615,45 @@ local function ensureAvatar(actor)
   end
   if actor.root == nil then
     local root = carsRoot:createBoundingSphereNode('ASRC_FPS_' .. actor.id, 1.5)
-    createOperatorBody(root, 'ASRC_FPS_OPERATOR_' .. actor.id)
+    if root == nil then
+      actor.root = false
+      if fpsVisual.modern then fpsVisual.fallback('operator root actor ' .. tostring(actor.id)) end
+      return
+    end
+    if fpsVisual.modern then
+      local loaded, model = pcall(function()
+        local child = root:loadKN5({filename = rifleWorldModelPath, forceRenderableOn = true})
+        if child == nil then error('loadKN5 returned no operator model') end
+        child:setShadows(true)
+        child:setVisible(true, false)
+        child:setCullMode(render.CullMode.Back)
+        child:setDepthMode(render.DepthMode.Normal)
+        child:setMotionStencil(1)
+        child:setAnimation(fpsVisual.asset(fpsVisual.operatorClips.aim_idle), 0, true)
+        return child
+      end)
+      if not loaded or model == nil then
+        root:dispose()
+        actor.root = nil
+        fpsVisual.fallback('operator load actor ' .. tostring(actor.id) .. ': ' .. tostring(model))
+        return
+      end
+      actor.modernModel = model
+      local weaponMeshOk, weaponMesh = pcall(function()
+        return model:findSkinnedMeshes('ASRC_CARBINE_WORLD')
+      end)
+      actor.weaponMesh = weaponMeshOk and weaponMesh or nil
+      actor.weaponRoot = false
+      actor.avatarKind = 'modern-animated-operator'
+    else
+      createOperatorBody(root, 'ASRC_FPS_OPERATOR_' .. actor.id)
+      actor.avatarKind = 'procedural-skinned-operator'
+    end
     root:setVirtualCarFlag(true)
     root:setMotionStencil(1)
     root:setVisible(false, false)
     actor.root = root
     actor.nativeScenePrepared = false
-    actor.avatarKind = 'procedural-skinned-operator'
   end
   if actor.root == false or actor.weaponRoot ~= nil then return end
   if rifleWorldModelPath == nil then
@@ -1314,8 +1674,55 @@ local function ensureAvatar(actor)
     end
   end
   if actor.weaponRoot ~= nil then
-    pcall(function() actor.weaponRoot:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
+    if rifleDiffusePath ~= nil then
+      pcall(function() actor.weaponRoot:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
+    end
     actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08))
+  end
+end
+
+function fpsVisual.updatePickups()
+  if rifleAssetFolder == nil then return end
+  for _, pickup in pairs(fpsVisual.pickups) do
+    if pickup.root == nil then
+      local loaded, rootOrError = pcall(function()
+        local root = carsRoot:createBoundingSphereNode('ASRC_FPS_PICKUP_' .. pickup.id, 1.2)
+        if root == nil then error('pickup holder could not be created') end
+        local model = root:loadKN5({filename = fpsVisual.pickupPath, forceRenderableOn = true})
+        if model == nil then
+          root:dispose()
+          error('pickup KN5 could not be loaded')
+        end
+        model:setShadows(true)
+        model:setCullMode(render.CullMode.Back)
+        model:setDepthMode(render.DepthMode.Normal)
+        model:setMotionStencil(1)
+        root:setVirtualCarFlag(true)
+        root:setMotionStencil(1)
+        pickup.model = model
+        return root
+      end)
+      if loaded then
+        pickup.root = rootOrError
+        pickup.root:clearMotion()
+      else
+        pickup.root = false
+        ac.warn('[ASRC FPS] dropped-rifle pickup model failed: ' .. tostring(rootOrError))
+      end
+    end
+    if pickup.root ~= nil and pickup.root ~= false then
+      local age = math.max(0, effectClock - pickup.bornAt)
+      local fall = fpsVisual.smoothstep01(math.clamp(age / 0.55, 0, 1))
+      local yawAngle = (pickup.id * 2.399963) % (math.pi * 2)
+      local baseForward = vec3(math.sin(yawAngle), 0, math.cos(yawAngle))
+      local angle = math.rad(82) * fall
+      local forward = baseForward * math.cos(angle) + vec3(0, 1, 0) * math.sin(angle)
+      local up = vec3(0, 1, 0) * math.cos(angle) - baseForward * math.sin(angle)
+      local height = 0.72 * (1 - fall) * (1 - fall) + 0.08
+      pickup.root:setPosition(pickup.position + vec3(0, height, 0) + ac.getSim().originShift)
+      pickup.root:setOrientation(forward, up)
+      pickup.root:setVisible(gameplayActive, false)
+    end
   end
 end
 
@@ -1367,7 +1774,7 @@ local function applyFpsClipPlane()
   end
   fpsClipPlaneApplied = true
   fpsClipPlaneMethod = #methods > 0 and table.concat(methods, ',') or 'unavailable'
-  ac.log(string.format('[ASRC FPS] camera near-clip request: requested=%.3f observed=%.3f method=%s',
+  ac.log(string.format('[ASRC FPS] camera near-clip request: requested=%.4f observed=%.4f method=%s',
     fpsNearClip, ac.getSim().cameraClipNear, fpsClipPlaneMethod))
 end
 
@@ -1542,15 +1949,22 @@ end
 local function applyFpsCamera(actor, dt)
   if actor == nil or camera == nil or not camera:active() then return false end
   local look = vec3(math.sin(yaw) * math.cos(pitch), math.sin(pitch), math.cos(yaw) * math.cos(pitch))
+  local adsAllowed = not thirdPersonEnabled and actor.reloadRemaining <= 0 and not viewmodelSprint
+  local adsTarget = adsAllowed and fpsVisual.adsInput or 0
+  local adsSpeed = adsTarget > fpsVisual.ads and 15 or 11
+  fpsVisual.ads = math.lerp(fpsVisual.ads, adsTarget, 1 - math.exp(-dt * adsSpeed))
   camera.ownShare = 1
-  camera.fov = 72
+  camera.fov = thirdPersonEnabled and 72 or math.lerp(72, 56, fpsVisual.ads)
   if thirdPersonEnabled then
     firstPersonCameraOffset:set(0, 0, 0)
     firstPersonCameraConstrained = false
+    fpsVisual.thirdPersonDistance = math.lerp(fpsVisual.thirdPersonDistance,
+      fpsVisual.thirdPersonDistanceTarget, 1 - math.exp(-dt * 12))
     local forward = vec3(math.sin(yaw), 0, math.cos(yaw))
     local right = vec3(forward.z, 0, -forward.x)
     local focus = actor.render + vec3(0, math.max(1.05, cameraHeight - 0.25), 0)
-    local desired = focus - forward * 3.2 + right * 0.72 + vec3(0, 0.55, 0)
+    local desired = focus - forward * fpsVisual.thirdPersonDistance
+      + right * 0.72 + vec3(0, 0.55, 0)
     local cameraOffset = desired - focus
     local distance = cameraOffset:length()
     if distance > 0.001 then
@@ -1574,6 +1988,145 @@ local function applyFpsCamera(actor, dt)
   return true
 end
 
+function fpsVisual.updateActorAnimation(actor, dt)
+  if not fpsVisual.modern or actor.modernModel == nil then return true end
+  local nowPosition = actor.render:clone()
+  local displacement = actor.animationLastPosition ~= nil
+    and (nowPosition - actor.animationLastPosition) or vec3()
+  actor.animationLastPosition = nowPosition
+  local speed = displacement:length() / math.max(dt, 0.001)
+  local grounded = bit.band(actor.flags, 16) ~= 0
+  local dead = bit.band(actor.flags, 2) ~= 0
+  local actionState = actor.actionState or 0
+  if actor.animationWasGrounded == nil then
+    actor.animationWasGrounded = grounded
+  elseif actor.animationWasGrounded and not grounded and bit.band(actionState, 1) == 0 then
+    actor.animationJumpStarted = effectClock
+  elseif not actor.animationWasGrounded and grounded then
+    actor.animationLanded = effectClock
+  end
+  actor.animationWasGrounded = grounded
+  if actor.animationActionState ~= actionState then
+    if bit.band(actionState, 1) ~= 0 then actor.animationTraversalStarted = effectClock end
+    actor.animationActionState = actionState
+  end
+  local clip = 'aim_idle'
+  local position = 0
+  local looping = false
+  if dead then
+    if actor.animationDeathStarted == nil then actor.animationDeathStarted = effectClock end
+    clip = 'death'
+    position = math.clamp((effectClock - actor.animationDeathStarted) / 1.45, 0, 1)
+  else
+    actor.animationDeathStarted = nil
+    if bit.band(actionState, 1) ~= 0 then
+      clip = bit.band(actionState, 2) ~= 0 and 'vault' or 'mantle'
+      position = math.clamp((effectClock - (actor.animationTraversalStarted or effectClock))
+        / 0.45, 0, 1)
+    elseif actor.animationLanded ~= nil and effectClock - actor.animationLanded < 0.3 then
+      clip = 'land'
+      position = math.clamp((effectClock - actor.animationLanded) / 0.3, 0, 1)
+    elseif not grounded then
+      local jumpAge = effectClock - (actor.animationJumpStarted or -10)
+      if jumpAge < 0.22 then
+        clip = 'jump_start'
+        position = math.clamp(jumpAge / 0.22, 0, 1)
+      else
+        clip = 'airborne'
+        position = 0.5
+      end
+    elseif bit.band(actor.flags, 128) ~= 0 then
+      clip = speed > 0.35 and 'prone_crawl' or 'prone_idle'
+      looping = speed > 0.35
+    elseif bit.band(actor.flags, 32) ~= 0 then
+      clip = speed > 0.35 and 'crouch_move' or 'crouch_idle'
+      looping = speed > 0.35
+    elseif speed > 4.8 then
+      clip = 'sprint'
+      looping = true
+    elseif speed > 0.35 then
+      local forwardX, forwardZ = math.sin(actor.yaw), math.cos(actor.yaw)
+      local forwardAmount = displacement.x * forwardX + displacement.z * forwardZ
+      local rightAmount = displacement.x * forwardZ - displacement.z * forwardX
+      if math.abs(rightAmount) > math.abs(forwardAmount) * 1.15 then
+        clip = rightAmount < 0 and 'strafe_left' or 'strafe_right'
+      else
+        clip = forwardAmount < 0 and 'walk_backward' or 'walk_forward'
+      end
+      looping = true
+    elseif actor.pitch > 0.32 then
+      clip = 'aim_up'
+    elseif actor.pitch < -0.32 then
+      clip = 'aim_down'
+    end
+    if looping then
+      actor.animationPhase = ((actor.animationPhase or 0)
+        + dt * math.max(0.75, speed * 0.35)) % 1
+      position = actor.animationPhase
+    else
+      actor.animationPhase = position
+    end
+  end
+
+  if actor.animationClip ~= clip then
+    actor.animationPreviousClip = actor.animationClip
+    actor.animationPreviousPosition = actor.animationPosition or 0
+    actor.animationBlend = 0
+    actor.animationClip = clip
+  end
+  actor.animationPosition = position
+  actor.animationBlend = math.min(1, (actor.animationBlend or 0) + dt / 0.12)
+  local ok, err = pcall(function()
+    actor.modernModel:setAnimation(fpsVisual.asset(fpsVisual.operatorClips[clip]),
+      position, true)
+    if actor.animationPreviousClip ~= nil and actor.animationBlend < 1 then
+      actor.modernModel:blendAnimation(
+        fpsVisual.asset(fpsVisual.operatorClips[actor.animationPreviousClip]),
+        actor.animationPreviousPosition, 1 - actor.animationBlend, false)
+    end
+    if actor.reloadRemaining > 0 and not dead then
+      actor.modernModel:blendAnimation(fpsVisual.asset(fpsVisual.operatorClips.reload),
+        math.clamp(1 - actor.reloadRemaining / 1.8, 0, 1), 0.82, false)
+    elseif (actor.animationFireUntil or 0) > effectClock and not dead then
+      local firePosition = math.clamp(1 - (actor.animationFireUntil - effectClock) / 0.12, 0, 1)
+      actor.modernModel:blendAnimation(fpsVisual.asset(fpsVisual.operatorClips.fire),
+        firePosition, 0.9, false)
+    end
+  end)
+  if not ok then
+    fpsVisual.fallback('operator animation actor ' .. tostring(actor.id) .. ': ' .. tostring(err))
+    return false
+  end
+  return true
+end
+
+function fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint)
+  if not fpsVisual.modern or viewmodelRoot == nil or viewmodelRoot == false then return true end
+  fpsVisual.viewmodelPhase = ((fpsVisual.viewmodelPhase or 0) + dt * 1.15) % 1
+  local clip = 'idle'
+  local position = fpsVisual.viewmodelPhase
+  if actor.reloadRemaining > 0 then
+    clip = actor.ammo == 0 and 'reload_empty' or 'reload'
+    position = math.clamp(1 - actor.reloadRemaining / 1.8, 0, 1)
+  elseif fpsVisual.viewmodelFireUntil > effectClock then
+    clip = 'fire'
+    position = math.clamp(1 - (fpsVisual.viewmodelFireUntil - effectClock) / 0.12, 0, 1)
+  elseif fpsVisual.viewmodelEquipUntil > effectClock then
+    clip = 'equip'
+    position = math.clamp(1 - (fpsVisual.viewmodelEquipUntil - effectClock) / 0.55, 0, 1)
+  elseif sprint and moving then
+    clip = 'sprint'
+  end
+  local ok, err = pcall(function()
+    viewmodelRoot:setAnimation(fpsVisual.asset(fpsVisual.viewmodelClips[clip]), position, true)
+  end)
+  if not ok then
+    fpsVisual.fallback('viewmodel animation: ' .. tostring(err))
+    return false
+  end
+  return true
+end
+
 local function updateRifleViewmodel(dt, actor, move, sprint)
   viewmodelUpdateAttempts = viewmodelUpdateAttempts + 1
   if viewmodelRoot == nil or viewmodelRoot == false then return end
@@ -1582,19 +2135,23 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   if not visible or camera == nil or not camera:active() then return end
   viewmodelKick = viewmodelKick * math.exp(-dt * 17)
   local moving = move:lengthSquared() > 0.01
+  if not fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint) then return end
   if moving then viewmodelBobTime = viewmodelBobTime + dt * (sprint and 12 or 8) end
   -- Camera and weapon scene transforms are submitted together in frameBegin. Keeping
   -- both on the requested grabbed-camera pose lets CSP calculate matching motion vectors.
   local cameraPosition = camera.transform.position:clone()
   local look = camera.transform.look:clone()
-  local up = camera.transform.up:clone()
   if look:lengthSquared() < 0.001 then look:set(0, 0, 1) else look:normalize() end
-  if up:lengthSquared() < 0.001 then up:set(0, 1, 0) else up:normalize() end
   local right = vec3(look.z, 0, -look.x)
   if right:lengthSquared() < 0.001 then right:set(1, 0, 0) else right:normalize() end
-  local bobX = moving and math.sin(viewmodelBobTime) * 0.004 or 0
-  local bobY = moving and math.abs(math.cos(viewmodelBobTime)) * 0.003 or 0
-  local sprintLower = sprint and moving and 0.04 or 0
+  -- Build a true camera-relative orthonormal frame. World-up combined with a pitched
+  -- look vector shears the KN5 basis and is why steep ADS previously folded the sight.
+  local viewUp = vec3(-math.sin(yaw) * math.sin(pitch), math.cos(pitch),
+    -math.cos(yaw) * math.sin(pitch))
+  local adsMotionScale = 1 - fpsVisual.ads
+  local bobX = moving and math.sin(viewmodelBobTime) * 0.004 * adsMotionScale or 0
+  local bobY = moving and math.abs(math.cos(viewmodelBobTime)) * 0.003 * adsMotionScale or 0
+  local sprintLower = sprint and moving and 0.04 * adsMotionScale or 0
   local wallNormal = vec3()
   local wallHit = physics.raycastTrack(cameraPosition, look, 0.9,
     nil, wallNormal, false, false)
@@ -1602,16 +2159,39 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
     and math.clamp((0.9 - wallHit) / 0.75, 0, 1) or 0
   viewmodelWallRetraction = math.lerp(viewmodelWallRetraction, wallRetractionTarget,
     1 - math.exp(-dt * 18))
+  local hipForward = fpsVisual.modern and 0.32 or 0.30
+  local hipRight = fpsVisual.modern and -0.18 or 0.22
+  local hipUp = fpsVisual.modern and -0.32 or -0.20
+  -- The Modern KN5 faces back toward its root, so its apparent screen-right
+  -- direction is opposite the holder translation. These calibrated offsets put
+  -- the optic axis on the camera look vector and bring the rear sight close
+  -- enough to read as true ADS instead of a zoomed hip-fire pose.
+  local adsForward = fpsVisual.modern and 0.12 or 0.38
+  local adsRight = fpsVisual.modern and 0.0003 or 0.00
+  local adsUp = fpsVisual.modern and -0.2218 or -0.10
+  local visualKickScale = math.lerp(1, 0.35, fpsVisual.ads)
+  -- At steep downward pitch the source arms extend beyond their authored first-person
+  -- framing. Pull the Modern rig toward the camera on a smooth cubic curve so close
+  -- geometry exits behind the near plane instead of exposing sleeve and stock ends.
+  local downwardLook = math.clamp((-pitch - math.rad(35)) / math.rad(45), 0, 1)
+  local downwardCurve = fpsVisual.smoothstep01(downwardLook)
+  local downwardPull = fpsVisual.modern
+    and math.lerp(0.38, 0.14, fpsVisual.ads) * downwardCurve or 0
   local position = cameraPosition
-    + look * (0.30 - viewmodelKick * 0.04 - viewmodelWallRetraction * 0.25)
-    + right * (0.22 + bobX)
-    + up * (-0.20 - bobY - sprintLower + viewmodelKick * 0.012
+    + look * (math.lerp(hipForward, adsForward, fpsVisual.ads)
+      - downwardPull - viewmodelKick * 0.04 * visualKickScale
+      - viewmodelWallRetraction * 0.25)
+    + right * (math.lerp(hipRight, adsRight, fpsVisual.ads) + bobX)
+    + viewUp * (math.lerp(hipUp, adsUp, fpsVisual.ads)
+      - bobY - sprintLower + viewmodelKick * 0.012 * visualKickScale
       - viewmodelWallRetraction * 0.12)
   viewmodelLastPosition = position:clone()
   viewmodelRenderPosition = position:clone()
   viewmodelRenderLook = look:clone()
-  viewmodelRenderUp = up:clone()
-  localMuzzlePosition:set(position + look * 0.99 + up * 0.02)
+  viewmodelRenderUp = viewUp:clone()
+  localMuzzlePosition:set(position
+    + look * (fpsVisual.modern and 0.67 or 0.99)
+    + viewUp * (fpsVisual.modern and 0.08 or 0.02))
   viewmodelUpdateCompletions = viewmodelUpdateCompletions + 1
   if not viewmodelStagesSeen['native-transform:ready'] then
     markViewmodelStage('native-transform:ready', vec3Text(position))
@@ -1652,14 +2232,18 @@ local function updateNativeRifleViewmodel(dt)
   if not ok then
     viewmodelDirectDrawFailures = viewmodelDirectDrawFailures + 1
     markViewmodelStage('native-scene:failed', result)
-    clientPackError = 'FPS RIFLE SCENE UPDATE FAILED - CHECK LIVE LOG'
+    if fpsVisual.modern then
+      fpsVisual.fallback('viewmodel scene update: ' .. tostring(result))
+    else
+      clientPackError = 'FPS RIFLE SCENE UPDATE FAILED - CHECK LIVE LOG'
+    end
     if not viewmodelDirectRenderFailureLogged then
       viewmodelDirectRenderFailureLogged = true
       ac.warn('[ASRC FPS] native rifle scene update failed: ' .. tostring(result))
     end
   elseif result ~= false then
     viewmodelDirectDrawCompletions = viewmodelDirectDrawCompletions + 1
-    clientPackError = nil
+    clientPackError = fpsVisual.error
     if not viewmodelStagesSeen['native-scene:ready'] then
       markViewmodelStage('native-scene:ready', 'motion-tracked scene node visible')
       ac.log('[ASRC FPS] native assault-rifle viewmodel scene ready')
@@ -1671,15 +2255,14 @@ local function updateRemoteActors(dt)
   local visibleActors = 0
   remoteRender.actorsDrawn = 0
   for _, actor in pairs(actors) do
-    if actor.id ~= localSessionID and bit.band(actor.flags, 1) ~= 0
-        and bit.band(actor.flags, 2) == 0 then
+    if actor.id ~= localSessionID and fpsVisual.actorSceneActive(actor) then
       visibleActors = visibleActors + 1
     end
   end
   remoteRender.actorSnapshotCount = visibleActors
   for _, actor in pairs(actors) do
     if actor.id ~= localSessionID then
-      local active = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
+      local active = fpsVisual.actorSceneActive(actor)
       remoteRender.drawAttempts = remoteRender.drawAttempts + 1
       local ok, result = pcall(function()
         -- CSP can stop an online-script update once its time budget is exhausted.
@@ -1703,9 +2286,17 @@ local function updateRemoteActors(dt)
           actor.render:set(math.lerp(actor.render, actor.target, poseBlend))
           actor.yaw = lerpAngle(actor.yaw, actor.targetYaw, poseBlend)
         end
-        actor.root:setPosition(actor.render + ac.getSim().originShift)
-        actor.root:setOrientation(vec3(math.sin(actor.yaw), 0,
-          math.cos(actor.yaw)), vec3(0, 1, 0))
+        local scenePosition, sceneLook, sceneUp, sceneVisible = fpsVisual.actorScenePose(actor)
+        if not sceneVisible then
+          actor.root:setVisible(false, false)
+          actor.nativeSceneVisible = false
+          return nil
+        end
+        actor.root:setPosition(scenePosition + ac.getSim().originShift)
+        actor.root:setOrientation(sceneLook, sceneUp)
+        local dead = bit.band(actor.flags, 2) ~= 0
+        fpsVisual.setActorWeaponVisible(actor, not dead)
+        if not fpsVisual.updateActorAnimation(actor, dt) then return false end
         actor.weaponKick = (actor.weaponKick or 0) * math.exp(-dt * 15)
         if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
           actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - (actor.weaponKick or 0) * 0.07))
@@ -1726,6 +2317,10 @@ local function updateRemoteActors(dt)
       end)
       if not ok then
         remoteRender.drawFailures = remoteRender.drawFailures + 1
+        if fpsVisual.modern then
+          fpsVisual.fallback('operator scene actor ' .. tostring(actor.id) .. ': ' .. tostring(result))
+          return
+        end
         if not remoteRender.failureLogged then
           remoteRender.failureLogged = true
           ac.warn('[ASRC FPS] native remote avatar scene update failed: ' .. tostring(result))
@@ -1819,8 +2414,9 @@ local function updateLocalThirdPersonAvatar(actor, prepareOnly)
       return
     end
     if actor.root == nil or actor.root == false then return end
-    local active = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
+    local active = fpsVisual.actorSceneActive(actor)
     actor.root:setVisible(active and thirdPersonEnabled)
+    if not active then return end
     local avatarPosition = actor.render:clone()
     -- Snapshot interpolation is useful for the camera, but on an upward stair step it
     -- briefly leaves the mannequin below the authoritative support plane. Keep its feet
@@ -1828,10 +2424,23 @@ local function updateLocalThirdPersonAvatar(actor, prepareOnly)
     if bit.band(actor.flags, 16) ~= 0 and actor.target.y > avatarPosition.y then
       avatarPosition.y = actor.target.y
     end
-    actor.root:setPosition(avatarPosition + ac.getSim().originShift)
+    local dead = bit.band(actor.flags, 2) ~= 0
+    local scenePosition, sceneLook, sceneUp, sceneVisible = fpsVisual.actorScenePose(actor)
+    if not sceneVisible then
+      actor.root:setVisible(false)
+      return
+    end
+    if not dead then scenePosition = avatarPosition end
+    actor.root:setPosition(scenePosition + ac.getSim().originShift)
     -- Local mouse yaw is immediate; replicated yaw is intentionally delayed by snapshots.
-    -- Using it here made the shoulder camera orbit a body still facing its old direction.
-    actor.root:setOrientation(vec3(math.sin(yaw), 0, math.cos(yaw)), vec3(0, 1, 0))
+    -- A corpse instead retains the yaw captured at death while its visual root settles.
+    if dead then
+      actor.root:setOrientation(sceneLook, sceneUp)
+    else
+      actor.root:setOrientation(vec3(math.sin(yaw), 0, math.cos(yaw)), vec3(0, 1, 0))
+    end
+    fpsVisual.setActorWeaponVisible(actor, not dead)
+    if not fpsVisual.updateActorAnimation(actor, viewmodelFrameDt) then return end
     if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
       actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - (actor.weaponKick or 0) * 0.07))
       actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
@@ -1839,6 +2448,7 @@ local function updateLocalThirdPersonAvatar(actor, prepareOnly)
     end
   end)
   if not ok then
+    if fpsVisual.modern then fpsVisual.fallback('local operator scene: ' .. tostring(err)) end
     if not localAvatarErrorLogged then
       localAvatarErrorLogged = true
       ac.warn('[ASRC FPS] local third-person avatar update failed: ' .. tostring(err))
@@ -1942,6 +2552,7 @@ function script.update(dt)
   local sprint = false
   local jumpStarted = false
   gameplayActive = fpsGameplayIsActive()
+  fpsVisual.updatePickups()
   -- The companion HUD can win exclusive UI ownership before this script sees
   -- a gameplay-mode callback. Reset pause ownership on the simulation state
   -- transition instead, which is observed by script.update() in either case.
@@ -2046,6 +2657,7 @@ function script.update(dt)
     -- throttle and camera bindings from competing with the FPS actor.
     physics.setCarNoInput(true)
     physics.setGentleStop(car.index, true)
+    setCarrierInputSuppressed(true)
     cameraRetryAccumulator = cameraRetryAccumulator + dt
     if not acquireFpsCamera() then
       if cameraRetryAccumulator >= 1 then
@@ -2078,27 +2690,37 @@ function script.update(dt)
         .. (thirdPersonEnabled and 'third-person over-shoulder' or 'first-person'))
     end
     thirdPersonToggleWasHeld = thirdPersonToggle
+    local thirdPersonZoomShift = ac.isKeyDown(ac.KeyIndex.LeftShift)
+      or ac.isKeyDown(ac.KeyIndex.RightShift)
+    if thirdPersonEnabled and not cursorUnlocked and thirdPersonZoomShift then
+      local wheel = ui.mouseWheel()
+      if math.abs(wheel) > 0.001 then
+        fpsVisual.thirdPersonDistanceTarget = math.clamp(
+          fpsVisual.thirdPersonDistanceTarget - wheel * fpsVisual.thirdPersonZoomStep,
+          fpsVisual.thirdPersonDistanceMin, fpsVisual.thirdPersonDistanceMax)
+      end
+    end
     local mouse = vec2()
     if not cursorUnlocked then
       mouse = ac.accessMouseDelta(true, true, true)
       ac.hideMouseCursor(true)
     end
-    local rightX = clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.RightThumbX))
+    local rightX = -clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.RightThumbX))
     local rightY = clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.RightThumbY))
     yaw = yaw - mouse.x * 0.0022 + rightX * dt * 2.8
     pitch = math.clamp(pitch - mouse.y * 0.0022 + rightY * dt * 2.2, -1.45, 1.45)
 
-    -- Read both explicit FPS controls and AC's mapped driving controls. The
-    -- latter remains available while game-rule locks suppress the carrier car,
-    -- and covers GameInput devices which are not exposed as raw XInput pad 0.
+    -- FPS axes deliberately do not reuse throttle/brake: the right trigger is
+    -- Fire here, and must never become forward movement or carrier acceleration.
+    -- Mapped steering remains a fallback for devices not exposed as raw pad 0.
     local mapped = physics.getCarInputControls()
     local keyboardX = -inputAxis(ac.KeyIndex.A, ac.KeyIndex.D, ac.KeyIndex.Left, ac.KeyIndex.Right)
     local keyboardY = inputAxis(ac.KeyIndex.S, ac.KeyIndex.W, ac.KeyIndex.Down, ac.KeyIndex.Up)
-    local rawX = clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftThumbX))
-    local rawY = -clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftThumbY))
+    local rawX = -clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftThumbX))
+    local rawY = clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftThumbY))
     move = vec2(
-      selectInput(keyboardX, rawX, clampStick(mapped.steer)),
-      selectInput(keyboardY, rawY, clampStick(mapped.gas - mapped.brake)))
+      selectInput(keyboardX, rawX, -clampStick(mapped.steer)),
+      selectInput(keyboardY, rawY, 0))
     if move:lengthSquared() > 1 then move:normalize() end
     local gamepadFire = ac.getGamepadAxisValue(0, ac.GamepadAxis.RightTrigger) > 0.35
     -- Raw VK input remains available while mouse-delta capture owns the pointer. CSP UI
@@ -2108,6 +2730,12 @@ function script.update(dt)
     local uiMouseFire = ac.getUI().isMouseLeftKeyDown or ui.mouseDown(ui.MouseButton.Left)
     local boundFire = hud.bindingDown('fire', rawMouseFire or uiMouseFire)
     local fire = not cursorUnlocked and (boundFire or gamepadFire)
+    local rawMouseAds = ac.isKeyDown(ac.KeyIndex.RightButton)
+    local uiMouseAds = ac.getUI().isMouseRightKeyDown or ui.mouseDown(ui.MouseButton.Right)
+    local gamepadAds = math.clamp(
+      ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftTrigger), 0, 1)
+    fpsVisual.adsInput = not cursorUnlocked and not thirdPersonEnabled
+      and math.max((rawMouseAds or uiMouseAds) and 1 or 0, gamepadAds) or 0
     if fire and not fireCaptureLogged then
       fireCaptureLogged = true
       ac.log(string.format(
@@ -2117,6 +2745,7 @@ function script.update(dt)
     end
     sprint = hud.bindingDown('sprint', ac.isKeyDown(ac.KeyIndex.LeftShift))
       or ac.isGamepadButtonPressed(0, ac.GamepadButton.LeftThumb)
+    if fpsVisual.adsInput > 0.05 then sprint = false end
     viewmodelMove:set(move)
     viewmodelSprint = sprint
     local jump = hud.bindingDown('jump', ac.isKeyDown(ac.KeyIndex.Space))
@@ -2158,6 +2787,7 @@ function script.update(dt)
     jumpWasHeld = jump
     local buttons = (fire and 1 or 0) + (sprint and 2 or 0) + (jump and 4 or 0)
       + (crouch and 8 or 0) + (reload and 16 or 0)
+      + (fpsVisual.adsInput > 0.5 and 32 or 0)
 
     sendAccumulator = sendAccumulator + dt
     if sendAccumulator >= 0.05 then
@@ -2190,6 +2820,7 @@ function script.update(dt)
     -- camera ownership is retained only for the initial arena preview. It does not
     -- capture input or suppress AC's pre-Drive menu.
     physics.setCarNoInput(false)
+    setCarrierInputSuppressed(false)
     if previewCamera.isEligible(localActor) then
       if acquireFpsCamera() then previewCamera.apply(localActor) end
     else
@@ -2205,6 +2836,8 @@ function script.update(dt)
     inputWasActive = false
     viewmodelMove:set(0, 0)
     viewmodelSprint = false
+    fpsVisual.adsInput = 0
+    fpsVisual.ads = 0
     thirdPersonToggleWasHeld = false
     jumpWasHeld = false
     predictedHorizontalVelocity = vec2()
@@ -2415,10 +3048,12 @@ function script.drawUI()
   end
   if not cursorUnlocked then
     drawFallbackRifle(size)
-    ui.drawLine(center - vec2(9, 0), center - vec2(3, 0), rgbm.colors.white, 2)
-    ui.drawLine(center + vec2(3, 0), center + vec2(9, 0), rgbm.colors.white, 2)
-    ui.drawLine(center - vec2(0, 9), center - vec2(0, 3), rgbm.colors.white, 2)
-    ui.drawLine(center + vec2(0, 3), center + vec2(0, 9), rgbm.colors.white, 2)
+    if fpsVisual.ads <= 0.05 then
+      ui.drawLine(center - vec2(9, 0), center - vec2(3, 0), rgbm.colors.white, 2)
+      ui.drawLine(center + vec2(3, 0), center + vec2(9, 0), rgbm.colors.white, 2)
+      ui.drawLine(center - vec2(0, 9), center - vec2(0, 3), rgbm.colors.white, 2)
+      ui.drawLine(center + vec2(0, 3), center + vec2(0, 9), rgbm.colors.white, 2)
+    end
   end
   if hitMarkerUntil > effectClock and not cursorUnlocked then
     local c = rgbm(1, 0.25, 0.15,
@@ -2460,7 +3095,10 @@ function script.drawUI()
   ui.setCursor(vec2(size.x - 300, size.y - 44))
   ui.textAligned('R  RELOAD', 1, vec2(270, 24))
   ui.setCursor(vec2(size.x - 300, size.y - 20))
-  ui.textAligned('F6  CAMERA: ' .. (thirdPersonEnabled and 'THIRD PERSON' or 'FIRST PERSON'),
+  local cameraHint = 'F6  CAMERA: ' .. (thirdPersonEnabled and string.format(
+    'THIRD PERSON  |  SHIFT + WHEEL %.1f m', fpsVisual.thirdPersonDistanceTarget)
+    or 'FIRST PERSON')
+  ui.textAligned(cameraHint,
     1, vec2(270, 24))
   ui.setCursor(vec2(center.x - 80, 20))
   ui.textAligned(string.format('%02d:%02d   TARGET %d', math.floor(remainingSeconds / 60),

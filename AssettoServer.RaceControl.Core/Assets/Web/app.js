@@ -13,6 +13,8 @@ const ui = {
   metricTargetLabel: document.getElementById("metric-target-label"),
   metricTarget: document.getElementById("metric-target"),
   metricActive: document.getElementById("metric-active"),
+  metricThemeCard: document.getElementById("metric-theme-card"),
+  metricTheme: document.getElementById("metric-theme"),
   mapTitle: document.getElementById("map-title"),
   mapCaption: document.getElementById("map-caption"),
   mapEmpty: document.getElementById("map-empty"),
@@ -153,6 +155,8 @@ function renderStatus() {
 
   const isFps = Boolean(live?.isFps || launcher.mode === "FPS");
   const sessionLabel = isFps ? "MATCH" : "RACE";
+  ui.metricThemeCard.hidden = !isFps;
+  ui.metricTheme.textContent = isFps ? (launcher.fpsTheme || "Blocks") : "—";
   ui.liveTitle.textContent = `LIVE ${sessionLabel}`;
   ui.sessionControlTitle.textContent = `${sessionLabel} CONTROL`;
   document.querySelector('[data-action="start-session"]').textContent = `START ${sessionLabel}`;
@@ -308,6 +312,7 @@ function renderSecondaryViews(launcher) {
   setText("preset-name", launcher.eventName);
   setText("preset-mode", launcher.mode);
   setText("preset-track", displayTrack(launcher.track, launcher.layout));
+  setText("preset-theme", launcher.mode === "FPS" ? launcher.fpsTheme : "—");
   setText("settings-address", status.webAddress);
 }
 

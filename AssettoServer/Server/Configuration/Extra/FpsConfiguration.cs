@@ -7,6 +7,7 @@ namespace AssettoServer.Server.Configuration.Extra;
 public sealed class FpsConfiguration
 {
     public bool Enabled { get; init; }
+    public FpsVisualTheme Theme { get; init; } = FpsVisualTheme.Blocks;
     public FpsMatchType MatchType { get; init; } = FpsMatchType.Deathmatch;
     public int TimeLimitMinutes { get; init; } = 10;
     public int KillLimit { get; init; } = 20;
@@ -14,6 +15,12 @@ public sealed class FpsConfiguration
     public float SpawnProtectionSeconds { get; init; } = 1;
     public FpsBotConfiguration Bots { get; init; } = new();
     public FpsArenaConfiguration Arena { get; init; } = new();
+}
+
+public enum FpsVisualTheme
+{
+    Blocks,
+    Modern,
 }
 
 public enum FpsMatchType

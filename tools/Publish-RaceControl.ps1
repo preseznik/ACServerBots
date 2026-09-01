@@ -3,12 +3,13 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string] $Configuration = 'Release',
     [ValidateSet('win-x64', 'win-arm64')]
-    [string] $Runtime = 'win-x64'
+    [string] $Runtime = 'win-x64',
+    [string] $OutputDirectory = 'out-race-control'
 )
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$appOutput = [IO.Path]::GetFullPath((Join-Path $repositoryRoot 'out-race-control'))
+$appOutput = [IO.Path]::GetFullPath((Join-Path $repositoryRoot $OutputDirectory))
 $publishRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot ".artifacts\race-control-publish-$PID"))
 $appStaging = Join-Path $publishRoot 'app'
 $serverStaging = Join-Path $publishRoot 'server'
@@ -73,6 +74,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\race-control.md') -Destination $documentationRoot -Force
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\race-bots.md') -Destination $documentationRoot -Force
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\fps-client-rendering.md') -Destination $documentationRoot -Force
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\fps-modern-theme.md') -Destination $documentationRoot -Force
 
     $runningFromOutput = @(Get-Process -Name 'AssettoServer Race Control' -ErrorAction SilentlyContinue | Where-Object {
         try { $_.Path -and [IO.Path]::GetFullPath($_.Path).StartsWith($appOutput, [StringComparison]::OrdinalIgnoreCase) }

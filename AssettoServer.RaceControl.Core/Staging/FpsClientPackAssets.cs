@@ -4,6 +4,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackAssets
 {
+    private const string ModernResourcePrefix =
+        "AssettoServer.RaceControl.Core.Assets.Fps.Modern.";
+    public const string ModernAssetDirectory = "content/objects3D/asrc_fps/modern/";
     public const string RifleViewmodelPath =
         "content/objects3D/asrc_fps/asrc_assault_rifle_viewmodel.kn5";
     public const string RifleWorldModelPath =
@@ -32,6 +35,32 @@ public static class FpsClientPackAssets
 
     public static byte[] GetHudScript() => ReadEmbeddedText(
         "AssettoServer.RaceControl.Core.Assets.Fps.Hud.asrc_fps_hud.lua");
+
+    public static IReadOnlyList<(string Path, byte[] Data)> GetModernAssets()
+    {
+        var assets = new List<(string Path, byte[] Data)>();
+        var assembly = typeof(FpsClientPackAssets).Assembly;
+        foreach (string resourceName in assembly.GetManifestResourceNames()
+                     .Where(name => name.StartsWith(ModernResourcePrefix,
+                         StringComparison.Ordinal))
+                     .OrderBy(name => name, StringComparer.Ordinal))
+        {
+            string fileName = resourceName[ModernResourcePrefix.Length..];
+            using Stream stream = assembly.GetManifestResourceStream(resourceName)
+                ?? throw new InvalidOperationException(
+                    $"Embedded Modern FPS client asset was not found: {resourceName}");
+            using var output = new MemoryStream();
+            stream.CopyTo(output);
+            byte[] data = output.ToArray();
+            ValidateModernAsset(fileName, data);
+            assets.Add(($"{ModernAssetDirectory}{fileName}", data));
+        }
+
+        if (assets.Count < 30)
+            throw new InvalidDataException("Embedded Modern FPS client asset set is incomplete");
+        ValidateModernAssetSet(assets);
+        return assets;
+    }
 
     public static string Sha256(byte[] data) => Convert.ToHexString(
         System.Security.Cryptography.SHA256.HashData(data)).ToLowerInvariant();
@@ -110,5 +139,63 @@ public static class FpsClientPackAssets
         if (data.Length < 32 || data.Any(value => value == 0))
             throw new InvalidDataException($"Embedded FPS client text asset is invalid: {resourceName}");
         return data;
+    }
+
+    private static void ValidateModernAsset(string fileName, byte[] data)
+    {
+        if (data.Length < 32)
+            throw new InvalidDataException($"Embedded Modern FPS asset is too small: {fileName}");
+        bool valid;
+        if (fileName.EndsWith(".kn5", StringComparison.OrdinalIgnoreCase))
+            valid = data.AsSpan(0, 6).SequenceEqual("sc6969"u8);
+        else if (fileName.EndsWith(".ksanim", StringComparison.OrdinalIgnoreCase))
+            valid = BitConverter.ToUInt32(data, 0) == 2;
+        else if (fileName.Equals("asrc-modern-assets.json", StringComparison.Ordinal))
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(data);
+            valid = document.RootElement.GetProperty("schemaVersion").GetInt32() == 1
+                    && document.RootElement.GetProperty("theme").GetString() == "Modern"
+                    && document.RootElement.GetProperty("validation").GetProperty("status")
+                        .GetString() == "passed";
+        }
+        else valid = false;
+        if (!valid)
+            throw new InvalidDataException($"Embedded Modern FPS asset is invalid: {fileName}");
+    }
+
+    private static void ValidateModernAssetSet(
+        IReadOnlyList<(string Path, byte[] Data)> assets)
+    {
+        var byName = assets.ToDictionary(asset => Path.GetFileName(asset.Path),
+            asset => asset.Data, StringComparer.Ordinal);
+        if (!byName.TryGetValue("asrc-modern-assets.json", out byte[]? manifestData))
+            throw new InvalidDataException("Embedded Modern FPS manifest is missing");
+        using var document = System.Text.Json.JsonDocument.Parse(manifestData);
+        System.Text.Json.JsonElement root = document.RootElement;
+        if (!root.GetProperty("redistributionRightsConfirmedByUser").GetBoolean()
+            || root.GetProperty("sources").GetProperty("m4a1Used").GetBoolean())
+            throw new InvalidDataException("Embedded Modern FPS provenance is invalid");
+        System.Text.Json.JsonElement files = root.GetProperty("files");
+        if (files.GetRawText().Length == 0 || files.EnumerateObject().Count() != byName.Count - 1)
+            throw new InvalidDataException("Embedded Modern FPS manifest file count is invalid");
+        foreach (System.Text.Json.JsonProperty file in files.EnumerateObject())
+        {
+            if (!byName.TryGetValue(file.Name, out byte[]? data)
+                || !Sha256(data).Equals(file.Value.GetString(), StringComparison.Ordinal))
+                throw new InvalidDataException($"Embedded Modern FPS hash mismatch: {file.Name}");
+        }
+        if (root.GetProperty("operator").GetProperty("triangles").GetInt32() > 40_000
+            || root.GetProperty("operator").GetProperty("materials").GetInt32() > 4
+            || root.GetProperty("viewmodel").GetProperty("triangles").GetInt32() > 30_000
+            || root.GetProperty("viewmodel").GetProperty("materials").GetInt32() > 3
+            || root.GetProperty("pickup").GetProperty("triangles").GetInt32() > 6_000
+            || root.GetProperty("pickup").GetProperty("materials").GetInt32() != 1
+            || root.GetProperty("validation").GetProperty("viewmodelSkinnedMeshes").GetInt32() < 2
+            || root.GetProperty("validation").GetProperty("viewmodelWeaponSkinnedMeshes").GetInt32() != 1
+            || root.GetProperty("validation").GetProperty("pickupRigidMeshes").GetInt32() != 1
+            || !root.GetProperty("validation").GetProperty("stancePosesValidated").GetBoolean()
+            || !root.GetProperty("validation").GetProperty("deathCollapseValidated").GetBoolean()
+            || !root.GetProperty("validation").GetProperty("uniqueNodeNames").GetBoolean())
+            throw new InvalidDataException("Embedded Modern FPS model integrity is invalid");
     }
 }

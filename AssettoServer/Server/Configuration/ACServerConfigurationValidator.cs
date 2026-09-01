@@ -185,6 +185,10 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
             .When(cfg => cfg.Extra.AiParams is
                 { Behavior: AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race, Race.AllowMidRaceBotTakeover: true })
             .WithMessage("Mid-race bot takeover requires at least one AI=auto entry-list slot");
+        RuleFor(cfg => cfg.Extra.Fps.Theme)
+            .IsInEnum()
+            .When(cfg => cfg.Extra.Fps.Enabled)
+            .WithMessage("FPS Theme must be Blocks or Modern");
         RuleFor(cfg => cfg.EntryList.Cars)
             .Must(cars => cars.Count(car => car.FpsRole != Kunos.FpsSlotRole.Spectator) is >= 2 and <= 32)
             .When(cfg => cfg.Extra.Fps.Enabled)

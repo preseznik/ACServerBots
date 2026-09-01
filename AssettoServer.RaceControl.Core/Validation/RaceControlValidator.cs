@@ -165,6 +165,8 @@ public sealed class RaceControlValidator
     private static void ValidateFps(List<ValidationMessage> messages, RaceControlPreset preset, AcContentCatalog? catalog)
     {
         var fps = preset.Fps;
+        ErrorIf(messages, !Enum.IsDefined(typeof(FpsVisualTheme), fps.Theme), "Fps.Theme",
+            "FPS visual theme must be Blocks or Modern.");
         ErrorIf(messages, fps.MatchType != FpsMatchType.Deathmatch, "Fps", "FPS V1 only supports Deathmatch.");
         ErrorIf(messages, fps.TimeLimitMinutes is < 1 or > 1440, "Fps", "Deathmatch duration must be 1..1440 minutes.");
         ErrorIf(messages, fps.KillLimit is < 1 or > 999, "Fps", "Deathmatch kill limit must be 1..999.");

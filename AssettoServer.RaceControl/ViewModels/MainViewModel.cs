@@ -149,6 +149,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             OnPropertyChanged(nameof(ServerStateText));
             OnPropertyChanged(nameof(IsServerRunning));
+            OnPropertyChanged(nameof(ActiveFpsVisualTheme));
             RaiseCommandStates();
         });
         _liveMonitorTask = MonitorLiveRaceAsync(_liveMonitorCancellation.Token);
@@ -195,6 +196,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             new(SlotMode.Spectator, "Spectator"),
         ];
     public IReadOnlyList<PhysicsFidelity> PhysicsFidelities { get; } = Enum.GetValues<PhysicsFidelity>();
+    public IReadOnlyList<FpsVisualTheme> FpsVisualThemes { get; } = Enum.GetValues<FpsVisualTheme>();
     public IReadOnlyList<PlayerJoinSlotSelection> PlayerJoinSlotSelections { get; } =
         Enum.GetValues<PlayerJoinSlotSelection>();
     public IReadOnlyList<TimeOfDayOption> TimeOfDayOptions { get; } = Enumerable.Range(0, 24)
@@ -265,6 +267,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string LiveFocusLabel => IsFpsMode ? "Focus player" : "Focus car";
     public string LiveFullViewLabel => IsFpsMode ? "Full arena view" : "Full track view";
     public string LiveSelectedEntityTitle => IsFpsMode ? "Selected player" : "Selected car";
+    public string ActiveFpsVisualTheme => !IsFpsMode
+        ? string.Empty
+        : (_processController.State == ServerProcessState.Running && _lastInstance is not null
+            ? _lastInstance.FpsVisualTheme
+            : Preset.Fps.Theme).ToString();
     public string LiveBotLegend => IsFpsMode ? "Bot opponent" : "Race bot";
     public string LiveHumanLegend => IsFpsMode ? "Human player" : "Human driver";
     public string LiveSelectedLegend => IsFpsMode ? "Selected player" : "Selected car";
@@ -873,6 +880,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SessionLabel: IsFpsMode ? "MATCH" : "RACE",
         Track: Preset.TrackId,
         Layout: Preset.TrackLayoutId,
+        FpsTheme: ActiveFpsVisualTheme,
         ServerState: ServerStateText,
         Status: StatusText,
         IsBusy: IsBusy,
@@ -1310,6 +1318,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(LiveFocusLabel));
         OnPropertyChanged(nameof(LiveFullViewLabel));
         OnPropertyChanged(nameof(LiveSelectedEntityTitle));
+        OnPropertyChanged(nameof(ActiveFpsVisualTheme));
         OnPropertyChanged(nameof(LiveBotLegend));
         OnPropertyChanged(nameof(LiveHumanLegend));
         OnPropertyChanged(nameof(LiveSelectedLegend));
@@ -1870,6 +1879,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the working server…";
             _lastInstance = await StageAsync();
+            OnPropertyChanged(nameof(LastInstanceSummary));
+            OnPropertyChanged(nameof(ActiveFpsVisualTheme));
             InvalidateLiveTrackCache();
             SelectedPageIndex = 5;
         }
@@ -1893,6 +1904,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the new race…";
             _lastInstance = await StageAsync();
+            OnPropertyChanged(nameof(LastInstanceSummary));
+            OnPropertyChanged(nameof(ActiveFpsVisualTheme));
             InvalidateLiveTrackCache();
             SimulationResults = null;
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
@@ -1943,7 +1956,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RefreshRecentInstances();
         SelectedRecentInstance = RecentInstances.FirstOrDefault(summary =>
             summary.RootPath.Equals(instance.RootPath, StringComparison.OrdinalIgnoreCase));
-        OnPropertyChanged(nameof(LastInstanceSummary));
         RaiseCommandStates();
         return instance;
     }
@@ -2013,6 +2025,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (recoveredServers > 0)
                 StatusText = $"Stopped {recoveredServers} previous server process(es); staging the simulation…";
             _lastInstance = await StageAsync();
+            OnPropertyChanged(nameof(LastInstanceSummary));
+            OnPropertyChanged(nameof(ActiveFpsVisualTheme));
             InvalidateLiveTrackCache();
             SimulationResults = null;
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);

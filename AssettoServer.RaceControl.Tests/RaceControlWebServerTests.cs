@@ -110,7 +110,7 @@ public sealed class RaceControlWebServerTests
         public RaceControlWebEnvironmentRequest? LastEnvironment { get; private set; }
 
         public RaceControlWebControlState GetState() => new(
-            "Test Deathmatch", "Test Server", "FPS", "MATCH", "fire_pit", "",
+            "Test Deathmatch", "Test Server", "FPS", "MATCH", "fire_pit", "", "Blocks",
             "RUNNING", "Ready", false, false, true, true, true, true, true);
 
         public Task<RaceControlWebActionResult> ExecuteAsync(RaceControlWebAction action,

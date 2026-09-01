@@ -45,11 +45,14 @@ in a live Fire Pit match: visible bot models now follow and face their authorita
 - Native models keep normal depth and motion history. Do not replace them with repeated transparent
   render callbacks; that path caused ghosting and jitter in earlier builds.
 - Floating-origin compensation is applied exactly once when setting persistent world-node positions.
+- The Modern operator is an animated child of this same proven root. `setAnimation()` and
+  `blendAnimation()` may change the child pose only; they never own world position or yaw. See the
+  [Modern visual theme handoff](fps-modern-theme.md) for the exporter, fallback, and preview520 gate.
 
 ## Hybrid HUD ownership
 
-Client pack version 7 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
-script publishes presentation state through the local shared structure `asrc.fps.hud.v2`; no gameplay
+Client pack version 15 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+script publishes presentation state through the local shared structure `asrc.fps.hud.v3`; no gameplay
 packet or server protocol changes are involved.
 
 While both sides exchange a current version-1 heartbeat, the app draws the modular FPS HUD through
@@ -59,6 +62,10 @@ the server-delivered online script owns a match-specific menu and standings pane
 can explicitly yield to the native AC/CSP menu. If the app is absent, disabled, incompatible, or silent
 for more than 0.5 seconds, the online script resumes its complete exclusive gameplay HUD. A bridge
 mismatch is logged once and must never produce a blank frame.
+
+Bridge v3 adds an ADS presentation flag. The companion HUD and the online fallback both suppress
+the ordinary four-line crosshair while ADS is active, but retain authoritative hitmarkers and award
+popups. Older HUD apps fail the bridge-version check and automatically yield to the complete fallback.
 
 The first combat radar is player-up and limited to 40 m. A living, non-protected opponent is revealed
 only by a clear client track-geometry raycast or for two seconds after its authoritative shot event.

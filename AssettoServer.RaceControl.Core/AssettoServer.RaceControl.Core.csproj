@@ -14,6 +14,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Assets\Fps\*.kn5" />
     <EmbeddedResource Include="Assets\Fps\*.png" />
+    <EmbeddedResource Include="Assets\Fps\Modern\*.*" />
     <EmbeddedResource Include="Assets\Fps\Hud\*.ini" />
     <EmbeddedResource Include="Assets\Fps\Hud\*.lua" />
     <EmbeddedResource Include="Assets\Web\*" />

@@ -150,6 +150,7 @@ public enum PhysicsFidelity
 
 public sealed class FpsOptions
 {
+    public FpsVisualTheme Theme { get; set; } = FpsVisualTheme.Blocks;
     public FpsMatchType MatchType { get; set; } = FpsMatchType.Deathmatch;
     public int TimeLimitMinutes { get; set; } = 10;
     public int KillLimit { get; set; } = 20;
@@ -158,6 +159,12 @@ public sealed class FpsOptions
     public string CarrierCarId { get; set; } = "bmw_m3_e30";
     public FpsBotOptions Bots { get; set; } = new();
     public FpsArenaDefinition? Arena { get; set; }
+}
+
+public enum FpsVisualTheme
+{
+    Blocks,
+    Modern,
 }
 
 public enum FpsMatchType

@@ -17,6 +17,7 @@ public sealed record RaceControlWebControlState(
     string SessionLabel,
     string Track,
     string Layout,
+    string FpsTheme,
     string ServerState,
     string Status,
     bool IsBusy,

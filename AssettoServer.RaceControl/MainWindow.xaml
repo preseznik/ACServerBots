@@ -366,6 +366,29 @@
                             </StackPanel>
                         </Border>
                     </Grid>
+                    <Grid Grid.Row="1" Margin="0,0,0,14">
+                        <Grid.Style>
+                            <Style TargetType="Grid">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Style>
+                        <Border Style="{StaticResource Card}" Margin="0" Width="420" HorizontalAlignment="Left">
+                            <StackPanel>
+                                <TextBlock Text="Visual theme" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="Theme" Style="{StaticResource FieldLabel}" />
+                                <ComboBox ItemsSource="{Binding FpsVisualThemes}"
+                                          SelectedItem="{Binding Preset.Fps.Theme}"
+                                          ToolTip="Blocks preserves the current procedural models. Modern loads the animated operator and carbine after the next server stage or restart." />
+                                <TextBlock Text="Theme changes are staged with the server and never switch during a running match. Modern falls back to Blocks if any client asset fails."
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
                     <DataGrid Grid.Row="2" ItemsSource="{Binding Grid}" SelectedItem="{Binding SelectedGridSlot}"
                               AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single" AlternationCount="2">
                         <DataGrid.Columns>
@@ -967,6 +990,19 @@
                                 </StackPanel>
                                 <TextBlock Text="{Binding LiveControlStatus}" Foreground="{DynamicResource MutedTextBrush}"
                                            TextWrapping="Wrap" Margin="0,10,0,0" />
+                                <TextBlock Text="{Binding ActiveFpsVisualTheme, StringFormat=Visual theme: {0}}"
+                                           Foreground="{DynamicResource MutedTextBrush}" Margin="0,4,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </StackPanel>
 
                             <StackPanel Grid.Column="2">

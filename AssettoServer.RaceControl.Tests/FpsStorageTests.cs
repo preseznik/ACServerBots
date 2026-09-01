@@ -31,6 +31,27 @@ public sealed class FpsStorageTests
     }
 
     [Test]
+    public void PresetStore_OlderFpsPresetDefaultsToBlocksTheme()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation();
+        var store = new PresetStore(new RaceControlPaths(factory.DataRoot));
+        var preset = factory.CreatePreset();
+        preset.Mode = EventMode.Fps;
+        preset.Name = "Legacy FPS";
+        string path = store.Save(preset);
+        string json = File.ReadAllText(path).Replace(
+            "    \"Theme\": \"Blocks\",\r\n", string.Empty, StringComparison.Ordinal)
+            .Replace("    \"Theme\": \"Blocks\",\n", string.Empty,
+                StringComparison.Ordinal);
+        File.WriteAllText(path, json);
+
+        RaceControlPreset loaded = store.Load(path);
+
+        Assert.That(loaded.Fps.Theme, Is.EqualTo(FpsVisualTheme.Blocks));
+    }
+
+    [Test]
     public void ArenaStore_RoundTripsAppDataSidecar()
     {
         using var factory = new TestContentFactory();

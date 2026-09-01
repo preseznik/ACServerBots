@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 7;
-    public const int BridgeProtocol = 2;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v7.zip";
+    public const int ClientPackVersion = 15;
+    public const int BridgeProtocol = 3;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v15.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -20,6 +20,8 @@ public static class FpsClientPackBuilder
         byte[] hudManifest = FpsClientPackAssets.GetHudManifest();
         byte[] hudScript = FpsClientPackAssets.GetHudScript();
         byte[] rifleAudio = FpsClientPackAssets.CreateRifleWave();
+        IReadOnlyList<(string Path, byte[] Data)> modernAssets =
+            FpsClientPackAssets.GetModernAssets();
 
         using var archive = new ZipArchive(destination, ZipArchiveMode.Create, leaveOpen: true);
         var manifestEntry = archive.CreateEntry("asrc-fps-client.json", CompressionLevel.Optimal);
@@ -33,6 +35,17 @@ public static class FpsClientPackBuilder
                 minimumCspVersion = MinimumCspVersion,
                 carrierCar = carrierCarId,
                 nativeHooks = false,
+                visualThemes = new
+                {
+                    defaultTheme = "Blocks",
+                    available = new[] { "Blocks", "Modern" },
+                    modernAssetDirectory = FpsClientPackAssets.ModernAssetDirectory,
+                    modernAssets = modernAssets.Select(asset => new
+                    {
+                        path = asset.Path,
+                        sha256 = FpsClientPackAssets.Sha256(asset.Data),
+                    }),
+                },
                 weapon = new
                 {
                     id = "asrc_assault_rifle_v1",
@@ -53,7 +66,7 @@ public static class FpsClientPackBuilder
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v2",
+                    bridge = "asrc.fps.hud.v3",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),
@@ -79,9 +92,10 @@ public static class FpsClientPackBuilder
                 the Assetto Corsa installation root. It installs the project-owned assault-rifle
                 models and operator UV skin under content/objects3D/asrc_fps, plus rifle sound
                 under extension/audio/asrc_fps. It also installs the presentation-only ASRC FPS
-                HUD under apps/lua/asrc_fps_hud. Existing files are not replaced outside those
-                project-owned folders. FPS avatars use the packaged procedural operator, not
-                Kunos assets.
+                HUD under apps/lua/asrc_fps_hud. Client pack v9 also contains the animated Modern
+                operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
+                are not replaced outside those project-owned folders. Blocks remains the default;
+                the server chooses one theme for the next staged match.
 
                 The HUD app is background-loaded and takes over the exclusive HUD layer only
                 while its versioned local bridge is receiving a live FPS session heartbeat.
@@ -109,6 +123,8 @@ public static class FpsClientPackBuilder
             cancellationToken);
         await WriteEntryAsync(archive, "extension/audio/asrc_fps/rifle.wav", rifleAudio,
             cancellationToken);
+        foreach ((string path, byte[] data) in modernAssets)
+            await WriteEntryAsync(archive, path, data, cancellationToken);
     }
 
     private static async Task WriteEntryAsync(ZipArchive archive, string path, byte[] data,

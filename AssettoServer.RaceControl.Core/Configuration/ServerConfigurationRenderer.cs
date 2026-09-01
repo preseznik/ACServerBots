@@ -256,6 +256,7 @@ public sealed class ServerConfigurationRenderer
             var arena = fps.Arena ?? throw new InvalidOperationException("Prepare the selected layout as an FPS arena before staging it.");
             Line("Fps:");
             Line("  Enabled: true");
+            Line($"  Theme: {fps.Theme}");
             Line("  MatchType: Deathmatch");
             Line($"  TimeLimitMinutes: {fps.TimeLimitMinutes}");
             Line($"  KillLimit: {fps.KillLimit}");

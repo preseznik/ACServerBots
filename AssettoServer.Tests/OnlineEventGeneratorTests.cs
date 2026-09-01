@@ -35,7 +35,8 @@ public class OnlineEventGeneratorTests
             typeof(FpsInputPacket), typeof(FpsReadyPacket), typeof(FpsEnvironmentRequestPacket),
             typeof(FpsSnapshotPacket),
             typeof(FpsRosterPacket), typeof(FpsMatchPacket), typeof(FpsKillPacket), typeof(FpsHitPacket),
-            typeof(FpsAwardPacket), typeof(FpsShotPacket), typeof(FpsClientDiagnosticPacket),
+            typeof(FpsAwardPacket), typeof(FpsPickupPacket), typeof(FpsShotPacket),
+            typeof(FpsClientDiagnosticPacket),
         ];
         var definitions = packets.Select(OnlineEventGenerator.ParseClientMessage).ToArray();
         var snapshotDefinition = definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot");
@@ -53,6 +54,12 @@ public class OnlineEventGeneratorTests
                 Is.False);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsAward").Structure,
                 Does.Contain("uint32_t totalScore"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsPickup").Udp,
+                Is.False);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsPickup").Structure,
+                Does.Contain("uint32_t pickupID"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsPickup").Structure,
+                Does.Contain("vec3 position"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Udp,
                 Is.False);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Structure,
@@ -65,6 +72,8 @@ public class OnlineEventGeneratorTests
                 Does.Contain("vec3 remoteRender"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Contain($"uint8_t actorIDs[{FpsSnapshotPacket.Capacity}]"));
+            Assert.That(snapshotDefinition.Structure,
+                Does.Contain("uint32_t actionStates"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Contain($"uint32_t spawnCounts[{FpsSnapshotPacket.Capacity}]"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
@@ -94,6 +103,7 @@ public class OnlineEventGeneratorTests
             Assert.That(FpsWorld.UsesUdpTransport<FpsHitPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsKillPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsAwardPacket>(), Is.False);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsPickupPacket>(), Is.False);
         });
     }
 }

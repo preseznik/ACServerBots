@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using AssettoServer.Network.ClientMessages;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Server.Configuration.Kunos;
 using AssettoServer.Server.Weather;
 using AssettoServer.Shared.Weather;
@@ -75,7 +76,22 @@ public sealed class FpsWorld : IHostedService
         using var script = Assembly.GetExecutingAssembly()
             .GetManifestResourceStream("AssettoServer.Server.Fps.fps.lua")
             ?? throw new InvalidOperationException("Embedded FPS client script is missing");
-        scriptProvider.AddScript(script, "fps.lua");
+        using var reader = new StreamReader(script);
+        scriptProvider.AddScript(ConfigureClientScript(reader.ReadToEnd(),
+            _configuration.Extra.Fps.Theme), "fps.lua");
+    }
+
+    internal const string VisualThemeMarker = "__ASRC_FPS_THEME__";
+
+    internal static string ConfigureClientScript(string script, FpsVisualTheme theme)
+    {
+        if (!Enum.IsDefined(theme))
+            throw new ConfigurationException($"Unsupported FPS visual theme: {theme}");
+        int marker = script.IndexOf(VisualThemeMarker, StringComparison.Ordinal);
+        if (marker < 0 || script.IndexOf(VisualThemeMarker, marker + 1,
+                            StringComparison.Ordinal) >= 0)
+            throw new InvalidDataException("FPS client visual-theme marker is missing or duplicated");
+        return script.Replace(VisualThemeMarker, theme.ToString(), StringComparison.Ordinal);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -111,9 +127,10 @@ public sealed class FpsWorld : IHostedService
         _server.Update += OnUpdate;
         _entryCarManager.ClientConnected += OnClientConnected;
         _entryCarManager.ClientDisconnected += OnClientDisconnected;
-        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills, {Triangles} collision triangles, {Nodes} navigation nodes in {Components} components",
+        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills, theme {Theme}, {Triangles} collision triangles, {Nodes} navigation nodes in {Components} components",
             _simulation.Actors.Count, _configuration.Extra.Fps.TimeLimitMinutes,
-            _configuration.Extra.Fps.KillLimit, surface.TriangleCount,
+            _configuration.Extra.Fps.KillLimit, _configuration.Extra.Fps.Theme,
+            surface.TriangleCount,
             navigation.Nodes.Count, navigation.ComponentCount);
         foreach (var actor in _simulation.Actors.Where(actor => actor.Active).OrderBy(actor => actor.Id))
         {
@@ -325,6 +342,16 @@ public sealed class FpsWorld : IHostedService
                     TotalScore = actor.Score,
                 });
             }
+            foreach (var pickup in _simulation.Pickups.OrderBy(pickup => pickup.Id))
+            {
+                client.SendPacket(new FpsPickupPacket
+                {
+                    PickupId = pickup.Id,
+                    State = FpsPickupState.Spawned,
+                    WeaponType = pickup.WeaponType,
+                    Position = pickup.Position,
+                });
+            }
         }
     }
 
@@ -451,6 +478,26 @@ public sealed class FpsWorld : IHostedService
                     Points = award.Points,
                     TotalScore = award.TotalScore,
                     Flags = (byte)award.Flags,
+                });
+            }
+            foreach (var pickup in _simulation.PickupEvents)
+            {
+                if (pickup.State == FpsPickupState.Spawned)
+                    Log.Debug("FPS weapon pickup spawned: pickup={PickupId}, weapon={WeaponType}, position={Position}",
+                        pickup.PickupId, pickup.WeaponType, pickup.Position);
+                else if (pickup.CollectorId != byte.MaxValue)
+                    Log.Information("FPS weapon pickup collected: pickup={PickupId}, weapon={WeaponType}, actor={ActorId}",
+                        pickup.PickupId, pickup.WeaponType, pickup.CollectorId);
+                else
+                    Log.Debug("FPS weapon pickup removed: pickup={PickupId}, weapon={WeaponType}",
+                        pickup.PickupId, pickup.WeaponType);
+                Broadcast(new FpsPickupPacket
+                {
+                    PickupId = pickup.PickupId,
+                    State = pickup.State,
+                    WeaponType = pickup.WeaponType,
+                    CollectorId = pickup.CollectorId,
+                    Position = pickup.Position,
                 });
             }
 
@@ -580,6 +627,12 @@ public sealed class FpsWorld : IHostedService
                     | (actor.HumanControlled ? 4 : 0) | (actor.SpawnProtectionRemaining > 0 ? 8 : 0)
                     | (actor.IsGrounded ? 16 : 0) | (actor.IsCrouching ? 32 : 0)
                     | (actor.GeometryBlocked ? 64 : 0) | (actor.IsProne ? 128 : 0));
+                if (actor.IsMantling)
+                {
+                    packet.ActionStates |= 1u << index;
+                    if (actor.MantleArcHeight > 0.5f)
+                        packet.ActionStates |= 1u << (FpsSnapshotPacket.Capacity + index);
+                }
                 packet.SpawnCounts[index] = actor.SpawnCount;
                 packet.Positions[index] = actor.Position;
                 packet.GroundYs[index] = actor.GroundY;

@@ -5,12 +5,12 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 2
+local bridgeProtocol = 3
 local actorCapacity = 32
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v2'),
+  ac.StructItem.key('asrc.fps.hud.v3'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -35,6 +35,7 @@ local bridge = ac.connect({
   persistentCursor = ac.StructItem.byte(),
   appPersistentCursor = ac.StructItem.byte(),
   hitMarkerRemaining = ac.StructItem.float(),
+  adsActive = ac.StructItem.byte(),
   linkState = ac.StructItem.byte(),
   clientError = ac.StructItem.string(128),
   actorCount = ac.StructItem.byte(),
@@ -216,10 +217,12 @@ local function drawAim(size, scale)
   if bridge.cursorUnlocked ~= 0 then return end
   local center = size * 0.5
   local gap, extent = 3 * scale, 9 * scale
-  ui.drawLine(center - vec2(extent, 0), center - vec2(gap, 0), rgbm.colors.white, 2 * scale)
-  ui.drawLine(center + vec2(gap, 0), center + vec2(extent, 0), rgbm.colors.white, 2 * scale)
-  ui.drawLine(center - vec2(0, extent), center - vec2(0, gap), rgbm.colors.white, 2 * scale)
-  ui.drawLine(center + vec2(0, gap), center + vec2(0, extent), rgbm.colors.white, 2 * scale)
+  if bridge.adsActive == 0 then
+    ui.drawLine(center - vec2(extent, 0), center - vec2(gap, 0), rgbm.colors.white, 2 * scale)
+    ui.drawLine(center + vec2(gap, 0), center + vec2(extent, 0), rgbm.colors.white, 2 * scale)
+    ui.drawLine(center - vec2(0, extent), center - vec2(0, gap), rgbm.colors.white, 2 * scale)
+    ui.drawLine(center + vec2(0, gap), center + vec2(0, extent), rgbm.colors.white, 2 * scale)
+  end
   if bridge.hitMarkerRemaining > 0 then
     local color = rgbm(1, 0.25, 0.15, math.min(1, bridge.hitMarkerRemaining * 7))
     ui.drawLine(center - vec2(8, 8) * scale, center - vec2(3, 3) * scale, color, 3 * scale)

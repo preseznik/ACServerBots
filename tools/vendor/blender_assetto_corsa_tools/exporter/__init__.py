@@ -77,7 +77,7 @@ class CopyClipboardButtonOperator(bpy.types.Operator):
 
 class KN5FileWriter(KN5Writer):
     def __init__(self, file, context, settings, warnings, root_node_name="BlenderFile",
-                 even_split=False, forward_axis='-Y'):
+                 even_split=False, forward_axis='-Y', separate_mesh_node_names=False):
         super().__init__(file)
 
         self.context = context
@@ -86,6 +86,7 @@ class KN5FileWriter(KN5Writer):
         self.root_node_name = root_node_name
         self.even_split = even_split
         self.forward_axis = forward_axis
+        self.separate_mesh_node_names = separate_mesh_node_names
 
         self.file_version = 5
 
@@ -104,7 +105,8 @@ class KN5FileWriter(KN5Writer):
         material_writer.write()
         node_writer = NodeWriter(self.file, self.context, self.settings, self.warnings, material_writer,
                                   root_node_name=self.root_node_name, even_split=self.even_split,
-                                  forward_axis=self.forward_axis)
+                                  forward_axis=self.forward_axis,
+                                  separate_mesh_node_names=self.separate_mesh_node_names)
         node_writer.write()
 
 

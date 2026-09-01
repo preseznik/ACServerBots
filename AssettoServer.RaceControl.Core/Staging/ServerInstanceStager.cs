@@ -18,7 +18,8 @@ public sealed record StagedInstance(
     string ShutdownFilePath,
     int SlotCount,
     int BotSlotCount,
-    bool PhysicsCacheHit);
+    bool PhysicsCacheHit,
+    FpsVisualTheme FpsVisualTheme);
 
 public sealed class ServerInstanceStager
 {
@@ -139,6 +140,7 @@ public sealed class ServerInstanceStager
         {
             schemaVersion = 2,
             mode = preset.Mode.ToString(),
+            fpsVisualTheme = preset.Mode == EventMode.Fps ? preset.Fps.Theme.ToString() : null,
             presetId = preset.Id,
             presetName = preset.Name,
             createdAt = DateTimeOffset.Now,
@@ -165,7 +167,8 @@ public sealed class ServerInstanceStager
             shutdownPath,
             rendered.EffectiveGrid.Count,
             botSlots,
-            cacheHit);
+            cacheHit,
+            preset.Fps.Theme);
     }
 
     private static async Task WriteRenderedConfigurationAsync(string presetRoot,

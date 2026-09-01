@@ -151,6 +151,7 @@ public sealed class RaceControlValidatorTests
         preset.Mode = EventMode.Fps;
         preset.Fps.CarrierCarId = "car_one";
         preset.Fps.Bots.Health = 250;
+        preset.Fps.Theme = (FpsVisualTheme)99;
         preset.Fps.Arena = new FpsArenaDefinition
         {
             TrackId = "another_track",
@@ -176,6 +177,8 @@ public sealed class RaceControlValidatorTests
             Assert.That(result.IsValid, Is.False);
             Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
                 message.Field == "Fps" && message.Message.Contains("health", StringComparison.OrdinalIgnoreCase)));
+            Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
+                message.Field == "Fps.Theme" && message.Message.Contains("Blocks", StringComparison.Ordinal)));
             Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
                 message.Field == "Fps.Arena" && message.Message.Contains("does not match", StringComparison.OrdinalIgnoreCase)));
             Assert.That(result.Messages, Has.None.Matches<ValidationMessage>(message =>

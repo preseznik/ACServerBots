@@ -58,7 +58,8 @@ FORWARD_AXIS_ROTATIONS = {
 
 class NodeWriter(KN5Writer):
     def __init__(self, file, context, settings, warnings, material_writer,
-                 root_node_name="BlenderFile", even_split=False, forward_axis='-Y'):
+                 root_node_name="BlenderFile", even_split=False, forward_axis='-Y',
+                 separate_mesh_node_names=False):
         super().__init__(file)
 
         self.context = context
@@ -68,6 +69,7 @@ class NodeWriter(KN5Writer):
         self.root_node_name = root_node_name
         self.even_split = even_split
         self.forward_axis = forward_axis
+        self.separate_mesh_node_names = separate_mesh_node_names
         self.scene = self.context.scene
         self.node_settings = []
         self.ac_objects = []
@@ -106,9 +108,15 @@ class NodeWriter(KN5Writer):
         if not obj.name.startswith("__"):
             node_name = self._get_node_name(obj)
             if obj.type == "MESH":
-                if obj.children:
-                    raise Exception(f"A mesh cannot contain children ('{obj.name}')")
                 self._write_mesh_node(obj, node_name)
+            elif obj.type == "ARMATURE":
+                root_bones = [bone for bone in obj.data.bones if bone.parent is None]
+                self._write_base_node(obj, node_name, len(root_bones))
+                for child in obj.children:
+                    self._write_object(child)
+                for bone in root_bones:
+                    self._write_bone_node(bone)
+                return
             else:
                 self._write_base_node(obj, node_name)
             for child in obj.children:
@@ -126,7 +134,7 @@ class NodeWriter(KN5Writer):
             return Matrix()
         return Matrix.Rotation(angle, 4, 'Y')
 
-    def _write_base_node(self, obj, node_name):
+    def _write_base_node(self, obj, node_name, extra_child_count=0):
         node_data = {}
         matrix = None
         num_children = 0
@@ -151,10 +159,24 @@ class NodeWriter(KN5Writer):
                     num_children += 1
 
         node_data["name"] = node_name
-        node_data["childCount"] = num_children
+        node_data["childCount"] = num_children + extra_child_count
         node_data["active"] = True
         node_data["transform"] = matrix
         self._write_base_node_data(node_data)
+
+    def _write_bone_node(self, bone):
+        if bone.parent:
+            matrix = bone.parent.matrix_local.inverted() @ bone.matrix_local
+        else:
+            matrix = bone.matrix_local
+        self._write_base_node_data({
+            "name": bone.name,
+            "childCount": len(bone.children),
+            "active": True,
+            "transform": convert_matrix(matrix),
+        })
+        for child in bone.children:
+            self._write_bone_node(child)
 
     def _write_base_node_data(self, node_data):
         self._write_node_class("Node")
@@ -165,18 +187,26 @@ class NodeWriter(KN5Writer):
 
     def _write_mesh_node(self, obj, node_name=None):
         effective_name = node_name or obj.name
-        divided_meshes = self._split_object_by_materials(obj)
+        armature = self._find_armature(obj)
+        divided_meshes = self._split_object_by_materials(obj, armature)
         if self.even_split:
             divided_meshes = self._split_meshes_evenly(divided_meshes)
         else:
             divided_meshes = self._split_meshes_for_vertex_limit(divided_meshes)
-        if obj.parent or len(divided_meshes) > 1:
+        if obj.parent or len(divided_meshes) > 1 or obj.children:
             node_data = {}
             node_data["name"] = effective_name
-            node_data["childCount"] = len(divided_meshes)
+            node_data["childCount"] = len(divided_meshes) + len([
+                child for child in obj.children if not child.name.startswith("__")
+            ])
             node_data["active"] = True
             transform_matrix = Matrix()
-            if obj.parent:
+            if armature is not None:
+                # Skinned vertices are exported in world space. Cancel the armature
+                # object's transform at the mesh wrapper so it is not applied twice;
+                # the bone hierarchy and inverse-bind matrices still retain it.
+                transform_matrix = convert_matrix(armature.matrix_world).inverted()
+            elif obj.parent:
                 bbox_corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
                 bbox_center = sum(bbox_corners, Vector()) / 8
                 parent_pos = obj.parent.matrix_world.translation
@@ -189,14 +219,30 @@ class NodeWriter(KN5Writer):
         node_properties = NodeProperties(obj)
         for node_setting in self.node_settings:
             node_setting.apply_settings_to_node(node_properties)
-        for mesh in divided_meshes:
-            self._write_mesh(obj, mesh, node_properties, effective_name)
+        has_wrapper = bool(obj.parent) or len(divided_meshes) > 1 or bool(obj.children)
+        for index, mesh in enumerate(divided_meshes):
+            if len(divided_meshes) > 1:
+                mesh_name = f"{effective_name}__MESH_{index}"
+            elif has_wrapper and self.separate_mesh_node_names:
+                mesh_name = f"{effective_name}__MESH"
+            else:
+                mesh_name = effective_name
+            self._write_mesh(obj, mesh, node_properties, mesh_name)
+
+    @staticmethod
+    def _find_armature(obj):
+        armature = obj.find_armature()
+        if armature is None or not obj.vertex_groups:
+            return None
+        bone_names = {bone.name for bone in armature.data.bones if bone.use_deform}
+        return armature if any(group.name in bone_names for group in obj.vertex_groups) else None
 
     def _write_node_class(self, node_class):
         self.write_uint(NODE_CLASS[node_class])
 
     def _write_mesh(self, obj, mesh, node_properties, name=None):
-        self._write_node_class("Mesh")
+        skinned = mesh.skin_binding is not None
+        self._write_node_class("SkinnedMesh" if skinned else "Mesh")
         self.write_string(name or obj.name)
         self.write_uint(0) # Child count, none allowed
         is_active = True
@@ -204,6 +250,11 @@ class NodeWriter(KN5Writer):
         self.write_bool(node_properties.castShadows)
         self.write_bool(node_properties.visible)
         self.write_bool(node_properties.transparent)
+        if skinned:
+            self.write_uint(len(mesh.skin_binding.bones))
+            for bone_name, inverse_bind in mesh.skin_binding.bones:
+                self.write_string(bone_name)
+                self.write_matrix(inverse_bind)
         if len(mesh.vertices) > 2**16:
             raise Exception(f"Only {2**16} vertices per mesh allowed. ('{obj.name}')")
         self.write_uint(len(mesh.vertices))
@@ -212,6 +263,9 @@ class NodeWriter(KN5Writer):
             self.write_vector3(vertex.normal)
             self.write_vector2(vertex.uv)
             self.write_vector3(vertex.tangent)
+            if skinned:
+                self.write_vector4(vertex.weights)
+                self.write_vector4(vertex.bone_indices)
         self.write_uint(len(mesh.indices))
         for i in mesh.indices:
             self.write_ushort(i)
@@ -223,8 +277,9 @@ class NodeWriter(KN5Writer):
         self.write_uint(node_properties.layer) #Layer
         self.write_float(node_properties.lodIn) #LOD In
         self.write_float(node_properties.lodOut) #LOD Out
-        self._write_bounding_sphere(mesh.vertices)
-        self.write_bool(node_properties.renderable) #isRenderable
+        if not skinned:
+            self._write_bounding_sphere(mesh.vertices)
+            self.write_bool(node_properties.renderable) #isRenderable
 
     def _write_bounding_sphere(self, vertices):
         max_x = -999999999
@@ -257,7 +312,7 @@ class NodeWriter(KN5Writer):
         self.write_vector3(sphere_center)
         self.write_float(sphere_radius)
 
-    def _split_object_by_materials(self, obj):
+    def _split_object_by_materials(self, obj, armature=None):
         meshes = []
         mesh_copy = obj.to_mesh()
 
@@ -275,6 +330,7 @@ class NodeWriter(KN5Writer):
             mesh_triangles = mesh_copy.loop_triangles[:]
             uv_layer = mesh_copy.uv_layers.active
             matrix = obj.matrix_world
+            skin_binding = self._create_skin_binding(obj, armature) if armature else None
 
             if not mesh_copy.materials:
                 raise Exception(f"Object '{obj.name}' has no material assigned")
@@ -306,7 +362,13 @@ class NodeWriter(KN5Writer):
                         else:
                             uv = self._calculate_uvs(obj, mesh_copy, material_index, local_position)
                         tangent = loop.tangent
-                        vertex = UvVertex(converted_position, converted_normal, uv, tangent)
+                        if skin_binding:
+                            weights, bone_indices = self._get_vertex_weights(
+                                obj, mesh_vertices[loop.vertex_index], skin_binding)
+                            vertex = SkinnedUvVertex(converted_position, converted_normal, uv,
+                                                     tangent, weights, bone_indices)
+                        else:
+                            vertex = UvVertex(converted_position, converted_normal, uv, tangent)
                         if vertex not in vertices:
                             new_index = len(vertices)
                             vertices[vertex] = new_index
@@ -317,10 +379,45 @@ class NodeWriter(KN5Writer):
                         indices.extend((face_indices[2], face_indices[3], face_indices[0]))
                 vertices = [v for v, index in sorted(vertices.items(), key=lambda k: k[1])]
                 material_id = self.material_writer.material_positions[material_name]
-                meshes.append(Mesh(material_id, vertices, indices))
+                meshes.append(Mesh(material_id, vertices, indices, skin_binding))
         finally:
             obj.to_mesh_clear()
         return meshes
+
+    @staticmethod
+    def _create_skin_binding(obj, armature):
+        deform_bones = [bone for bone in armature.data.bones if bone.use_deform]
+        if not deform_bones:
+            raise Exception(f"Armature '{armature.name}' has no deform bones")
+        bone_indices = {bone.name: index for index, bone in enumerate(deform_bones)}
+        group_to_bone = {
+            group.index: bone_indices[group.name]
+            for group in obj.vertex_groups if group.name in bone_indices
+        }
+        bones = []
+        for bone in deform_bones:
+            bone_world = armature.matrix_world @ bone.matrix_local
+            bones.append((bone.name, convert_matrix(bone_world.inverted())))
+        return SkinBinding(bones, group_to_bone)
+
+    @staticmethod
+    def _get_vertex_weights(obj, vertex, skin_binding):
+        influences = []
+        for group in vertex.groups:
+            bone_index = skin_binding.group_to_bone.get(group.group)
+            if bone_index is not None and group.weight > 0:
+                influences.append((float(group.weight), bone_index))
+        influences.sort(key=lambda influence: influence[0], reverse=True)
+        influences = influences[:4]
+        if not influences:
+            influences = [(1.0, 0)]
+        total = sum(weight for weight, _ in influences)
+        weights = [weight / total for weight, _ in influences]
+        indices = [float(index) for _, index in influences]
+        while len(weights) < 4:
+            weights.append(0.0)
+            indices.append(0.0)
+        return tuple(weights), tuple(indices)
 
     def _split_meshes_for_vertex_limit(self, divided_meshes):
         new_meshes = []
@@ -342,7 +439,7 @@ class NodeWriter(KN5Writer):
                         if len(vertex_index_mapping) >= limit-3:
                             break
                     verts = [mesh.vertices[v] for v, index in sorted(vertex_index_mapping.items(), key=lambda k: k[1])]
-                    new_meshes.append(Mesh(mesh.material_id, verts, new_indices))
+                    new_meshes.append(Mesh(mesh.material_id, verts, new_indices, mesh.skin_binding))
             else:
                 new_meshes.append(mesh)
         return new_meshes
@@ -368,7 +465,7 @@ class NodeWriter(KN5Writer):
                         # Flush current chunk
                         verts = [mesh.vertices[v] for v, _ in sorted(
                             vertex_index_mapping.items(), key=lambda k: k[1])]
-                        new_meshes.append(Mesh(mesh.material_id, verts, list(new_indices)))
+                        new_meshes.append(Mesh(mesh.material_id, verts, list(new_indices), mesh.skin_binding))
                         chunk_count += 1
                         vertex_index_mapping = {}
                         new_indices = []
@@ -381,7 +478,7 @@ class NodeWriter(KN5Writer):
                 if new_indices:
                     verts = [mesh.vertices[v] for v, _ in sorted(
                         vertex_index_mapping.items(), key=lambda k: k[1])]
-                    new_meshes.append(Mesh(mesh.material_id, verts, list(new_indices)))
+                    new_meshes.append(Mesh(mesh.material_id, verts, list(new_indices), mesh.skin_binding))
                     chunk_count += 1
 
                 self.warnings.append(
@@ -496,8 +593,33 @@ class UvVertex:
         return True
 
 
+class SkinnedUvVertex(UvVertex):
+    def __init__(self, co, normal, uv, tangent, weights, bone_indices):
+        super().__init__(co, normal, uv, tangent)
+        self.weights = weights
+        self.bone_indices = bone_indices
+
+    def __hash__(self):
+        if not self.hash:
+            self.hash = hash((super().__hash__(), self.weights, self.bone_indices))
+        return self.hash
+
+    def __eq__(self, other):
+        return (isinstance(other, SkinnedUvVertex)
+                and super().__eq__(other)
+                and self.weights == other.weights
+                and self.bone_indices == other.bone_indices)
+
+
+class SkinBinding:
+    def __init__(self, bones, group_to_bone):
+        self.bones = bones
+        self.group_to_bone = group_to_bone
+
+
 class Mesh:
-    def __init__(self, material_id, vertices, indices):
+    def __init__(self, material_id, vertices, indices, skin_binding=None):
         self.material_id = material_id
         self.vertices = vertices
         self.indices = indices
+        self.skin_binding = skin_binding

@@ -12,6 +12,7 @@ public enum FpsInputButtons : byte
     Jump = 4,
     Crouch = 8,
     Reload = 16,
+    Aim = 32,
 }
 
 [OnlineEvent(Key = "ASRC_FpsInput", Udp = true)]
@@ -87,6 +88,9 @@ public sealed class FpsSnapshotPacket : OnlineEvent<FpsSnapshotPacket>
     [OnlineEventField(Name = "count")] public byte Count;
     [OnlineEventField(Name = "actorIDs", Size = Capacity)] public byte[] ActorIds = new byte[Capacity];
     [OnlineEventField(Name = "flags", Size = Capacity)] public byte[] Flags = new byte[Capacity];
+    // Two traversal bits per actor: active in bits 0..15 and vault in bits 16..31.
+    // The compact bitfield keeps the UDP event under CSP's silent payload-drop threshold.
+    [OnlineEventField(Name = "actionStates")] public uint ActionStates;
     [OnlineEventField(Name = "spawnCounts", Size = Capacity)] public uint[] SpawnCounts = new uint[Capacity];
     [OnlineEventField(Name = "positions", Size = Capacity)] public Vector3[] Positions = new Vector3[Capacity];
     [OnlineEventField(Name = "groundYs", Size = Capacity)] public float[] GroundYs = new float[Capacity];
@@ -147,6 +151,27 @@ public sealed class FpsAwardPacket : OnlineEvent<FpsAwardPacket>
     [OnlineEventField(Name = "points")] public ushort Points;
     [OnlineEventField(Name = "totalScore")] public uint TotalScore;
     [OnlineEventField(Name = "flags")] public byte Flags;
+}
+
+public enum FpsWeaponType : byte
+{
+    AssaultRifle = 1,
+}
+
+public enum FpsPickupState : byte
+{
+    Spawned = 1,
+    Removed = 2,
+}
+
+[OnlineEvent(Key = "ASRC_FpsPickup")]
+public sealed class FpsPickupPacket : OnlineEvent<FpsPickupPacket>
+{
+    [OnlineEventField(Name = "pickupID")] public uint PickupId;
+    [OnlineEventField(Name = "state")] public FpsPickupState State;
+    [OnlineEventField(Name = "weaponType")] public FpsWeaponType WeaponType;
+    [OnlineEventField(Name = "collectorID")] public byte CollectorId = byte.MaxValue;
+    [OnlineEventField(Name = "position")] public Vector3 Position;
 }
 
 [OnlineEvent(Key = "ASRC_FpsShot", Udp = true)]

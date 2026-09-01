@@ -53,6 +53,17 @@ internal enum FpsAwardFlags : byte
 }
 internal readonly record struct FpsAwardEvent(byte ActorId, byte VictimId, ushort Points,
     uint TotalScore, FpsAwardFlags Flags);
+internal sealed class FpsWeaponPickup
+{
+    public required uint Id { get; init; }
+    public required byte DroppedByActorId { get; init; }
+    public required FpsWeaponType WeaponType { get; init; }
+    public required Vector3 Position { get; init; }
+    public float AgeSeconds { get; set; }
+    public float RemainingSeconds { get; set; }
+}
+internal readonly record struct FpsPickupEvent(uint PickupId, FpsPickupState State,
+    FpsWeaponType WeaponType, Vector3 Position, byte CollectorId = byte.MaxValue);
 internal enum FpsShotImpact : byte
 {
     None,
@@ -86,6 +97,7 @@ internal sealed class FpsActorState
     public float WeaponHeat { get; set; }
     public int AmmoInMagazine { get; set; }
     public int ReserveMagazines { get; set; }
+    public FpsWeaponType WeaponType { get; init; } = FpsWeaponType.AssaultRifle;
     public float ReloadRemaining { get; set; }
     public bool ReloadHeld { get; set; }
     public uint ShotSequence { get; set; }
@@ -159,22 +171,31 @@ internal sealed class FpsSimulation
     private const float RifleTargetRadius = 0.42f;
     private const float RifleOcclusionEpsilon = 0.02f;
     private const float RifleMaximumSpreadRadians = 0.018f;
+    private const float RifleAimSpreadMultiplier = 0.35f;
     private const float RifleHeatPerShot = 0.18f;
     private const float RifleHeatRecoveryPerSecond = 0.45f;
     internal const int RifleMagazineCapacity = 40;
     internal const int RifleInitialReserveMagazines = 4;
+    internal const int RifleMaximumReserveMagazines = 4;
     internal const float RifleReloadSeconds = 1.8f;
+    internal const float WeaponPickupLifetimeSeconds = 15;
+    private const float WeaponPickupCollectionDelaySeconds = 0.4f;
+    private const float WeaponPickupRadius = 1.1f;
+    private const int MaximumWeaponPickups = 32;
     private readonly FpsConfiguration _configuration;
     private readonly Dictionary<byte, FpsActorState> _actors;
     private readonly List<FpsKillEvent> _killEvents = [];
     private readonly List<FpsHitEvent> _hitEvents = [];
     private readonly List<FpsShotEvent> _shotEvents = [];
     private readonly List<FpsAwardEvent> _awardEvents = [];
+    private readonly List<FpsWeaponPickup> _pickups = [];
+    private readonly List<FpsPickupEvent> _pickupEvents = [];
     private readonly List<FpsBotDiagnosticEvent> _botDiagnosticEvents = [];
     private readonly FpsArenaSurface? _surface;
     private readonly FpsArenaNavigationAsset? _navigation;
     private readonly int _seed;
     private int _nextSpawn;
+    private uint _nextPickupId = 1;
 
     public FpsMatchState MatchState { get; private set; } = FpsMatchState.Running;
     public float RemainingSeconds { get; private set; }
@@ -185,6 +206,8 @@ internal sealed class FpsSimulation
     public IReadOnlyList<FpsHitEvent> HitEvents => _hitEvents;
     public IReadOnlyList<FpsShotEvent> ShotEvents => _shotEvents;
     public IReadOnlyList<FpsAwardEvent> AwardEvents => _awardEvents;
+    public IReadOnlyList<FpsWeaponPickup> Pickups => _pickups;
+    public IReadOnlyList<FpsPickupEvent> PickupEvents => _pickupEvents;
     public IReadOnlyList<FpsBotDiagnosticEvent> BotDiagnosticEvents => _botDiagnosticEvents;
 
     public FpsSimulation(FpsConfiguration configuration, IEnumerable<FpsSimulationSlot> slots,
@@ -252,6 +275,7 @@ internal sealed class FpsSimulation
         _hitEvents.Clear();
         _shotEvents.Clear();
         _awardEvents.Clear();
+        _pickupEvents.Clear();
         _botDiagnosticEvents.Clear();
         if (MatchState != FpsMatchState.Running || !float.IsFinite(dt) || dt <= 0) return;
         dt = Math.Min(dt, 0.05f);
@@ -290,6 +314,7 @@ internal sealed class FpsSimulation
         }
 
         SeparateActors();
+        StepWeaponPickups(dt);
         if (RemainingSeconds <= 0 || _actors.Values.Any(actor => actor.Kills >= _configuration.KillLimit))
             FinishMatch();
     }
@@ -1057,7 +1082,10 @@ internal sealed class FpsSimulation
         attacker.FireCooldown = RifleInterval;
         attacker.AmmoInMagazine--;
         uint shotSequence = ++attacker.ShotSequence;
-        float spread = attacker.WeaponHeat * RifleMaximumSpreadRadians;
+        float aimSpreadMultiplier = attacker.Input.Buttons.HasFlag(FpsInputButtons.Aim)
+            ? RifleAimSpreadMultiplier
+            : 1;
+        float spread = attacker.WeaponHeat * RifleMaximumSpreadRadians * aimSpreadMultiplier;
         float baseYaw = attacker.Yaw;
         float basePitch = attacker.Pitch;
         if (intendedTarget is not null)
@@ -1115,6 +1143,7 @@ internal sealed class FpsSimulation
         hit.Health = 0;
         hit.RespawnRemaining = _configuration.RespawnSeconds;
         hit.Deaths++;
+        DropWeapon(hit);
         attacker.Kills++;
         attacker.Score += 100;
         attacker.FinalScoreAttainedAtSeconds = ElapsedSeconds;
@@ -1135,6 +1164,68 @@ internal sealed class FpsSimulation
                 contributor.Score, FpsAwardFlags.Assist));
         }
         hit.DamageContributors.Clear();
+    }
+
+    private void DropWeapon(FpsActorState actor)
+    {
+        while (_pickups.Count >= MaximumWeaponPickups)
+        {
+            var oldest = _pickups[0];
+            _pickups.RemoveAt(0);
+            _pickupEvents.Add(new FpsPickupEvent(oldest.Id, FpsPickupState.Removed,
+                oldest.WeaponType, oldest.Position));
+        }
+
+        var pickup = new FpsWeaponPickup
+        {
+            Id = _nextPickupId++,
+            DroppedByActorId = actor.Id,
+            WeaponType = actor.WeaponType,
+            Position = actor.Position with { Y = actor.GroundY },
+            RemainingSeconds = WeaponPickupLifetimeSeconds,
+        };
+        if (_nextPickupId == 0) _nextPickupId = 1;
+        _pickups.Add(pickup);
+        _pickupEvents.Add(new FpsPickupEvent(pickup.Id, FpsPickupState.Spawned,
+            pickup.WeaponType, pickup.Position));
+    }
+
+    private void StepWeaponPickups(float dt)
+    {
+        for (int index = _pickups.Count - 1; index >= 0; index--)
+        {
+            var pickup = _pickups[index];
+            pickup.AgeSeconds += dt;
+            pickup.RemainingSeconds -= dt;
+            if (pickup.RemainingSeconds <= 0)
+            {
+                RemovePickup(index, pickup);
+                continue;
+            }
+            if (pickup.AgeSeconds < WeaponPickupCollectionDelaySeconds) continue;
+
+            var collector = _actors.Values
+                .Where(actor => actor.Active && !actor.Dead
+                                && actor.Id != pickup.DroppedByActorId
+                                && actor.WeaponType == pickup.WeaponType
+                                && actor.ReserveMagazines < RifleMaximumReserveMagazines
+                                && Vector3.DistanceSquared(actor.Position, pickup.Position)
+                                <= WeaponPickupRadius * WeaponPickupRadius)
+                .OrderBy(actor => actor.Id)
+                .FirstOrDefault();
+            if (collector is null) continue;
+
+            collector.ReserveMagazines++;
+            RemovePickup(index, pickup, collector.Id);
+        }
+    }
+
+    private void RemovePickup(int index, FpsWeaponPickup pickup,
+        byte collectorId = byte.MaxValue)
+    {
+        _pickups.RemoveAt(index);
+        _pickupEvents.Add(new FpsPickupEvent(pickup.Id, FpsPickupState.Removed,
+            pickup.WeaponType, pickup.Position, collectorId));
     }
 
     private static bool TryRaycastActorCapsule(Vector3 origin, Vector3 direction,
