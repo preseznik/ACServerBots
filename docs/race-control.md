@@ -185,6 +185,8 @@ The runner uses the bundled server's network-free virtual-time mode, preserves s
 
 Use `-AllUsableTracks -FullGrid -Seeds 1 -ContinueOnError` for an installation-wide diagnostic sweep. The runner records preflight-incompatible layouts separately and does not let one failed track abort later runs.
 
+FPS bot jump links are collision-preflighted before takeoff. An obstructed edge is quarantined for three seconds and excluded from the next path search so the bot can use an alternate walk route. A jump which lands short is recorded as a failed traversal instead of being immediately retriggered; after three repeated failures the existing safe-spawn recovery ends the loop without changing score.
+
 ## Current limits
 
 - Race Control is a portable build, not yet an MSIX/MSI installer.

@@ -688,6 +688,76 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void BotRejectsBlockedJumpLinkAndRoutesAroundWall()
+    {
+        var triangles = new List<Kn5Triangle>();
+        triangles.AddRange(FlatFloor(-4, 4, -4, 4, 0));
+        triangles.AddRange(VerticalWall(0, -1, 1, 0, 2.5f));
+        var nodes = new[]
+        {
+            new FpsNavigationNode { Position = new Vector3(-1.5f, 0, 0), Component = 0 },
+            new FpsNavigationNode { Position = new Vector3(1.5f, 0, 0), Component = 0 },
+            new FpsNavigationNode { Position = new Vector3(-1.5f, 0, 2), Component = 0 },
+            new FpsNavigationNode { Position = new Vector3(1.5f, 0, 2), Component = 0 },
+        };
+        nodes[0].Edges.Add(new FpsNavigationEdge(1, FpsNavigationLinkKind.Jump, 1));
+        nodes[0].Edges.Add(new FpsNavigationEdge(2, FpsNavigationLinkKind.Walk, 2));
+        nodes[2].Edges.Add(new FpsNavigationEdge(3, FpsNavigationLinkKind.Walk, 3));
+        nodes[3].Edges.Add(new FpsNavigationEdge(1, FpsNavigationLinkKind.Walk, 2));
+        var navigation = new FpsArenaNavigationAsset
+        {
+            CellSize = 0.6f,
+            Nodes = nodes,
+            SpawnNodes = [0, 1],
+            ComponentCount = 1,
+            PrimaryComponent = 0,
+        };
+        var configuration = Configuration(difficulty: 1, aggression: 0.8f);
+        configuration.Arena.SpawnPoints.Clear();
+        configuration.Arena.SpawnPoints.AddRange(
+        [
+            new FpsSpawnConfiguration { Position = nodes[0].Position },
+            new FpsSpawnConfiguration { Position = nodes[1].Position,
+                YawRadians = MathF.PI },
+        ]);
+        var simulation = new FpsSimulation(configuration,
+            [new(0, "Hunter", FpsSlotRole.Bot), new(1, "Target", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(triangles), navigation: navigation);
+        Assert.That(simulation.ClaimHuman(1), Is.True);
+        var hunter = simulation.Actors.Single(actor => actor.Id == 0);
+        var target = simulation.Actors.Single(actor => actor.Id == 1);
+        hunter.BotTargetId = target.Id;
+        hunter.BotLastKnownTargetPosition = target.Position;
+        hunter.BotSearchRemaining = 30;
+        hunter.BotReactionRemaining = 30;
+        target.Health = 10_000;
+
+        bool rejectedJump = false;
+        int airborneTicks = 0;
+        float maximumDetour = 0;
+        for (int tick = 0; tick < 120; tick++)
+        {
+            simulation.Step(0.05f);
+            rejectedJump |= simulation.BotDiagnosticEvents.Any(item =>
+                item.Message.Contains("traversal-failed kind=Jump", StringComparison.Ordinal));
+            if (!hunter.IsGrounded) airborneTicks++;
+            maximumDetour = MathF.Max(maximumDetour, hunter.Position.Z);
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rejectedJump, Is.True,
+                "The obstructed jump edge must be rejected and temporarily blacklisted.");
+            Assert.That(airborneTicks, Is.Zero,
+                "A wall-blocked navigation jump must not start an airborne retry loop.");
+            Assert.That(maximumDetour, Is.GreaterThan(1.2f),
+                "The bot must replan through the available walk path around the wall.");
+            Assert.That(hunter.SpawnCount, Is.EqualTo(1),
+                "A usable alternate path must recover without respawning the bot.");
+        });
+    }
+
+    [Test]
     public void BotDropsTargetWhenAuthoritativePosesAreOnDisconnectedComponents()
     {
         var navigation = new FpsArenaNavigationAsset

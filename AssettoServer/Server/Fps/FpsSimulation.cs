@@ -189,6 +189,9 @@ internal sealed class FpsActorState
     public int BotBlockedTraversalTargetNode { get; set; } = -1;
     public FpsNavigationLinkKind BotBlockedTraversalKind { get; set; }
     public float BotBlockedTraversalRemaining { get; set; }
+    public int BotJumpTraversalFromNode { get; set; } = -1;
+    public int BotJumpTraversalTargetNode { get; set; } = -1;
+    public Vector3 BotJumpTraversalTargetPosition { get; set; }
     public float BotReactionRemaining { get; set; }
     public int BotBurstShotsRemaining { get; set; }
     public float BotBurstPauseRemaining { get; set; }
@@ -243,6 +246,8 @@ internal sealed class FpsSimulation
     private const int MaximumBotPathPlansPerTick = 1;
     private const float BotPathTargetReplanDistance = 2.4f;
     private const float BotFailedTraversalCooldownSeconds = 3;
+    private const float BotJumpTraversalArcHeight = 0.45f;
+    private const float BotJumpLandingTolerance = 0.65f;
     private readonly FpsConfiguration _configuration;
     private readonly Dictionary<byte, FpsActorState> _actors;
     private readonly List<FpsKillEvent> _killEvents = [];
@@ -792,6 +797,7 @@ internal sealed class FpsSimulation
         actor.BotPlanRemaining = Math.Max(0, actor.BotPlanRemaining - dt);
         actor.BotBlockedTraversalRemaining = Math.Max(0,
             actor.BotBlockedTraversalRemaining - dt);
+        ResolveBotJumpTraversal(actor);
         actor.BotBurstPauseRemaining = Math.Max(0, actor.BotBurstPauseRemaining - dt);
         actor.BotStrafeRemaining = Math.Max(0, actor.BotStrafeRemaining - dt);
         var target = GetBotTarget(actor);
@@ -1058,28 +1064,70 @@ internal sealed class FpsSimulation
         {
             if (!BeginBotTraversal(actor, step))
             {
-                actor.BotBlockedTraversalFromNode = actor.BotPathIndex > 0
+                int fromNode = actor.BotPathIndex > 0
                     ? actor.BotPath[actor.BotPathIndex - 1].NodeIndex
                     : _navigation.FindClosestNode(actor.Position);
-                actor.BotBlockedTraversalTargetNode = step.NodeIndex;
-                actor.BotBlockedTraversalKind = step.Kind;
-                actor.BotBlockedTraversalRemaining = BotFailedTraversalCooldownSeconds;
-                actor.BotPlanRemaining = 0.25f;
-                actor.HasBotPlannedTargetPosition = false;
-                actor.BotPath.Clear();
-                _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, actor.BotMode,
-                    $"traversal-failed kind={step.Kind} edge={actor.BotBlockedTraversalFromNode}->{step.NodeIndex} cooldown={BotFailedTraversalCooldownSeconds:F1}s"));
+                RejectBotTraversal(actor, fromNode, step, "preflight", false);
                 return false;
             }
             return true;
         }
         if (step.Kind == FpsNavigationLinkKind.Jump && actor.IsGrounded)
         {
+            int fromNode = actor.BotPathIndex > 0
+                ? actor.BotPath[actor.BotPathIndex - 1].NodeIndex
+                : _navigation.FindClosestNode(actor.Position);
+            if (!IsTraversalPathClear(actor.Position, step.Position,
+                    BotJumpTraversalArcHeight))
+            {
+                RejectBotTraversal(actor, fromNode, step, "preflight", true);
+                return false;
+            }
+            actor.BotJumpTraversalFromNode = fromNode;
+            actor.BotJumpTraversalTargetNode = step.NodeIndex;
+            actor.BotJumpTraversalTargetPosition = step.Position;
             actor.VerticalVelocity = JumpSpeed;
             actor.IsGrounded = false;
         }
         MoveWorld(actor, direction, true, dt);
         return true;
+    }
+
+    private void ResolveBotJumpTraversal(FpsActorState actor)
+    {
+        if (actor.BotJumpTraversalTargetNode < 0 || !actor.IsGrounded) return;
+        var step = new FpsNavigationStep(actor.BotJumpTraversalTargetNode,
+            actor.BotJumpTraversalTargetPosition, FpsNavigationLinkKind.Jump);
+        float distance = PlanarDistance(actor.Position, step.Position);
+        float heightDifference = MathF.Abs(actor.Position.Y - step.Position.Y);
+        int fromNode = actor.BotJumpTraversalFromNode;
+        actor.BotJumpTraversalFromNode = -1;
+        actor.BotJumpTraversalTargetNode = -1;
+        if (distance <= BotJumpLandingTolerance && heightDifference <= 0.75f) return;
+        RejectBotTraversal(actor, fromNode, step,
+            $"landed-short distance={distance:F2}", true);
+    }
+
+    private void RejectBotTraversal(FpsActorState actor, int fromNode,
+        FpsNavigationStep step, string reason, bool countAsStuck)
+    {
+        actor.BotBlockedTraversalFromNode = fromNode;
+        actor.BotBlockedTraversalTargetNode = step.NodeIndex;
+        actor.BotBlockedTraversalKind = step.Kind;
+        actor.BotBlockedTraversalRemaining = BotFailedTraversalCooldownSeconds;
+        actor.BotJumpTraversalFromNode = -1;
+        actor.BotJumpTraversalTargetNode = -1;
+        actor.BotPlanRemaining = 0.25f;
+        actor.HasBotPlannedTargetPosition = false;
+        actor.BotPath.Clear();
+        actor.BotPathIndex = 0;
+        if (countAsStuck) actor.BotStuckFailures++;
+        _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, actor.BotMode,
+            $"traversal-failed kind={step.Kind} edge={fromNode}->{step.NodeIndex} reason={reason} cooldown={BotFailedTraversalCooldownSeconds:F1}s"));
+        if (!countAsStuck || actor.BotStuckFailures < 3) return;
+        _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, FpsBotMode.Recover,
+            "stuck-respawn after repeated jump traversal failures", true));
+        Spawn(actor);
     }
 
     private bool BeginBotTraversal(FpsActorState actor, FpsNavigationStep step)
@@ -1924,6 +1972,8 @@ internal sealed class FpsSimulation
         actor.BotBlockedTraversalFromNode = -1;
         actor.BotBlockedTraversalTargetNode = -1;
         actor.BotBlockedTraversalRemaining = 0;
+        actor.BotJumpTraversalFromNode = -1;
+        actor.BotJumpTraversalTargetNode = -1;
         actor.BotReactionRemaining = 0;
         actor.BotBurstShotsRemaining = 0;
         actor.BotBurstPauseRemaining = 0;
