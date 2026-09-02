@@ -24,3 +24,16 @@ The Race Control Direct3D 11 viewport links the `Vortice.Wpf` and
 
 The MIT license text is available in the upstream repository at
 https://github.com/amerkoleci/Vortice.Windows/blob/main/LICENSE.
+
+## Desert Eagle 3D model
+
+The FPS loadout uses the downloadable Desert Eagle model and textures by ELIZION.
+
+- Source: https://sketchfab.com/3d-models/desert-eagle-cabde59f5cf24effaf80536e35d04e95
+- Author: ELIZION
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+The model parts are regrouped by material, reoriented around the grip, textures are
+downsampled for real-time use, and the FBX source is converted to Assetto Corsa KN5.
+The CC BY 4.0 license text is available at
+https://creativecommons.org/licenses/by/4.0/.

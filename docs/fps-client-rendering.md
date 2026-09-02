@@ -49,13 +49,29 @@ in a live Fire Pit match: visible bot models now follow and face their authorita
   `blendAnimation()` may change the child pose only; they never own world position or yaw. See the
   [Modern visual theme handoff](fps-modern-theme.md) for the exporter, fallback, and preview520 gate.
 
+## Desert Eagle asset ownership
+
+The Desert Eagle is no longer a rifle alias. `tools/Build-FpsDesertEagleAssets.ps1` reads the
+downloaded ELIZION FBX and textures from the external `.resources` tree, caps first-person body and
+slide color at 1024², caps the world payload at 512², converts both variants through the pinned KN5
+exporter, and then runs a Blender-independent KN5 structure and budget validator. The generated
+viewmodel retains lightweight project-owned arms; the world model is gun-only and anchored at its
+grip. Both Blocks and Modern request base asset archive v9 for this loadout item. Modern hides its
+baked carbine mesh while the pistol is active. Local first person, local/remote third person, and
+dropped pickups all choose the model from the authoritative active weapon ID.
+
+The source model is [Desert Eagle by ELIZION](https://sketchfab.com/3d-models/desert-eagle-cabde59f5cf24effaf80536e35d04e95),
+licensed CC BY 4.0. Every server archive and exported client pack that carries the KN5 also carries
+`desert-eagle-attribution.txt`; the portable launcher additionally ships `THIRD_PARTY_NOTICES.md`.
+The source FBX and textures remain outside the repository.
+
 ## Hybrid HUD ownership
 
-Client pack version 17 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
-script publishes presentation state through the local shared structure `asrc.fps.hud.v4`; no gameplay
-packet or server protocol changes are involved.
+Client pack version 19 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+script publishes presentation state through the local shared structure `asrc.fps.hud.v5`. Bridge v5
+adds the active main/secondary slot, item IDs, and lethal count; it remains presentation-only.
 
-While both sides exchange a current version-1 heartbeat, the app draws the modular FPS HUD through
+While both sides exchange a current version-5 heartbeat, the app draws the modular FPS HUD through
 `ui.onExclusiveHUD()` and suppresses regular AC UI and third-party apps only in active gameplay. The
 app returns normal control in pre-match menus, results, replay, and non-FPS sessions. In `pause` mode,
 the server-delivered online script owns a match-specific menu and standings panel; its options action
@@ -63,7 +79,8 @@ can explicitly yield to the native AC/CSP menu. If the app is absent, disabled, 
 for more than 0.5 seconds, the online script resumes its complete exclusive gameplay HUD. A bridge
 mismatch is logged once and must never produce a blank frame.
 
-Bridge v4 carries ADS presentation, configured maximum health, and predicted/authoritative stamina.
+Bridge v5 carries ADS presentation, configured maximum health, predicted/authoritative stamina, and
+the current loadout presentation.
 The companion HUD and the online fallback both suppress the ordinary four-line crosshair while ADS
 is active, but retain authoritative hitmarkers and award popups. Both paths use matching lower-corner
 panels with health and stamina bars plus actual rendered carbine artwork, ammunition, reserve

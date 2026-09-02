@@ -197,6 +197,39 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ];
     public IReadOnlyList<PhysicsFidelity> PhysicsFidelities { get; } = Enum.GetValues<PhysicsFidelity>();
     public IReadOnlyList<FpsVisualTheme> FpsVisualThemes { get; } = Enum.GetValues<FpsVisualTheme>();
+    public IReadOnlyList<FpsMainWeapon> FpsMainWeapons { get; } = Enum.GetValues<FpsMainWeapon>();
+    public IReadOnlyList<FpsLethalEquipment> FpsLethals { get; } = Enum.GetValues<FpsLethalEquipment>();
+    public IReadOnlyList<FpsSecondaryWeapon> FpsSecondaryWeapons { get; } = Enum.GetValues<FpsSecondaryWeapon>();
+    public bool AllowAssaultRifle
+    {
+        get => Preset.Fps.Loadouts.AllowedMainWeapons.Contains(FpsMainWeapon.AssaultRifle);
+        set => SetAllowed(Preset.Fps.Loadouts.AllowedMainWeapons, FpsMainWeapon.AssaultRifle, value, nameof(AllowAssaultRifle));
+    }
+    public bool AllowCompactSmg
+    {
+        get => Preset.Fps.Loadouts.AllowedMainWeapons.Contains(FpsMainWeapon.CompactSmg);
+        set => SetAllowed(Preset.Fps.Loadouts.AllowedMainWeapons, FpsMainWeapon.CompactSmg, value, nameof(AllowCompactSmg));
+    }
+    public bool AllowFragGrenade
+    {
+        get => Preset.Fps.Loadouts.AllowedLethals.Contains(FpsLethalEquipment.FragGrenade);
+        set => SetAllowed(Preset.Fps.Loadouts.AllowedLethals, FpsLethalEquipment.FragGrenade, value, nameof(AllowFragGrenade));
+    }
+    public bool AllowStickyGrenade
+    {
+        get => Preset.Fps.Loadouts.AllowedLethals.Contains(FpsLethalEquipment.StickyGrenade);
+        set => SetAllowed(Preset.Fps.Loadouts.AllowedLethals, FpsLethalEquipment.StickyGrenade, value, nameof(AllowStickyGrenade));
+    }
+    public bool AllowDesertEagle
+    {
+        get => Preset.Fps.Loadouts.AllowedSecondaryWeapons.Contains(FpsSecondaryWeapon.DesertEagle);
+        set => SetAllowed(Preset.Fps.Loadouts.AllowedSecondaryWeapons, FpsSecondaryWeapon.DesertEagle, value, nameof(AllowDesertEagle));
+    }
+    public bool AllowColt1911
+    {
+        get => Preset.Fps.Loadouts.AllowedSecondaryWeapons.Contains(FpsSecondaryWeapon.Colt1911);
+        set => SetAllowed(Preset.Fps.Loadouts.AllowedSecondaryWeapons, FpsSecondaryWeapon.Colt1911, value, nameof(AllowColt1911));
+    }
     public IReadOnlyList<PlayerJoinSlotSelection> PlayerJoinSlotSelections { get; } =
         Enum.GetValues<PlayerJoinSlotSelection>();
     public IReadOnlyList<TimeOfDayOption> TimeOfDayOptions { get; } = Enumerable.Range(0, 24)
@@ -1198,7 +1231,35 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(EffectiveGridSummary));
         OnPropertyChanged(nameof(SelectedTrackDetails));
         OnPropertyChanged(nameof(FpsArenaStatus));
+        NotifyLoadoutProperties();
         NotifyModeProperties();
+    }
+
+    private void SetAllowed<T>(ICollection<T> values, T item, bool allowed, string propertyName)
+        where T : struct, Enum
+    {
+        if (allowed)
+        {
+            if (!values.Contains(item)) values.Add(item);
+        }
+        else
+        {
+            values.Remove(item);
+        }
+
+        OnPropertyChanged(propertyName);
+        Validate();
+        RaiseCommandStates();
+    }
+
+    private void NotifyLoadoutProperties()
+    {
+        OnPropertyChanged(nameof(AllowAssaultRifle));
+        OnPropertyChanged(nameof(AllowCompactSmg));
+        OnPropertyChanged(nameof(AllowFragGrenade));
+        OnPropertyChanged(nameof(AllowStickyGrenade));
+        OnPropertyChanged(nameof(AllowDesertEagle));
+        OnPropertyChanged(nameof(AllowColt1911));
     }
 
     private IEnumerable<AcTrackLayout> FilteredTracks()

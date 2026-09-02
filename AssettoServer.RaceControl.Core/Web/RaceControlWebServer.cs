@@ -22,6 +22,7 @@ public sealed class RaceControlWebServer : IAsyncDisposable
     private readonly Action<string>? _log;
     private readonly string _controlToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
     private readonly SemaphoreSlim _actionLock = new(1, 1);
+    private readonly CancellationTokenSource _shutdown = new();
     private WebApplication? _application;
 
     public RaceControlWebServer(RaceControlWebServerOptions options, RaceControlPaths paths,
@@ -56,6 +57,9 @@ public sealed class RaceControlWebServer : IAsyncDisposable
         var app = builder.Build();
         app.Use(async (context, next) =>
         {
+            using var requestLifetime = CancellationTokenSource.CreateLinkedTokenSource(
+                context.RequestAborted, _shutdown.Token);
+            context.RequestAborted = requestLifetime.Token;
             context.Response.Headers["X-Content-Type-Options"] = "nosniff";
             context.Response.Headers["Referrer-Policy"] = "no-referrer";
             context.Response.Headers["X-Frame-Options"] = "DENY";
@@ -89,6 +93,7 @@ public sealed class RaceControlWebServer : IAsyncDisposable
         var app = Interlocked.Exchange(ref _application, null);
         if (app is null)
             return;
+        _shutdown.Cancel();
         await app.StopAsync(cancellationToken);
         await app.DisposeAsync();
         _log?.Invoke("Web GUI stopped.");
@@ -206,6 +211,7 @@ public sealed class RaceControlWebServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
+        _shutdown.Dispose();
         _actionLock.Dispose();
     }
 }

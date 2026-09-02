@@ -14,7 +14,45 @@ public sealed class FpsConfiguration
     public float RespawnSeconds { get; init; } = 3;
     public float SpawnProtectionSeconds { get; init; } = 1;
     public FpsBotConfiguration Bots { get; init; } = new();
+    public FpsLoadoutConfiguration Loadouts { get; init; } = new();
     public FpsArenaConfiguration Arena { get; init; } = new();
+}
+
+public enum FpsMainWeapon : byte
+{
+    AssaultRifle = 1,
+    CompactSmg = 2,
+}
+
+public enum FpsLethalEquipment : byte
+{
+    FragGrenade = 16,
+    StickyGrenade = 17,
+}
+
+public enum FpsSecondaryWeapon : byte
+{
+    DesertEagle = 3,
+    Colt1911 = 4,
+}
+
+public sealed class FpsLoadoutSelectionConfiguration
+{
+    public FpsMainWeapon MainWeapon { get; init; } = FpsMainWeapon.AssaultRifle;
+    public FpsLethalEquipment Lethal { get; init; } = FpsLethalEquipment.FragGrenade;
+    public FpsSecondaryWeapon SecondaryWeapon { get; init; } = FpsSecondaryWeapon.Colt1911;
+}
+
+public sealed class FpsLoadoutConfiguration
+{
+    public List<FpsMainWeapon> AllowedMainWeapons { get; init; } =
+        [FpsMainWeapon.AssaultRifle, FpsMainWeapon.CompactSmg];
+    public List<FpsLethalEquipment> AllowedLethals { get; init; } =
+        [FpsLethalEquipment.FragGrenade, FpsLethalEquipment.StickyGrenade];
+    public List<FpsSecondaryWeapon> AllowedSecondaryWeapons { get; init; } =
+        [FpsSecondaryWeapon.DesertEagle, FpsSecondaryWeapon.Colt1911];
+    public FpsLoadoutSelectionConfiguration HumanDefault { get; init; } = new();
+    public FpsLoadoutSelectionConfiguration BotDefault { get; init; } = new();
 }
 
 public enum FpsVisualTheme

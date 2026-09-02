@@ -611,6 +611,30 @@
                                            Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,14,0,0" />
                             </StackPanel>
                         </Border>
+                        <Border Style="{StaticResource Card}" Width="420">
+                            <StackPanel>
+                                <TextBlock Text="Loadouts" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="Allowed main weapons" Style="{StaticResource FieldLabel}" />
+                                <CheckBox Content="Assault Rifle" IsChecked="{Binding AllowAssaultRifle}" />
+                                <CheckBox Content="Compact SMG" IsChecked="{Binding AllowCompactSmg}" />
+                                <TextBlock Text="Allowed lethal equipment" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                <CheckBox Content="Frag Grenade" IsChecked="{Binding AllowFragGrenade}" />
+                                <CheckBox Content="Sticky Grenade" IsChecked="{Binding AllowStickyGrenade}" />
+                                <TextBlock Text="Allowed secondary weapons" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
+                                <CheckBox Content="Desert Eagle" IsChecked="{Binding AllowDesertEagle}" />
+                                <CheckBox Content="Colt 1911" IsChecked="{Binding AllowColt1911}" />
+                                <TextBlock Text="Human default" Style="{StaticResource FieldLabel}" Margin="0,14,0,5" />
+                                <ComboBox ItemsSource="{Binding FpsMainWeapons}" SelectedItem="{Binding Preset.Fps.Loadouts.HumanDefault.MainWeapon}" />
+                                <ComboBox ItemsSource="{Binding FpsLethals}" SelectedItem="{Binding Preset.Fps.Loadouts.HumanDefault.Lethal}" Margin="0,6,0,0" />
+                                <ComboBox ItemsSource="{Binding FpsSecondaryWeapons}" SelectedItem="{Binding Preset.Fps.Loadouts.HumanDefault.SecondaryWeapon}" Margin="0,6,0,0" />
+                                <TextBlock Text="Bot default" Style="{StaticResource FieldLabel}" Margin="0,14,0,5" />
+                                <ComboBox ItemsSource="{Binding FpsMainWeapons}" SelectedItem="{Binding Preset.Fps.Loadouts.BotDefault.MainWeapon}" />
+                                <ComboBox ItemsSource="{Binding FpsLethals}" SelectedItem="{Binding Preset.Fps.Loadouts.BotDefault.Lethal}" Margin="0,6,0,0" />
+                                <ComboBox ItemsSource="{Binding FpsSecondaryWeapons}" SelectedItem="{Binding Preset.Fps.Loadouts.BotDefault.SecondaryWeapon}" Margin="0,6,0,0" />
+                                <TextBlock Text="Players must confirm their loadout before spawning. Pause-menu changes apply on the next respawn."
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,14,0,0" />
+                            </StackPanel>
+                        </Border>
                     </WrapPanel>
                 </ScrollViewer>
                 </Grid>

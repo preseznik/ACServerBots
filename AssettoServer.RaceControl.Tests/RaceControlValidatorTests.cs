@@ -196,6 +196,32 @@ public sealed class RaceControlValidatorTests
     }
 
     [Test]
+    public void Validate_FpsRejectsEmptyAllowListAndDisallowedDefault()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation(8, false, "car_one");
+        var preset = factory.CreatePreset(4);
+        preset.Mode = EventMode.Fps;
+        preset.Fps.CarrierCarId = "car_one";
+        preset.Fps.Loadouts.AllowedMainWeapons.Clear();
+        preset.Fps.Loadouts.AllowedSecondaryWeapons.Remove(FpsSecondaryWeapon.DesertEagle);
+        preset.Fps.Loadouts.HumanDefault.SecondaryWeapon = FpsSecondaryWeapon.DesertEagle;
+
+        var result = new RaceControlValidator().Validate(preset, factory.Scan());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
+                message.Field == "Fps.Loadouts"
+                && message.Message.Contains("main weapon", StringComparison.OrdinalIgnoreCase)));
+            Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
+                message.Field == "Fps.Loadouts.HumanDefault"
+                && message.Message.Contains("secondary", StringComparison.OrdinalIgnoreCase)));
+        });
+    }
+
+    [Test]
     public void Validate_FpsAcceptsPreparedArenaWithoutRaceAiAssets()
     {
         using var factory = new TestContentFactory();

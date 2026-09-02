@@ -4,7 +4,9 @@ namespace AssettoServer.RaceControl.Core.Models;
 
 public sealed class RaceControlPreset
 {
-    public int SchemaVersion { get; set; } = 2;
+    public const int CurrentSchemaVersion = 3;
+
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public Guid Id { get; set; } = Guid.NewGuid();
     public EventMode Mode { get; set; } = EventMode.Racing;
     public string Name { get; set; } = "New LAN race";
@@ -159,7 +161,45 @@ public sealed class FpsOptions
     public string CarrierCarId { get; set; } = "bmw_m3_e30";
     public double ArenaBoundsPaddingMeters { get; set; } = 45;
     public FpsBotOptions Bots { get; set; } = new();
+    public FpsLoadoutOptions Loadouts { get; set; } = new();
     public FpsArenaDefinition? Arena { get; set; }
+}
+
+public enum FpsMainWeapon : byte
+{
+    AssaultRifle = 1,
+    CompactSmg = 2,
+}
+
+public enum FpsLethalEquipment : byte
+{
+    FragGrenade = 16,
+    StickyGrenade = 17,
+}
+
+public enum FpsSecondaryWeapon : byte
+{
+    DesertEagle = 3,
+    Colt1911 = 4,
+}
+
+public sealed class FpsLoadoutPreset
+{
+    public FpsMainWeapon MainWeapon { get; set; } = FpsMainWeapon.AssaultRifle;
+    public FpsLethalEquipment Lethal { get; set; } = FpsLethalEquipment.FragGrenade;
+    public FpsSecondaryWeapon SecondaryWeapon { get; set; } = FpsSecondaryWeapon.Colt1911;
+}
+
+public sealed class FpsLoadoutOptions
+{
+    public List<FpsMainWeapon> AllowedMainWeapons { get; set; } =
+        [FpsMainWeapon.AssaultRifle, FpsMainWeapon.CompactSmg];
+    public List<FpsLethalEquipment> AllowedLethals { get; set; } =
+        [FpsLethalEquipment.FragGrenade, FpsLethalEquipment.StickyGrenade];
+    public List<FpsSecondaryWeapon> AllowedSecondaryWeapons { get; set; } =
+        [FpsSecondaryWeapon.DesertEagle, FpsSecondaryWeapon.Colt1911];
+    public FpsLoadoutPreset HumanDefault { get; set; } = new();
+    public FpsLoadoutPreset BotDefault { get; set; } = new();
 }
 
 public enum FpsVisualTheme

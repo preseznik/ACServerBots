@@ -5,12 +5,12 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 4
+local bridgeProtocol = 5
 local actorCapacity = 32
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v4'),
+  ac.StructItem.key('asrc.fps.hud.v5'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -24,6 +24,11 @@ local bridge = ac.connect({
   localAmmo = ac.StructItem.byte(),
   localReserveMagazines = ac.StructItem.byte(),
   localReloadRemaining = ac.StructItem.float(),
+  localMainWeapon = ac.StructItem.byte(),
+  localLethal = ac.StructItem.byte(),
+  localSecondaryWeapon = ac.StructItem.byte(),
+  localActiveSlot = ac.StructItem.byte(),
+  localLethalsRemaining = ac.StructItem.byte(),
   localKills = ac.StructItem.uint16(),
   localDeaths = ac.StructItem.uint16(),
   localScore = ac.StructItem.uint32(),
@@ -65,6 +70,11 @@ local assettoRoot = ac.getFolder(ac.FolderID.Root)
 local weaponImagePath = (assettoRoot ~= nil and assettoRoot ~= '')
   and (assettoRoot .. '/apps/lua/asrc_fps_hud/asrc_carbine_hud.png')
   or 'asrc_carbine_hud.png'
+local itemNames = {
+  [1] = 'ASSAULT RIFLE', [2] = 'COMPACT SMG',
+  [3] = 'DESERT EAGLE', [4] = 'COLT 1911',
+  [16] = 'FRAG GRENADE', [17] = 'STICKY GRENADE',
+}
 
 local function bridgeString(value)
   if type(value) == 'string' then return value end
@@ -226,7 +236,9 @@ local function drawStatusWidgets(size, scale, margin)
   if bridge.localReloadRemaining > 0 then
     ui.text(string.format('RELOADING  %.1fs', bridge.localReloadRemaining))
   else
-    ui.text('ASSAULT RIFLE')
+    local activeWeapon = bridge.localActiveSlot == 1
+      and bridge.localSecondaryWeapon or bridge.localMainWeapon
+    ui.text(itemNames[activeWeapon] or 'FIREARM')
   end
   ui.setCursor(rightMin + vec2(258, 32) * scale)
   ui.pushFont(ui.Font.Title)
@@ -236,6 +248,9 @@ local function drawStatusWidgets(size, scale, margin)
   ui.text(string.format('%d RESERVE MAGS', bridge.localReserveMagazines))
   ui.setCursor(rightMin + vec2(258, 89) * scale)
   ui.text('R  RELOAD')
+  ui.setCursor(rightMin + vec2(258, 108) * scale)
+  ui.text(string.format('G  %s  x%d', itemNames[bridge.localLethal] or 'LETHAL',
+    bridge.localLethalsRemaining))
   if bridge.localReloadRemaining > 0 then
     local reloadMin = rightMin + vec2(258, 115) * scale
     local reloadMax = rightMin + vec2(374, 125) * scale

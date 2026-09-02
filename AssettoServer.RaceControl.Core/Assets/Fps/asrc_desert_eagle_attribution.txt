@@ -1,0 +1,9 @@
+Desert Eagle 3D model by ELIZION
+Source: https://sketchfab.com/3d-models/desert-eagle-cabde59f5cf24effaf80536e35d04e95
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/
+
+AssettoServer Race Control modifications: model parts were regrouped by material,
+reoriented around the grip, textures were downsampled for real-time use, and the
+FBX source was converted to Assetto Corsa KN5. The first-person variant includes
+project-owned placeholder arms; the weapon geometry and textures remain ELIZION's work.

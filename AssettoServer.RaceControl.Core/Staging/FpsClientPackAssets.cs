@@ -15,6 +15,24 @@ public static class FpsClientPackAssets
         "content/objects3D/asrc_fps/asrc_rifle_diffuse.png";
     public const string OperatorSkinPath =
         "content/objects3D/asrc_fps/asrc_operator_skin.png";
+    public const string CompactSmgViewmodelPath =
+        "content/objects3D/asrc_fps/asrc_compact_smg_viewmodel.kn5";
+    public const string CompactSmgWorldModelPath =
+        "content/objects3D/asrc_fps/asrc_compact_smg_world.kn5";
+    public const string DesertEagleViewmodelPath =
+        "content/objects3D/asrc_fps/asrc_desert_eagle_viewmodel.kn5";
+    public const string DesertEagleWorldModelPath =
+        "content/objects3D/asrc_fps/asrc_desert_eagle_world.kn5";
+    public const string DesertEagleAttributionPath =
+        "content/objects3D/asrc_fps/attribution/desert-eagle.txt";
+    public const string Colt1911ViewmodelPath =
+        "content/objects3D/asrc_fps/asrc_colt_1911_viewmodel.kn5";
+    public const string Colt1911WorldModelPath =
+        "content/objects3D/asrc_fps/asrc_colt_1911_world.kn5";
+    public const string FragGrenadeWorldModelPath =
+        "content/objects3D/asrc_fps/asrc_frag_grenade_world.kn5";
+    public const string StickyGrenadeWorldModelPath =
+        "content/objects3D/asrc_fps/asrc_sticky_grenade_world.kn5";
     public const string HudManifestPath = "apps/lua/asrc_fps_hud/manifest.ini";
     public const string HudScriptPath = "apps/lua/asrc_fps_hud/asrc_fps_hud.lua";
     public const string HudWeaponImagePath = "apps/lua/asrc_fps_hud/asrc_carbine_hud.png";
@@ -24,6 +42,15 @@ public static class FpsClientPackAssets
 
     public static byte[] GetRifleWorldModel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_assault_rifle_world.kn5");
+
+    public static byte[] GetDesertEagleViewmodel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_desert_eagle_viewmodel.kn5");
+
+    public static byte[] GetDesertEagleWorldModel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_desert_eagle_world.kn5");
+
+    public static byte[] GetDesertEagleAttribution() => ReadEmbeddedText(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_desert_eagle_attribution.txt");
 
     public static byte[] GetRifleDiffuse() => ReadEmbeddedPng(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_rifle_diffuse.png");

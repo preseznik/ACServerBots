@@ -38,11 +38,12 @@ internal sealed record FpsSimulationSlot(byte Id, string Name, FpsSlotRole Role,
     float? Difficulty = null, float? Aggression = null);
 
 internal readonly record struct FpsInputCommand(uint Sequence, Vector2 Move, float Yaw,
-    float Pitch, FpsInputButtons Buttons);
+    float Pitch, FpsInputButtons Buttons, byte SelectedSlot = 0);
 
 internal readonly record struct FpsKillEvent(byte KillerId, byte VictimId, ushort KillerKills,
-    ushort VictimDeaths);
-internal readonly record struct FpsHitEvent(byte AttackerId, byte VictimId, ushort RemainingHealth);
+    ushort VictimDeaths, byte ItemId = (byte)FpsWeaponType.AssaultRifle);
+internal readonly record struct FpsHitEvent(byte AttackerId, byte VictimId, ushort RemainingHealth,
+    byte ItemId = (byte)FpsWeaponType.AssaultRifle);
 [Flags]
 internal enum FpsAwardFlags : byte
 {
@@ -72,7 +73,23 @@ internal enum FpsShotImpact : byte
     Actor,
 }
 internal readonly record struct FpsShotEvent(byte ShooterId, uint Sequence, Vector3 Origin,
-    Vector3 Direction, float Distance, FpsShotImpact Impact, byte TargetId);
+    Vector3 Direction, float Distance, FpsShotImpact Impact, byte TargetId,
+    FpsWeaponType WeaponType = FpsWeaponType.AssaultRifle);
+internal sealed class FpsGrenadeState
+{
+    public required uint Id { get; init; }
+    public required byte OwnerId { get; init; }
+    public required FpsLethalType Type { get; init; }
+    public Vector3 Position { get; set; }
+    public Vector3 Velocity { get; set; }
+    public float RemainingSeconds { get; set; }
+    public byte AttachedActorId { get; set; } = byte.MaxValue;
+    public uint AttachedActorSpawnCount { get; set; }
+    public Vector3 AttachmentOffset { get; set; }
+    public bool StuckToWorld { get; set; }
+}
+internal readonly record struct FpsGrenadeExplosionEvent(uint GrenadeId, byte OwnerId,
+    FpsLethalType Type, Vector3 Position);
 internal readonly record struct FpsBotDiagnosticEvent(byte ActorId, FpsBotMode Mode,
     string Message, bool Warning = false);
 internal readonly record struct FpsStepDiagnostics(double HumanMilliseconds,
@@ -101,12 +118,25 @@ internal sealed class FpsActorState
     public float WeaponHeat { get; set; }
     public int AmmoInMagazine { get; set; }
     public int ReserveMagazines { get; set; }
+    public FpsLoadout Loadout { get; set; }
+    public FpsLoadout? PendingLoadout { get; set; }
+    public bool LoadoutConfirmed { get; set; }
+    public byte ActiveWeaponSlot { get; set; }
+    public int PrimaryAmmoInMagazine { get; set; }
+    public int PrimaryReserveMagazines { get; set; }
+    public int SecondaryAmmoInMagazine { get; set; }
+    public int SecondaryReserveMagazines { get; set; }
+    public int LethalsRemaining { get; set; }
+    public bool FireHeld { get; set; }
+    public bool LethalHeld { get; set; }
+    public float ActionLockRemaining { get; set; }
     public float HealthRegenerationDelay { get; set; }
     public float HealthRegenerationCarry { get; set; }
     public float Stamina { get; set; } = FpsSimulation.MaximumStamina;
     public bool SprintExhausted { get; set; }
     public float StaminaRecoveryDelay { get; set; }
-    public FpsWeaponType WeaponType { get; init; } = FpsWeaponType.AssaultRifle;
+    public FpsWeaponType WeaponType => ActiveWeaponSlot == 0
+        ? Loadout.MainWeapon : Loadout.SecondaryWeapon;
     public float ReloadRemaining { get; set; }
     public bool ReloadHeld { get; set; }
     public uint ShotSequence { get; set; }
@@ -221,12 +251,15 @@ internal sealed class FpsSimulation
     private readonly List<FpsAwardEvent> _awardEvents = [];
     private readonly List<FpsWeaponPickup> _pickups = [];
     private readonly List<FpsPickupEvent> _pickupEvents = [];
+    private readonly List<FpsGrenadeState> _grenades = [];
+    private readonly List<FpsGrenadeExplosionEvent> _grenadeExplosionEvents = [];
     private readonly List<FpsBotDiagnosticEvent> _botDiagnosticEvents = [];
     private readonly FpsArenaSurface? _surface;
     private readonly FpsArenaNavigationAsset? _navigation;
     private readonly int _seed;
     private int _nextSpawn;
     private uint _nextPickupId = 1;
+    private uint _nextGrenadeId = 1;
 
     public FpsMatchState MatchState { get; private set; } = FpsMatchState.Running;
     public float RemainingSeconds { get; private set; }
@@ -239,6 +272,9 @@ internal sealed class FpsSimulation
     public IReadOnlyList<FpsAwardEvent> AwardEvents => _awardEvents;
     public IReadOnlyList<FpsWeaponPickup> Pickups => _pickups;
     public IReadOnlyList<FpsPickupEvent> PickupEvents => _pickupEvents;
+    public IReadOnlyList<FpsGrenadeState> Grenades => _grenades;
+    public IReadOnlyList<FpsGrenadeExplosionEvent> GrenadeExplosionEvents =>
+        _grenadeExplosionEvents;
     public IReadOnlyList<FpsBotDiagnosticEvent> BotDiagnosticEvents => _botDiagnosticEvents;
     internal int BotPathPlansLastStep { get; private set; }
     internal FpsStepDiagnostics LastStepDiagnostics { get; private set; }
@@ -260,6 +296,8 @@ internal sealed class FpsSimulation
                 Name = string.IsNullOrWhiteSpace(slot.Name) ? $"Player {slot.Id + 1}" : slot.Name,
                 Role = slot.Role,
                 Health = configuration.Bots.Health,
+                Loadout = FpsItems.FromConfiguration(configuration.Loadouts.BotDefault),
+                LoadoutConfirmed = true,
                 Active = slot.Role is FpsSlotRole.Auto or FpsSlotRole.Bot,
                 HumanControlled = false,
                 Difficulty = Math.Clamp(slot.Difficulty ?? Vary(configuration.Bots.Difficulty,
@@ -271,13 +309,40 @@ internal sealed class FpsSimulation
         foreach (var actor in _actors.Values.Where(actor => actor.Active)) Spawn(actor);
     }
 
-    public bool ClaimHuman(byte actorId)
+    public bool ClaimHuman(byte actorId, bool requireLoadoutConfirmation = false)
     {
         if (!_actors.TryGetValue(actorId, out var actor) || actor.Role == FpsSlotRole.Bot) return false;
         actor.HumanControlled = true;
-        actor.Active = true;
-        Spawn(actor);
+        actor.Loadout = FpsItems.FromConfiguration(_configuration.Loadouts.HumanDefault);
+        actor.PendingLoadout = null;
+        actor.LoadoutConfirmed = !requireLoadoutConfirmation;
+        actor.Active = !requireLoadoutConfirmation;
+        actor.Dead = false;
+        actor.HasInput = false;
+        _grenades.RemoveAll(grenade => grenade.OwnerId == actorId);
+        if (actor.Active) Spawn(actor);
         return true;
+    }
+
+    public FpsLoadoutResultCode SelectLoadout(byte actorId, in FpsLoadout loadout)
+    {
+        if (!_actors.TryGetValue(actorId, out var actor) || !actor.HumanControlled)
+            return FpsLoadoutResultCode.NotAvailable;
+        if (!FpsItems.IsAllowed(_configuration.Loadouts, loadout))
+            return FpsLoadoutResultCode.InvalidSelection;
+
+        if (!actor.LoadoutConfirmed || !actor.Active)
+        {
+            actor.Loadout = loadout;
+            actor.PendingLoadout = null;
+            actor.LoadoutConfirmed = true;
+            actor.Active = true;
+            Spawn(actor);
+            return FpsLoadoutResultCode.Applied;
+        }
+
+        actor.PendingLoadout = loadout;
+        return FpsLoadoutResultCode.QueuedForRespawn;
     }
 
     public void ReleaseHuman(byte actorId)
@@ -285,13 +350,18 @@ internal sealed class FpsSimulation
         if (!_actors.TryGetValue(actorId, out var actor)) return;
         actor.HumanControlled = false;
         actor.HasInput = false;
+        actor.PendingLoadout = null;
+        actor.Loadout = FpsItems.FromConfiguration(_configuration.Loadouts.BotDefault);
+        actor.LoadoutConfirmed = true;
+        _grenades.RemoveAll(grenade => grenade.OwnerId == actorId);
         actor.Active = actor.Role == FpsSlotRole.Auto;
         if (actor.Active) Spawn(actor);
     }
 
     public bool ApplyInput(byte actorId, in FpsInputCommand command)
     {
-        if (!_actors.TryGetValue(actorId, out var actor) || !actor.HumanControlled || actor.Dead
+        if (!_actors.TryGetValue(actorId, out var actor) || !actor.HumanControlled
+            || !actor.Active || actor.Dead
             || !Finite(command.Move) || !float.IsFinite(command.Yaw) || !float.IsFinite(command.Pitch)
             || command.Move.LengthSquared() > 1.05f
             || (actor.HasInput && !IsNewer(command.Sequence, actor.LastInputSequence)))
@@ -310,6 +380,7 @@ internal sealed class FpsSimulation
         _shotEvents.Clear();
         _awardEvents.Clear();
         _pickupEvents.Clear();
+        _grenadeExplosionEvents.Clear();
         _botDiagnosticEvents.Clear();
         BotPathPlansLastStep = 0;
         _pathMillisecondsLastStep = 0;
@@ -330,6 +401,7 @@ internal sealed class FpsSimulation
             if (!actor.Active) continue;
             long actorStarted = Stopwatch.GetTimestamp();
             actor.FireCooldown = Math.Max(0, actor.FireCooldown - dt);
+            actor.ActionLockRemaining = Math.Max(0, actor.ActionLockRemaining - dt);
             actor.WeaponHeat = Math.Max(0,
                 actor.WeaponHeat - RifleHeatRecoveryPerSecond * dt);
             StepReload(actor, dt);
@@ -366,6 +438,7 @@ internal sealed class FpsSimulation
         long postStarted = Stopwatch.GetTimestamp();
         SeparateActors();
         StepWeaponPickups(dt);
+        StepGrenades(dt);
         if (RemainingSeconds <= 0 || _actors.Values.Any(actor => actor.Kills >= _configuration.KillLimit))
             FinishMatch();
         LastStepDiagnostics = new FpsStepDiagnostics(humanMilliseconds, botMilliseconds,
@@ -385,8 +458,9 @@ internal sealed class FpsSimulation
     private void StepHuman(FpsActorState actor, float dt)
     {
         if (!actor.HasInput) return;
+        SwitchWeapon(actor, actor.Input.SelectedSlot);
         bool reload = actor.Input.Buttons.HasFlag(FpsInputButtons.Reload);
-        if (reload && !actor.ReloadHeld) BeginReload(actor);
+        if (reload && !actor.ReloadHeld && actor.ActionLockRemaining <= 0) BeginReload(actor);
         actor.ReloadHeld = reload;
         actor.Yaw = NormalizeAngle(actor.Input.Yaw);
         actor.Pitch = actor.Input.Pitch;
@@ -408,7 +482,7 @@ internal sealed class FpsSimulation
             actor.JumpHeld = jump;
             actor.JumpHeldSeconds = 0;
             actor.TraversalConsumedForJumpHold = true;
-            if (actor.Input.Buttons.HasFlag(FpsInputButtons.Fire)) TryFire(actor);
+            TryHumanCombatActions(actor);
             return;
         }
         if (!jumpConsumed && jumpStarted && actor.IsGrounded)
@@ -417,7 +491,58 @@ internal sealed class FpsSimulation
             actor.IsGrounded = false;
         }
         actor.JumpHeld = jump;
-        if (actor.Input.Buttons.HasFlag(FpsInputButtons.Fire)) TryFire(actor);
+        TryHumanCombatActions(actor);
+    }
+
+    private void TryHumanCombatActions(FpsActorState actor)
+    {
+        bool fire = actor.Input.Buttons.HasFlag(FpsInputButtons.Fire);
+        var firearm = FpsItems.Firearm(actor.WeaponType);
+        if (actor.ActionLockRemaining <= 0 && fire && (firearm.Automatic || !actor.FireHeld))
+            TryFire(actor);
+        actor.FireHeld = fire;
+
+        bool lethal = actor.Input.Buttons.HasFlag(FpsInputButtons.ThrowLethal);
+        if (actor.ActionLockRemaining <= 0 && lethal && !actor.LethalHeld)
+            TryThrowLethal(actor);
+        actor.LethalHeld = lethal;
+    }
+
+    private static void SwitchWeapon(FpsActorState actor, byte selectedSlot)
+    {
+        selectedSlot = selectedSlot == 1 ? (byte)1 : (byte)0;
+        if (selectedSlot == actor.ActiveWeaponSlot) return;
+
+        SaveActiveWeaponState(actor);
+        actor.ActiveWeaponSlot = selectedSlot;
+        if (selectedSlot == 0)
+        {
+            actor.AmmoInMagazine = actor.PrimaryAmmoInMagazine;
+            actor.ReserveMagazines = actor.PrimaryReserveMagazines;
+        }
+        else
+        {
+            actor.AmmoInMagazine = actor.SecondaryAmmoInMagazine;
+            actor.ReserveMagazines = actor.SecondaryReserveMagazines;
+        }
+        actor.ReloadRemaining = 0;
+        actor.FireCooldown = Math.Max(actor.FireCooldown, 0.35f);
+        actor.ActionLockRemaining = Math.Max(actor.ActionLockRemaining, 0.35f);
+        actor.FireHeld = true;
+    }
+
+    private static void SaveActiveWeaponState(FpsActorState actor)
+    {
+        if (actor.ActiveWeaponSlot == 0)
+        {
+            actor.PrimaryAmmoInMagazine = actor.AmmoInMagazine;
+            actor.PrimaryReserveMagazines = actor.ReserveMagazines;
+        }
+        else
+        {
+            actor.SecondaryAmmoInMagazine = actor.AmmoInMagazine;
+            actor.SecondaryReserveMagazines = actor.ReserveMagazines;
+        }
     }
 
     private static bool UpdateStance(FpsActorState actor, bool crouch, bool jump,
@@ -661,6 +786,9 @@ internal sealed class FpsSimulation
 
     private void StepBot(FpsActorState actor, float dt)
     {
+        if (actor.ActiveWeaponSlot == 0 && actor.AmmoInMagazine == 0
+            && actor.ReserveMagazines == 0)
+            SwitchWeapon(actor, 1);
         actor.BotPlanRemaining = Math.Max(0, actor.BotPlanRemaining - dt);
         actor.BotBlockedTraversalRemaining = Math.Max(0,
             actor.BotBlockedTraversalRemaining - dt);
@@ -721,10 +849,15 @@ internal sealed class FpsSimulation
         AimBot(actor, visible ? target.Position : actor.BotLastKnownTargetPosition,
             visible ? target.Stance : FpsStance.Standing, dt);
         float distance = PlanarDistance(actor.Position, target.Position);
+        if (visible && actor.BotReactionRemaining <= 0 && actor.LethalsRemaining > 0
+            && distance is >= 5 and <= 18
+            && actor.BotTargetVisibleSeconds >= Lerp(1.5f, 0.6f, actor.Aggression))
+            TryThrowLethal(actor);
         float preferredDistance = Lerp(24, 8, actor.Aggression);
+        float firearmRange = FpsItems.Firearm(actor.WeaponType).Range;
         bool canFire = visible && actor.BotReactionRemaining <= 0
                        && target.SpawnProtectionRemaining <= 0
-                       && distance <= RifleRange && BotAimIsReady(actor, target);
+                       && distance <= firearmRange && BotAimIsReady(actor, target);
         bool wantsMovement;
         if (actor.ReloadRemaining > 0)
         {
@@ -811,7 +944,8 @@ internal sealed class FpsSimulation
             + Vector3.UnitY * (CollisionHeight(target.Stance) * 0.55f);
         var delta = targetPoint - origin;
         float centerDistance = delta.Length();
-        if (centerDistance < 0.01f || centerDistance > RifleRange)
+        float firearmRange = FpsItems.Firearm(actor.WeaponType).Range;
+        if (centerDistance < 0.01f || centerDistance > firearmRange)
         {
             direction = Vector3.UnitZ;
             targetDistance = 0;
@@ -820,7 +954,7 @@ internal sealed class FpsSimulation
         direction = delta / centerDistance;
         if (!TryRaycastActorCapsule(origin, direction, target.Position,
                 CollisionHeight(target.Stance), out targetDistance, out _)
-            || targetDistance > RifleRange)
+            || targetDistance > firearmRange)
             return false;
         return _surface is null || !_surface.TryRaycast(origin, direction,
             targetDistance + RifleOcclusionEpsilon, out float worldDistance)
@@ -1290,13 +1424,15 @@ internal sealed class FpsSimulation
 
     private void TryFire(FpsActorState attacker, FpsActorState? intendedTarget = null)
     {
-        if (attacker.FireCooldown > 0 || attacker.ReloadRemaining > 0) return;
+        if (attacker.FireCooldown > 0 || attacker.ReloadRemaining > 0
+            || attacker.ActionLockRemaining > 0) return;
+        var firearm = FpsItems.Firearm(attacker.WeaponType);
         if (attacker.AmmoInMagazine <= 0)
         {
             BeginReload(attacker);
             return;
         }
-        attacker.FireCooldown = RifleInterval;
+        attacker.FireCooldown = firearm.FireInterval;
         attacker.AmmoInMagazine--;
         uint shotSequence = ++attacker.ShotSequence;
         float aimSpreadMultiplier = attacker.Input.Buttons.HasFlag(FpsInputButtons.Aim)
@@ -1308,7 +1444,7 @@ internal sealed class FpsSimulation
             FpsStance.Prone => RifleProneSpreadMultiplier,
             _ => RifleStandingSpreadMultiplier,
         };
-        float spread = attacker.WeaponHeat * RifleMaximumSpreadRadians
+        float spread = attacker.WeaponHeat * firearm.MaximumSpreadRadians
             * aimSpreadMultiplier * stanceSpreadMultiplier;
         float baseYaw = attacker.Yaw;
         float basePitch = attacker.Pitch;
@@ -1322,16 +1458,16 @@ internal sealed class FpsSimulation
         float shotYaw = baseYaw + ShotNoise(attacker.Id, shotSequence, 0xA511E9B3u) * spread;
         float shotPitch = basePitch
             + ShotNoise(attacker.Id, shotSequence, 0x63D83595u) * spread;
-        attacker.WeaponHeat = Math.Min(1, attacker.WeaponHeat + RifleHeatPerShot);
+        attacker.WeaponHeat = Math.Min(1, attacker.WeaponHeat + firearm.HeatPerShot);
         float cosPitch = MathF.Cos(shotPitch);
         var direction = Vector3.Normalize(new Vector3(MathF.Sin(shotYaw) * cosPitch,
             MathF.Sin(shotPitch), MathF.Cos(shotYaw) * cosPitch));
         var origin = attacker.Position + Vector3.UnitY * EyeHeight(attacker.Stance);
         FpsActorState? hit = null;
         float hitHeightRatio = 0;
-        float hitDistance = RifleRange;
+        float hitDistance = firearm.Range;
         bool hitWorld = false;
-        if (_surface is not null && _surface.TryRaycast(origin, direction, RifleRange,
+        if (_surface is not null && _surface.TryRaycast(origin, direction, firearm.Range,
                 out float surfaceDistance))
         {
             hitDistance = surfaceDistance;
@@ -1344,7 +1480,7 @@ internal sealed class FpsSimulation
             if (!TryRaycastActorCapsule(origin, direction, candidate.Position,
                     CollisionHeight(candidate.Stance), out float along,
                     out float candidateHeightRatio)
-                || along <= 0 || along > RifleRange || along >= hitDistance) continue;
+                || along <= 0 || along > firearm.Range || along >= hitDistance) continue;
             hit = candidate;
             hitDistance = along;
             hitHeightRatio = candidateHeightRatio;
@@ -1353,43 +1489,59 @@ internal sealed class FpsSimulation
         _shotEvents.Add(new FpsShotEvent(attacker.Id, shotSequence, origin, direction,
             hitDistance, hit is not null ? FpsShotImpact.Actor
                 : hitWorld ? FpsShotImpact.World : FpsShotImpact.None,
-            hit?.Id ?? byte.MaxValue));
+            hit?.Id ?? byte.MaxValue, attacker.WeaponType));
 
         if (attacker.AmmoInMagazine == 0) BeginReload(attacker);
 
         if (hit is null) return;
-        int healthBefore = hit.Health;
-        hit.DamageContributors.Add(attacker.Id);
-        hit.HealthRegenerationDelay = HealthRegenerationDelaySeconds;
-        hit.HealthRegenerationCarry = 0;
-        hit.Health -= (int)RifleDamage;
-        _hitEvents.Add(new FpsHitEvent(attacker.Id, hit.Id, (ushort)Math.Max(0, hit.Health)));
-        if (hit.Health > 0) return;
-        hit.Dead = true;
-        hit.Health = 0;
-        hit.RespawnRemaining = _configuration.RespawnSeconds;
-        hit.Deaths++;
-        DropWeapon(hit);
-        attacker.Kills++;
-        attacker.Score += 100;
-        attacker.FinalScoreAttainedAtSeconds = ElapsedSeconds;
-        _killEvents.Add(new FpsKillEvent(attacker.Id, hit.Id, attacker.Kills, hit.Deaths));
-        var killFlags = FpsAwardFlags.Kill;
-        if (hitHeightRatio >= 0.8f) killFlags |= FpsAwardFlags.Headshot;
-        if (healthBefore == _configuration.Bots.Health && RifleDamage >= healthBefore)
-            killFlags |= FpsAwardFlags.OneShot;
-        _awardEvents.Add(new FpsAwardEvent(attacker.Id, hit.Id, 100, attacker.Score,
-            killFlags));
-        foreach (byte contributorId in hit.DamageContributors
+        ApplyDamage(attacker, hit, firearm.Damage, (byte)attacker.WeaponType,
+            hitHeightRatio);
+    }
+
+    private void ApplyDamage(FpsActorState attacker, FpsActorState victim, int damage,
+        byte itemId, float hitHeightRatio = 0)
+    {
+        if (victim.Dead || victim.SpawnProtectionRemaining > 0 || damage <= 0) return;
+        int healthBefore = victim.Health;
+        bool selfDamage = attacker.Id == victim.Id;
+        if (!selfDamage) victim.DamageContributors.Add(attacker.Id);
+        victim.HealthRegenerationDelay = HealthRegenerationDelaySeconds;
+        victim.HealthRegenerationCarry = 0;
+        victim.Health -= damage;
+        _hitEvents.Add(new FpsHitEvent(attacker.Id, victim.Id,
+            (ushort)Math.Max(0, victim.Health), itemId));
+        if (victim.Health > 0) return;
+
+        victim.Dead = true;
+        victim.Health = 0;
+        victim.RespawnRemaining = _configuration.RespawnSeconds;
+        victim.Deaths++;
+        DropWeapon(victim);
+        byte killerId = selfDamage ? byte.MaxValue : attacker.Id;
+        if (!selfDamage)
+        {
+            attacker.Kills++;
+            attacker.Score += 100;
+            attacker.FinalScoreAttainedAtSeconds = ElapsedSeconds;
+            var killFlags = FpsAwardFlags.Kill;
+            if (hitHeightRatio >= 0.8f) killFlags |= FpsAwardFlags.Headshot;
+            if (healthBefore == _configuration.Bots.Health && damage >= healthBefore)
+                killFlags |= FpsAwardFlags.OneShot;
+            _awardEvents.Add(new FpsAwardEvent(attacker.Id, victim.Id, 100,
+                attacker.Score, killFlags));
+        }
+        _killEvents.Add(new FpsKillEvent(killerId, victim.Id,
+            selfDamage ? (ushort)0 : attacker.Kills, victim.Deaths, itemId));
+        foreach (byte contributorId in victim.DamageContributors
                      .Where(id => id != attacker.Id).OrderBy(id => id))
         {
             if (!_actors.TryGetValue(contributorId, out var contributor)
                 || !contributor.Active) continue;
             contributor.Score += 50;
-            _awardEvents.Add(new FpsAwardEvent(contributor.Id, hit.Id, 50,
+            _awardEvents.Add(new FpsAwardEvent(contributor.Id, victim.Id, 50,
                 contributor.Score, FpsAwardFlags.Assist));
         }
-        hit.DamageContributors.Clear();
+        victim.DamageContributors.Clear();
     }
 
     private void DropWeapon(FpsActorState actor)
@@ -1433,16 +1585,44 @@ internal sealed class FpsSimulation
             var collector = _actors.Values
                 .Where(actor => actor.Active && !actor.Dead
                                 && actor.Id != pickup.DroppedByActorId
-                                && actor.WeaponType == pickup.WeaponType
-                                && actor.ReserveMagazines < RifleMaximumReserveMagazines
+                                && HasWeapon(actor, pickup.WeaponType)
+                                && ReserveMagazines(actor, pickup.WeaponType)
+                                < FpsItems.Firearm(pickup.WeaponType).MaximumReserveMagazines
                                 && Vector3.DistanceSquared(actor.Position, pickup.Position)
                                 <= WeaponPickupRadius * WeaponPickupRadius)
                 .OrderBy(actor => actor.Id)
                 .FirstOrDefault();
             if (collector is null) continue;
 
-            collector.ReserveMagazines++;
+            AddReserveMagazine(collector, pickup.WeaponType);
             RemovePickup(index, pickup, collector.Id);
+        }
+    }
+
+    private static bool HasWeapon(FpsActorState actor, FpsWeaponType weapon) =>
+        actor.Loadout.MainWeapon == weapon || actor.Loadout.SecondaryWeapon == weapon;
+
+    private static int ReserveMagazines(FpsActorState actor, FpsWeaponType weapon)
+    {
+        if (actor.WeaponType == weapon) return actor.ReserveMagazines;
+        return actor.Loadout.MainWeapon == weapon
+            ? actor.PrimaryReserveMagazines : actor.SecondaryReserveMagazines;
+    }
+
+    private static void AddReserveMagazine(FpsActorState actor, FpsWeaponType weapon)
+    {
+        if (actor.WeaponType == weapon)
+        {
+            actor.ReserveMagazines++;
+            SaveActiveWeaponState(actor);
+        }
+        else if (actor.Loadout.MainWeapon == weapon)
+        {
+            actor.PrimaryReserveMagazines++;
+        }
+        else
+        {
+            actor.SecondaryReserveMagazines++;
         }
     }
 
@@ -1452,6 +1632,145 @@ internal sealed class FpsSimulation
         _pickups.RemoveAt(index);
         _pickupEvents.Add(new FpsPickupEvent(pickup.Id, FpsPickupState.Removed,
             pickup.WeaponType, pickup.Position, collectorId));
+    }
+
+    private void TryThrowLethal(FpsActorState actor)
+    {
+        if (actor.LethalsRemaining <= 0) return;
+        var definition = FpsItems.Lethal(actor.Loadout.Lethal);
+        float cosPitch = MathF.Cos(actor.Pitch);
+        var direction = Vector3.Normalize(new Vector3(MathF.Sin(actor.Yaw) * cosPitch,
+            MathF.Sin(actor.Pitch), MathF.Cos(actor.Yaw) * cosPitch));
+        var origin = actor.Position + Vector3.UnitY * EyeHeight(actor.Stance)
+            + direction * 0.55f;
+        _grenades.Add(new FpsGrenadeState
+        {
+            Id = _nextGrenadeId++,
+            OwnerId = actor.Id,
+            Type = actor.Loadout.Lethal,
+            Position = origin,
+            Velocity = direction * definition.ThrowSpeed + Vector3.UnitY * 1.5f,
+            RemainingSeconds = definition.FuseSeconds,
+        });
+        if (_nextGrenadeId == 0) _nextGrenadeId = 1;
+        actor.LethalsRemaining--;
+        actor.ReloadRemaining = 0;
+        actor.ActionLockRemaining = 0.45f;
+    }
+
+    private void StepGrenades(float dt)
+    {
+        for (int index = _grenades.Count - 1; index >= 0; index--)
+        {
+            var grenade = _grenades[index];
+            grenade.RemainingSeconds -= dt;
+            if (grenade.AttachedActorId != byte.MaxValue)
+            {
+                if (_actors.TryGetValue(grenade.AttachedActorId, out var attached)
+                    && attached.Active && !attached.Dead
+                    && attached.SpawnCount == grenade.AttachedActorSpawnCount)
+                {
+                    grenade.Position = attached.Position + grenade.AttachmentOffset;
+                }
+                else
+                {
+                    grenade.AttachedActorId = byte.MaxValue;
+                    grenade.Velocity = Vector3.Zero;
+                }
+            }
+            else if (!grenade.StuckToWorld)
+            {
+                StepFlyingGrenade(grenade, dt);
+            }
+
+            if (grenade.RemainingSeconds > 0) continue;
+            ExplodeGrenade(grenade);
+            _grenades.RemoveAt(index);
+        }
+    }
+
+    private void StepFlyingGrenade(FpsGrenadeState grenade, float dt)
+    {
+        var definition = FpsItems.Lethal(grenade.Type);
+        var start = grenade.Position;
+        grenade.Velocity += Vector3.UnitY * (-Gravity * dt);
+        var displacement = grenade.Velocity * dt;
+        float distance = displacement.Length();
+        if (distance <= 1e-5f) return;
+        var direction = displacement / distance;
+        FpsActorState? hitActor = null;
+        float hitDistance = distance;
+        if (definition.Sticky)
+        {
+            foreach (var actor in _actors.Values)
+            {
+                if (!actor.Active || actor.Dead || actor.Id == grenade.OwnerId) continue;
+                if (!TryRaycastActorCapsule(start, direction, actor.Position,
+                        CollisionHeight(actor.Stance), out float along, out _)
+                    || along < 0 || along >= hitDistance) continue;
+                hitActor = actor;
+                hitDistance = along;
+            }
+        }
+
+        float worldDistance = float.PositiveInfinity;
+        bool hitWorld = _surface is not null
+            && _surface.TryRaycast(start, direction, distance, out worldDistance)
+            && worldDistance < hitDistance;
+        if (hitWorld) hitDistance = worldDistance;
+        grenade.Position = start + direction * hitDistance;
+        if (hitActor is not null && !hitWorld)
+        {
+            grenade.AttachedActorId = hitActor.Id;
+            grenade.AttachedActorSpawnCount = hitActor.SpawnCount;
+            grenade.AttachmentOffset = grenade.Position - hitActor.Position;
+            grenade.Velocity = Vector3.Zero;
+        }
+        else if (hitWorld)
+        {
+            if (definition.Sticky)
+            {
+                grenade.StuckToWorld = true;
+                grenade.Velocity = Vector3.Zero;
+            }
+            else
+            {
+                grenade.Position -= direction * 0.02f;
+                grenade.Velocity = new Vector3(grenade.Velocity.X * 0.55f,
+                    -grenade.Velocity.Y * 0.45f, grenade.Velocity.Z * 0.55f);
+            }
+        }
+        else
+        {
+            grenade.Position = start + displacement;
+        }
+    }
+
+    private void ExplodeGrenade(FpsGrenadeState grenade)
+    {
+        _grenadeExplosionEvents.Add(new FpsGrenadeExplosionEvent(grenade.Id,
+            grenade.OwnerId, grenade.Type, grenade.Position));
+        if (!_actors.TryGetValue(grenade.OwnerId, out var owner)) return;
+        var definition = FpsItems.Lethal(grenade.Type);
+        foreach (var victim in _actors.Values.Where(actor => actor.Active && !actor.Dead)
+                     .OrderBy(actor => actor.Id))
+        {
+            var target = victim.Position + Vector3.UnitY * EyeHeight(victim.Stance);
+            var fromExplosion = target - grenade.Position;
+            float distance = fromExplosion.Length();
+            if (distance > definition.DamageRadius) continue;
+            if (distance > 0.05f && _surface is not null
+                && _surface.TryRaycast(grenade.Position + Vector3.UnitY * 0.05f,
+                    fromExplosion / distance, distance, out float obstruction)
+                && obstruction < distance - RifleOcclusionEpsilon)
+                continue;
+            float falloff = distance <= 1 ? 0
+                : Math.Clamp((distance - 1) / Math.Max(0.01f,
+                    definition.DamageRadius - 1), 0, 1);
+            int damage = (int)MathF.Round(definition.MaximumDamage
+                + (definition.EdgeDamage - definition.MaximumDamage) * falloff);
+            ApplyDamage(owner, victim, damage, (byte)grenade.Type);
+        }
     }
 
     private static bool TryRaycastActorCapsule(Vector3 origin, Vector3 direction,
@@ -1516,10 +1835,11 @@ internal sealed class FpsSimulation
 
     private static void BeginReload(FpsActorState actor)
     {
-        if (actor.ReloadRemaining > 0 || actor.AmmoInMagazine >= RifleMagazineCapacity
+        var firearm = FpsItems.Firearm(actor.WeaponType);
+        if (actor.ReloadRemaining > 0 || actor.AmmoInMagazine >= firearm.MagazineCapacity
             || actor.ReserveMagazines <= 0)
             return;
-        actor.ReloadRemaining = RifleReloadSeconds;
+        actor.ReloadRemaining = firearm.ReloadSeconds;
     }
 
     private static void StepReload(FpsActorState actor, float dt)
@@ -1527,12 +1847,19 @@ internal sealed class FpsSimulation
         if (actor.ReloadRemaining <= 0) return;
         actor.ReloadRemaining = Math.Max(0, actor.ReloadRemaining - dt);
         if (actor.ReloadRemaining > 0) return;
-        actor.AmmoInMagazine = RifleMagazineCapacity;
+        actor.AmmoInMagazine = FpsItems.Firearm(actor.WeaponType).MagazineCapacity;
         actor.ReserveMagazines--;
     }
 
     private void Spawn(FpsActorState actor)
     {
+        if (actor.PendingLoadout is { } pendingLoadout)
+        {
+            actor.Loadout = pendingLoadout;
+            actor.PendingLoadout = null;
+        }
+        var primary = FpsItems.Firearm(actor.Loadout.MainWeapon);
+        var secondary = FpsItems.Firearm(actor.Loadout.SecondaryWeapon);
         var spawns = _configuration.Arena.SpawnPoints;
         if (spawns.Count == 0) throw new InvalidOperationException("FPS arena has no spawn points");
         var spawn = ChooseSpawn(actor);
@@ -1565,8 +1892,17 @@ internal sealed class FpsSimulation
         actor.SpawnProtectionRemaining = _configuration.SpawnProtectionSeconds;
         actor.FireCooldown = 0;
         actor.WeaponHeat = 0;
-        actor.AmmoInMagazine = RifleMagazineCapacity;
-        actor.ReserveMagazines = RifleInitialReserveMagazines;
+        actor.ActiveWeaponSlot = 0;
+        actor.PrimaryAmmoInMagazine = primary.MagazineCapacity;
+        actor.PrimaryReserveMagazines = primary.InitialReserveMagazines;
+        actor.SecondaryAmmoInMagazine = secondary.MagazineCapacity;
+        actor.SecondaryReserveMagazines = secondary.InitialReserveMagazines;
+        actor.AmmoInMagazine = actor.PrimaryAmmoInMagazine;
+        actor.ReserveMagazines = actor.PrimaryReserveMagazines;
+        actor.LethalsRemaining = 1;
+        actor.FireHeld = false;
+        actor.LethalHeld = false;
+        actor.ActionLockRemaining = 0;
         actor.HealthRegenerationDelay = 0;
         actor.HealthRegenerationCarry = 0;
         actor.Stamina = MaximumStamina;

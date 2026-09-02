@@ -56,8 +56,7 @@ public partial class App : Application
         {
             if (_webServer is not null)
             {
-                await _webServer.DisposeAsync();
-                _webServer = null;
+                await StopWebDashboardCoreAsync();
             }
 
             if (!Settings.WebUiEnabled)
@@ -94,6 +93,36 @@ public partial class App : Application
         }
     }
 
+    public async Task StopWebDashboardAsync(CancellationToken cancellationToken = default)
+    {
+        await _webServerLock.WaitAsync(cancellationToken);
+        try
+        {
+            await StopWebDashboardCoreAsync();
+        }
+        finally
+        {
+            _webServerLock.Release();
+        }
+    }
+
+    private async Task StopWebDashboardCoreAsync()
+    {
+        var server = Interlocked.Exchange(ref _webServer, null);
+        if (server is null)
+            return;
+        try
+        {
+            await server.DisposeAsync();
+            WebDashboardStatus = "Stopped";
+        }
+        catch (Exception exception)
+        {
+            WebDashboardStatus = $"Could not stop cleanly: {exception.Message}";
+            LogWebDashboard($"ERROR: {WebDashboardStatus}");
+        }
+    }
+
     private void LogWebDashboard(string message)
     {
         try
@@ -110,15 +139,25 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        try
+        // Normal window close awaits StopWebDashboardAsync before reaching OnExit. Keep this
+        // fallback non-blocking: synchronous disposal here can deadlock with an HTTP request
+        // waiting on the WPF dispatcher which is itself executing this method.
+        var server = Interlocked.Exchange(ref _webServer, null);
+        if (server is not null)
         {
-            _webServer?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await server.DisposeAsync();
+                }
+                catch
+                {
+                    // Process shutdown is already committed; diagnostics cannot delay it.
+                }
+            });
         }
-        finally
-        {
-            _webServerLock.Dispose();
-            base.OnExit(e);
-        }
+        base.OnExit(e);
     }
 
     private static Assembly? ResolveLocalizedAssembly(AssemblyLoadContext context, AssemblyName assemblyName)

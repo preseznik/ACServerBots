@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private readonly MainViewModel _viewModel = new();
     private bool _initialized;
     private bool _allowClose;
+    private bool _closeInProgress;
     private readonly DispatcherTimer _takeoverInputTimer;
     private bool _leftPressed;
     private bool _rightPressed;
@@ -53,14 +54,16 @@ public partial class MainWindow : Window
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
         PersistWindowSettings();
-        if (_allowClose || !_viewModel.IsServerRunning)
+        if (_allowClose)
         {
             _viewModel.Dispose();
             return;
         }
 
         e.Cancel = true;
-        if (RaceControlApp.Settings.ConfirmBeforeStoppingServerOnExit)
+        if (_closeInProgress)
+            return;
+        if (_viewModel.IsServerRunning && RaceControlApp.Settings.ConfirmBeforeStoppingServerOnExit)
         {
             var answer = MessageBox.Show(
                 this,
@@ -74,9 +77,19 @@ public partial class MainWindow : Window
             }
         }
 
-        await _viewModel.RequestStopAsync();
-        _allowClose = true;
-        Close();
+        _closeInProgress = true;
+        IsEnabled = false;
+        try
+        {
+            if (_viewModel.IsServerRunning)
+                await _viewModel.RequestStopAsync();
+            await RaceControlApp.StopWebDashboardAsync();
+        }
+        finally
+        {
+            _allowClose = true;
+            Close();
+        }
     }
 
     private void LogTextBox_TextChanged(object sender, TextChangedEventArgs e)

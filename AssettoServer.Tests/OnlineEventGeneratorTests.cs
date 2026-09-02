@@ -33,14 +33,21 @@ public class OnlineEventGeneratorTests
         Type[] packets =
         [
             typeof(FpsInputPacket), typeof(FpsReadyPacket), typeof(FpsEnvironmentRequestPacket),
+            typeof(FpsLoadoutSelectPacket), typeof(FpsLoadoutCatalogPacket),
+            typeof(FpsLoadoutResultPacket), typeof(FpsLoadoutStatePacket),
             typeof(FpsSnapshotPacket),
             typeof(FpsRosterPacket), typeof(FpsMatchPacket), typeof(FpsKillPacket), typeof(FpsHitPacket),
             typeof(FpsAwardPacket), typeof(FpsPickupPacket), typeof(FpsShotPacket),
+            typeof(FpsGrenadeSnapshotPacket), typeof(FpsGrenadeExplodedPacket),
             typeof(FpsClientDiagnosticPacket),
         ];
         var definitions = packets.Select(OnlineEventGenerator.ParseClientMessage).ToArray();
         var snapshotDefinition = definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot");
         int snapshotPayloadBytes = snapshotDefinition.Fields.Sum(field =>
+            Math.Abs(field.Size) * (field.Array ?? 1));
+        var grenadeDefinition = definitions.Single(definition =>
+            definition.Key == "ASRC_FpsGrenadeSnapshot");
+        int grenadePayloadBytes = grenadeDefinition.Fields.Sum(field =>
             Math.Abs(field.Size) * (field.Array ?? 1));
 
         Assert.Multiple(() =>
@@ -49,6 +56,7 @@ public class OnlineEventGeneratorTests
             Assert.That(definitions.Select(definition => definition.PacketType), Is.Unique);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsInput").Udp, Is.True);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Udp, Is.True);
+            Assert.That(grenadeDefinition.Udp, Is.True);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsKill").Udp, Is.False);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsAward").Udp,
                 Is.False);
@@ -92,8 +100,15 @@ public class OnlineEventGeneratorTests
                 Does.Contain("uint8_t impact"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsShot").Structure,
                 Does.Contain("uint8_t targetID"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsShot").Structure,
+                Does.Contain("uint8_t weaponType"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsInput").Structure,
+                Does.Contain("uint16_t buttons"));
+            Assert.That(grenadeDefinition.Structure,
+                Does.Contain($"uint32_t grenadeIDs[{FpsGrenadeSnapshotPacket.Capacity}]"));
             Assert.That(snapshotPayloadBytes, Is.LessThanOrEqualTo(704),
                 "CSP silently drops oversized UDP online events before invoking the Lua callback");
+            Assert.That(grenadePayloadBytes, Is.LessThanOrEqualTo(512));
         });
     }
 
@@ -104,6 +119,7 @@ public class OnlineEventGeneratorTests
         {
             Assert.That(FpsWorld.UsesUdpTransport<FpsShotPacket>(), Is.True);
             Assert.That(FpsWorld.UsesUdpTransport<FpsSnapshotPacket>(), Is.True);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsGrenadeSnapshotPacket>(), Is.True);
             Assert.That(FpsWorld.UsesUdpTransport<FpsHitPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsKillPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsAwardPacket>(), Is.False);

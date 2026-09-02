@@ -46,8 +46,22 @@ public sealed class PresetStore
     public RaceControlPreset Load(string path)
     {
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<RaceControlPreset>(json, JsonOptions)
+        var preset = JsonSerializer.Deserialize<RaceControlPreset>(json, JsonOptions)
             ?? throw new InvalidDataException($"Preset is empty: {path}");
+        if (preset.SchemaVersion > RaceControlPreset.CurrentSchemaVersion)
+            throw new InvalidDataException(
+                $"Unsupported preset schema {preset.SchemaVersion}: {path}");
+        preset.Fps.Loadouts ??= new FpsLoadoutOptions();
+        preset.Fps.Loadouts.AllowedMainWeapons ??=
+            [FpsMainWeapon.AssaultRifle, FpsMainWeapon.CompactSmg];
+        preset.Fps.Loadouts.AllowedLethals ??=
+            [FpsLethalEquipment.FragGrenade, FpsLethalEquipment.StickyGrenade];
+        preset.Fps.Loadouts.AllowedSecondaryWeapons ??=
+            [FpsSecondaryWeapon.DesertEagle, FpsSecondaryWeapon.Colt1911];
+        preset.Fps.Loadouts.HumanDefault ??= new FpsLoadoutPreset();
+        preset.Fps.Loadouts.BotDefault ??= new FpsLoadoutPreset();
+        preset.SchemaVersion = RaceControlPreset.CurrentSchemaVersion;
+        return preset;
     }
 
     public string Save(RaceControlPreset preset)

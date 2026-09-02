@@ -217,7 +217,7 @@ try {
         $httpClient.Timeout = [TimeSpan]::FromSeconds(2)
         try {
             $assetUrls = @(
-                'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v7.zip',
+                'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v8.zip',
                 'http://127.0.0.1:18081/fps/assets/asrc-fps-modern-v8.zip'
             )
             foreach ($assetUrl in $assetUrls) {

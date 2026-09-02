@@ -169,6 +169,177 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void PickupRefillsMatchingInactiveLoadoutSlotWithoutReplacingWeapons()
+    {
+        var simulation = new FpsSimulation(Configuration(health: 30),
+        [
+            new(0, "Shooter", FpsSlotRole.Human),
+            new(1, "Victim", FpsSlotRole.Human),
+            new(2, "Collector", FpsSlotRole.Human),
+        ]);
+        foreach (byte id in new byte[] { 0, 1, 2 }) simulation.ClaimHuman(id, true);
+        var pistolLoadout = new FpsLoadout(FpsWeaponType.AssaultRifle,
+            FpsLethalType.FragGrenade, FpsWeaponType.DesertEagle);
+        simulation.SelectLoadout(0, pistolLoadout);
+        simulation.SelectLoadout(1, pistolLoadout);
+        simulation.SelectLoadout(2, pistolLoadout);
+        var actors = simulation.Actors.OrderBy(actor => actor.Id).ToArray();
+        simulation.ApplyInput(1, new FpsInputCommand(1, Vector2.Zero, MathF.PI, 0,
+            FpsInputButtons.None, 1));
+        for (int tick = 0; tick < 8; tick++) simulation.Step(0.05f);
+        actors[0].Position = Vector3.Zero;
+        actors[1].Position = new Vector3(0, 0, 5);
+        actors[1].GroundY = 0;
+        actors[2].Position = new Vector3(5, 0, 0);
+        actors[2].SecondaryReserveMagazines = 2;
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+
+        var pickup = simulation.Pickups.Single();
+        Assert.That(pickup.WeaponType, Is.EqualTo(FpsWeaponType.DesertEagle));
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+        actors[2].Position = pickup.Position;
+        for (int tick = 0; tick < 8 && simulation.Pickups.Count > 0; tick++)
+            simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actors[2].ActiveWeaponSlot, Is.Zero);
+            Assert.That(actors[2].ReserveMagazines, Is.EqualTo(4));
+            Assert.That(actors[2].SecondaryReserveMagazines, Is.EqualTo(3));
+            Assert.That(actors[2].Loadout, Is.EqualTo(pistolLoadout));
+        });
+    }
+
+    [Test]
+    public void HumanWaitsForValidLoadoutAndAliveChangesApplyOnRespawn()
+    {
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Player", FpsSlotRole.Human)]);
+        Assert.That(simulation.ClaimHuman(0, requireLoadoutConfirmation: true), Is.True);
+        var actor = simulation.Actors.Single();
+        Assert.That(actor.Active, Is.False);
+        Assert.That(simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire)), Is.False);
+
+        var first = new FpsLoadout(FpsWeaponType.CompactSmg,
+            FpsLethalType.StickyGrenade, FpsWeaponType.DesertEagle);
+        Assert.That(simulation.SelectLoadout(0, first),
+            Is.EqualTo(FpsLoadoutResultCode.Applied));
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Active, Is.True);
+            Assert.That(actor.Loadout, Is.EqualTo(first));
+            Assert.That(actor.AmmoInMagazine, Is.EqualTo(30));
+            Assert.That(actor.LethalsRemaining, Is.EqualTo(1));
+        });
+
+        var next = new FpsLoadout(FpsWeaponType.AssaultRifle,
+            FpsLethalType.FragGrenade, FpsWeaponType.Colt1911);
+        Assert.That(simulation.SelectLoadout(0, next),
+            Is.EqualTo(FpsLoadoutResultCode.QueuedForRespawn));
+        Assert.That(actor.Loadout, Is.EqualTo(first));
+        actor.Dead = true;
+        actor.RespawnRemaining = 0;
+        simulation.Step(0.01f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Loadout, Is.EqualTo(next));
+            Assert.That(actor.PendingLoadout, Is.Null);
+            Assert.That(actor.AmmoInMagazine, Is.EqualTo(40));
+        });
+    }
+
+    [Test]
+    public void FirearmSlotsKeepIndependentAmmoAndPistolsAreSemiAutomatic()
+    {
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Player", FpsSlotRole.Human)]);
+        simulation.ClaimHuman(0, requireLoadoutConfirmation: true);
+        simulation.SelectLoadout(0, new FpsLoadout(FpsWeaponType.CompactSmg,
+            FpsLethalType.FragGrenade, FpsWeaponType.DesertEagle));
+        var actor = simulation.Actors.Single();
+
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire, 0));
+        simulation.Step(0.05f);
+        Assert.That(actor.AmmoInMagazine, Is.EqualTo(29));
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None, 1));
+        for (int tick = 0; tick < 8; tick++) simulation.Step(0.05f);
+        Assert.That(actor.AmmoInMagazine, Is.EqualTo(7));
+
+        simulation.ApplyInput(0, new FpsInputCommand(3, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire, 1));
+        for (int tick = 0; tick < 10; tick++) simulation.Step(0.05f);
+        Assert.That(actor.AmmoInMagazine, Is.EqualTo(6),
+            "holding a semi-automatic pistol must emit one shot");
+
+        simulation.ApplyInput(0, new FpsInputCommand(4, Vector2.Zero, 0, 0,
+            FpsInputButtons.None, 0));
+        simulation.Step(0.05f);
+        Assert.That(actor.AmmoInMagazine, Is.EqualTo(29));
+    }
+
+    [Test]
+    public void GrenadesExplodeAuthoritativelyAndStickyGrenadesAttachThenDetach()
+    {
+        var frag = new FpsSimulation(Configuration(),
+        [
+            new(0, "Thrower", FpsSlotRole.Human),
+            new(1, "Victim", FpsSlotRole.Human),
+        ]);
+        frag.ClaimHuman(0, true);
+        frag.ClaimHuman(1, true);
+        frag.SelectLoadout(0, new FpsLoadout(FpsWeaponType.AssaultRifle,
+            FpsLethalType.FragGrenade, FpsWeaponType.Colt1911));
+        frag.SelectLoadout(1, new FpsLoadout(FpsWeaponType.AssaultRifle,
+            FpsLethalType.FragGrenade, FpsWeaponType.Colt1911));
+        var fragActors = frag.Actors.OrderBy(actor => actor.Id).ToArray();
+        frag.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.ThrowLethal));
+        frag.Step(0.01f);
+        var grenade = frag.Grenades.Single();
+        grenade.Position = fragActors[1].Position + Vector3.UnitY;
+        grenade.Velocity = Vector3.Zero;
+        grenade.RemainingSeconds = 0.01f;
+        frag.Step(0.02f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(fragActors[1].Dead, Is.True);
+            Assert.That(frag.KillEvents.Single().ItemId,
+                Is.EqualTo((byte)FpsLethalType.FragGrenade));
+            Assert.That(frag.GrenadeExplosionEvents, Has.Count.EqualTo(1));
+        });
+
+        var sticky = new FpsSimulation(Configuration(),
+        [
+            new(0, "Thrower", FpsSlotRole.Human),
+            new(1, "Target", FpsSlotRole.Human),
+        ]);
+        sticky.ClaimHuman(0, true);
+        sticky.ClaimHuman(1, true);
+        sticky.SelectLoadout(0, new FpsLoadout(FpsWeaponType.AssaultRifle,
+            FpsLethalType.StickyGrenade, FpsWeaponType.Colt1911));
+        sticky.SelectLoadout(1, new FpsLoadout(FpsWeaponType.AssaultRifle,
+            FpsLethalType.FragGrenade, FpsWeaponType.Colt1911));
+        var stickyActors = sticky.Actors.OrderBy(actor => actor.Id).ToArray();
+        sticky.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.ThrowLethal));
+        sticky.Step(0.01f);
+        var stickyGrenade = sticky.Grenades.Single();
+        stickyGrenade.Position = stickyActors[1].Position + Vector3.UnitY;
+        stickyGrenade.Velocity = Vector3.UnitZ;
+        sticky.Step(0.01f);
+        Assert.That(stickyGrenade.AttachedActorId, Is.EqualTo(1));
+        stickyActors[1].Dead = true;
+        sticky.Step(0.01f);
+        Assert.That(stickyGrenade.AttachedActorId, Is.EqualTo(byte.MaxValue));
+    }
+
+    [Test]
     public void SprintStaminaExhaustsRecoversAndResetsOnSpawn()
     {
         var simulation = new FpsSimulation(Configuration(),

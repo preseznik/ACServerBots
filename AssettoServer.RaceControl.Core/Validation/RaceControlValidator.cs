@@ -180,6 +180,7 @@ public sealed class RaceControlValidator
         ErrorIf(messages, fps.Bots.DifficultyVariancePercent is < 0 or > 100, "Fps", "FPS skill variance must be 0..100 percent.");
         ErrorIf(messages, fps.Bots.Aggression is < 0 or > 1, "Fps", "FPS bot aggression must be between 0 and 1.");
         ErrorIf(messages, fps.Bots.AggressionVariancePercent is < 0 or > 100, "Fps", "FPS aggression variance must be 0..100 percent.");
+        ValidateLoadouts(messages, fps.Loadouts);
 
         var carrier = catalog?.Cars.FirstOrDefault(car => car.Id.Equals(fps.CarrierCarId, StringComparison.OrdinalIgnoreCase));
         ErrorIf(messages, catalog is not null && carrier is null, "Fps.CarrierCarId", $"FPS carrier car '{fps.CarrierCarId}' is not installed.");
@@ -221,6 +222,25 @@ public sealed class RaceControlValidator
             "Fps.Arena", "The FPS arena bounds are invalid.");
         ErrorIf(messages, arena.SpawnPoints.Any(spawn => !Finite(spawn.Position) || !double.IsFinite(spawn.YawRadians)),
             "Fps.Arena", "The FPS arena contains an invalid spawn point.");
+    }
+
+    private static void ValidateLoadouts(List<ValidationMessage> messages, FpsLoadoutOptions loadouts)
+    {
+        ErrorIf(messages, loadouts.AllowedMainWeapons.Count == 0, "Fps.Loadouts", "Allow at least one main weapon.");
+        ErrorIf(messages, loadouts.AllowedLethals.Count == 0, "Fps.Loadouts", "Allow at least one lethal.");
+        ErrorIf(messages, loadouts.AllowedSecondaryWeapons.Count == 0, "Fps.Loadouts", "Allow at least one secondary weapon.");
+        ErrorIf(messages, loadouts.AllowedMainWeapons.Any(value => !Enum.IsDefined(value)), "Fps.Loadouts", "The main-weapon allow-list contains an unknown item.");
+        ErrorIf(messages, loadouts.AllowedLethals.Any(value => !Enum.IsDefined(value)), "Fps.Loadouts", "The lethal allow-list contains an unknown item.");
+        ErrorIf(messages, loadouts.AllowedSecondaryWeapons.Any(value => !Enum.IsDefined(value)), "Fps.Loadouts", "The secondary-weapon allow-list contains an unknown item.");
+        ValidateDefault("HumanDefault", loadouts.HumanDefault);
+        ValidateDefault("BotDefault", loadouts.BotDefault);
+
+        void ValidateDefault(string name, FpsLoadoutPreset loadout)
+        {
+            ErrorIf(messages, !loadouts.AllowedMainWeapons.Contains(loadout.MainWeapon), $"Fps.Loadouts.{name}", "The default main weapon must be allowed.");
+            ErrorIf(messages, !loadouts.AllowedLethals.Contains(loadout.Lethal), $"Fps.Loadouts.{name}", "The default lethal must be allowed.");
+            ErrorIf(messages, !loadouts.AllowedSecondaryWeapons.Contains(loadout.SecondaryWeapon), $"Fps.Loadouts.{name}", "The default secondary weapon must be allowed.");
+        }
     }
 
     private static bool Finite(FpsPoint point) =>

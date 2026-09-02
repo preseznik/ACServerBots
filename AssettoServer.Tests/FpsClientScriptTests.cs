@@ -15,10 +15,10 @@ public sealed class FpsClientScriptTests
         string script = reader.ReadToEnd();
         int topLevelLocalCount = script.Split('\n')
             .Count(line => line.StartsWith("local ", StringComparison.Ordinal));
-        int snapshotStart = script.IndexOf("local snapshotEvent", StringComparison.Ordinal);
-        int rosterStart = script.IndexOf("local rosterEvent", StringComparison.Ordinal);
+        int snapshotStart = script.IndexOf("hud.snapshotEvent", StringComparison.Ordinal);
+        int rosterStart = script.IndexOf("hud.rosterEvent", StringComparison.Ordinal);
         string snapshotDefinition = script[snapshotStart..rosterStart];
-        int shotStart = script.IndexOf("local shotEvent", StringComparison.Ordinal);
+        int shotStart = script.IndexOf("hud.shotEvent", StringComparison.Ordinal);
         int meshStart = script.IndexOf("local function appendBox", StringComparison.Ordinal);
         string shotDefinition = script[shotStart..meshStart];
         int updateStart = script.IndexOf("function script.update(dt)", StringComparison.Ordinal);
@@ -69,7 +69,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("}, function() end, nil, true)"));
             Assert.That(snapshotDefinition, Does.Contain("end, nil, true)"));
             Assert.That(shotDefinition, Does.Contain("end, nil, true"));
-            Assert.That(script, Does.Contain("buttons = buttons }, false, 255)"));
+            Assert.That(script, Does.Contain("selectedSlot = hud.loadout.activeSlot }, false, 255)"));
             Assert.That(script, Does.Contain("not state.isInMainMenu"));
             Assert.That(script, Does.Contain("releaseFpsCamera()"));
             Assert.That(script, Does.Contain("camera, cameraError = ac.grabCamera"));
@@ -188,9 +188,9 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("ui.mouseDown(ui.MouseButton.Right)"));
             Assert.That(script, Does.Contain("math.lerp(72, 56, fpsVisual.ads)"));
             Assert.That(script, Does.Contain("math.lerp(hipRight, adsRight, fpsVisual.ads)"));
-            Assert.That(script, Does.Contain("local adsForward = fpsVisual.modern and 0.12"));
-            Assert.That(script, Does.Contain("local adsRight = fpsVisual.modern and 0.0003"));
-            Assert.That(script, Does.Contain("local adsUp = fpsVisual.modern and -0.2218"));
+            Assert.That(script, Does.Contain("local adsForward = modernViewmodel and 0.12"));
+            Assert.That(script, Does.Contain("local adsRight = modernViewmodel and 0.0003"));
+            Assert.That(script, Does.Contain("local adsUp = modernViewmodel and -0.2218"));
             Assert.That(script, Does.Contain("local visualKickScale = math.lerp(1, 0.35, fpsVisual.ads)"));
             Assert.That(script, Does.Contain(
                 "local downwardLook = math.clamp((-pitch - math.rad(35)) / math.rad(45), 0, 1)"));
@@ -204,8 +204,13 @@ public sealed class FpsClientScriptTests
                 "pitch + 0.011 * cameraRecoilScale * stanceRecoilScale"));
             Assert.That(script, Does.Contain("ac.LightSource(ac.LightType.Regular)"));
             Assert.That(script, Does.Contain("muzzleLightLifetime = 0.055"));
-            Assert.That(script, Does.Contain("muzzleLightRange = 2.25"));
-            Assert.That(script, Does.Contain("state.light.range = fpsVisual.muzzleLightRange"));
+            Assert.That(script, Does.Contain("muzzleLightLocalRange = 5.5"));
+            Assert.That(script, Does.Contain("muzzleLightRemoteRange = 2.25"));
+            Assert.That(script, Does.Contain("muzzleLightRemoteFadeAt = 500"));
+            Assert.That(script, Does.Contain(
+                "state.light.range = localFirstPerson and fpsVisual.muzzleLightLocalRange"));
+            Assert.That(script, Does.Contain(
+                "state.light.fadeAt = localFirstPerson and 4.5 or fpsVisual.muzzleLightRemoteFadeAt"));
             Assert.That(script, Does.Contain("light.shadows = false"));
             Assert.That(script, Does.Contain("fpsVisual.updateMuzzleLights(visualNow)"));
             Assert.That(script, Does.Contain("state.light:dispose()"));
@@ -301,7 +306,11 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("web.loadRemoteAssets"));
             Assert.That(script, Does.Contain("ac.getServerIP()"));
             Assert.That(script, Does.Contain("ac.getServerPortHTTP()"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v7.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v9.zip"));
+            Assert.That(script, Does.Contain("asrc_desert_eagle_viewmodel.kn5"));
+            Assert.That(script, Does.Contain("asrc_desert_eagle_world.kn5"));
+            Assert.That(script, Does.Contain("fpsVisual.weaponAssetKey(actor)"));
+            Assert.That(script, Does.Contain("actor.weaponMesh:setVisible(visible and actor.weaponAsset ~= 3"));
             Assert.That(script, Does.Contain("fileName = 'asrc_carbine_hud.png'"));
             Assert.That(script, Does.Contain("ui.drawImage(fpsVisual.hudWeapon.imagePath"));
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
@@ -314,10 +323,10 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsPickup')"));
             Assert.That(script, Does.Contain("text = '+1 MAGAZINE'"));
             Assert.That(script, Does.Contain("function fpsVisual.updatePickups()"));
-            Assert.That(script, Does.Contain("fpsVisual.modern and 0.32"));
-            Assert.That(script, Does.Contain("fpsVisual.modern and -0.18"));
-            Assert.That(script, Does.Contain("fpsVisual.modern and -0.32"));
-            Assert.That(script, Does.Contain("fpsVisual.modern and 0.67"));
+            Assert.That(script, Does.Contain("modernViewmodel and 0.32"));
+            Assert.That(script, Does.Contain("modernViewmodel and -0.18"));
+            Assert.That(script, Does.Contain("modernViewmodel and -0.32"));
+            Assert.That(script, Does.Contain("modernViewmodel and 0.67"));
             Assert.That(script, Does.Contain("asrc_modern_operator_vault.ksanim"));
             Assert.That(script, Does.Contain("asrc_modern_operator_crouch_idle.ksanim"));
             Assert.That(script, Does.Contain("asrc_modern_operator_crouch_move.ksanim"));
@@ -333,7 +342,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("requesting rifle assets:"));
             Assert.That(script, Does.Contain("rifle assets cached:"));
             Assert.That(script, Does.Contain("forceRenderableOn = true"));
-            Assert.That(script, Does.Contain("cached assault-rifle viewmodel loaded:"));
+            Assert.That(script, Does.Contain("cached weapon viewmodel loaded:"));
             Assert.That(script, Does.Contain(
                 "createBoundingSphereNode('ASRC_FPS_VIEWMODEL_HOLDER', 2)"));
             Assert.That(script, Does.Contain("model:setDepthMode(render.DepthMode.Normal)"));
@@ -358,7 +367,7 @@ public sealed class FpsClientScriptTests
             Assert.That(frameBeginDefinition,
                 Does.Contain("updateNativeRifleViewmodel(viewmodelFrameDt)"));
             Assert.That(script, Does.Contain("native assault-rifle viewmodel scene ready"));
-            Assert.That(script, Does.Contain("cached rifle viewmodel failed:"));
+            Assert.That(script, Does.Contain("cached weapon viewmodel failed:"));
             Assert.That(script, Does.Contain("FPS RIFLE ASSET DOWNLOAD FAILED - CHECK SERVER HTTP PORT"));
             Assert.That(script, Does.Not.Contain("clientAssetPath(rifleViewmodelRelativePath)"));
             Assert.That(script, Does.Contain("drawFallbackRifle(size)"));
@@ -384,6 +393,10 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("render.mesh(tracerRenderParams)"));
             Assert.That(script, Does.Contain("render.mesh(impactRenderParams)"));
             Assert.That(script, Does.Contain("render.mesh(sparkRenderParams)"));
+            Assert.That(script, Does.Contain("local function muzzleFlashRenderParams(tracer)"));
+            Assert.That(script, Does.Contain("if distance >= 60 then return muzzleFlashFarRenderParams end"));
+            Assert.That(script, Does.Contain("if distance >= 20 then return muzzleFlashMidRenderParams end"));
+            Assert.That(script, Does.Contain("render.mesh(muzzleFlashRenderParams(tracer))"));
             Assert.That(script, Does.Not.Contain("render.debugLine(tracer.from, tracer.to"));
             Assert.That(script, Does.Not.Contain("render.debugPlane(impact.position"));
             Assert.That(script, Does.Contain("ac.Particles.Sparks"));
@@ -408,7 +421,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("%d RESERVE MAGS"));
             Assert.That(script, Does.Not.Contain("ASSAULT RIFLE  |  INFINITE"));
             Assert.That(script, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v4')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v5')"));
             Assert.That(script, Does.Contain("localStamina = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain(
                 "fpsVisual.stamina.value - fpsVisual.stamina.drainPerSecond * dt"));

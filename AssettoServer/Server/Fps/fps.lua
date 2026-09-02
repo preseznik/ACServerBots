@@ -32,7 +32,9 @@ local fpsVisual = {
   muzzleLights = {},
   muzzleLightUnavailable = false,
   muzzleLightLifetime = 0.055,
-  muzzleLightRange = 2.25,
+  muzzleLightLocalRange = 5.5,
+  muzzleLightRemoteRange = 2.25,
+  muzzleLightRemoteFadeAt = 500,
   muzzleLightReuseSeconds = 1,
   corpseLifetime = 3.75,
   corpseFallSeconds = 0.72,
@@ -47,12 +49,19 @@ local fpsVisual = {
     exhaustionRelease = 25,
   },
   hudWeapon = {
-    archivePath = '/fps/assets/asrc-fps-assets-v7.zip',
+    archivePath = '/fps/assets/asrc-fps-assets-v9.zip',
     fileName = 'asrc_carbine_hud.png',
     imagePath = nil,
     loading = false,
     failed = false,
   },
+  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v9.zip',
+  loadoutAssetFolder = nil,
+  loadoutAssetsLoading = false,
+  loadoutAssetsFailed = false,
+  desertEagleViewmodelFileName = 'asrc_desert_eagle_viewmodel.kn5',
+  desertEagleWorldModelFileName = 'asrc_desert_eagle_world.kn5',
+  loadedViewmodelAsset = nil,
   pickups = {},
   operatorClips = {
     aim_idle = 'asrc_modern_operator_aim_idle.ksanim',
@@ -154,6 +163,9 @@ local shotEffectTemplateHolder = nil
 local tracerRenderParams = nil
 local impactRenderParams = nil
 local sparkRenderParams = nil
+local muzzleFlashNearRenderParams = nil
+local muzzleFlashMidRenderParams = nil
+local muzzleFlashFarRenderParams = nil
 local shotRender = {
   eventsReceived = 0,
   effectsRendered = 0,
@@ -167,7 +179,7 @@ local function clientAssetPath(relativePath)
 end
 local rifleAudioRelativePath = 'extension/audio/asrc_fps/rifle.wav'
 local rifleAudioPath = clientAssetPath(rifleAudioRelativePath)
-local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v7.zip'
+local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v9.zip'
 local rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
 local rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
 local rifleDiffuseFileName = 'asrc_rifle_diffuse.png'
@@ -271,7 +283,7 @@ local playRifleSound
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 4,
+  protocol = 5,
   capacity = 32,
   killFeedCapacity = 6,
   awardPopupCapacity = 4,
@@ -301,6 +313,19 @@ local hud = {
   environmentDraftTimeSeconds = 13 * 60 * 60,
   environmentDraftReady = false,
   maximumHealth = 100,
+  loadout = {
+    catalogReceived = false,
+    confirmed = false,
+    result = 'WAITING FOR SERVER CATALOG',
+    allowedMainWeapons = 0,
+    allowedLethals = 0,
+    allowedSecondaryWeapons = 0,
+    mainWeapon = 1,
+    lethal = 16,
+    secondaryWeapon = 4,
+    activeSlot = 0,
+    lethalsRemaining = 0,
+  },
 }
 
 hud.bindingDefaults = {
@@ -328,6 +353,20 @@ hud.aimSettings = ac.storage({
 hud.controlSettings = ac.storage({
   crouchToggle = false,
 }, 'asrc.fps.controls.')
+hud.loadoutStorage = ac.storage({
+  mainWeapon = 1,
+  lethal = 16,
+  secondaryWeapon = 4,
+}, 'asrc.fps.loadout.')
+hud.itemNames = {
+  [1] = 'ASSAULT RIFLE', [2] = 'COMPACT SMG',
+  [3] = 'DESERT EAGLE', [4] = 'COLT 1911',
+  [16] = 'FRAG GRENADE', [17] = 'STICKY GRENADE',
+}
+
+function hud.itemAllowed(mask, itemID)
+  return bit.band(mask, bit.lshift(1, itemID)) ~= 0
+end
 
 function hud.aimSensitivity(ads)
   local hip = math.clamp(tonumber(hud.aimSettings.hipSensitivity) or 1.0, 0.2, 3.0)
@@ -398,7 +437,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v4'),
+      ac.StructItem.key('asrc.fps.hud.v5'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -412,6 +451,11 @@ function hud.connect()
       localAmmo = ac.StructItem.byte(),
       localReserveMagazines = ac.StructItem.byte(),
       localReloadRemaining = ac.StructItem.float(),
+      localMainWeapon = ac.StructItem.byte(),
+      localLethal = ac.StructItem.byte(),
+      localSecondaryWeapon = ac.StructItem.byte(),
+      localActiveSlot = ac.StructItem.byte(),
+      localLethalsRemaining = ac.StructItem.byte(),
       localKills = ac.StructItem.uint16(),
       localDeaths = ac.StructItem.uint16(),
       localScore = ac.StructItem.uint32(),
@@ -448,7 +492,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v4')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v5')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -524,6 +568,16 @@ function hud.publish(dt)
   hud.bridge.localAmmo = localActor ~= nil and localActor.ammo or 0
   hud.bridge.localReserveMagazines = localActor ~= nil and localActor.reserveMagazines or 0
   hud.bridge.localReloadRemaining = localActor ~= nil and localActor.reloadRemaining or 0
+  hud.bridge.localMainWeapon = localActor ~= nil and (localActor.mainWeapon or 1)
+    or hud.loadout.mainWeapon
+  hud.bridge.localLethal = localActor ~= nil and (localActor.lethal or 16)
+    or hud.loadout.lethal
+  hud.bridge.localSecondaryWeapon = localActor ~= nil and (localActor.secondaryWeapon or 4)
+    or hud.loadout.secondaryWeapon
+  hud.bridge.localActiveSlot = localActor ~= nil and (localActor.activeSlot or 0)
+    or hud.loadout.activeSlot
+  hud.bridge.localLethalsRemaining = localActor ~= nil
+    and (localActor.lethalsRemaining or 0) or 0
   hud.bridge.localKills = localActor ~= nil and localActor.kills or 0
   hud.bridge.localDeaths = localActor ~= nil and localActor.deaths or 0
   hud.bridge.localScore = localActor ~= nil and localActor.score or 0
@@ -606,7 +660,7 @@ function fpsVisual.setActorWeaponVisible(actor, visible)
     actor.weaponRoot:setVisible(visible, false)
   end
   if actor.weaponMesh ~= nil and actor.weaponMesh ~= false then
-    actor.weaponMesh:setVisible(visible, false)
+    actor.weaponMesh:setVisible(visible and actor.weaponAsset ~= 3, false)
   end
 end
 
@@ -644,7 +698,7 @@ end
 function fpsVisual.actorStance(actor)
   -- Local third person should react in the same frame as input instead of waiting for
   -- the next 20 Hz snapshot. Remote actors use both representations of prone: the
-  -- original compact flag and the protocol-v1-compatible redundant action-state bit.
+  -- original compact flag and the compact redundant action-state bit.
   if actor.id == localSessionID then return localStance end
   local actionState = actor.actionState or 0
   if bit.band(actor.flags, 128) ~= 0
@@ -784,27 +838,121 @@ local function hideCarrierCars()
   end
 end
 
-local inputEvent = ac.OnlineEvent({
+hud.inputEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsInput'),
   sequence = ac.StructItem.uint32(),
   move = ac.StructItem.vec2(),
   yaw = ac.StructItem.float(),
   pitch = ac.StructItem.float(),
-  buttons = ac.StructItem.byte(),
+  buttons = ac.StructItem.uint16(),
+  selectedSlot = ac.StructItem.byte(),
 }, function() end, nil, true)
 
-local readyEvent = ac.OnlineEvent({
+hud.loadoutSelectEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsLoadoutSelect'),
+  mainWeapon = ac.StructItem.byte(),
+  lethal = ac.StructItem.byte(),
+  secondaryWeapon = ac.StructItem.byte(),
+}, function() end)
+
+hud.loadoutCatalogEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsLoadoutCatalog'),
+  allowedMainWeapons = ac.StructItem.uint32(),
+  allowedLethals = ac.StructItem.uint32(),
+  allowedSecondaryWeapons = ac.StructItem.uint32(),
+  defaultMainWeapon = ac.StructItem.byte(),
+  defaultLethal = ac.StructItem.byte(),
+  defaultSecondaryWeapon = ac.StructItem.byte(),
+}, function(sender, message)
+  if sender ~= nil then return end
+  local selection = hud.loadout
+  selection.catalogReceived = true
+  selection.allowedMainWeapons = message.allowedMainWeapons
+  selection.allowedLethals = message.allowedLethals
+  selection.allowedSecondaryWeapons = message.allowedSecondaryWeapons
+  selection.mainWeapon = hud.itemAllowed(message.allowedMainWeapons,
+      hud.loadoutStorage.mainWeapon) and hud.loadoutStorage.mainWeapon
+    or message.defaultMainWeapon
+  selection.lethal = hud.itemAllowed(message.allowedLethals,
+      hud.loadoutStorage.lethal) and hud.loadoutStorage.lethal
+    or message.defaultLethal
+  selection.secondaryWeapon = hud.itemAllowed(message.allowedSecondaryWeapons,
+      hud.loadoutStorage.secondaryWeapon) and hud.loadoutStorage.secondaryWeapon
+    or message.defaultSecondaryWeapon
+  selection.result = 'CONFIRM A LOADOUT TO JOIN'
+end)
+
+hud.loadoutResultEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsLoadoutResult'),
+  result = ac.StructItem.byte(),
+  mainWeapon = ac.StructItem.byte(),
+  lethal = ac.StructItem.byte(),
+  secondaryWeapon = ac.StructItem.byte(),
+}, function(sender, message)
+  if sender ~= nil then return end
+  if message.result == 1 then
+    hud.loadout.confirmed = true
+    hud.loadout.result = 'LOADOUT APPLIED'
+    hud.loadoutStorage.mainWeapon = message.mainWeapon
+    hud.loadoutStorage.lethal = message.lethal
+    hud.loadoutStorage.secondaryWeapon = message.secondaryWeapon
+  elseif message.result == 2 then
+    hud.loadout.result = 'QUEUED FOR NEXT RESPAWN'
+    hud.loadoutStorage.mainWeapon = message.mainWeapon
+    hud.loadoutStorage.lethal = message.lethal
+    hud.loadoutStorage.secondaryWeapon = message.secondaryWeapon
+  else
+    hud.loadout.result = message.result == 3 and 'SELECTION REJECTED BY SERVER'
+      or 'LOADOUT UNAVAILABLE'
+  end
+end)
+
+hud.loadoutStateEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsLoadoutState'),
+  actorID = ac.StructItem.byte(),
+  mainWeapon = ac.StructItem.byte(),
+  lethal = ac.StructItem.byte(),
+  secondaryWeapon = ac.StructItem.byte(),
+  activeSlot = ac.StructItem.byte(),
+  lethalsRemaining = ac.StructItem.byte(),
+}, function(sender, message)
+  if sender ~= nil then return end
+  local actor = actors[message.actorID]
+  if actor == nil then
+    actor = {
+      id = message.actorID, target = vec3(), render = vec3(), yaw = 0, targetYaw = 0,
+      collisionNormal = vec2(), pitch = 0, health = 0, stamina = 100, kills = 0,
+      deaths = 0, score = 0, flags = 0, actionState = 0, ammo = 0,
+      reserveMagazines = 0, reloadRemaining = 0, spawnCount = nil,
+    }
+    actors[message.actorID] = actor
+  end
+  actor.mainWeapon = message.mainWeapon
+  actor.lethal = message.lethal
+  actor.secondaryWeapon = message.secondaryWeapon
+  actor.activeSlot = message.activeSlot
+  actor.lethalsRemaining = message.lethalsRemaining
+  if message.actorID == localSessionID then
+    hud.loadout.mainWeapon = message.mainWeapon
+    hud.loadout.lethal = message.lethal
+    hud.loadout.secondaryWeapon = message.secondaryWeapon
+    hud.loadout.activeSlot = message.activeSlot
+    hud.loadout.lethalsRemaining = message.lethalsRemaining
+  end
+end)
+
+hud.readyEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsReady'),
   protocol = ac.StructItem.uint16(),
 }, function() end)
 
-local environmentRequestEvent = ac.OnlineEvent({
+hud.environmentRequestEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsEnvironmentRequest'),
   weatherType = ac.StructItem.byte(),
   timeOfDaySeconds = ac.StructItem.uint32(),
 }, function() end)
 
-local clientDiagnosticEvent = ac.OnlineEvent({
+hud.clientDiagnosticEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsClientDiagnostic'),
   pipeline = ac.StructItem.byte(),
   flags = ac.StructItem.uint16(),
@@ -826,7 +974,7 @@ local clientDiagnosticEvent = ac.OnlineEvent({
   stage = ac.StructItem.string(48),
 }, function() end)
 
-local snapshotEvent = ac.OnlineEvent({
+hud.snapshotEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsSnapshot'),
   sequence = ac.StructItem.uint32(),
   count = ac.StructItem.byte(),
@@ -1013,7 +1161,7 @@ local snapshotEvent = ac.OnlineEvent({
   end
 end, nil, true)
 
-local rosterEvent = ac.OnlineEvent({
+hud.rosterEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsRoster'),
   actorID = ac.StructItem.byte(),
   role = ac.StructItem.byte(),
@@ -1027,7 +1175,7 @@ local rosterEvent = ac.OnlineEvent({
   if actor ~= nil then actor.role = message.role end
 end)
 
-local matchEvent = ac.OnlineEvent({
+hud.matchEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsMatch'),
   state = ac.StructItem.byte(),
   remainingSeconds = ac.StructItem.float(),
@@ -1053,16 +1201,19 @@ clearActorImpacts = function(actorID)
   end
 end
 
-local killEvent = ac.OnlineEvent({
+hud.killEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsKill'),
   killerID = ac.StructItem.byte(),
   victimID = ac.StructItem.byte(),
   killerKills = ac.StructItem.uint16(),
   victimDeaths = ac.StructItem.uint16(),
+  itemID = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
+  local killerName = message.killerID == 255 and 'SELF'
+    or (names[message.killerID] or ('Player ' .. message.killerID))
   killFeed[#killFeed + 1] = {
-    text = (names[message.killerID] or ('Player ' .. message.killerID)) .. '  >  '
+    text = killerName .. '  [' .. (hud.itemNames[message.itemID] or 'DAMAGE') .. ']  '
       .. (names[message.victimID] or ('Player ' .. message.victimID)),
     ttl = 4,
   }
@@ -1070,18 +1221,19 @@ local killEvent = ac.OnlineEvent({
   clearActorImpacts(message.victimID)
 end)
 
-local hitEvent = ac.OnlineEvent({
+hud.hitEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsHit'),
   attackerID = ac.StructItem.byte(),
   victimID = ac.StructItem.byte(),
   remainingHealth = ac.StructItem.uint16(),
+  itemID = ac.StructItem.byte(),
 }, function(sender, message)
   if sender == nil and message.attackerID == localSessionID then
     hitMarkerUntil = effectClock + 0.16
   end
 end)
 
-local awardEvent = ac.OnlineEvent({
+hud.awardEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsAward'),
   actorID = ac.StructItem.byte(),
   victimID = ac.StructItem.byte(),
@@ -1147,7 +1299,7 @@ fpsVisual.pickupEvent = ac.OnlineEvent({
   end
 end)
 
-function fpsVisual.illuminateMuzzle(shooterID, position, now)
+function fpsVisual.illuminateMuzzle(shooterID, position, now, localFirstPerson)
   if fpsVisual.muzzleLightUnavailable then return end
   local state = fpsVisual.muzzleLights[shooterID]
   if state == nil then
@@ -1178,7 +1330,10 @@ function fpsVisual.illuminateMuzzle(shooterID, position, now)
   local ok, err = pcall(function()
     state.light.position:set(position)
     state.light.color = rgb(5.4, 2.35, 0.65)
-    state.light.range = fpsVisual.muzzleLightRange
+    state.light.range = localFirstPerson and fpsVisual.muzzleLightLocalRange
+      or fpsVisual.muzzleLightRemoteRange
+    state.light.fadeAt = localFirstPerson and 4.5 or fpsVisual.muzzleLightRemoteFadeAt
+    state.light.fadeSmooth = localFirstPerson and 2 or 25
     state.expiresAt = now + fpsVisual.muzzleLightLifetime
     state.disposeAt = now + fpsVisual.muzzleLightReuseSeconds
   end)
@@ -1203,7 +1358,7 @@ function fpsVisual.updateMuzzleLights(now)
   end
 end
 
-local shotEvent = ac.OnlineEvent({
+hud.shotEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsShot'),
   shooterID = ac.StructItem.byte(),
   sequence = ac.StructItem.uint32(),
@@ -1212,6 +1367,7 @@ local shotEvent = ac.OnlineEvent({
   distance = ac.StructItem.float(),
   impact = ac.StructItem.byte(),
   targetID = ac.StructItem.byte(),
+  weaponType = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   shotRender.eventsReceived = shotRender.eventsReceived + 1
@@ -1249,7 +1405,8 @@ local shotEvent = ac.OnlineEvent({
   local tracerDistance = (targetPoint - muzzleOrigin):length()
   local travelTime = math.clamp(tracerDistance / 260, 0.035, 0.08)
   local now = ui.time()
-  fpsVisual.illuminateMuzzle(message.shooterID, muzzleOrigin, now)
+  local localFirstPersonShot = message.shooterID == localSessionID and not thirdPersonEnabled
+  fpsVisual.illuminateMuzzle(message.shooterID, muzzleOrigin, now, localFirstPersonShot)
   while #tracers >= maxTracers do table.remove(tracers, 1) end
   tracers[#tracers + 1] = {
     -- Damage remains authoritative along the camera/crosshair ray. The tracer is
@@ -1315,6 +1472,59 @@ local shotEvent = ac.OnlineEvent({
     playRifleSound(message.origin, message.shooterID == localSessionID)
   end
 end, nil, true)
+
+fpsVisual.grenades = {}
+fpsVisual.grenadeSnapshotEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsGrenadeSnapshot'),
+  sequence = ac.StructItem.uint32(),
+  count = ac.StructItem.byte(),
+  grenadeIDs = ac.StructItem.array(ac.StructItem.uint32(), 8),
+  ownerIDs = ac.StructItem.array(ac.StructItem.byte(), 8),
+  types = ac.StructItem.array(ac.StructItem.byte(), 8),
+  flags = ac.StructItem.array(ac.StructItem.byte(), 8),
+  positions = ac.StructItem.array(ac.StructItem.vec3(), 8),
+  velocities = ac.StructItem.array(ac.StructItem.vec3(), 8),
+  remaining = ac.StructItem.array(ac.StructItem.float(), 8),
+}, function(sender, message)
+  if sender ~= nil then return end
+  for i = 0, message.count - 1 do
+    local id = message.grenadeIDs[i]
+    local grenade = fpsVisual.grenades[id] or { id = id }
+    grenade.ownerID = message.ownerIDs[i]
+    grenade.type = message.types[i]
+    grenade.flags = message.flags[i]
+    grenade.position = message.positions[i]:clone()
+    grenade.velocity = message.velocities[i]:clone()
+    grenade.remaining = message.remaining[i]
+    grenade.seenAt = effectClock
+    fpsVisual.grenades[id] = grenade
+  end
+  for id, grenade in pairs(fpsVisual.grenades) do
+    if grenade.seenAt ~= effectClock and effectClock - (grenade.seenAt or 0) > 0.15 then
+      fpsVisual.grenades[id] = nil
+    end
+  end
+end, nil, true)
+
+fpsVisual.grenadeExplodedEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsGrenadeExploded'),
+  grenadeID = ac.StructItem.uint32(),
+  ownerID = ac.StructItem.byte(),
+  type = ac.StructItem.byte(),
+  position = ac.StructItem.vec3(),
+}, function(sender, message)
+  if sender ~= nil then return end
+  fpsVisual.grenades[message.grenadeID] = nil
+  for i = 1, 18 do
+    local angle = i / 18 * math.pi * 2
+    sparks[#sparks + 1] = {
+      position = message.position:clone(),
+      velocity = vec3(math.cos(angle) * 4, 1.2 + (i % 4), math.sin(angle) * 4),
+      ttl = 0.45,
+    }
+  end
+  if playRifleSound ~= nil then playRifleSound(message.position, false) end
+end)
 
 local function uvRegion(column, row, x0, y0, x1, y1)
   local cell = 0.25
@@ -1452,7 +1662,11 @@ local function ensureShotEffectTemplates()
     local tracerRoot = shotEffectTemplateHolder:createNode('ASRC_FPS_TRACER', false)
     local impactRoot = shotEffectTemplateHolder:createNode('ASRC_FPS_IMPACT', false)
     local sparkRoot = shotEffectTemplateHolder:createNode('ASRC_FPS_SPARK', false)
-    if tracerRoot == nil or impactRoot == nil or sparkRoot == nil then
+    local muzzleNearRoot = shotEffectTemplateHolder:createNode('ASRC_FPS_MUZZLE_NEAR', false)
+    local muzzleMidRoot = shotEffectTemplateHolder:createNode('ASRC_FPS_MUZZLE_MID', false)
+    local muzzleFarRoot = shotEffectTemplateHolder:createNode('ASRC_FPS_MUZZLE_FAR', false)
+    if tracerRoot == nil or impactRoot == nil or sparkRoot == nil
+        or muzzleNearRoot == nil or muzzleMidRoot == nil or muzzleFarRoot == nil then
       error('one or more shot-effect roots could not be created')
     end
     createBoxGroup(tracerRoot, 'ASRC_FPS_TRACER_MESH', {
@@ -1464,28 +1678,59 @@ local function ensureShotEffectTemplates()
     createBoxGroup(sparkRoot, 'ASRC_FPS_SPARK_MESH', {
       {vec3(0, 0, 0.045), vec3(0.018, 0.018, 0.09)},
     }, 'FF9B2F')
+    -- Remote muzzle flares use distance LODs so the cosmetic flash retains a few pixels
+    -- of angular size across the full arena. Illumination radius remains independently small.
+    createBoxGroup(muzzleNearRoot, 'ASRC_FPS_MUZZLE_NEAR_MESH', {
+      {vec3(0, 0, 0.055), vec3(0.06, 0.06, 0.11)},
+    }, 'FFD24A')
+    createBoxGroup(muzzleMidRoot, 'ASRC_FPS_MUZZLE_MID_MESH', {
+      {vec3(0, 0, 0.08), vec3(0.18, 0.18, 0.16)},
+    }, 'FFD24A')
+    createBoxGroup(muzzleFarRoot, 'ASRC_FPS_MUZZLE_FAR_MESH', {
+      {vec3(0, 0, 0.12), vec3(0.45, 0.45, 0.24)},
+    }, 'FFD24A')
     tracerRoot:setShadows(false)
     impactRoot:setShadows(false)
     sparkRoot:setShadows(false)
+    muzzleNearRoot:setShadows(false)
+    muzzleMidRoot:setShadows(false)
+    muzzleFarRoot:setShadows(false)
     shotEffectTemplateHolder:setVisible(false)
     return {
       directEffectRenderParams(tracerRoot, 0x41535251, rgbm(1, 0.76, 0.18, 1)),
       directEffectRenderParams(impactRoot, 0x41535252, rgbm(0.045, 0.032, 0.022, 1)),
       directEffectRenderParams(sparkRoot, 0x41535253, rgbm(1, 0.42, 0.08, 1)),
+      directEffectRenderParams(muzzleNearRoot, 0x41535254, rgbm(1, 0.64, 0.12, 1)),
+      directEffectRenderParams(muzzleMidRoot, 0x41535255, rgbm(1, 0.64, 0.12, 1)),
+      directEffectRenderParams(muzzleFarRoot, 0x41535256, rgbm(1, 0.64, 0.12, 1)),
     }
   end)
   if not ok then
     tracerRenderParams = false
     impactRenderParams = false
     sparkRenderParams = false
+    muzzleFlashNearRenderParams = false
+    muzzleFlashMidRenderParams = false
+    muzzleFlashFarRenderParams = false
     ac.warn('[ASRC FPS] direct shot-effect template failed: ' .. tostring(result))
     return false
   end
   tracerRenderParams = result[1]
   impactRenderParams = result[2]
   sparkRenderParams = result[3]
+  muzzleFlashNearRenderParams = result[4]
+  muzzleFlashMidRenderParams = result[5]
+  muzzleFlashFarRenderParams = result[6]
   ac.log('[ASRC FPS] direct shot-effect templates ready')
   return true
+end
+
+local function muzzleFlashRenderParams(tracer)
+  if tracer.localShot or camera == nil then return sparkRenderParams end
+  local distance = (tracer.flashFrom - camera.transform.position):length()
+  if distance >= 60 then return muzzleFlashFarRenderParams end
+  if distance >= 20 then return muzzleFlashMidRenderParams end
+  return muzzleFlashNearRenderParams
 end
 
 createRifleModel = function(parent, prefix, includeArms)
@@ -1537,7 +1782,7 @@ function fpsVisual.fallback(reason)
   rifleAssetsLoading = false
   rifleAssetsFailed = false
   rifleAssetWaitLogged = false
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v7.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v9.zip'
   rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
   fpsVisual.pickupFileName = rifleWorldModelFileName
@@ -1545,6 +1790,7 @@ function fpsVisual.fallback(reason)
   operatorSkinFileName = 'asrc_operator_skin.png'
   rifleViewmodelPath = nil
   rifleWorldModelPath = nil
+  fpsVisual.loadedViewmodelAsset = nil
   rifleDiffusePath = nil
   operatorSkinPath = nil
   fpsVisual.pickupPath = nil
@@ -1578,6 +1824,66 @@ local function getAssetArchiveUrl(archivePath)
     serverIP = '[' .. serverIP .. ']'
   end
   return string.format('http://%s:%d%s', serverIP, serverHttpPort, archivePath)
+end
+
+function fpsVisual.activeWeapon(actor)
+  if actor == nil then
+    return hud.loadout.activeSlot == 1 and hud.loadout.secondaryWeapon
+      or hud.loadout.mainWeapon
+  end
+  return actor.activeSlot == 1 and (actor.secondaryWeapon or 4)
+    or (actor.mainWeapon or 1)
+end
+
+function fpsVisual.weaponAssetKey(actor)
+  return fpsVisual.activeWeapon(actor) == 3 and 3 or 1
+end
+
+function fpsVisual.viewmodelPath(assetKey)
+  if assetKey == 3 and fpsVisual.loadoutAssetFolder ~= nil then
+    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.desertEagleViewmodelFileName
+  end
+  return rifleViewmodelPath
+end
+
+function fpsVisual.worldModelPath(assetKey)
+  if assetKey == 3 and fpsVisual.loadoutAssetFolder ~= nil then
+    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.desertEagleWorldModelFileName
+  end
+  return rifleWorldModelPath
+end
+
+function fpsVisual.actorWeaponPosition(actor)
+  local kick = actor.weaponKick or 0
+  if actor.weaponAsset == 3 then return vec3(0.22, 1.13, 0.39 - kick * 0.04) end
+  return vec3(0.22, 1.13, 0.08 - kick * 0.07)
+end
+
+function fpsVisual.requestLoadoutAssets()
+  if fpsVisual.loadoutAssetFolder ~= nil or fpsVisual.loadoutAssetsLoading
+      or fpsVisual.loadoutAssetsFailed then return end
+  if not fpsVisual.modern and rifleAssetFolder ~= nil then
+    fpsVisual.loadoutAssetFolder = rifleAssetFolder
+    return
+  end
+  local archiveUrl = getAssetArchiveUrl(fpsVisual.loadoutAssetArchivePath)
+  if archiveUrl == nil then return end
+  fpsVisual.loadoutAssetsLoading = true
+  web.loadRemoteAssets({
+    url = archiveUrl,
+    headers = {},
+    crucial = fpsVisual.desertEagleViewmodelFileName,
+  }, function(err, folder)
+    fpsVisual.loadoutAssetsLoading = false
+    if (err ~= nil and err ~= '') or folder == nil or folder == '' then
+      fpsVisual.loadoutAssetsFailed = true
+      clientPackError = 'FPS LOADOUT ASSET DOWNLOAD FAILED - CHECK SERVER HTTP PORT'
+      ac.warn('[ASRC FPS] loadout asset download failed: ' .. tostring(err))
+      return
+    end
+    fpsVisual.loadoutAssetFolder = folder
+    ac.log('[ASRC FPS] loadout weapon assets cached: ' .. folder)
+  end)
 end
 
 function hud.requestWeaponImage()
@@ -1641,6 +1947,11 @@ requestRifleAssets = function()
     fpsVisual.pickupPath = folder .. '/' .. fpsVisual.pickupFileName
     clientPackError = fpsVisual.error
     viewmodelRoot = nil
+    if fpsVisual.modern then
+      fpsVisual.requestLoadoutAssets()
+    else
+      fpsVisual.loadoutAssetFolder = folder
+    end
     ac.log('[ASRC FPS] rifle assets cached: folder=' .. folder
       .. '; viewmodel=' .. rifleViewmodelPath .. '; world=' .. rifleWorldModelPath
       .. '; rifleTexture=' .. tostring(rifleDiffusePath)
@@ -1650,13 +1961,32 @@ requestRifleAssets = function()
 end
 
 local function ensureLocalViewmodel()
+  local actor = actors[localSessionID]
+  local assetKey = fpsVisual.weaponAssetKey(actor)
+  if viewmodelRoot ~= nil and fpsVisual.loadedViewmodelAsset ~= assetKey then
+    if viewmodelHolder ~= nil then pcall(function() viewmodelHolder:dispose() end) end
+    viewmodelHolder = nil
+    viewmodelRoot = nil
+    viewmodelRenderPosition = nil
+    viewmodelRenderLook = nil
+    viewmodelRenderUp = nil
+    viewmodelDirectDrawCompletions = 0
+    viewmodelStagesSeen['native-scene:deferred'] = nil
+    viewmodelStagesSeen['native-scene:ready'] = nil
+  end
   if viewmodelRoot ~= nil then return viewmodelRoot ~= false end
   if rifleAssetFolder == nil then
     markViewmodelStage('asset-wait', 'remote archive is not cached yet')
     requestRifleAssets()
     return false
   end
-  markViewmodelStage('load-requested', rifleViewmodelPath)
+  if assetKey == 3 and fpsVisual.loadoutAssetFolder == nil then
+    markViewmodelStage('loadout-asset-wait', fpsVisual.desertEagleViewmodelFileName)
+    fpsVisual.requestLoadoutAssets()
+    return false
+  end
+  local viewmodelPath = fpsVisual.viewmodelPath(assetKey)
+  markViewmodelStage('load-requested', viewmodelPath)
   local ok, result = pcall(function()
     -- carsRoot expects dynamic children to be bounding-sphere nodes. Attaching an
     -- ordinary node here can crash CSP when the native renderer first traverses it.
@@ -1664,12 +1994,12 @@ local function ensureLocalViewmodel()
     viewmodelHolder = carsRoot:createBoundingSphereNode('ASRC_FPS_VIEWMODEL_HOLDER', 2)
     if viewmodelHolder == nil then error('viewmodel holder could not be created') end
     markViewmodelStage('holder-create:complete')
-    markViewmodelStage('kn5-load:begin', rifleViewmodelPath)
+    markViewmodelStage('kn5-load:begin', viewmodelPath)
     local model = viewmodelHolder:loadKN5({
-      filename = rifleViewmodelPath,
+      filename = viewmodelPath,
       forceRenderableOn = true,
     })
-    if model == nil then error('loadKN5 returned no model for ' .. rifleViewmodelPath) end
+    if model == nil then error('loadKN5 returned no model for ' .. viewmodelPath) end
     markViewmodelStage('kn5-load:complete')
     markViewmodelStage('model-configure:begin')
     model:setShadows(false)
@@ -1677,10 +2007,10 @@ local function ensureLocalViewmodel()
     model:setCullMode(render.CullMode.None)
     model:setDepthMode(render.DepthMode.Normal)
     model:setMotionStencil(1)
-    if rifleDiffusePath ~= nil then
+    if assetKey ~= 3 and rifleDiffusePath ~= nil then
       pcall(function() model:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
     end
-    if fpsVisual.modern then
+    if fpsVisual.modern and assetKey ~= 3 then
       model:setAnimation(fpsVisual.asset(fpsVisual.viewmodelClips.equip), 0, true)
       fpsVisual.viewmodelEquipUntil = effectClock + 0.55
     end
@@ -1690,19 +2020,22 @@ local function ensureLocalViewmodel()
   if not ok then
     if viewmodelHolder ~= nil then viewmodelHolder:dispose() end
     viewmodelHolder = nil
-    if fpsVisual.modern then
+    fpsVisual.loadedViewmodelAsset = assetKey
+    if fpsVisual.modern and assetKey ~= 3 then
       viewmodelRoot = nil
       fpsVisual.fallback('viewmodel load: ' .. tostring(result))
       return false
     end
     viewmodelRoot = false
     clientPackError = fpsVisual.error
-      or 'FPS RIFLE MODEL ERROR - CACHED VIEWMODEL COULD NOT BE LOADED'
-    ac.warn('[ASRC FPS] cached rifle viewmodel failed: ' .. tostring(result)
-      .. '; cached path ' .. rifleViewmodelPath .. '; using 2D fallback')
+      or (assetKey == 3 and 'FPS DESERT EAGLE VIEWMODEL ERROR - CHECK LIVE LOG'
+        or 'FPS RIFLE MODEL ERROR - CACHED VIEWMODEL COULD NOT BE LOADED')
+    ac.warn('[ASRC FPS] cached weapon viewmodel failed: ' .. tostring(result)
+      .. '; cached path ' .. tostring(viewmodelPath) .. '; using 2D fallback')
     return false
   end
   viewmodelRoot = result
+  fpsVisual.loadedViewmodelAsset = assetKey
   if not runViewmodelStage('holder-initial-hide', function()
     viewmodelHolder:setVisible(false)
   end) then
@@ -1719,7 +2052,7 @@ local function ensureLocalViewmodel()
   end)
   markViewmodelStage(boundsOk and 'bounds-read:complete' or 'bounds-read:failed',
     boundsOk and ('meshes=' .. tostring(meshCount)) or boundsMin)
-  ac.log('[ASRC FPS] cached assault-rifle viewmodel loaded: ' .. rifleViewmodelPath
+  ac.log('[ASRC FPS] cached weapon viewmodel loaded: ' .. tostring(viewmodelPath)
     .. '; bounds=' .. (boundsOk and (vec3Text(boundsMin) .. '..' .. vec3Text(boundsMax)
       .. '; meshes=' .. tostring(meshCount)) or ('unavailable: ' .. tostring(boundsMin))))
   markViewmodelStage('native-scene:configured', 'dynamic KN5 scene node')
@@ -1827,19 +2160,42 @@ local function ensureAvatar(actor)
     root:setMotionStencil(1)
     root:setVisible(false, false)
     actor.root = root
+    actor.weaponAsset = nil
     actor.nativeScenePrepared = false
   end
-  if actor.root == false or actor.weaponRoot ~= nil then return end
-  if rifleWorldModelPath == nil then
-    requestRifleAssets()
+  if actor.root == false then return end
+  local assetKey = fpsVisual.weaponAssetKey(actor)
+  if actor.weaponAsset ~= assetKey then
+    if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
+      pcall(function() actor.weaponRoot:dispose() end)
+    end
+    actor.weaponRoot = nil
+    actor.weaponAsset = assetKey
+  end
+  if assetKey == 3 and fpsVisual.loadoutAssetFolder == nil then
+    fpsVisual.requestLoadoutAssets()
     return
   end
+  if fpsVisual.modern and assetKey ~= 3 then
+    actor.weaponRoot = false
+    return
+  end
+  if actor.weaponRoot ~= nil then return end
+  local worldModelPath = fpsVisual.worldModelPath(assetKey)
+  if worldModelPath == nil then return end
 
   local weaponOk, weapon = pcall(function()
-    return actor.root:loadKN5({filename = rifleWorldModelPath, forceRenderableOn = true})
+    return actor.root:loadKN5({filename = worldModelPath, forceRenderableOn = true})
   end)
   actor.weaponRoot = weaponOk and weapon or nil
   if actor.weaponRoot == nil then
+    if assetKey == 3 then
+      actor.weaponRoot = false
+      clientPackError = 'FPS DESERT EAGLE WORLD MODEL ERROR - CHECK LIVE LOG'
+      ac.warn('[ASRC FPS] cached Desert Eagle world model unavailable at '
+        .. tostring(worldModelPath))
+      return
+    end
     actor.weaponRoot = createRifleModel(actor.root, 'ASRC_FPS_REMOTE_RIFLE_' .. actor.id, false)
     if not remoteRifleFallbackLogged then
       remoteRifleFallbackLogged = true
@@ -1848,21 +2204,26 @@ local function ensureAvatar(actor)
     end
   end
   if actor.weaponRoot ~= nil then
-    if rifleDiffusePath ~= nil then
+    if assetKey ~= 3 and rifleDiffusePath ~= nil then
       pcall(function() actor.weaponRoot:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
     end
-    actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08))
+    actor.weaponRoot:setPosition(fpsVisual.actorWeaponPosition(actor))
   end
 end
 
 function fpsVisual.updatePickups()
   if rifleAssetFolder == nil then return end
   for _, pickup in pairs(fpsVisual.pickups) do
-    if pickup.root == nil then
+    local assetKey = pickup.weaponType == 3 and 3 or 1
+    if assetKey == 3 and fpsVisual.loadoutAssetFolder == nil then
+      fpsVisual.requestLoadoutAssets()
+    elseif pickup.root == nil then
       local loaded, rootOrError = pcall(function()
         local root = carsRoot:createBoundingSphereNode('ASRC_FPS_PICKUP_' .. pickup.id, 1.2)
         if root == nil then error('pickup holder could not be created') end
-        local model = root:loadKN5({filename = fpsVisual.pickupPath, forceRenderableOn = true})
+        local modelPath = assetKey == 3 and fpsVisual.worldModelPath(assetKey)
+          or fpsVisual.pickupPath
+        local model = root:loadKN5({filename = modelPath, forceRenderableOn = true})
         if model == nil then
           root:dispose()
           error('pickup KN5 could not be loaded')
@@ -1881,7 +2242,7 @@ function fpsVisual.updatePickups()
         pickup.root:clearMotion()
       else
         pickup.root = false
-        ac.warn('[ASRC FPS] dropped-rifle pickup model failed: ' .. tostring(rootOrError))
+        ac.warn('[ASRC FPS] dropped-weapon pickup model failed: ' .. tostring(rootOrError))
       end
     end
     if pickup.root ~= nil and pickup.root ~= false then
@@ -2286,7 +2647,8 @@ function fpsVisual.updateActorAnimation(actor, dt)
 end
 
 function fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint)
-  if not fpsVisual.modern or viewmodelRoot == nil or viewmodelRoot == false then return true end
+  if not fpsVisual.modern or fpsVisual.loadedViewmodelAsset == 3
+      or viewmodelRoot == nil or viewmodelRoot == false then return true end
   fpsVisual.viewmodelPhase = ((fpsVisual.viewmodelPhase or 0) + dt * 1.15) % 1
   local clip = 'idle'
   local position = fpsVisual.viewmodelPhase
@@ -2320,6 +2682,7 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   if not visible or camera == nil or not camera:active() then return end
   viewmodelKick = viewmodelKick * math.exp(-dt * 17)
   local moving = move:lengthSquared() > 0.01
+  local modernViewmodel = fpsVisual.modern and fpsVisual.loadedViewmodelAsset ~= 3
   if not fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint) then return end
   if moving then viewmodelBobTime = viewmodelBobTime + dt * (sprint and 12 or 8) end
   -- Camera and weapon scene transforms are submitted together in frameBegin. Keeping
@@ -2344,23 +2707,23 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
     and math.clamp((0.9 - wallHit) / 0.75, 0, 1) or 0
   viewmodelWallRetraction = math.lerp(viewmodelWallRetraction, wallRetractionTarget,
     1 - math.exp(-dt * 18))
-  local hipForward = fpsVisual.modern and 0.32 or 0.30
-  local hipRight = fpsVisual.modern and -0.18 or 0.22
-  local hipUp = fpsVisual.modern and -0.32 or -0.20
+  local hipForward = modernViewmodel and 0.32 or 0.30
+  local hipRight = modernViewmodel and -0.18 or 0.22
+  local hipUp = modernViewmodel and -0.32 or -0.20
   -- The Modern KN5 faces back toward its root, so its apparent screen-right
   -- direction is opposite the holder translation. These calibrated offsets put
   -- the optic axis on the camera look vector and bring the rear sight close
   -- enough to read as true ADS instead of a zoomed hip-fire pose.
-  local adsForward = fpsVisual.modern and 0.12 or 0.38
-  local adsRight = fpsVisual.modern and 0.0003 or 0.00
-  local adsUp = fpsVisual.modern and -0.2218 or -0.10
+  local adsForward = modernViewmodel and 0.12 or 0.38
+  local adsRight = modernViewmodel and 0.0003 or 0.00
+  local adsUp = modernViewmodel and -0.2218 or -0.10
   local visualKickScale = math.lerp(1, 0.35, fpsVisual.ads)
   -- At steep downward pitch the source arms extend beyond their authored first-person
   -- framing. Pull the Modern rig toward the camera on a smooth cubic curve so close
   -- geometry exits behind the near plane instead of exposing sleeve and stock ends.
   local downwardLook = math.clamp((-pitch - math.rad(35)) / math.rad(45), 0, 1)
   local downwardCurve = fpsVisual.smoothstep01(downwardLook)
-  local downwardPull = fpsVisual.modern
+  local downwardPull = modernViewmodel
     and math.lerp(0.38, 0.14, fpsVisual.ads) * downwardCurve or 0
   local position = cameraPosition
     + look * (math.lerp(hipForward, adsForward, fpsVisual.ads)
@@ -2375,8 +2738,10 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   viewmodelRenderLook = look:clone()
   viewmodelRenderUp = viewUp:clone()
   localMuzzlePosition:set(position
-    + look * (fpsVisual.modern and 0.67 or 0.99)
-    + viewUp * (fpsVisual.modern and 0.08 or 0.02))
+    + look * (fpsVisual.loadedViewmodelAsset == 3 and 0.58
+      or (modernViewmodel and 0.67 or 0.99))
+    + viewUp * (fpsVisual.loadedViewmodelAsset == 3 and 0.10
+      or (modernViewmodel and 0.08 or 0.02)))
   viewmodelUpdateCompletions = viewmodelUpdateCompletions + 1
   if not viewmodelStagesSeen['native-transform:ready'] then
     markViewmodelStage('native-transform:ready', vec3Text(position))
@@ -2484,7 +2849,7 @@ local function updateRemoteActors(dt)
         if not fpsVisual.updateActorAnimation(actor, dt) then return false end
         actor.weaponKick = (actor.weaponKick or 0) * math.exp(-dt * 15)
         if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
-          actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - (actor.weaponKick or 0) * 0.07))
+          actor.weaponRoot:setPosition(fpsVisual.actorWeaponPosition(actor))
           actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
             vec3(0, 1, 0))
         end
@@ -2531,7 +2896,8 @@ local function effectUp(direction)
 end
 
 local function drawDirectShotEffects()
-  if #tracers == 0 and #impacts == 0 and #sparks == 0 then return end
+  if #tracers == 0 and #impacts == 0 and #sparks == 0
+      and next(fpsVisual.grenades) == nil then return end
   if not ensureShotEffectTemplates() then return end
 
   local rendered = 0
@@ -2552,7 +2918,7 @@ local function drawDirectShotEffects()
           if render.mesh(tracerRenderParams) ~= false then rendered = rendered + 1 end
           if tracer.flashUntil > now then
             render.setTransform(tracer.flashFrom, direction, effectUp(direction), true)
-            if render.mesh(sparkRenderParams) ~= false then rendered = rendered + 1 end
+            if render.mesh(muzzleFlashRenderParams(tracer)) ~= false then rendered = rendered + 1 end
           end
         end
       end
@@ -2571,6 +2937,13 @@ local function drawDirectShotEffects()
         render.setTransform(spark.position, direction, effectUp(direction), true)
         if render.mesh(sparkRenderParams) ~= false then rendered = rendered + 1 end
       end
+    end
+
+    for _, grenade in pairs(fpsVisual.grenades) do
+      local direction = grenade.velocity ~= nil and grenade.velocity:lengthSquared() > 0.001
+        and grenade.velocity:clone():normalize() or vec3(0, 0, 1)
+      render.setTransform(grenade.position, direction, vec3(0, 1, 0), true)
+      if render.mesh(sparkRenderParams) ~= false then rendered = rendered + 1 end
     end
   end)
   render.setTransform(vec3(), vec3(0, 0, 1), vec3(0, 1, 0))
@@ -2627,7 +3000,7 @@ local function updateLocalThirdPersonAvatar(actor, prepareOnly)
     fpsVisual.setActorWeaponVisible(actor, not dead)
     if not fpsVisual.updateActorAnimation(actor, viewmodelFrameDt) then return end
     if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
-      actor.weaponRoot:setPosition(vec3(0.22, 1.13, 0.08 - (actor.weaponKick or 0) * 0.07))
+      actor.weaponRoot:setPosition(fpsVisual.actorWeaponPosition(actor))
       actor.weaponRoot:setOrientation(vec3(0, math.sin(actor.pitch), math.cos(actor.pitch)),
         vec3(0, 1, 0))
     end
@@ -2785,7 +3158,7 @@ function script.update(dt)
       end)
       if sceneOk then diagnosticRemoteRender = scenePosition end
     end
-    viewmodelDiagnosticSendOk = clientDiagnosticEvent({
+    viewmodelDiagnosticSendOk = hud.clientDiagnosticEvent({
       pipeline = 21,
       flags = diagnosticFlags,
       attempts = viewmodelUpdateAttempts,
@@ -2868,7 +3241,7 @@ function script.update(dt)
     -- Main/pits/results UI was excluded above. Once gameplay is active, FPS
     -- owns the pointer even if a third-party app incorrectly asks for it.
     scoreboardHeld = ac.isKeyDown(ac.KeyIndex.Tab)
-    cursorUnlocked = scoreboardHeld or persistentCursor
+    cursorUnlocked = scoreboardHeld or persistentCursor or not hud.loadout.confirmed
     local thirdPersonToggle = ac.isKeyDown(ac.KeyIndex.F6)
     if thirdPersonToggle and not thirdPersonToggleWasHeld then
       thirdPersonEnabled = not thirdPersonEnabled
@@ -2966,6 +3339,12 @@ function script.update(dt)
     local crouch = hud.bindingDown('crouch', ac.isKeyDown(ac.KeyIndex.C))
     local crouchToggleMode = hud.controlSettings.crouchToggle == true
     local reload = hud.bindingDown('reload', ac.isKeyDown(ac.KeyIndex.R))
+    local grenade = hud.bindingDown('grenade', ac.isKeyDown(ac.KeyIndex.G))
+    if not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D1) then
+      hud.loadout.activeSlot = 0
+    elseif not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D2) then
+      hud.loadout.activeSlot = 1
+    end
     jumpStarted = jump and not jumpWasHeld
     local crouchPressed = crouch and not crouchWasHeld
     local jumpConsumed = false
@@ -3043,13 +3422,14 @@ function script.update(dt)
       + (crouch and 8 or 0) + (reload and 16 or 0)
       + (fpsVisual.adsInput > 0.5 and 32 or 0)
       + (crouchToggleMode and 64 or 0)
+      + (grenade and not cursorUnlocked and 128 or 0)
 
     sendAccumulator = sendAccumulator + dt
     if sendAccumulator >= 0.05 then
       sendAccumulator = sendAccumulator - 0.05
       sequence = sequence + 1
-      inputSendOk = inputEvent({ sequence = sequence, move = move, yaw = yaw,
-        pitch = pitch, buttons = buttons }, false, 255)
+      inputSendOk = hud.inputEvent({ sequence = sequence, move = move, yaw = yaw,
+        pitch = pitch, buttons = buttons, selectedSlot = hud.loadout.activeSlot }, false, 255)
     end
 
     inputDiagnosticAccumulator = inputDiagnosticAccumulator + dt
@@ -3361,6 +3741,8 @@ function hud.drawFallbackRanking(ranking, scale, margin, radarDiameter)
 end
 
 function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
+  local activeWeapon = actor ~= nil and (actor.activeSlot == 1
+      and actor.secondaryWeapon or actor.mainWeapon) or hud.loadout.mainWeapon
   local bottom = size.y - margin
   local height = 148 * scale
   local leftWidth = 330 * scale
@@ -3423,7 +3805,8 @@ function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
   end
   ui.setCursor(rightMin + vec2(16, 10) * scale)
   ui.text(actor ~= nil and actor.reloadRemaining > 0
-    and string.format('RELOADING  %.1fs', actor.reloadRemaining) or 'ASSAULT RIFLE')
+    and string.format('RELOADING  %.1fs', actor.reloadRemaining)
+    or (hud.itemNames[activeWeapon] or 'FIREARM'))
   ui.setCursor(rightMin + vec2(258, 32) * scale)
   ui.pushFont(ui.Font.Title)
   ui.text(string.format('%02d', actor and actor.ammo or 0))
@@ -3432,6 +3815,9 @@ function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
   ui.text(string.format('%d RESERVE MAGS', actor and actor.reserveMagazines or 0))
   ui.setCursor(rightMin + vec2(258, 89) * scale)
   ui.text('R  RELOAD')
+  ui.setCursor(rightMin + vec2(258, 108) * scale)
+  ui.text(string.format('G  %s  x%d', hud.itemNames[actor and actor.lethal or hud.loadout.lethal]
+    or 'LETHAL', actor and actor.lethalsRemaining or 0))
   ui.setCursor(rightMin + vec2(16, 126) * scale)
   ui.text(thirdPersonEnabled and string.format('F6  3P  SHIFT + WHEEL %.1f m',
     fpsVisual.thirdPersonDistanceTarget) or 'F6  FIRST PERSON')
@@ -3445,10 +3831,113 @@ function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
   end
 end
 
+function hud.cycleLoadoutItem(mask, current, items, direction)
+  local start = 1
+  for index = 1, #items do
+    if items[index] == current then start = index; break end
+  end
+  for offset = 1, #items do
+    local index = ((start - 1 + direction * offset) % #items) + 1
+    if hud.itemAllowed(mask, items[index]) then return items[index] end
+  end
+  return current
+end
+
+function hud.submitLoadout()
+  if not hud.loadout.catalogReceived then return end
+  hud.loadout.result = 'SENDING TO SERVER...'
+  hud.loadoutSelectEvent({
+    mainWeapon = hud.loadout.mainWeapon,
+    lethal = hud.loadout.lethal,
+    secondaryWeapon = hud.loadout.secondaryWeapon,
+  })
+end
+
+function hud.drawLoadoutMenu(initialSelection)
+  local size = ui.windowSize()
+  local scale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.5)
+  local panelSize = vec2(760, 560) * scale
+  local panelMin = (size - panelSize) * 0.5
+  local mouse = ui.mousePos()
+  ui.captureMouse(true)
+  ui.setMouseCursor(ui.MouseCursor.Arrow)
+  ui.drawRectFilled(vec2(), size, rgbm(0.006, 0.01, 0.016, 0.82))
+  ui.drawRectFilled(panelMin, panelMin + panelSize, rgbm(0.025, 0.035, 0.05, 0.98),
+    10 * scale)
+  ui.drawRect(panelMin, panelMin + panelSize, rgbm(0.42, 0.68, 0.88, 0.85),
+    10 * scale, nil, math.max(1, 1.5 * scale))
+
+  local function button(label, position, dimensions, accent)
+    local maximum = position + dimensions
+    local hovered = mouse.x >= position.x and mouse.x <= maximum.x
+      and mouse.y >= position.y and mouse.y <= maximum.y
+    local base = accent and rgbm(0.12, 0.42, 0.58, 1) or rgbm(0.10, 0.18, 0.25, 1)
+    ui.drawRectFilled(position, maximum, hovered and rgbm(0.2, 0.5, 0.68, 1) or base,
+      5 * scale)
+    ui.drawRect(position, maximum, rgbm(0.42, 0.66, 0.82, 0.9), 5 * scale,
+      nil, math.max(1, scale))
+    ui.setCursor(position + vec2(14, 12) * scale)
+    ui.text(label)
+    return hovered and ui.mouseClicked(ui.MouseButton.Left)
+  end
+
+  local left = panelMin + vec2(42, 32) * scale
+  ui.setCursor(left)
+  ui.pushFont(ui.Font.Huge)
+  ui.text(initialSelection and 'SELECT LOADOUT' or 'CHANGE LOADOUT')
+  ui.popFont()
+  ui.setCursor(left + vec2(0, 52) * scale)
+  ui.textColored(initialSelection and 'Confirmation is required before spawning.'
+      or 'Changes apply on your next respawn.', rgbm(0.55, 0.78, 0.94, 1))
+
+  local rows = {
+    { label = 'MAIN WEAPON', field = 'mainWeapon', mask = 'allowedMainWeapons',
+      items = { 1, 2 } },
+    { label = 'LETHAL EQUIPMENT', field = 'lethal', mask = 'allowedLethals',
+      items = { 16, 17 } },
+    { label = 'SECONDARY WEAPON', field = 'secondaryWeapon',
+      mask = 'allowedSecondaryWeapons', items = { 3, 4 } },
+  }
+  for index = 1, #rows do
+    local row = rows[index]
+    local y = 105 + (index - 1) * 100
+    ui.setCursor(left + vec2(0, y) * scale)
+    ui.textColored(row.label, rgbm(0.62, 0.72, 0.8, 1))
+    if button('<', left + vec2(0, y + 28) * scale, vec2(52, 44) * scale, false) then
+      hud.loadout[row.field] = hud.cycleLoadoutItem(hud.loadout[row.mask],
+        hud.loadout[row.field], row.items, -1)
+    end
+    ui.setCursor(left + vec2(90, y + 40) * scale)
+    ui.pushFont(ui.Font.Title)
+    ui.text(hud.itemNames[hud.loadout[row.field]] or 'UNKNOWN')
+    ui.popFont()
+    if button('>', left + vec2(560, y + 28) * scale, vec2(52, 44) * scale, false) then
+      hud.loadout[row.field] = hud.cycleLoadoutItem(hud.loadout[row.mask],
+        hud.loadout[row.field], row.items, 1)
+    end
+  end
+
+  ui.setCursor(left + vec2(0, 417) * scale)
+  ui.textColored(hud.loadout.result, hud.loadout.catalogReceived
+    and rgbm(0.65, 0.88, 1, 1) or rgbm(1, 0.6, 0.2, 1))
+  if button(initialSelection and 'CONFIRM & SPAWN' or 'QUEUE FOR RESPAWN',
+      left + vec2(360, 410) * scale, vec2(252, 46) * scale, true) then
+    hud.submitLoadout()
+  end
+  if not initialSelection and button('BACK TO MATCH MENU', left + vec2(0, 472) * scale,
+      vec2(245, 42) * scale, false) then
+    hud.pausePage = 'main'
+  end
+end
+
 function script.drawUI()
   if hud.exclusiveSubscription ~= nil and not hud.drawingFallback then return end
   viewmodelDrawUICalls = viewmodelDrawUICalls + 1
   if not gameplayActive then return end
+  if not hud.loadout.confirmed then
+    hud.drawLoadoutMenu(true)
+    return
+  end
   local size = ui.windowSize()
   local center = size / 2
   local hudScale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.65)
@@ -3564,7 +4053,7 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
     { label = 'CROUCH / PRONE', action = 'crouch', crouchMode = true },
     { label = 'RELOAD', action = 'reload' },
     { label = 'JUMP', action = 'jump' },
-    { label = 'GRENADE', action = 'grenade', reserved = true },
+    { label = 'GRENADE', action = 'grenade' },
     { label = 'MELEE', action = 'melee', reserved = true },
   }
   local left = panelMin + vec2(42, 34) * scale
@@ -3722,7 +4211,7 @@ function hud.drawEnvironmentMenu(panelMin, panelSize, scale, pauseButton)
 
   if pauseButton('APPLY TO MATCH', left + vec2(500, 500) * scale,
       vec2(230, 42) * scale, false) then
-    environmentRequestEvent({
+    hud.environmentRequestEvent({
       weatherType = hud.environmentDraftWeather,
       timeOfDaySeconds = hud.environmentDraftTimeSeconds,
     })
@@ -3782,6 +4271,10 @@ function hud.drawPauseMenu()
     hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
     return
   end
+  if hud.pausePage == 'loadout' then
+    hud.drawLoadoutMenu(false)
+    return
+  end
   if hud.pausePage == 'pure' then
     if not hud.environmentDraftReady then
       hud.environmentDraftWeather = hud.environmentWeather
@@ -3812,33 +4305,39 @@ function hud.drawPauseMenu()
     hud.leaveServerArmed = false
     hud.controlsContentLogged = false
   end
-  if pauseButton('TIME & WEATHER', left + vec2(0, 260) * scale,
+  if pauseButton('LOADOUT', left + vec2(0, 260) * scale, buttonSize, false) then
+    ac.log('[ASRC FPS] pause menu action: loadout')
+    hud.loadout.result = 'CHANGES APPLY ON NEXT RESPAWN'
+    hud.pausePage = 'loadout'
+    hud.leaveServerArmed = false
+  end
+  if pauseButton('TIME & WEATHER', left + vec2(0, 315) * scale,
       buttonSize, false) then
     ac.log('[ASRC FPS] pause menu action: authoritative time and weather')
     hud.environmentDraftReady = false
     hud.pausePage = 'pure'
     hud.leaveServerArmed = false
   end
-  if pauseButton('ASSETTO CORSA OPTIONS', left + vec2(0, 315) * scale,
+  if pauseButton('ASSETTO CORSA OPTIONS', left + vec2(0, 370) * scale,
       buttonSize, false) then
     ac.log('[ASRC FPS] pause menu action: native options')
     hud.nativePauseMenu = true
     hud.leaveServerArmed = false
   end
   if not hud.leaveServerArmed then
-    if pauseButton('LEAVE SERVER', left + vec2(0, 370) * scale, buttonSize, true) then
+    if pauseButton('LEAVE SERVER', left + vec2(0, 425) * scale, buttonSize, true) then
       ac.log('[ASRC FPS] pause menu action: arm leave confirmation')
       hud.leaveServerArmed = true
     end
   else
-    ui.setCursor(left + vec2(0, 370) * scale)
+    ui.setCursor(left + vec2(0, 425) * scale)
     ui.textColored('Leave the current server?', rgbm(1, 0.52, 0.35, 1))
-    if pauseButton('CONFIRM LEAVE', left + vec2(0, 402) * scale,
+    if pauseButton('CONFIRM LEAVE', left + vec2(0, 457) * scale,
         vec2(162, 42) * scale, true) then
       ac.log('[ASRC FPS] pause menu action: leave server confirmed')
       ac.shutdownAssettoCorsa()
     end
-    if pauseButton('CANCEL', left + vec2(170, 402) * scale,
+    if pauseButton('CANCEL', left + vec2(170, 457) * scale,
         vec2(90, 42) * scale, false) then
       ac.log('[ASRC FPS] pause menu action: leave cancelled')
       hud.leaveServerArmed = false
@@ -3891,7 +4390,7 @@ function hud.exclusiveCallback(mode)
     return true
   end
   if mode ~= 'game' or not gameplayActive then return false end
-  if hud.appOwnsHud() then return false end
+  if hud.appOwnsHud() and hud.loadout.confirmed then return false end
   hud.drawingFallback = true
   script.drawUI()
   hud.drawingFallback = false
@@ -3909,5 +4408,5 @@ else
   ac.log('[ASRC FPS] exclusive online HUD fallback registered')
 end
 
-local readySent = readyEvent({ protocol = 1 })
-ac.log(string.format('[ASRC FPS] ready sent: protocol=1 result=%s', tostring(readySent)))
+hud.readySent = hud.readyEvent({ protocol = 2 })
+ac.log(string.format('[ASRC FPS] ready sent: protocol=2 result=%s', tostring(hud.readySent)))

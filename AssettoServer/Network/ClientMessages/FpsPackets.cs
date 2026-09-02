@@ -4,7 +4,7 @@ using System.Numerics;
 namespace AssettoServer.Network.ClientMessages;
 
 [Flags]
-public enum FpsInputButtons : byte
+public enum FpsInputButtons : ushort
 {
     None = 0,
     Fire = 1,
@@ -16,6 +16,7 @@ public enum FpsInputButtons : byte
     // The input packet still carries the physical crouch button. This flag tells the
     // authoritative stance state machine whether a short press should latch crouch.
     CrouchToggleMode = 64,
+    ThrowLethal = 128,
 }
 
 [OnlineEvent(Key = "ASRC_FpsInput", Udp = true)]
@@ -26,12 +27,60 @@ public sealed class FpsInputPacket : OnlineEvent<FpsInputPacket>
     [OnlineEventField(Name = "yaw")] public float Yaw;
     [OnlineEventField(Name = "pitch")] public float Pitch;
     [OnlineEventField(Name = "buttons")] public FpsInputButtons Buttons;
+    [OnlineEventField(Name = "selectedSlot")] public byte SelectedSlot;
 }
 
 [OnlineEvent(Key = "ASRC_FpsReady")]
 public sealed class FpsReadyPacket : OnlineEvent<FpsReadyPacket>
 {
-    [OnlineEventField(Name = "protocol")] public ushort Protocol = 1;
+    [OnlineEventField(Name = "protocol")] public ushort Protocol = 2;
+}
+
+[OnlineEvent(Key = "ASRC_FpsLoadoutSelect")]
+public sealed class FpsLoadoutSelectPacket : OnlineEvent<FpsLoadoutSelectPacket>
+{
+    [OnlineEventField(Name = "mainWeapon")] public byte MainWeapon;
+    [OnlineEventField(Name = "lethal")] public byte Lethal;
+    [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
+}
+
+[OnlineEvent(Key = "ASRC_FpsLoadoutCatalog")]
+public sealed class FpsLoadoutCatalogPacket : OnlineEvent<FpsLoadoutCatalogPacket>
+{
+    [OnlineEventField(Name = "allowedMainWeapons")] public uint AllowedMainWeapons;
+    [OnlineEventField(Name = "allowedLethals")] public uint AllowedLethals;
+    [OnlineEventField(Name = "allowedSecondaryWeapons")] public uint AllowedSecondaryWeapons;
+    [OnlineEventField(Name = "defaultMainWeapon")] public byte DefaultMainWeapon;
+    [OnlineEventField(Name = "defaultLethal")] public byte DefaultLethal;
+    [OnlineEventField(Name = "defaultSecondaryWeapon")] public byte DefaultSecondaryWeapon;
+}
+
+public enum FpsLoadoutResultCode : byte
+{
+    Applied = 1,
+    QueuedForRespawn = 2,
+    InvalidSelection = 3,
+    NotAvailable = 4,
+}
+
+[OnlineEvent(Key = "ASRC_FpsLoadoutResult")]
+public sealed class FpsLoadoutResultPacket : OnlineEvent<FpsLoadoutResultPacket>
+{
+    [OnlineEventField(Name = "result")] public FpsLoadoutResultCode Result;
+    [OnlineEventField(Name = "mainWeapon")] public byte MainWeapon;
+    [OnlineEventField(Name = "lethal")] public byte Lethal;
+    [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
+}
+
+[OnlineEvent(Key = "ASRC_FpsLoadoutState")]
+public sealed class FpsLoadoutStatePacket : OnlineEvent<FpsLoadoutStatePacket>
+{
+    [OnlineEventField(Name = "actorID")] public byte ActorId;
+    [OnlineEventField(Name = "mainWeapon")] public byte MainWeapon;
+    [OnlineEventField(Name = "lethal")] public byte Lethal;
+    [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
+    [OnlineEventField(Name = "activeSlot")] public byte ActiveSlot;
+    [OnlineEventField(Name = "lethalsRemaining")] public byte LethalsRemaining;
 }
 
 [OnlineEvent(Key = "ASRC_FpsEnvironmentRequest")]
@@ -139,6 +188,7 @@ public sealed class FpsKillPacket : OnlineEvent<FpsKillPacket>
     [OnlineEventField(Name = "victimID")] public byte VictimId;
     [OnlineEventField(Name = "killerKills")] public ushort KillerKills;
     [OnlineEventField(Name = "victimDeaths")] public ushort VictimDeaths;
+    [OnlineEventField(Name = "itemID")] public byte ItemId;
 }
 
 [OnlineEvent(Key = "ASRC_FpsHit")]
@@ -147,6 +197,7 @@ public sealed class FpsHitPacket : OnlineEvent<FpsHitPacket>
     [OnlineEventField(Name = "attackerID")] public byte AttackerId;
     [OnlineEventField(Name = "victimID")] public byte VictimId;
     [OnlineEventField(Name = "remainingHealth")] public ushort RemainingHealth;
+    [OnlineEventField(Name = "itemID")] public byte ItemId;
 }
 
 [OnlineEvent(Key = "ASRC_FpsAward")]
@@ -162,6 +213,15 @@ public sealed class FpsAwardPacket : OnlineEvent<FpsAwardPacket>
 public enum FpsWeaponType : byte
 {
     AssaultRifle = 1,
+    CompactSmg = 2,
+    DesertEagle = 3,
+    Colt1911 = 4,
+}
+
+public enum FpsLethalType : byte
+{
+    FragGrenade = 16,
+    StickyGrenade = 17,
 }
 
 public enum FpsPickupState : byte
@@ -190,4 +250,30 @@ public sealed class FpsShotPacket : OnlineEvent<FpsShotPacket>
     [OnlineEventField(Name = "distance")] public float Distance;
     [OnlineEventField(Name = "impact")] public byte Impact;
     [OnlineEventField(Name = "targetID")] public byte TargetId = byte.MaxValue;
+    [OnlineEventField(Name = "weaponType")] public FpsWeaponType WeaponType;
+}
+
+[OnlineEvent(Key = "ASRC_FpsGrenadeSnapshot", Udp = true)]
+public sealed class FpsGrenadeSnapshotPacket : OnlineEvent<FpsGrenadeSnapshotPacket>
+{
+    public const int Capacity = 8;
+
+    [OnlineEventField(Name = "sequence")] public uint Sequence;
+    [OnlineEventField(Name = "count")] public byte Count;
+    [OnlineEventField(Name = "grenadeIDs", Size = Capacity)] public uint[] GrenadeIds = new uint[Capacity];
+    [OnlineEventField(Name = "ownerIDs", Size = Capacity)] public byte[] OwnerIds = new byte[Capacity];
+    [OnlineEventField(Name = "types", Size = Capacity)] public byte[] Types = new byte[Capacity];
+    [OnlineEventField(Name = "flags", Size = Capacity)] public byte[] Flags = new byte[Capacity];
+    [OnlineEventField(Name = "positions", Size = Capacity)] public Vector3[] Positions = new Vector3[Capacity];
+    [OnlineEventField(Name = "velocities", Size = Capacity)] public Vector3[] Velocities = new Vector3[Capacity];
+    [OnlineEventField(Name = "remaining", Size = Capacity)] public float[] Remaining = new float[Capacity];
+}
+
+[OnlineEvent(Key = "ASRC_FpsGrenadeExploded")]
+public sealed class FpsGrenadeExplodedPacket : OnlineEvent<FpsGrenadeExplodedPacket>
+{
+    [OnlineEventField(Name = "grenadeID")] public uint GrenadeId;
+    [OnlineEventField(Name = "ownerID")] public byte OwnerId;
+    [OnlineEventField(Name = "type")] public FpsLethalType Type;
+    [OnlineEventField(Name = "position")] public Vector3 Position;
 }

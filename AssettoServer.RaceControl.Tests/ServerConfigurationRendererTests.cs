@@ -220,6 +220,10 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.ExtraConfiguration, Does.Contain("Fps:"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  Theme: Modern"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  KillLimit: 20"));
+            Assert.That(rendered.ExtraConfiguration,
+                Does.Contain("    AllowedMainWeapons: [AssaultRifle, CompactSmg]"));
+            Assert.That(rendered.ExtraConfiguration,
+                Does.Contain("      SecondaryWeapon: Colt1911"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("    GeometryPath: fps-arena-geometry.bin"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("    NavigationPath: fps-arena-navigation.bin"));
         });

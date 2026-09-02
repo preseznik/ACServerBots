@@ -41,6 +41,7 @@ public sealed class FpsWorld : IHostedService
     private FpsSimulation? _simulation;
     private FpsLiveArenaSnapshot? _liveArena;
     private uint _snapshotSequence;
+    private uint _grenadeSnapshotSequence;
     private int _snapshotTicks;
     private int _matchTicks;
     private bool _finalSent;
@@ -50,6 +51,7 @@ public sealed class FpsWorld : IHostedService
     private readonly HashSet<byte> _botsWithActiveBehavior = [];
     private readonly Dictionary<byte, int> _neutralInputCounts = [];
     private readonly Dictionary<byte, uint> _knownSpawnCounts = [];
+    private readonly Dictionary<byte, ulong> _knownLoadoutStates = [];
     private readonly Dictionary<byte, Vector3> _lastDiagnosticPositions = [];
     private readonly Dictionary<byte, (float GroundY, bool Grounded, bool Mantling)>
         _lastMovementStates = [];
@@ -71,6 +73,7 @@ public sealed class FpsWorld : IHostedService
         _weatherManager = weatherManager;
         _messageTypes.RegisterOnlineEvent<FpsInputPacket>(OnInput);
         _messageTypes.RegisterOnlineEvent<FpsReadyPacket>(OnReady);
+        _messageTypes.RegisterOnlineEvent<FpsLoadoutSelectPacket>(OnLoadoutSelect);
         _messageTypes.RegisterOnlineEvent<FpsClientDiagnosticPacket>(OnClientDiagnostic);
         _messageTypes.RegisterOnlineEvent<FpsEnvironmentRequestPacket>(OnEnvironmentRequest);
 
@@ -97,6 +100,7 @@ public sealed class FpsWorld : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        ValidateLoadouts(_configuration.Extra.Fps.Loadouts);
         string geometryPath = Path.GetFullPath(Path.Combine(_configuration.BaseFolder,
             _configuration.Extra.Fps.Arena.GeometryPath));
         string navigationPath = Path.GetFullPath(Path.Combine(_configuration.BaseFolder,
@@ -137,6 +141,7 @@ public sealed class FpsWorld : IHostedService
         foreach (var actor in _simulation.Actors.Where(actor => actor.Active).OrderBy(actor => actor.Id))
         {
             _knownSpawnCounts[actor.Id] = actor.SpawnCount;
+            _knownLoadoutStates[actor.Id] = LoadoutSignature(actor);
             _lastDiagnosticPositions[actor.Id] = actor.Position;
             _lastMovementStates[actor.Id] = (actor.GroundY, actor.IsGrounded, actor.IsMantling);
             Log.Debug(
@@ -193,18 +198,19 @@ public sealed class FpsWorld : IHostedService
         bool claimed;
         lock (_sync)
         {
-            claimed = _simulation?.ClaimHuman(client.SessionId) == true;
+            claimed = _simulation?.ClaimHuman(client.SessionId,
+                requireLoadoutConfirmation: true) == true;
             if (claimed)
             {
                 var actor = _simulation!.Actors.Single(actor => actor.Id == client.SessionId);
                 _knownSpawnCounts[actor.Id] = actor.SpawnCount;
+                _knownLoadoutStates[actor.Id] = LoadoutSignature(actor);
                 _lastDiagnosticPositions[actor.Id] = actor.Position;
                 _lastMovementStates[actor.Id] =
                     (actor.GroundY, actor.IsGrounded, actor.IsMantling);
                 client.Logger.Information(
-                    "FPS human actor spawned: actor={ActorId}, spawn={SpawnCount}, position={Position}, yaw={Yaw:F3}, health={Health}, active={Active}, dead={Dead}",
-                    actor.Id, actor.SpawnCount, actor.Position, actor.Yaw, actor.Health,
-                    actor.Active, actor.Dead);
+                    "FPS human actor claimed and awaiting loadout confirmation: actor={ActorId}, spawn={SpawnCount}, active={Active}",
+                    actor.Id, actor.SpawnCount, actor.Active);
             }
         }
         if (claimed)
@@ -230,6 +236,7 @@ public sealed class FpsWorld : IHostedService
             _neutralInputCounts.Remove(client.SessionId);
             _lastClientViewmodelDiagnosticTicks.Remove(client.SessionId);
             _lastMovementStates.Remove(client.SessionId);
+            _knownLoadoutStates.Remove(client.SessionId);
         }
     }
 
@@ -276,7 +283,8 @@ public sealed class FpsWorld : IHostedService
         lock (_sync)
         {
             bool accepted = _simulation?.ApplyInput(client.SessionId, new FpsInputCommand(packet.Sequence,
-                packet.Move, packet.Yaw, packet.Pitch, packet.Buttons)) == true;
+                packet.Move, packet.Yaw, packet.Pitch, packet.Buttons,
+                packet.SelectedSlot)) == true;
             if (!accepted)
             {
                 client.Logger.Verbose("Rejected stale or invalid FPS input sequence {Sequence}", packet.Sequence);
@@ -313,7 +321,7 @@ public sealed class FpsWorld : IHostedService
 
     private void OnReady(ACTcpClient client, FpsReadyPacket packet)
     {
-        if (packet.Protocol != 1)
+        if (packet.Protocol != 2)
         {
             client.Logger.Warning("FPS client protocol {Protocol} is not supported", packet.Protocol);
             _ = client.DisconnectAsync();
@@ -325,6 +333,7 @@ public sealed class FpsWorld : IHostedService
         lock (_sync)
         {
             if (_simulation is null) return;
+            SendLoadoutCatalog(client);
             foreach (var actor in _simulation.Actors.OrderBy(actor => actor.Id))
             {
                 client.SendPacket(new FpsRosterPacket
@@ -336,6 +345,7 @@ public sealed class FpsWorld : IHostedService
             }
             SendMatch(client);
             SendSnapshots(client);
+            SendGrenadeSnapshots(client);
             foreach (var actor in _simulation.Actors.OrderBy(actor => actor.Id))
             {
                 client.SendPacket(new FpsAwardPacket
@@ -343,6 +353,7 @@ public sealed class FpsWorld : IHostedService
                     ActorId = actor.Id,
                     TotalScore = actor.Score,
                 });
+                SendLoadoutState(client, actor);
             }
             foreach (var pickup in _simulation.Pickups.OrderBy(pickup => pickup.Id))
             {
@@ -354,6 +365,38 @@ public sealed class FpsWorld : IHostedService
                     Position = pickup.Position,
                 });
             }
+        }
+    }
+
+    private void OnLoadoutSelect(ACTcpClient client, FpsLoadoutSelectPacket packet)
+    {
+        if (client.EntryCar.FpsRole == FpsSlotRole.Spectator) return;
+        var loadout = new FpsLoadout((FpsWeaponType)packet.MainWeapon,
+            (FpsLethalType)packet.Lethal, (FpsWeaponType)packet.SecondaryWeapon);
+        lock (_sync)
+        {
+            if (_simulation is null) return;
+            var result = _simulation.SelectLoadout(client.SessionId, loadout);
+            client.SendPacket(new FpsLoadoutResultPacket
+            {
+                Result = result,
+                MainWeapon = packet.MainWeapon,
+                Lethal = packet.Lethal,
+                SecondaryWeapon = packet.SecondaryWeapon,
+            });
+            if (result == FpsLoadoutResultCode.Applied)
+            {
+                var actor = _simulation.Actors.Single(actor => actor.Id == client.SessionId);
+                _knownSpawnCounts[actor.Id] = actor.SpawnCount;
+                _knownLoadoutStates[actor.Id] = LoadoutSignature(actor);
+                _lastDiagnosticPositions[actor.Id] = actor.Position;
+                _lastMovementStates[actor.Id] =
+                    (actor.GroundY, actor.IsGrounded, actor.IsMantling);
+                BroadcastLoadoutState(actor);
+            }
+            client.Logger.Information(
+                "FPS loadout selection {Result}: main={MainWeapon}, lethal={Lethal}, secondary={SecondaryWeapon}",
+                result, loadout.MainWeapon, loadout.Lethal, loadout.SecondaryWeapon);
         }
     }
 
@@ -416,6 +459,7 @@ public sealed class FpsWorld : IHostedService
             }
             _simulationDurationSamples++;
             LogSpawnChanges();
+            BroadcastLoadoutChanges();
             LogMovementTransitions();
             foreach (var diagnostic in _simulation.BotDiagnosticEvents)
             {
@@ -438,6 +482,7 @@ public sealed class FpsWorld : IHostedService
                     AttackerId = hit.AttackerId,
                     VictimId = hit.VictimId,
                     RemainingHealth = hit.RemainingHealth,
+                    ItemId = hit.ItemId,
                 });
             }
             foreach (var shot in _simulation.ShotEvents)
@@ -462,6 +507,7 @@ public sealed class FpsWorld : IHostedService
                     Distance = shot.Distance,
                     Impact = (byte)shot.Impact,
                     TargetId = shot.TargetId,
+                    WeaponType = shot.WeaponType,
                 });
             }
             foreach (var kill in _simulation.KillEvents)
@@ -472,6 +518,7 @@ public sealed class FpsWorld : IHostedService
                     VictimId = kill.VictimId,
                     KillerKills = kill.KillerKills,
                     VictimDeaths = kill.VictimDeaths,
+                    ItemId = kill.ItemId,
                 });
             }
             foreach (var award in _simulation.AwardEvents)
@@ -505,12 +552,23 @@ public sealed class FpsWorld : IHostedService
                     Position = pickup.Position,
                 });
             }
+            foreach (var explosion in _simulation.GrenadeExplosionEvents)
+            {
+                Broadcast(new FpsGrenadeExplodedPacket
+                {
+                    GrenadeId = explosion.GrenadeId,
+                    OwnerId = explosion.OwnerId,
+                    Type = explosion.Type,
+                    Position = explosion.Position,
+                });
+            }
 
             int snapshotInterval = Math.Max(1, _configuration.Server.RefreshRateHz / 20);
             if (++_snapshotTicks >= snapshotInterval)
             {
                 _snapshotTicks = 0;
                 SendSnapshots();
+                SendGrenadeSnapshots();
             }
 
             if (++_matchTicks >= _configuration.Server.RefreshRateHz)
@@ -668,6 +726,121 @@ public sealed class FpsWorld : IHostedService
                     client.SendPacketUdp(in packet);
             }
         }
+    }
+
+    private void SendGrenadeSnapshots(ACTcpClient? only = null)
+    {
+        if (_simulation is null) return;
+        var grenades = _simulation.Grenades.OrderBy(grenade => grenade.Id).ToArray();
+        if (grenades.Length == 0)
+        {
+            Send(new FpsGrenadeSnapshotPacket { Sequence = ++_grenadeSnapshotSequence });
+            return;
+        }
+        for (int offset = 0; offset < grenades.Length;
+             offset += FpsGrenadeSnapshotPacket.Capacity)
+        {
+            var packet = new FpsGrenadeSnapshotPacket
+            {
+                Sequence = ++_grenadeSnapshotSequence,
+                Count = (byte)Math.Min(FpsGrenadeSnapshotPacket.Capacity,
+                    grenades.Length - offset),
+            };
+            for (int index = 0; index < packet.Count; index++)
+            {
+                var grenade = grenades[offset + index];
+                packet.GrenadeIds[index] = grenade.Id;
+                packet.OwnerIds[index] = grenade.OwnerId;
+                packet.Types[index] = (byte)grenade.Type;
+                packet.Flags[index] = (byte)((grenade.StuckToWorld ? 1 : 0)
+                    | (grenade.AttachedActorId != byte.MaxValue ? 2 : 0));
+                packet.Positions[index] = grenade.Position;
+                packet.Velocities[index] = grenade.Velocity;
+                packet.Remaining[index] = grenade.RemainingSeconds;
+            }
+            Send(packet);
+        }
+
+        void Send(FpsGrenadeSnapshotPacket packet)
+        {
+            if (only is not null) only.SendPacketUdp(in packet);
+            else
+            {
+                foreach (var client in _entryCarManager.ConnectedCars.Values
+                             .Select(car => car.Client).OfType<ACTcpClient>())
+                    client.SendPacketUdp(in packet);
+            }
+        }
+    }
+
+    private void BroadcastLoadoutChanges()
+    {
+        if (_simulation is null) return;
+        foreach (var actor in _simulation.Actors.Where(actor => actor.Active)
+                     .OrderBy(actor => actor.Id))
+        {
+            ulong signature = LoadoutSignature(actor);
+            if (_knownLoadoutStates.GetValueOrDefault(actor.Id) == signature) continue;
+            _knownLoadoutStates[actor.Id] = signature;
+            BroadcastLoadoutState(actor);
+        }
+    }
+
+    private void SendLoadoutCatalog(ACTcpClient client)
+    {
+        var loadouts = _configuration.Extra.Fps.Loadouts;
+        client.SendPacket(new FpsLoadoutCatalogPacket
+        {
+            AllowedMainWeapons = ItemMask(loadouts.AllowedMainWeapons.Select(value => (byte)value)),
+            AllowedLethals = ItemMask(loadouts.AllowedLethals.Select(value => (byte)value)),
+            AllowedSecondaryWeapons = ItemMask(loadouts.AllowedSecondaryWeapons.Select(value => (byte)value)),
+            DefaultMainWeapon = (byte)loadouts.HumanDefault.MainWeapon,
+            DefaultLethal = (byte)loadouts.HumanDefault.Lethal,
+            DefaultSecondaryWeapon = (byte)loadouts.HumanDefault.SecondaryWeapon,
+        });
+    }
+
+    private static void SendLoadoutState(ACTcpClient client, FpsActorState actor) =>
+        client.SendPacket(CreateLoadoutState(actor));
+
+    private void BroadcastLoadoutState(FpsActorState actor) =>
+        Broadcast(CreateLoadoutState(actor));
+
+    private static FpsLoadoutStatePacket CreateLoadoutState(FpsActorState actor) => new()
+    {
+        ActorId = actor.Id,
+        MainWeapon = (byte)actor.Loadout.MainWeapon,
+        Lethal = (byte)actor.Loadout.Lethal,
+        SecondaryWeapon = (byte)actor.Loadout.SecondaryWeapon,
+        ActiveSlot = actor.ActiveWeaponSlot,
+        LethalsRemaining = (byte)Math.Clamp(actor.LethalsRemaining, 0, byte.MaxValue),
+    };
+
+    private static ulong LoadoutSignature(FpsActorState actor) =>
+        (byte)actor.Loadout.MainWeapon
+        | (ulong)(byte)actor.Loadout.Lethal << 8
+        | (ulong)(byte)actor.Loadout.SecondaryWeapon << 16
+        | (ulong)actor.ActiveWeaponSlot << 24
+        | (ulong)(byte)Math.Clamp(actor.LethalsRemaining, 0, byte.MaxValue) << 32;
+
+    private static uint ItemMask(IEnumerable<byte> values) =>
+        values.Aggregate(0u, (mask, value) => value < 32 ? mask | 1u << value : mask);
+
+    private static void ValidateLoadouts(FpsLoadoutConfiguration loadouts)
+    {
+        bool invalid = loadouts.AllowedMainWeapons.Count == 0
+                       || loadouts.AllowedLethals.Count == 0
+                       || loadouts.AllowedSecondaryWeapons.Count == 0
+                       || loadouts.AllowedMainWeapons.Any(value => !Enum.IsDefined(value))
+                       || loadouts.AllowedLethals.Any(value => !Enum.IsDefined(value))
+                       || loadouts.AllowedSecondaryWeapons.Any(value => !Enum.IsDefined(value))
+                       || !FpsItems.IsAllowed(loadouts,
+                           FpsItems.FromConfiguration(loadouts.HumanDefault))
+                       || !FpsItems.IsAllowed(loadouts,
+                           FpsItems.FromConfiguration(loadouts.BotDefault));
+        if (invalid)
+            throw new ConfigurationException(
+                "FPS loadouts require non-empty allow-lists and allowed human/bot defaults");
     }
 
     internal static byte EncodeCollisionDirection(Vector2 direction)

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using System.Text.Json;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Runtime;
@@ -95,6 +96,42 @@ public sealed class RaceControlWebServerTests
         });
     }
 
+    [Test]
+    public async Task StopCancelsAnInFlightDashboardActionPromptly()
+    {
+        using var factory = new TestContentFactory();
+        var paths = new RaceControlPaths(factory.DataRoot);
+        paths.EnsureCreated();
+        int port = ReserveLoopbackPort();
+        var control = new BlockingWebControl();
+        await using var server = new RaceControlWebServer(
+            new RaceControlWebServerOptions(true, "127.0.0.1", port), paths, control);
+        await server.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri(server.BrowserUrl) };
+        using JsonDocument status = JsonDocument.Parse(await client.GetStringAsync("api/v1/status"));
+        client.DefaultRequestHeaders.Add("X-ASRC-Control",
+            status.RootElement.GetProperty("controlToken").GetString()!);
+
+        Task<HttpResponseMessage> request = client.PostAsync(
+            "api/v1/actions/start-session", new ByteArrayContent([]));
+        await control.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var stopwatch = Stopwatch.StartNew();
+        await server.StopAsync();
+        stopwatch.Stop();
+        try
+        {
+            using var _ = await request;
+        }
+        catch (Exception exception) when (exception is HttpRequestException
+                                          or TaskCanceledException)
+        {
+            // The server intentionally aborted the request during application shutdown.
+        }
+
+        Assert.That(stopwatch.Elapsed, Is.LessThan(TimeSpan.FromSeconds(2)),
+            "A dashboard request must not retain the desktop process during shutdown");
+    }
+
     private static int ReserveLoopbackPort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -127,5 +164,28 @@ public sealed class RaceControlWebServerTests
             LastEnvironment = request;
             return Task.FromResult(RaceControlWebActionResult.Success("Environment accepted."));
         }
+    }
+
+    private sealed class BlockingWebControl : IRaceControlWebControl
+    {
+        public TaskCompletionSource Started { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public RaceControlWebControlState GetState() => new(
+            "Shutdown test", "Test Server", "FPS", "MATCH", "fire_pit", "", "Blocks",
+            "RUNNING", "Ready", false, false, true, true, true, true, true);
+
+        public async Task<RaceControlWebActionResult> ExecuteAsync(RaceControlWebAction action,
+            CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return RaceControlWebActionResult.Success("Unreachable");
+        }
+
+        public Task<RaceControlWebActionResult> SetEnvironmentAsync(
+            RaceControlWebEnvironmentRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(RaceControlWebActionResult.Success("Accepted."));
     }
 }

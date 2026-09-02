@@ -268,6 +268,12 @@ public sealed class ServerConfigurationRenderer
             Line($"    Aggression: {fps.Bots.Aggression.ToString("0.###", invariant)}");
             Line($"    AggressionVariancePercent: {fps.Bots.AggressionVariancePercent.ToString("0.###", invariant)}");
             Line($"    Health: {fps.Bots.Health}");
+            Line("  Loadouts:");
+            Values("AllowedMainWeapons", fps.Loadouts.AllowedMainWeapons, 4);
+            Values("AllowedLethals", fps.Loadouts.AllowedLethals, 4);
+            Values("AllowedSecondaryWeapons", fps.Loadouts.AllowedSecondaryWeapons, 4);
+            Loadout("HumanDefault", fps.Loadouts.HumanDefault, 4);
+            Loadout("BotDefault", fps.Loadouts.BotDefault, 4);
             Line("  Arena:");
             Line("    GeometryPath: fps-arena-geometry.bin");
             Line("    NavigationPath: fps-arena-navigation.bin");
@@ -290,6 +296,21 @@ public sealed class ServerConfigurationRenderer
                 Line($"{prefix}  X: {point.X.ToString("0.######", invariant)}");
                 Line($"{prefix}  Y: {point.Y.ToString("0.######", invariant)}");
                 Line($"{prefix}  Z: {point.Z.ToString("0.######", invariant)}");
+            }
+
+            void Values<T>(string name, IEnumerable<T> values, int spaces) where T : struct, Enum
+            {
+                var prefix = new string(' ', spaces);
+                Line($"{prefix}{name}: [{string.Join(", ", values)}]");
+            }
+
+            void Loadout(string name, FpsLoadoutPreset loadout, int spaces)
+            {
+                var prefix = new string(' ', spaces);
+                Line($"{prefix}{name}:");
+                Line($"{prefix}  MainWeapon: {loadout.MainWeapon}");
+                Line($"{prefix}  Lethal: {loadout.Lethal}");
+                Line($"{prefix}  SecondaryWeapon: {loadout.SecondaryWeapon}");
             }
         }
 
