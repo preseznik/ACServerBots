@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Infrastructure;
@@ -76,7 +74,7 @@ public sealed class ServerInstanceStager
         if (preset.Mode == EventMode.Racing && preset.Bots.Enabled)
         {
             var physicsOutput = Path.Combine(presetRoot, "race-physics.bin");
-            var cachePath = GetPhysicsCachePath(preset, rendered);
+            var cachePath = PreparedPhysicsAssetCache.GetRacePath(_paths, preset, rendered);
             if (File.Exists(cachePath))
             {
                 File.Copy(cachePath, physicsOutput, true);
@@ -109,12 +107,10 @@ public sealed class ServerInstanceStager
         {
             var geometryOutput = Path.Combine(presetRoot, "fps-arena-geometry.bin");
             var navigationOutput = Path.Combine(presetRoot, "fps-arena-navigation.bin");
-            var geometryCachePath = GetFpsAssetCachePath("fps-arena-geometry", preset, rendered);
-            var navigationCachePath = GetFpsAssetCachePath("fps-arena-navigation", preset, rendered);
-            if (File.Exists(geometryCachePath) && File.Exists(navigationCachePath))
+            var cachePaths = PreparedPhysicsAssetCache.GetFpsPaths(_paths, preset, rendered.Track);
+            if (cachePaths.IsComplete)
             {
-                File.Copy(geometryCachePath, geometryOutput, true);
-                File.Copy(navigationCachePath, navigationOutput, true);
+                cachePaths.CopyTo(geometryOutput, navigationOutput);
                 cacheHit = true;
                 progress?.Report(new("Physics", "Reused prepared FPS arena geometry and navigation from the local cache.", 0.9));
             }
@@ -123,9 +119,7 @@ public sealed class ServerInstanceStager
                 progress?.Report(new("Physics", "Preparing physical FPS arena geometry and navigation…", 0.8));
                 await PrepareFpsGeometryAsync(root, preset, rendered, geometryOutput,
                     navigationOutput, progress, cancellationToken);
-                Directory.CreateDirectory(Path.GetDirectoryName(geometryCachePath)!);
-                File.Copy(geometryOutput, geometryCachePath, true);
-                File.Copy(navigationOutput, navigationCachePath, true);
+                cachePaths.StoreFrom(geometryOutput, navigationOutput);
             }
         }
 
@@ -232,77 +226,6 @@ public sealed class ServerInstanceStager
             : Path.Combine(root, "content", "tracks", rendered.Track.TrackId, rendered.Track.LayoutId, "ai");
         Directory.CreateDirectory(aiDestination);
         File.Copy(rendered.Track.FastLanePath, Path.Combine(aiDestination, "fast_lane.ai"), true);
-    }
-
-    private string GetPhysicsCachePath(RaceControlPreset preset, RenderedServerConfiguration rendered)
-    {
-        var inputs = GetTrackGeometryInputs(preset, rendered);
-        foreach (var car in rendered.RacingCars)
-        {
-            inputs.Add(car.ColliderPath ?? string.Empty);
-            inputs.Add(car.DataAcdPath ?? string.Empty);
-            inputs.Add(Path.Combine(car.RootPath, "lods.ini"));
-            inputs.Add(Path.Combine(car.RootPath, "data", "tyres.ini"));
-            inputs.Add(Path.Combine(car.RootPath, "data", "car.ini"));
-            inputs.AddRange(Directory.EnumerateFiles(car.RootPath, "*.kn5", SearchOption.TopDirectoryOnly));
-        }
-        return CachePath("race-physics", inputs);
-    }
-
-    private string GetFpsAssetCachePath(string prefix, RaceControlPreset preset,
-        RenderedServerConfiguration rendered) =>
-        CachePath(prefix, GetTrackGeometryInputs(preset, rendered),
-        [
-            $"preparation={FpsArenaDefinition.CurrentPreparationVersion}",
-            $"include={string.Join(';', preset.Fps.Arena?.CollisionIncludeMeshes ?? [])}",
-            $"exclude={string.Join(';', preset.Fps.Arena?.CollisionExcludeMeshes ?? [])}",
-        ]);
-
-    private static List<string> GetTrackGeometryInputs(RaceControlPreset preset,
-        RenderedServerConfiguration rendered)
-    {
-        var inputs = new List<string>
-        {
-            Path.Combine(preset.ServerPayloadPath, "AssettoServer.exe"),
-            rendered.Track.ModelsIniPath,
-            rendered.Track.FastLanePath,
-        };
-        using var models = File.Exists(rendered.Track.ModelsIniPath) ? File.OpenText(rendered.Track.ModelsIniPath) : null;
-        if (models is not null)
-        {
-            string? line;
-            while ((line = models.ReadLine()) is not null)
-            {
-                var separator = line.IndexOf('=');
-                if (separator > 0 && line[..separator].Trim().Equals("FILE", StringComparison.OrdinalIgnoreCase))
-                {
-                    string relative = line[(separator + 1)..].Split(';', 2)[0].Trim();
-                    if (!string.IsNullOrWhiteSpace(relative))
-                        inputs.Add(Path.Combine(rendered.Track.RootPath, relative));
-                }
-            }
-        }
-
-        return inputs;
-    }
-
-    private string CachePath(string prefix, IEnumerable<string> inputs,
-        IEnumerable<string>? values = null)
-    {
-        var keyBuilder = new StringBuilder();
-        foreach (var path in inputs.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
-        {
-            var info = new FileInfo(path);
-            keyBuilder.Append(Path.GetFullPath(path)).Append('|').Append(info.Length).Append('|').Append(info.LastWriteTimeUtc.Ticks).AppendLine();
-        }
-        if (values is not null)
-        {
-            foreach (string value in values.Order(StringComparer.Ordinal))
-                keyBuilder.Append("value|").Append(value).AppendLine();
-        }
-
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(keyBuilder.ToString()))).ToLowerInvariant();
-        return Path.Combine(_paths.CacheDirectory, "Physics", $"{prefix}-{hash}.bin");
     }
 
     private static async Task PreparePhysicsAsync(

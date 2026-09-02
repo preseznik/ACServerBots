@@ -31,14 +31,17 @@ public sealed class FpsClientPackAssetsTests
     {
         byte[] rifle = FpsClientPackAssets.GetRifleDiffuse();
         byte[] operatorTexture = FpsClientPackAssets.GetOperatorSkin();
+        byte[] hudWeapon = FpsClientPackAssets.GetHudWeaponImage();
         byte[] pngMagic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
         Assert.Multiple(() =>
         {
             Assert.That(rifle.AsSpan(0, 8).SequenceEqual(pngMagic), Is.True);
             Assert.That(operatorTexture.AsSpan(0, 8).SequenceEqual(pngMagic), Is.True);
+            Assert.That(hudWeapon.AsSpan(0, 8).SequenceEqual(pngMagic), Is.True);
             Assert.That(rifle, Has.Length.GreaterThan(100_000));
             Assert.That(operatorTexture, Has.Length.GreaterThan(100_000));
+            Assert.That(hudWeapon, Has.Length.GreaterThan(10_000));
             Assert.That(FpsClientPackAssets.RifleDiffusePath, Does.EndWith(".png"));
             Assert.That(FpsClientPackAssets.OperatorSkinPath,
                 Does.EndWith("asrc_operator_skin.png"));
@@ -81,7 +84,10 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(manifest, Does.Contain("NAME = ASRC FPS HUD"));
             Assert.That(manifest, Does.Contain("LAZY = NONE"));
             Assert.That(manifest, Does.Contain("IN_GAME = appOverlay"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v3')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v4')"));
+            Assert.That(script, Does.Contain("localStamina = ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain("STAMINA  %d%%"));
+            Assert.That(script, Does.Contain("ui.drawImage(weaponImagePath"));
             Assert.That(script, Does.Contain("adsActive = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("if bridge.adsActive == 0 then"));
             Assert.That(script, Does.Contain("awardPopupTexts"));
@@ -103,7 +109,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV15ContainsBothThemesAndOnlyProjectOwnedPayloadPaths()
+    public async Task ClientPackV17ContainsBothThemesAndOnlyProjectOwnedPayloadPaths()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -113,14 +119,15 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(15));
-            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(3));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(17));
+            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(4));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v15.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v17.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudScriptPath));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudWeaponImagePath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.RifleViewmodelPath));
             Assert.That(entries.Keys, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
             Assert.That(entries.Keys, Does.Contain(
@@ -144,15 +151,15 @@ public sealed class FpsClientPackAssetsTests
         JsonElement hud = root.GetProperty("hud");
         Assert.Multiple(() =>
         {
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(15));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(17));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),
                 Is.EqualTo("Blocks"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("available")
                 .EnumerateArray().Select(value => value.GetString()),
                 Is.EqualTo(new[] { "Blocks", "Modern" }));
-            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v3"));
-            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(3));
+            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v4"));
+            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(4));
             Assert.That(hud.GetProperty("onlineFallback").GetBoolean(), Is.True);
             Assert.That(hud.GetProperty("manifestSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(
@@ -160,6 +167,9 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(hud.GetProperty("scriptSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(
                     ReadEntry(entries[FpsClientPackAssets.HudScriptPath]))));
+            Assert.That(hud.GetProperty("weaponImageSha256").GetString(),
+                Is.EqualTo(FpsClientPackAssets.Sha256(
+                    ReadEntry(entries[FpsClientPackAssets.HudWeaponImagePath]))));
         });
     }
 

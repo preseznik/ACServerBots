@@ -17,12 +17,41 @@ local fpsVisual = {
   thirdPersonDistanceMin = 1.25,
   thirdPersonDistanceMax = 7.0,
   thirdPersonZoomStep = 0.4,
+  modernAssetRevision = 8,
+  -- KSANIM conversion maps the officer's local vertical root translation to Z.
+  -- CSP preview520 then raises the crouch/prone hips track by 50 cm relative to
+  -- standing. Ground the complete animated child in scene space, whose Y axis is
+  -- unambiguous, so feet, hips, torso and head all move together.
+  operatorStanceGroundOffsets = { [1] = -0.50, [2] = -0.50 },
+  crouchSuppressedUntilRelease = false,
+  crouchToggleReleaseStands = false,
   carrierControlsOverride = nil,
   carrierControlsOverrideErrorLogged = false,
   viewmodelFireUntil = 0,
   viewmodelEquipUntil = 0,
+  muzzleLights = {},
+  muzzleLightUnavailable = false,
+  muzzleLightLifetime = 0.055,
+  muzzleLightReuseSeconds = 1,
   corpseLifetime = 3.75,
   corpseFallSeconds = 0.72,
+  stamina = {
+    value = 100,
+    exhausted = false,
+    recoveryDelay = 0,
+    maximum = 100,
+    drainPerSecond = 20,
+    recoveryPerSecond = 18,
+    recoveryDelaySeconds = 0.9,
+    exhaustionRelease = 25,
+  },
+  hudWeapon = {
+    archivePath = '/fps/assets/asrc-fps-assets-v7.zip',
+    fileName = 'asrc_carbine_hud.png',
+    imagePath = nil,
+    loading = false,
+    failed = false,
+  },
   pickups = {},
   operatorClips = {
     aim_idle = 'asrc_modern_operator_aim_idle.ksanim',
@@ -137,7 +166,7 @@ local function clientAssetPath(relativePath)
 end
 local rifleAudioRelativePath = 'extension/audio/asrc_fps/rifle.wav'
 local rifleAudioPath = clientAssetPath(rifleAudioRelativePath)
-local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v6.zip'
+local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v7.zip'
 local rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
 local rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
 local rifleDiffuseFileName = 'asrc_rifle_diffuse.png'
@@ -155,7 +184,9 @@ fpsVisual.pickupPath = nil
 if fpsVisual.requested == 'Modern' then
   fpsVisual.modern = true
   fpsVisual.active = 'Modern'
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v7.zip'
+  -- CSP caches remote asset archives by URL. Every regenerated KN5/KSANIM payload
+  -- must advance this revision or clients can keep rendering the previous poses.
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v8.zip'
   rifleViewmodelFileName = 'asrc_modern_carbine_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_modern_operator_carbine.kn5'
   fpsVisual.pickupFileName = 'asrc_modern_carbine_pickup.kn5'
@@ -184,6 +215,11 @@ local predictedAirborne = false
 local predictionCollisionConstrained = false
 local predictionClearSnapshots = 0
 local localStance = 0 -- 0 standing, 1 crouching, 2 prone
+
+function fpsVisual.stanceRecoilMultiplier(stance)
+  return stance == 2 and 0.55 or stance == 1 and 0.7 or 1.08
+end
+
 local crouchWasHeld = false
 local crouchHeldSeconds = 0
 local crouchLatched = false
@@ -234,7 +270,7 @@ local playRifleSound
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 3,
+  protocol = 4,
   capacity = 32,
   killFeedCapacity = 6,
   awardPopupCapacity = 4,
@@ -263,6 +299,7 @@ local hud = {
   environmentDraftWeather = 15,
   environmentDraftTimeSeconds = 13 * 60 * 60,
   environmentDraftReady = false,
+  maximumHealth = 100,
 }
 
 hud.bindingDefaults = {
@@ -283,6 +320,19 @@ hud.bindings = ac.storage({
   grenade = hud.bindingDefaults.grenade,
   melee = hud.bindingDefaults.melee,
 }, 'asrc.fps.bindings.')
+hud.aimSettings = ac.storage({
+  hipSensitivity = 1.0,
+  adsSensitivity = 0.8,
+}, 'asrc.fps.aim.')
+hud.controlSettings = ac.storage({
+  crouchToggle = false,
+}, 'asrc.fps.controls.')
+
+function hud.aimSensitivity(ads)
+  local hip = math.clamp(tonumber(hud.aimSettings.hipSensitivity) or 1.0, 0.2, 3.0)
+  local aimed = math.clamp(tonumber(hud.aimSettings.adsSensitivity) or 0.8, 0.2, 3.0)
+  return math.lerp(hip, aimed, math.clamp(ads or 0, 0, 1))
+end
 
 hud.bindingCandidates = {
   { key = ac.KeyIndex.LeftButton, name = 'MOUSE 1' },
@@ -347,7 +397,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v3'),
+      ac.StructItem.key('asrc.fps.hud.v4'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -356,6 +406,8 @@ function hud.connect()
       gameplayActive = ac.StructItem.byte(),
       localActorID = ac.StructItem.byte(),
       localHealth = ac.StructItem.uint16(),
+      localMaximumHealth = ac.StructItem.uint16(),
+      localStamina = ac.StructItem.byte(),
       localAmmo = ac.StructItem.byte(),
       localReserveMagazines = ac.StructItem.byte(),
       localReloadRemaining = ac.StructItem.float(),
@@ -395,7 +447,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v3')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v4')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -466,6 +518,8 @@ function hud.publish(dt)
   hud.bridge.onlineSequence = hud.onlineSequence
   hud.bridge.localActorID = localSessionID
   hud.bridge.localHealth = localActor ~= nil and localActor.health or 0
+  hud.bridge.localMaximumHealth = hud.maximumHealth
+  hud.bridge.localStamina = math.clamp(math.floor(fpsVisual.stamina.value + 0.5), 0, 100)
   hud.bridge.localAmmo = localActor ~= nil and localActor.ammo or 0
   hud.bridge.localReserveMagazines = localActor ~= nil and localActor.reserveMagazines or 0
   hud.bridge.localReloadRemaining = localActor ~= nil and localActor.reloadRemaining or 0
@@ -584,6 +638,20 @@ function fpsVisual.actorSceneActive(actor)
   if bit.band(actor.flags, 2) == 0 then return true end
   if actor.corpseStarted == nil then return true end
   return effectClock - actor.corpseStarted < fpsVisual.corpseLifetime
+end
+
+function fpsVisual.actorStance(actor)
+  -- Local third person should react in the same frame as input instead of waiting for
+  -- the next 20 Hz snapshot. Remote actors use both representations of prone: the
+  -- original compact flag and the protocol-v1-compatible redundant action-state bit.
+  if actor.id == localSessionID then return localStance end
+  local actionState = actor.actionState or 0
+  if bit.band(actor.flags, 128) ~= 0
+      or (bit.band(actionState, 1) == 0 and bit.band(actionState, 2) ~= 0) then
+    return 2
+  end
+  if bit.band(actor.flags, 32) ~= 0 then return 1 end
+  return 0
 end
 
 function fpsVisual.actorScenePose(actor)
@@ -770,7 +838,7 @@ local snapshotEvent = ac.OnlineEvent({
   collisionDirections = ac.StructItem.array(ac.StructItem.byte(), capacity),
   yaws = ac.StructItem.array(ac.StructItem.float(), capacity),
   pitches = ac.StructItem.array(ac.StructItem.float(), capacity),
-  health = ac.StructItem.array(ac.StructItem.uint16(), capacity),
+  vitals = ac.StructItem.array(ac.StructItem.uint16(), capacity),
   kills = ac.StructItem.array(ac.StructItem.uint16(), capacity),
   deaths = ac.StructItem.array(ac.StructItem.uint16(), capacity),
   ammo = ac.StructItem.array(ac.StructItem.byte(), capacity),
@@ -790,7 +858,7 @@ local snapshotEvent = ac.OnlineEvent({
       actor = {
         id = id, target = vec3(), render = vec3(), yaw = 0, targetYaw = 0,
         collisionNormal = vec2(),
-        pitch = 0, health = 0, kills = 0, deaths = 0, score = 0, flags = 0,
+        pitch = 0, health = 0, stamina = 100, kills = 0, deaths = 0, score = 0, flags = 0,
         actionState = 0, ammo = 0, reserveMagazines = 0, reloadRemaining = 0,
         spawnCount = nil,
       }
@@ -810,7 +878,8 @@ local snapshotEvent = ac.OnlineEvent({
     if actor.render:lengthSquared() < 0.001 then actor.render:set(actor.target) end
     actor.targetYaw = message.yaws[i]
     actor.pitch = message.pitches[i]
-    actor.health = message.health[i]
+    actor.health = bit.band(message.vitals[i], 255)
+    actor.stamina = bit.rshift(message.vitals[i], 8)
     actor.kills = message.kills[i]
     actor.deaths = message.deaths[i]
     actor.ammo = message.ammo[i]
@@ -876,6 +945,12 @@ local snapshotEvent = ac.OnlineEvent({
         end
       end
       predictedGroundY = actor.groundY
+      fpsVisual.stamina.value = actor.stamina
+      if fpsVisual.stamina.value <= 0 then
+        fpsVisual.stamina.exhausted = true
+      elseif fpsVisual.stamina.value >= fpsVisual.stamina.exhaustionRelease then
+        fpsVisual.stamina.exhausted = false
+      end
       local geometryBlocked = bit.band(actor.flags, 64) ~= 0
       if geometryBlocked then
         if not predictionCollisionConstrained then
@@ -920,12 +995,17 @@ local snapshotEvent = ac.OnlineEvent({
         predictedVerticalVelocity = 0
         predictedHorizontalVelocity = vec2()
         predictedAirborne = false
+        fpsVisual.stamina.value = actor.stamina
+        fpsVisual.stamina.exhausted = false
+        fpsVisual.stamina.recoveryDelay = 0
         predictionCollisionConstrained = geometryBlocked
         predictionClearSnapshots = 0
         jumpWasHeld = false
         crouchWasHeld = false
         crouchHeldSeconds = 0
         crouchLatched = false
+        fpsVisual.crouchToggleReleaseStands = false
+        fpsVisual.crouchSuppressedUntilRelease = false
         cameraHeight = 1.65
       end
     end
@@ -951,6 +1031,7 @@ local matchEvent = ac.OnlineEvent({
   state = ac.StructItem.byte(),
   remainingSeconds = ac.StructItem.float(),
   killLimit = ac.StructItem.uint16(),
+  maximumHealth = ac.StructItem.uint16(),
   winnerID = ac.StructItem.byte(),
   weatherType = ac.StructItem.byte(),
   timeOfDaySeconds = ac.StructItem.uint32(),
@@ -959,6 +1040,7 @@ local matchEvent = ac.OnlineEvent({
   matchState = message.state
   remainingSeconds = message.remainingSeconds
   killLimit = message.killLimit
+  hud.maximumHealth = math.max(1, message.maximumHealth)
   winnerID = message.winnerID
   hud.environmentWeather = message.weatherType
   hud.environmentTimeSeconds = message.timeOfDaySeconds
@@ -1064,6 +1146,62 @@ fpsVisual.pickupEvent = ac.OnlineEvent({
   end
 end)
 
+function fpsVisual.illuminateMuzzle(shooterID, position, now)
+  if fpsVisual.muzzleLightUnavailable then return end
+  local state = fpsVisual.muzzleLights[shooterID]
+  if state == nil then
+    local ok, lightOrError = pcall(function()
+      local light = ac.LightSource(ac.LightType.Regular)
+      light.range = 0
+      light.spot = 0
+      light.diffuseConcentration = 0.65
+      light.specularMultiplier = 0.35
+      light.rangeGradientOffset = 0
+      light.fadeAt = 4.5
+      light.fadeSmooth = 2
+      light.volumetricLight = false
+      light.skipLightMap = true
+      light.affectsCars = false
+      light.showInReflections = false
+      light.shadows = false
+      return light
+    end)
+    if not ok or lightOrError == nil then
+      fpsVisual.muzzleLightUnavailable = true
+      ac.log('[ASRC FPS] dynamic muzzle lighting unavailable: ' .. tostring(lightOrError))
+      return
+    end
+    state = { light = lightOrError, expiresAt = 0, disposeAt = 0 }
+    fpsVisual.muzzleLights[shooterID] = state
+  end
+  local ok, err = pcall(function()
+    state.light.position:set(position)
+    state.light.color = rgb(5.4, 2.35, 0.65)
+    state.light.range = 5.5
+    state.expiresAt = now + fpsVisual.muzzleLightLifetime
+    state.disposeAt = now + fpsVisual.muzzleLightReuseSeconds
+  end)
+  if not ok then
+    pcall(function() state.light:dispose() end)
+    fpsVisual.muzzleLights[shooterID] = nil
+    fpsVisual.muzzleLightUnavailable = true
+    ac.log('[ASRC FPS] dynamic muzzle lighting failed: ' .. tostring(err))
+  end
+end
+
+function fpsVisual.updateMuzzleLights(now)
+  for shooterID, state in pairs(fpsVisual.muzzleLights) do
+    if state.expiresAt > 0 and state.expiresAt <= now then
+      state.light.range = 0
+      state.expiresAt = 0
+    end
+    if state.disposeAt > 0 and state.disposeAt <= now then
+      pcall(function() state.light:dispose() end)
+      fpsVisual.muzzleLights[shooterID] = nil
+    end
+  end
+end
+
 local shotEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsShot'),
   shooterID = ac.StructItem.byte(),
@@ -1083,10 +1221,11 @@ local shotEvent = ac.OnlineEvent({
   local muzzleOrigin = message.origin:clone()
   if message.shooterID == localSessionID and localMuzzlePosition:lengthSquared() > 0.001 then
     muzzleOrigin:set(localMuzzlePosition)
-    viewmodelKick = 1
+    local stanceRecoilScale = fpsVisual.stanceRecoilMultiplier(localStance)
+    viewmodelKick = stanceRecoilScale
     fpsVisual.viewmodelFireUntil = effectClock + 0.12
     local cameraRecoilScale = math.lerp(1, 0.45, fpsVisual.ads)
-    pitch = math.min(1.45, pitch + 0.011 * cameraRecoilScale)
+    pitch = math.min(1.45, pitch + 0.011 * cameraRecoilScale * stanceRecoilScale)
   elseif actor ~= nil then
     actor.animationFireUntil = effectClock + 0.12
     local forward = vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw))
@@ -1098,6 +1237,7 @@ local shotEvent = ac.OnlineEvent({
   local tracerDistance = (targetPoint - muzzleOrigin):length()
   local travelTime = math.clamp(tracerDistance / 260, 0.035, 0.08)
   local now = ui.time()
+  fpsVisual.illuminateMuzzle(message.shooterID, muzzleOrigin, now)
   while #tracers >= maxTracers do table.remove(tracers, 1) end
   tracers[#tracers + 1] = {
     -- Damage remains authoritative along the camera/crosshair ray. The tracer is
@@ -1385,7 +1525,7 @@ function fpsVisual.fallback(reason)
   rifleAssetsLoading = false
   rifleAssetsFailed = false
   rifleAssetWaitLogged = false
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v6.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v7.zip'
   rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
   fpsVisual.pickupFileName = rifleWorldModelFileName
@@ -1418,19 +1558,41 @@ function fpsVisual.fallback(reason)
   ac.warn('[ASRC FPS] ' .. fpsVisual.error)
 end
 
-local function getRifleAssetArchiveUrl()
+local function getAssetArchiveUrl(archivePath)
   local serverIP = ac.getServerIP()
   local serverHttpPort = ac.getServerPortHTTP()
   if serverIP == nil or serverIP == '' or serverHttpPort == nil or serverHttpPort < 0 then return nil end
   if string.find(serverIP, ':', 1, true) ~= nil and string.sub(serverIP, 1, 1) ~= '[' then
     serverIP = '[' .. serverIP .. ']'
   end
-  return string.format('http://%s:%d%s', serverIP, serverHttpPort, rifleAssetArchivePath)
+  return string.format('http://%s:%d%s', serverIP, serverHttpPort, archivePath)
+end
+
+function hud.requestWeaponImage()
+  local weapon = fpsVisual.hudWeapon
+  if weapon.imagePath ~= nil or weapon.loading or weapon.failed then return end
+  local archiveUrl = getAssetArchiveUrl(weapon.archivePath)
+  if archiveUrl == nil then return end
+  weapon.loading = true
+  web.loadRemoteAssets({
+    url = archiveUrl,
+    headers = {},
+    crucial = weapon.fileName,
+  }, function(err, folder)
+    weapon.loading = false
+    if (err ~= nil and err ~= '') or folder == nil or folder == '' then
+      weapon.failed = true
+      ac.warn('[ASRC FPS] HUD weapon image download failed: ' .. tostring(err))
+      return
+    end
+    weapon.imagePath = folder .. '/' .. weapon.fileName
+    ac.log('[ASRC FPS] HUD weapon image cached: ' .. weapon.imagePath)
+  end)
 end
 
 requestRifleAssets = function()
   if rifleAssetFolder ~= nil or rifleAssetsLoading or rifleAssetsFailed then return end
-  local archiveUrl = getRifleAssetArchiveUrl()
+  local archiveUrl = getAssetArchiveUrl(rifleAssetArchivePath)
   if archiveUrl == nil then
     if not rifleAssetWaitLogged then
       rifleAssetWaitLogged = true
@@ -1998,6 +2160,15 @@ function fpsVisual.updateActorAnimation(actor, dt)
   local grounded = bit.band(actor.flags, 16) ~= 0
   local dead = bit.band(actor.flags, 2) ~= 0
   local actionState = actor.actionState or 0
+  local stance = fpsVisual.actorStance(actor)
+  if actor.animationLoggedStance ~= stance then
+    actor.animationLoggedStance = stance
+    if actor.id == localSessionID then
+      ac.log(string.format(
+        '[ASRC FPS] local operator stance changed: stance=%d assetRevision=%d',
+        stance, fpsVisual.modernAssetRevision))
+    end
+  end
   if actor.animationWasGrounded == nil then
     actor.animationWasGrounded = grounded
   elseif actor.animationWasGrounded and not grounded and bit.band(actionState, 1) == 0 then
@@ -2035,10 +2206,10 @@ function fpsVisual.updateActorAnimation(actor, dt)
         clip = 'airborne'
         position = 0.5
       end
-    elseif bit.band(actor.flags, 128) ~= 0 then
+    elseif stance == 2 then
       clip = speed > 0.35 and 'prone_crawl' or 'prone_idle'
       looping = speed > 0.35
-    elseif bit.band(actor.flags, 32) ~= 0 then
+    elseif stance == 1 then
       clip = speed > 0.35 and 'crouch_move' or 'crouch_idle'
       looping = speed > 0.35
     elseif speed > 4.8 then
@@ -2077,6 +2248,8 @@ function fpsVisual.updateActorAnimation(actor, dt)
   actor.animationPosition = position
   actor.animationBlend = math.min(1, (actor.animationBlend or 0) + dt / 0.12)
   local ok, err = pcall(function()
+    local stanceGroundOffset = fpsVisual.operatorStanceGroundOffsets[stance] or 0
+    actor.modernModel:setPosition(vec3(0, stanceGroundOffset, 0))
     actor.modernModel:setAnimation(fpsVisual.asset(fpsVisual.operatorClips[clip]),
       position, true)
     if actor.animationPreviousClip ~= nil and actor.animationBlend < 1 then
@@ -2552,6 +2725,7 @@ function script.update(dt)
   local sprint = false
   local jumpStarted = false
   gameplayActive = fpsGameplayIsActive()
+  if gameplayActive then hud.requestWeaponImage() end
   fpsVisual.updatePickups()
   -- The companion HUD can win exclusive UI ownership before this script sees
   -- a gameplay-mode callback. Reset pause ownership on the simulation state
@@ -2705,10 +2879,19 @@ function script.update(dt)
       mouse = ac.accessMouseDelta(true, true, true)
       ac.hideMouseCursor(true)
     end
+    local rawMouseAds = ac.isKeyDown(ac.KeyIndex.RightButton)
+    local uiMouseAds = ac.getUI().isMouseRightKeyDown or ui.mouseDown(ui.MouseButton.Right)
+    local gamepadAds = math.clamp(
+      ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftTrigger), 0, 1)
+    fpsVisual.adsInput = not cursorUnlocked and not thirdPersonEnabled
+      and math.max((rawMouseAds or uiMouseAds) and 1 or 0, gamepadAds) or 0
+    local aimSensitivity = hud.aimSensitivity(fpsVisual.adsInput)
     local rightX = -clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.RightThumbX))
     local rightY = clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.RightThumbY))
-    yaw = yaw - mouse.x * 0.0022 + rightX * dt * 2.8
-    pitch = math.clamp(pitch - mouse.y * 0.0022 + rightY * dt * 2.2, -1.45, 1.45)
+    yaw = yaw - mouse.x * 0.0022 * aimSensitivity
+      + rightX * dt * 2.8 * aimSensitivity
+    pitch = math.clamp(pitch - mouse.y * 0.0022 * aimSensitivity
+      + rightY * dt * 2.2 * aimSensitivity, -1.45, 1.45)
 
     -- FPS axes deliberately do not reuse throttle/brake: the right trigger is
     -- Fire here, and must never become forward movement or carrier acceleration.
@@ -2730,12 +2913,6 @@ function script.update(dt)
     local uiMouseFire = ac.getUI().isMouseLeftKeyDown or ui.mouseDown(ui.MouseButton.Left)
     local boundFire = hud.bindingDown('fire', rawMouseFire or uiMouseFire)
     local fire = not cursorUnlocked and (boundFire or gamepadFire)
-    local rawMouseAds = ac.isKeyDown(ac.KeyIndex.RightButton)
-    local uiMouseAds = ac.getUI().isMouseRightKeyDown or ui.mouseDown(ui.MouseButton.Right)
-    local gamepadAds = math.clamp(
-      ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftTrigger), 0, 1)
-    fpsVisual.adsInput = not cursorUnlocked and not thirdPersonEnabled
-      and math.max((rawMouseAds or uiMouseAds) and 1 or 0, gamepadAds) or 0
     if fire and not fireCaptureLogged then
       fireCaptureLogged = true
       ac.log(string.format(
@@ -2746,23 +2923,86 @@ function script.update(dt)
     sprint = hud.bindingDown('sprint', ac.isKeyDown(ac.KeyIndex.LeftShift))
       or ac.isGamepadButtonPressed(0, ac.GamepadButton.LeftThumb)
     if fpsVisual.adsInput > 0.05 then sprint = false end
+    local sprintRequested = sprint and move:lengthSquared() > 0.0001
+      and localStance == 0 and not predictedAirborne
+    sprint = sprintRequested and not fpsVisual.stamina.exhausted
+      and fpsVisual.stamina.value > 0
+    if sprint then
+      fpsVisual.stamina.value = math.max(0,
+        fpsVisual.stamina.value - fpsVisual.stamina.drainPerSecond * dt)
+      fpsVisual.stamina.recoveryDelay = fpsVisual.stamina.recoveryDelaySeconds
+      if fpsVisual.stamina.value <= 0 then
+        fpsVisual.stamina.value = 0
+        fpsVisual.stamina.exhausted = true
+        sprint = false
+      end
+    else
+      fpsVisual.stamina.recoveryDelay = math.max(0,
+        fpsVisual.stamina.recoveryDelay - dt)
+      if fpsVisual.stamina.recoveryDelay <= 0 then
+        fpsVisual.stamina.value = math.min(fpsVisual.stamina.maximum,
+          fpsVisual.stamina.value + fpsVisual.stamina.recoveryPerSecond * dt)
+        if fpsVisual.stamina.exhausted
+            and fpsVisual.stamina.value >= fpsVisual.stamina.exhaustionRelease then
+          fpsVisual.stamina.exhausted = false
+        end
+      end
+    end
     viewmodelMove:set(move)
     viewmodelSprint = sprint
     local jump = hud.bindingDown('jump', ac.isKeyDown(ac.KeyIndex.Space))
     local crouch = hud.bindingDown('crouch', ac.isKeyDown(ac.KeyIndex.C))
+    local crouchToggleMode = hud.controlSettings.crouchToggle == true
     local reload = hud.bindingDown('reload', ac.isKeyDown(ac.KeyIndex.R))
     jumpStarted = jump and not jumpWasHeld
     local crouchPressed = crouch and not crouchWasHeld
     local jumpConsumed = false
+    if not crouch then fpsVisual.crouchSuppressedUntilRelease = false end
     if localStance == 2 then
       if crouchPressed or jumpStarted then
         localStance = 1
         crouchLatched = true
         crouchHeldSeconds = 0
+        fpsVisual.crouchToggleReleaseStands = false
         jumpConsumed = jumpStarted
       end
+    elseif localStance == 1 and jumpStarted then
+      localStance = 0
+      crouchLatched = false
+      crouchHeldSeconds = 0
+      fpsVisual.crouchToggleReleaseStands = false
+      fpsVisual.crouchSuppressedUntilRelease = true
+    elseif crouchToggleMode then
+      if localStance == 0 then
+        if crouchPressed and not fpsVisual.crouchSuppressedUntilRelease then
+          localStance = 1
+          crouchLatched = true
+          crouchHeldSeconds = dt
+          fpsVisual.crouchToggleReleaseStands = false
+        end
+      elseif crouchPressed then
+        -- A short second press releases crouch on button-up. Holding that same
+        -- press continues into prone without requiring a separate binding.
+        crouchHeldSeconds = dt
+        fpsVisual.crouchToggleReleaseStands = true
+      elseif crouch then
+        crouchHeldSeconds = crouchHeldSeconds + dt
+        if crouchHeldSeconds >= 0.65 then
+          localStance = 2
+          crouchLatched = false
+          crouchHeldSeconds = 0
+          fpsVisual.crouchToggleReleaseStands = false
+        end
+      elseif crouchWasHeld and fpsVisual.crouchToggleReleaseStands then
+        localStance = 0
+        crouchLatched = false
+        crouchHeldSeconds = 0
+        fpsVisual.crouchToggleReleaseStands = false
+      elseif crouchWasHeld then
+        crouchHeldSeconds = 0
+      end
     elseif localStance == 0 then
-      if crouch then
+      if crouch and not fpsVisual.crouchSuppressedUntilRelease then
         localStance = 1
         crouchHeldSeconds = dt
         crouchLatched = false
@@ -2771,6 +3011,7 @@ function script.update(dt)
       if crouchPressed then
         crouchLatched = false
         crouchHeldSeconds = dt
+        fpsVisual.crouchToggleReleaseStands = false
       end
     elseif crouch then
       crouchHeldSeconds = crouchHeldSeconds + dt
@@ -2781,6 +3022,7 @@ function script.update(dt)
     else
       localStance = 0
       crouchHeldSeconds = 0
+      fpsVisual.crouchToggleReleaseStands = false
     end
     crouchWasHeld = crouch
     if jumpConsumed then jumpStarted = false end
@@ -2788,6 +3030,7 @@ function script.update(dt)
     local buttons = (fire and 1 or 0) + (sprint and 2 or 0) + (jump and 4 or 0)
       + (crouch and 8 or 0) + (reload and 16 or 0)
       + (fpsVisual.adsInput > 0.5 and 32 or 0)
+      + (crouchToggleMode and 64 or 0)
 
     sendAccumulator = sendAccumulator + dt
     if sendAccumulator >= 0.05 then
@@ -2848,6 +3091,8 @@ function script.update(dt)
     crouchWasHeld = false
     crouchHeldSeconds = 0
     crouchLatched = false
+    fpsVisual.crouchToggleReleaseStands = false
+    fpsVisual.crouchSuppressedUntilRelease = false
     cameraHeight = 1.65
     scoreboardHeld = false
     cursorUnlocked = false
@@ -2858,8 +3103,9 @@ function script.update(dt)
     local forward = vec2(math.sin(yaw), math.cos(yaw))
     local right = vec2(forward.y, -forward.x)
     local predicted = forward * move.y + right * move.x
+    local aimingMovementScale = fpsVisual.adsInput > 0.5 and 0.4 or 1
     local desiredVelocity = predicted * (localStance == 2 and 1.8
-      or localStance == 1 and 3.4 or sprint and 9 or 6)
+      or localStance == 1 and 3.4 or sprint and 9 or 6) * aimingMovementScale
     if predictedGroundY == nil then predictedGroundY = localActor.target.y end
     local grounded = bit.band(localActor.flags, 16) ~= 0
     if jumpStarted and (grounded or localActor.render.y <= predictedGroundY + 0.05) then
@@ -2960,6 +3206,7 @@ function script.update(dt)
 
   effectClock = effectClock + dt
   local visualNow = ui.time()
+  fpsVisual.updateMuzzleLights(visualNow)
   for i = #tracers, 1, -1 do
     if tracers[i].expiresAt <= visualNow then table.remove(tracers, i) end
   end
@@ -3034,12 +3281,166 @@ function script.draw3D()
   drawDirectShotEffects()
 end
 
+function hud.drawFallbackRadar(size, scale, margin)
+  local diameter = 190 * scale
+  local radius = diameter * 0.5
+  local center = vec2(margin + radius, margin + radius)
+  local panelMin = center - vec2(radius, radius)
+  local panelMax = center + vec2(radius, radius)
+  ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.035, 0.05, 0.88), 9 * scale)
+  ui.drawRect(panelMin, panelMax, rgbm(0.38, 0.62, 0.78, 0.68), 9 * scale,
+    nil, math.max(1, 1.4 * scale))
+  ui.drawCircle(center, radius - 8 * scale, rgbm(0.5, 0.7, 0.82, 0.5), 48,
+    math.max(1, scale))
+  ui.drawCircle(center, (radius - 8 * scale) * 0.5, rgbm(0.35, 0.5, 0.62, 0.34),
+    36, math.max(1, scale))
+  ui.drawLine(center - vec2(radius - 8 * scale, 0),
+    center + vec2(radius - 8 * scale, 0), rgbm(0.3, 0.45, 0.56, 0.25),
+    math.max(1, scale))
+  ui.drawLine(center - vec2(0, radius - 8 * scale),
+    center + vec2(0, radius - 8 * scale), rgbm(0.3, 0.45, 0.56, 0.25),
+    math.max(1, scale))
+
+  local own = actors[localSessionID]
+  if own ~= nil then
+    local lookX, lookZ = math.sin(yaw), math.cos(yaw)
+    local rightX, rightZ = lookZ, -lookX
+    local usableRadius = radius - 16 * scale
+    for id, actor in pairs(actors) do
+      if id ~= localSessionID and (hud.radarVisible[id] or 0) ~= 0 then
+        local offset = actor.target - own.target
+        -- Match the companion app's player-up basis. FPS yaw increases toward
+        -- screen-left, so presentation-right is the negated world right dot product.
+        local right = -(offset.x * rightX + offset.z * rightZ)
+        local forward = offset.x * lookX + offset.z * lookZ
+        local point = vec2(right, -forward) / 40 * usableRadius
+        local length = point:length()
+        if length > usableRadius then point:scale(usableRadius / length) end
+        ui.drawCircleFilled(center + point, 4.5 * scale,
+          rgbm(1, 0.22, 0.15, 0.95), 16)
+      end
+    end
+  end
+  ui.drawTriangleFilled(center - vec2(0, 8 * scale),
+    center + vec2(-5 * scale, 6 * scale), center + vec2(5 * scale, 6 * scale),
+    rgbm(0.35, 0.9, 1, 1))
+  ui.setCursor(vec2(margin + 10 * scale, margin + diameter - 24 * scale))
+  ui.textColored('COMBAT RADAR  40 m', rgbm(0.65, 0.8, 0.9, 0.9))
+  return diameter
+end
+
+function hud.drawFallbackRanking(ranking, scale, margin, radarDiameter)
+  local top = margin + radarDiameter + 12 * scale
+  local width = 310 * scale
+  local rows = math.min(8, #ranking)
+  local panelMin = vec2(margin, top)
+  local panelMax = vec2(margin + width, top + (34 + rows * 23) * scale)
+  ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.035, 0.05, 0.84), 8 * scale)
+  ui.drawRect(panelMin, panelMax, rgbm(0.38, 0.62, 0.78, 0.58), 8 * scale,
+    nil, math.max(1, 1.2 * scale))
+  ui.setCursor(vec2(margin + 12 * scale, top + 8 * scale))
+  ui.text('DEATHMATCH')
+  for place = 1, rows do
+    local actor = ranking[place]
+    ui.setCursor(vec2(margin + 12 * scale, top + (10 + place * 23) * scale))
+    ui.text(string.format('%2d  %-16s  %4d  %2d/%2d', place,
+      names[actor.id] or ('Player ' .. actor.id), actor.score, actor.kills, actor.deaths))
+  end
+end
+
+function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
+  local bottom = size.y - margin
+  local height = 148 * scale
+  local leftWidth = 330 * scale
+  local rightWidth = 390 * scale
+  local leftMin = vec2(margin, bottom - height)
+  local leftMax = vec2(margin + leftWidth, bottom)
+  ui.drawRectFilled(leftMin, leftMax, rgbm(0.025, 0.035, 0.05, 0.9), 7 * scale)
+  ui.drawRect(leftMin, leftMax, rgbm(0.45, 0.62, 0.78, 0.52), 7 * scale,
+    nil, math.max(1, scale))
+  ui.drawRectFilled(leftMin, vec2(leftMin.x + 4 * scale, leftMax.y),
+    rgbm(0.22, 0.82, 0.98, 0.95), 2 * scale)
+  ui.setCursor(leftMin + vec2(16, 10) * scale)
+  ui.textColored('OPERATOR STATUS', rgbm(0.55, 0.78, 0.9, 0.9))
+  local health = actor ~= nil and actor.health or 0
+  ui.setCursor(leftMin + vec2(16, 31) * scale)
+  ui.pushFont(ui.Font.Title)
+  ui.textColored(string.format('HEALTH   %d', health),
+    health <= 25 and rgbm(1, 0.2, 0.16, 1) or rgbm.colors.white)
+  ui.popFont()
+  local healthRatio = math.clamp(health / math.max(1, hud.maximumHealth), 0, 1)
+  local healthBarMin = leftMin + vec2(16, 61) * scale
+  local healthBarMax = leftMin + vec2(314, 72) * scale
+  ui.drawRectFilled(healthBarMin, healthBarMax, rgbm(0.08, 0.12, 0.16, 0.94), 3 * scale)
+  ui.drawRectFilled(healthBarMin, vec2(healthBarMin.x
+      + (healthBarMax.x - healthBarMin.x) * healthRatio, healthBarMax.y),
+    healthRatio <= 0.25 and rgbm(1, 0.2, 0.16, 1) or rgbm(0.25, 0.88, 0.72, 1),
+    3 * scale)
+  local stamina = math.clamp(math.floor(fpsVisual.stamina.value + 0.5), 0, 100)
+  ui.setCursor(leftMin + vec2(16, 79) * scale)
+  ui.textColored(string.format('STAMINA  %d%%', stamina),
+    stamina <= 20 and rgbm(1, 0.58, 0.16, 1) or rgbm(0.75, 0.88, 0.95, 1))
+  local staminaBarMin = leftMin + vec2(16, 101) * scale
+  local staminaBarMax = leftMin + vec2(314, 111) * scale
+  ui.drawRectFilled(staminaBarMin, staminaBarMax, rgbm(0.08, 0.12, 0.16, 0.94), 3 * scale)
+  ui.drawRectFilled(staminaBarMin, vec2(staminaBarMin.x
+      + (staminaBarMax.x - staminaBarMin.x) * stamina / 100, staminaBarMax.y),
+    stamina <= 20 and rgbm(1, 0.58, 0.16, 1) or rgbm(0.25, 0.72, 1, 1), 3 * scale)
+  ui.setCursor(leftMin + vec2(16, 119) * scale)
+  ui.text(string.format('K %d   D %d   SCORE %d', actor and actor.kills or 0,
+    actor and actor.deaths or 0, actor and actor.score or 0))
+  ui.setCursor(leftMin + vec2(190, 119) * scale)
+  ui.textColored(actor == nil and 'LINK: WAITING' or inputSendOk and 'LINK: ACTIVE'
+      or 'LINK: BLOCKED', actor ~= nil and inputSendOk and rgbm(0.35, 1, 0.45, 1)
+      or rgbm(1, 0.55, 0.2, 1))
+
+  local right = size.x - margin
+  local rightMin = vec2(right - rightWidth, bottom - height)
+  local rightMax = vec2(right, bottom)
+  ui.drawRectFilled(rightMin, rightMax, rgbm(0.025, 0.035, 0.05, 0.9), 7 * scale)
+  ui.drawRect(rightMin, rightMax, rgbm(0.45, 0.62, 0.78, 0.52), 7 * scale,
+    nil, math.max(1, scale))
+  ui.drawRectFilled(vec2(rightMax.x - 4 * scale, rightMin.y), rightMax,
+    rgbm(0.22, 0.82, 0.98, 0.95), 2 * scale)
+  if fpsVisual.hudWeapon.imagePath ~= nil then
+    ui.drawImage(fpsVisual.hudWeapon.imagePath, rightMin + vec2(8, 26) * scale,
+      rightMin + vec2(252, 124) * scale, rgbm(1, 1, 1, 0.98))
+  else
+    ui.setCursor(rightMin + vec2(42, 72) * scale)
+    ui.textColored('LOADING CARBINE...', rgbm(0.55, 0.68, 0.76, 0.8))
+  end
+  ui.setCursor(rightMin + vec2(16, 10) * scale)
+  ui.text(actor ~= nil and actor.reloadRemaining > 0
+    and string.format('RELOADING  %.1fs', actor.reloadRemaining) or 'ASSAULT RIFLE')
+  ui.setCursor(rightMin + vec2(258, 32) * scale)
+  ui.pushFont(ui.Font.Title)
+  ui.text(string.format('%02d', actor and actor.ammo or 0))
+  ui.popFont()
+  ui.setCursor(rightMin + vec2(258, 64) * scale)
+  ui.text(string.format('%d RESERVE MAGS', actor and actor.reserveMagazines or 0))
+  ui.setCursor(rightMin + vec2(258, 89) * scale)
+  ui.text('R  RELOAD')
+  ui.setCursor(rightMin + vec2(16, 126) * scale)
+  ui.text(thirdPersonEnabled and string.format('F6  3P  SHIFT + WHEEL %.1f m',
+    fpsVisual.thirdPersonDistanceTarget) or 'F6  FIRST PERSON')
+  if actor ~= nil and actor.reloadRemaining > 0 then
+    local reloadMin = rightMin + vec2(258, 133) * scale
+    local reloadMax = rightMin + vec2(374, 141) * scale
+    ui.drawRectFilled(reloadMin, reloadMax, rgbm(0.08, 0.12, 0.16, 0.94), 3 * scale)
+    ui.drawRectFilled(reloadMin, vec2(reloadMin.x
+        + (reloadMax.x - reloadMin.x) * math.clamp(1 - actor.reloadRemaining / 1.8, 0, 1),
+      reloadMax.y), rgbm(1, 0.7, 0.2, 1), 3 * scale)
+  end
+end
+
 function script.drawUI()
   if hud.exclusiveSubscription ~= nil and not hud.drawingFallback then return end
   viewmodelDrawUICalls = viewmodelDrawUICalls + 1
   if not gameplayActive then return end
   local size = ui.windowSize()
   local center = size / 2
+  local hudScale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.65)
+  local hudMargin = 28 * hudScale
   if cursorUnlocked then
     -- AC's own TAB leaderboard also asks for mouse ownership. Capture it here so the
     -- FPS scoreboard controls receive the click instead of rendering as inert HUD.
@@ -3067,39 +3468,12 @@ function script.drawUI()
 
   local actor = actors[localSessionID]
   if clientPackError ~= nil then
-    ui.setCursor(vec2(28, size.y - 126))
+    ui.setCursor(vec2(hudMargin, size.y - hudMargin - 174 * hudScale))
     ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 0.18, 0.12, 1))
     ui.text(clientPackError)
     ui.popStyleColor()
   end
-  ui.setCursor(vec2(28, size.y - 94))
-  ui.pushFont(ui.Font.Title)
-  ui.text(string.format('HEALTH  %d', actor and actor.health or 0))
-  ui.text(string.format('K %d   D %d   SCORE %d', actor and actor.kills or 0,
-    actor and actor.deaths or 0, actor and actor.score or 0))
-  ui.popFont()
-  ui.textColored(actor == nil and 'LINK: WAITING FOR PLAYER STATE'
-      or (inputSendOk and 'LINK: ACTIVE' or 'LINK: INPUT SEND BLOCKED'),
-    actor ~= nil and inputSendOk and rgbm(0.35, 1, 0.45, 1) or rgbm(1, 0.55, 0.2, 1))
-  ui.setCursor(vec2(size.x - 300, size.y - 94))
-  if actor ~= nil and actor.reloadRemaining > 0 then
-    ui.textAligned(string.format('RELOADING  %.1fs', actor.reloadRemaining), 1, vec2(270, 24))
-  else
-    ui.textAligned('ASSAULT RIFLE', 1, vec2(270, 24))
-  end
-  ui.setCursor(vec2(size.x - 300, size.y - 70))
-  ui.pushFont(ui.Font.Title)
-  ui.textAligned(string.format('%02d  |  %d MAGS', actor and actor.ammo or 0,
-    actor and actor.reserveMagazines or 0), 1, vec2(270, 28))
-  ui.popFont()
-  ui.setCursor(vec2(size.x - 300, size.y - 44))
-  ui.textAligned('R  RELOAD', 1, vec2(270, 24))
-  ui.setCursor(vec2(size.x - 300, size.y - 20))
-  local cameraHint = 'F6  CAMERA: ' .. (thirdPersonEnabled and string.format(
-    'THIRD PERSON  |  SHIFT + WHEEL %.1f m', fpsVisual.thirdPersonDistanceTarget)
-    or 'FIRST PERSON')
-  ui.textAligned(cameraHint,
-    1, vec2(270, 24))
+  hud.drawFallbackStatusWidgets(size, hudScale, hudMargin, actor)
   ui.setCursor(vec2(center.x - 80, 20))
   ui.textAligned(string.format('%02d:%02d   TARGET %d', math.floor(remainingSeconds / 60),
     math.floor(remainingSeconds % 60), killLimit), 0.5, vec2(160, 24))
@@ -3145,14 +3519,8 @@ function script.drawUI()
         ui.textColored('Release TAB to close scoreboard', rgbm(0.75, 0.78, 0.84, 1))
       end)
   else
-    ui.setCursor(vec2(28, 28))
-    ui.text('DEATHMATCH')
-    for i = 1, math.min(8, #ranking) do
-      local rankedActor = ranking[i]
-      ui.text(string.format('%2d  %-16s  %4d  %2d / %2d', i,
-        names[rankedActor.id] or ('Player ' .. rankedActor.id), rankedActor.score,
-        rankedActor.kills, rankedActor.deaths))
-    end
+    local radarDiameter = hud.drawFallbackRadar(size, hudScale, hudMargin)
+    hud.drawFallbackRanking(ranking, hudScale, hudMargin, radarDiameter)
   end
   if persistentCursor and not scoreboardHeld then
     ui.setCursor(vec2(center.x - 145, size.y - 42))
@@ -3181,7 +3549,7 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
   local controls = {
     { label = 'FIRE', action = 'fire' },
     { label = 'SPRINT', action = 'sprint' },
-    { label = 'CROUCH / PRONE', action = 'crouch' },
+    { label = 'CROUCH / PRONE', action = 'crouch', crouchMode = true },
     { label = 'RELOAD', action = 'reload' },
     { label = 'JUMP', action = 'jump' },
     { label = 'GRENADE', action = 'grenade', reserved = true },
@@ -3216,7 +3584,7 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
 
   for index = 1, #controls do
     local item = controls[index]
-    local rowY = 91 + (index - 1) * 55
+    local rowY = 86 + (index - 1) * 47
     ui.setCursor(left + vec2(0, rowY + 12) * scale)
     ui.text(item.label)
     if item.reserved then
@@ -3225,20 +3593,68 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
     end
     local value = hud.bindingCapture == item.action and 'PRESS A KEY…'
       or hud.bindingName(hud.bindings[item.action])
+    local bindingWidth = item.crouchMode and 180 or 300
     if pauseButton(value, left + vec2(430, rowY) * scale,
-        vec2(300, 40) * scale, false) then
+        vec2(bindingWidth, 40) * scale, false) then
       hud.bindingCapture = item.action
       hud.bindingCaptureAfter = ui.time() + 0.25
     end
+    if item.crouchMode then
+      local modeLabel = hud.controlSettings.crouchToggle and 'TOGGLE' or 'HOLD'
+      if pauseButton(modeLabel, left + vec2(618, rowY) * scale,
+          vec2(112, 40) * scale, false) then
+        hud.controlSettings.crouchToggle = not hud.controlSettings.crouchToggle
+        fpsVisual.crouchToggleReleaseStands = false
+        ac.log('[ASRC FPS] crouch input mode changed: '
+          .. (hud.controlSettings.crouchToggle and 'toggle' or 'hold'))
+      end
+    end
   end
 
-  if pauseButton('RESET DEFAULTS', left + vec2(300, 500) * scale,
+  local mouse = ui.mousePos()
+  local function sensitivitySlider(label, field, rowY)
+    local minimum, maximum = 0.2, 3.0
+    local value = math.clamp(tonumber(hud.aimSettings[field]) or
+      (field == 'adsSensitivity' and 0.8 or 1.0), minimum, maximum)
+    ui.setCursor(left + vec2(0, rowY + 5) * scale)
+    ui.text(label)
+    ui.setCursor(left + vec2(344, rowY + 5) * scale)
+    ui.text(string.format('%d%%', math.floor(value * 100 + 0.5)))
+    local trackMin = left + vec2(430, rowY + 13) * scale
+    local trackMax = trackMin + vec2(300, 8) * scale
+    local hovered = mouse.x >= trackMin.x - 8 * scale
+      and mouse.x <= trackMax.x + 8 * scale
+      and mouse.y >= trackMin.y - 12 * scale
+      and mouse.y <= trackMax.y + 12 * scale
+    if hovered and ui.mouseDown(ui.MouseButton.Left) then
+      local unit = math.clamp((mouse.x - trackMin.x) / (trackMax.x - trackMin.x), 0, 1)
+      value = math.floor((math.lerp(minimum, maximum, unit) * 20) + 0.5) / 20
+      hud.aimSettings[field] = value
+    end
+    local unit = (value - minimum) / (maximum - minimum)
+    local knob = vec2(math.lerp(trackMin.x, trackMax.x, unit),
+      (trackMin.y + trackMax.y) * 0.5)
+    ui.drawRectFilled(trackMin, trackMax, rgbm(0.11, 0.18, 0.24, 1), 4 * scale)
+    ui.drawRectFilled(trackMin, vec2(knob.x, trackMax.y),
+      rgbm(0.22, 0.58, 0.82, 1), 4 * scale)
+    ui.drawRectFilled(knob - vec2(6, 10) * scale, knob + vec2(6, 10) * scale,
+      hovered and rgbm(0.65, 0.88, 1, 1) or rgbm(0.42, 0.72, 0.92, 1), 3 * scale)
+  end
+
+  sensitivitySlider('HIP-FIRE AIM SENSITIVITY', 'hipSensitivity', 425)
+  sensitivitySlider('ADS AIM SENSITIVITY', 'adsSensitivity', 471)
+
+  if pauseButton('RESET DEFAULTS', left + vec2(300, 530) * scale,
       vec2(190, 42) * scale, false) then
     for action, key in pairs(hud.bindingDefaults) do hud.bindings[action] = key end
+    hud.aimSettings.hipSensitivity = 1.0
+    hud.aimSettings.adsSensitivity = 0.8
+    hud.controlSettings.crouchToggle = false
+    fpsVisual.crouchToggleReleaseStands = false
     hud.bindingCapture = nil
-    ac.log('[ASRC FPS] FPS bindings reset to defaults')
+    ac.log('[ASRC FPS] FPS controls reset to defaults')
   end
-  if pauseButton('BACK TO MATCH MENU', left + vec2(0, 500) * scale,
+  if pauseButton('BACK TO MATCH MENU', left + vec2(0, 530) * scale,
       vec2(260, 42) * scale, false) then
     hud.bindingCapture = nil
     hud.pausePage = 'main'

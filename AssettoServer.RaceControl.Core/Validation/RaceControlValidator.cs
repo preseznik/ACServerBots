@@ -172,6 +172,9 @@ public sealed class RaceControlValidator
         ErrorIf(messages, fps.KillLimit is < 1 or > 999, "Fps", "Deathmatch kill limit must be 1..999.");
         ErrorIf(messages, fps.RespawnSeconds is < 0 or > 30, "Fps", "Respawn delay must be 0..30 seconds.");
         ErrorIf(messages, fps.SpawnProtectionSeconds is < 0 or > 10, "Fps", "Spawn protection must be 0..10 seconds.");
+        ErrorIf(messages, fps.ArenaBoundsPaddingMeters is < 5 or > 100
+                          || !double.IsFinite(fps.ArenaBoundsPaddingMeters),
+            "Fps.ArenaBoundsPaddingMeters", "FPS arena bounds padding must be 5..100 metres.");
         ErrorIf(messages, fps.Bots.Health is < 50 or > 200, "Fps", "FPS participant health must be 50..200 HP.");
         ErrorIf(messages, fps.Bots.Difficulty is < 0 or > 1, "Fps", "FPS bot difficulty must be between 0 and 1.");
         ErrorIf(messages, fps.Bots.DifficultyVariancePercent is < 0 or > 100, "Fps", "FPS skill variance must be 0..100 percent.");
@@ -188,6 +191,9 @@ public sealed class RaceControlValidator
 
         ErrorIf(messages, arena.PreparationVersion != FpsArenaDefinition.CurrentPreparationVersion,
             "Fps.Arena", "The FPS arena was prepared by an incompatible version; prepare it again.");
+        ErrorIf(messages, Math.Abs(arena.BoundsPaddingMeters
+                                   - fps.ArenaBoundsPaddingMeters) > 0.001,
+            "Fps.Arena", "FPS arena bounds padding changed; prepare the arena again.");
         ErrorIf(messages, !arena.TrackId.Equals(preset.TrackId, StringComparison.OrdinalIgnoreCase)
                           || !arena.LayoutId.Equals(preset.TrackLayoutId, StringComparison.OrdinalIgnoreCase),
             "Fps.Arena", "The prepared FPS arena does not match the selected layout.");
@@ -200,6 +206,14 @@ public sealed class RaceControlValidator
             && arena.Navigation.ConnectedSpawnCount < arena.SpawnPoints.Count)
             messages.Add(new(ValidationSeverity.Warning, "Fps.Arena",
                 $"{arena.SpawnPoints.Count - arena.Navigation.ConnectedSpawnCount} FPS spawn(s) are isolated from the primary navigation component."));
+        if (arena.Collision is not null)
+            ErrorIf(messages, arena.Collision.Version != 1
+                              || arena.Collision.TriangleCount <= 0
+                              || arena.Collision.BvhNodeCount <= 0
+                              || arena.Collision.BvhLeafCount <= 0
+                              || arena.Collision.MaximumLeafTriangles is < 1 or > 8,
+                "Fps.Arena",
+                "The FPS arena collision BVH summary is invalid; prepare the arena again.");
         ErrorIf(messages, !Finite(arena.BoundsMin) || !Finite(arena.BoundsMax)
                           || arena.BoundsMin.X >= arena.BoundsMax.X
                           || arena.BoundsMin.Y >= arena.BoundsMax.Y

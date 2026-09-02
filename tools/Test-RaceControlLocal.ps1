@@ -109,10 +109,16 @@ $acceptanceRoot = Join-Path $repositoryRoot '.artifacts\race-control-local-accep
 $paths = [AssettoServer.RaceControl.Core.Infrastructure.RaceControlPaths]::new($acceptanceRoot)
 if ($FpsGate) {
     $arenaStore = [AssettoServer.RaceControl.Core.Storage.FpsArenaStore]::new($paths)
-    $preparer = [AssettoServer.RaceControl.Core.Staging.FpsArenaPreparationService]::new($arenaStore)
+    $preparer = [AssettoServer.RaceControl.Core.Staging.FpsArenaPreparationService]::new($arenaStore, $paths)
+    $selectedTrack = $catalog.Tracks | Where-Object {
+        $_.TrackId -eq $preset.TrackId -and $_.LayoutId -eq $preset.TrackLayoutId
+    } | Select-Object -First 1
+    if ($null -eq $selectedTrack) {
+        throw 'Selected FPS track was not found in the scanned catalog.'
+    }
     Write-Host 'Preparing bounded FPS arena sidecar and safe prototype spawns...'
     $preset.Fps.Arena = $preparer.PrepareAsync(
-        $preset, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+        $preset, $selectedTrack, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
 }
 $validator = [AssettoServer.RaceControl.Core.Validation.RaceControlValidator]::new()
 $renderer = [AssettoServer.RaceControl.Core.Configuration.ServerConfigurationRenderer]::new()
@@ -169,36 +175,6 @@ try {
     }
 
     if ($FpsGate) {
-        $assetUrl = 'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v6.zip'
-        $assetDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
-        $assetArchiveBytes = $null
-        $httpClient = [Net.Http.HttpClient]::new()
-        $httpClient.Timeout = [TimeSpan]::FromSeconds(2)
-        try {
-            while ([DateTimeOffset]::UtcNow -lt $assetDeadline -and $null -eq $assetArchiveBytes) {
-                try {
-                    $response = $httpClient.GetAsync($assetUrl).GetAwaiter().GetResult()
-                    try {
-                        if ($response.IsSuccessStatusCode) {
-                            $assetArchiveBytes = $response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
-                        }
-                    } finally {
-                        $response.Dispose()
-                    }
-                } catch {
-                    if ($serverProcess.HasExited) { break }
-                }
-                if ($null -eq $assetArchiveBytes) { Start-Sleep -Milliseconds 100 }
-            }
-        } finally {
-            $httpClient.Dispose()
-        }
-        if ($null -eq $assetArchiveBytes -or $assetArchiveBytes.Length -le 10KB -or
-            $assetArchiveBytes[0] -ne 0x50 -or $assetArchiveBytes[1] -ne 0x4B) {
-            throw "FPS server did not expose a valid CSP asset archive at $assetUrl"
-        }
-        Write-Host "Verified CSP rifle asset archive endpoint ($($assetArchiveBytes.Length) bytes)."
-
         $fpsState = Wait-LiveState { param($state)
             $namedActors = @($state.Cars | Where-Object {
                 $_.IsActive -and -not [string]::IsNullOrWhiteSpace($_.Name)
@@ -236,6 +212,42 @@ try {
             return $false
         } 'moving authoritative FPS actor coordinates')
         Write-Host "Verified Live Match arena map ($($fpsTrack.ArenaCells.Count) cells) and $Slots named moving actors."
+
+        $httpClient = [Net.Http.HttpClient]::new()
+        $httpClient.Timeout = [TimeSpan]::FromSeconds(2)
+        try {
+            $assetUrls = @(
+                'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v7.zip',
+                'http://127.0.0.1:18081/fps/assets/asrc-fps-modern-v8.zip'
+            )
+            foreach ($assetUrl in $assetUrls) {
+                $assetDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+                $assetArchiveBytes = $null
+                while ([DateTimeOffset]::UtcNow -lt $assetDeadline -and
+                       $null -eq $assetArchiveBytes) {
+                    try {
+                        $response = $httpClient.GetAsync($assetUrl).GetAwaiter().GetResult()
+                        try {
+                            if ($response.IsSuccessStatusCode) {
+                                $assetArchiveBytes = $response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+                            }
+                        } finally {
+                            $response.Dispose()
+                        }
+                    } catch {
+                        if ($serverProcess.HasExited) { break }
+                    }
+                    if ($null -eq $assetArchiveBytes) { Start-Sleep -Milliseconds 100 }
+                }
+                if ($null -eq $assetArchiveBytes -or $assetArchiveBytes.Length -le 10KB -or
+                    $assetArchiveBytes[0] -ne 0x50 -or $assetArchiveBytes[1] -ne 0x4B) {
+                    throw "FPS server did not expose a valid CSP asset archive at $assetUrl"
+                }
+                Write-Host "Verified CSP asset archive endpoint $assetUrl ($($assetArchiveBytes.Length) bytes)."
+            }
+        } finally {
+            $httpClient.Dispose()
+        }
     }
 
     if ($VerifyLiveControl) {

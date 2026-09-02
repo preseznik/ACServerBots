@@ -6,7 +6,7 @@ namespace AssettoServer.Tests;
 public sealed class FpsClientAssetArchiveTests
 {
     [Test]
-    public void Archive_ContainsValidFlatModelsAndDiffuseTextures()
+    public void Archive_ContainsValidFlatModelsDiffuseTexturesAndHudWeaponArtwork()
     {
         byte[] bytes = FpsClientAssetArchive.GetArchive();
         using var stream = new MemoryStream(bytes);
@@ -20,6 +20,7 @@ public sealed class FpsClientAssetArchiveTests
             FpsClientAssetArchive.WorldModelFileName,
             FpsClientAssetArchive.RifleDiffuseFileName,
             FpsClientAssetArchive.OperatorSkinFileName,
+            FpsClientAssetArchive.HudWeaponImageFileName,
         }));
 
         Assert.Multiple(() =>

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Models;
 using AssettoServer.RaceControl.Core.Storage;
 
@@ -7,17 +8,31 @@ namespace AssettoServer.RaceControl.Core.Staging;
 public sealed class FpsArenaPreparationService
 {
     private readonly FpsArenaStore _store;
+    private readonly RaceControlPaths _paths;
 
-    public FpsArenaPreparationService(FpsArenaStore store) => _store = store;
+    public FpsArenaPreparationService(FpsArenaStore store, RaceControlPaths paths)
+    {
+        _store = store;
+        _paths = paths;
+    }
 
-    public async Task<FpsArenaDefinition> PrepareAsync(RaceControlPreset preset,
+    public async Task<FpsArenaDefinition> PrepareAsync(RaceControlPreset preset, AcTrackLayout track,
         IProgress<StagingProgress>? progress = null, CancellationToken cancellationToken = default)
     {
+        if (!track.TrackId.Equals(preset.TrackId, StringComparison.OrdinalIgnoreCase)
+            || !track.LayoutId.Equals(preset.TrackLayoutId, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("The FPS preparation track does not match the selected preset.",
+                nameof(track));
+
         string executable = Path.Combine(preset.ServerPayloadPath, "AssettoServer.exe");
         if (!File.Exists(executable))
             throw new FileNotFoundException("Published AssettoServer.exe was not found.", executable);
 
-        string temporary = Path.Combine(Path.GetTempPath(), $"asrc-fps-arena-{Guid.NewGuid():N}.json");
+        string temporaryRoot = Path.Combine(Path.GetTempPath(), $"asrc-fps-arena-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryRoot);
+        string metadataOutput = Path.Combine(temporaryRoot, "fps-arena.json");
+        string geometryOutput = Path.Combine(temporaryRoot, "fps-arena-geometry.bin");
+        string navigationOutput = Path.Combine(temporaryRoot, "fps-arena-navigation.bin");
         try
         {
             var startInfo = new ProcessStartInfo
@@ -40,7 +55,14 @@ public sealed class FpsArenaPreparationService
                 startInfo.ArgumentList.Add(preset.TrackLayoutId);
             }
             startInfo.ArgumentList.Add("--fps-arena-output");
-            startInfo.ArgumentList.Add(temporary);
+            startInfo.ArgumentList.Add(metadataOutput);
+            startInfo.ArgumentList.Add("--fps-geometry-output");
+            startInfo.ArgumentList.Add(geometryOutput);
+            startInfo.ArgumentList.Add("--fps-navigation-output");
+            startInfo.ArgumentList.Add(navigationOutput);
+            startInfo.ArgumentList.Add("--fps-bounds-padding");
+            startInfo.ArgumentList.Add(preset.Fps.ArenaBoundsPaddingMeters.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
             AddCollisionOverrides(startInfo, preset.Fps.Arena);
 
             using var process = new Process { StartInfo = startInfo };
@@ -50,15 +72,17 @@ public sealed class FpsArenaPreparationService
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             await process.WaitForExitAsync(cancellationToken);
-            if (process.ExitCode != 0 || !File.Exists(temporary))
+            if (process.ExitCode != 0 || !File.Exists(metadataOutput)
+                || !File.Exists(geometryOutput) || !File.Exists(navigationOutput))
                 throw new InvalidOperationException($"FPS arena preparation failed with exit code {process.ExitCode}.");
 
-            // Deserialize directly: the temporary filename is intentionally unique and not a sidecar key.
             var arena = System.Text.Json.JsonSerializer.Deserialize<FpsArenaDefinition>(
-                await File.ReadAllTextAsync(temporary, cancellationToken),
+                await File.ReadAllTextAsync(metadataOutput, cancellationToken),
                 new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                 ?? throw new InvalidDataException("FPS arena preparation returned an empty document.");
-            _store.Save(arena);
+            PersistPreparedArena(preset, track, arena, geometryOutput, navigationOutput);
+            progress?.Report(new("FPS arena",
+                "Cached prepared FPS geometry and navigation for server staging.", 0.95));
             return arena;
 
             void Report(string? message)
@@ -69,8 +93,16 @@ public sealed class FpsArenaPreparationService
         }
         finally
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
+            if (Directory.Exists(temporaryRoot)) Directory.Delete(temporaryRoot, true);
         }
+    }
+
+    internal void PersistPreparedArena(RaceControlPreset preset, AcTrackLayout track,
+        FpsArenaDefinition arena, string geometryPath, string navigationPath)
+    {
+        var cachePaths = PreparedPhysicsAssetCache.GetFpsPaths(_paths, preset, track);
+        cachePaths.StoreFrom(geometryPath, navigationPath);
+        _store.Save(arena);
     }
 
     internal static void AddCollisionOverrides(ProcessStartInfo startInfo,

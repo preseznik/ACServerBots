@@ -13,7 +13,7 @@ namespace AssettoServer.Server.Fps;
 
 internal sealed class FpsArenaAsset
 {
-    public const int CurrentPreparationVersion = 3;
+    public const int CurrentPreparationVersion = 4;
     public int PreparationVersion { get; init; } = CurrentPreparationVersion;
     public required string TrackId { get; init; }
     public required string LayoutId { get; init; }
@@ -21,6 +21,8 @@ internal sealed class FpsArenaAsset
     public required FpsArenaPoint BoundsMax { get; init; }
     public required IReadOnlyList<FpsArenaSpawn> SpawnPoints { get; init; }
     public required FpsArenaNavigationSummary Navigation { get; init; }
+    public FpsArenaCollisionSummary? Collision { get; init; }
+    public float BoundsPaddingMeters { get; init; } = 45;
     public IReadOnlyList<string> CollisionIncludeMeshes { get; init; } = [];
     public IReadOnlyList<string> CollisionExcludeMeshes { get; init; } = [];
 }
@@ -33,10 +35,13 @@ internal sealed record FpsArenaPoint(float X, float Y, float Z)
 internal sealed record FpsArenaSpawn(FpsArenaPoint Position, float YawRadians);
 internal sealed record FpsArenaNavigationSummary(int Version, float CellSize, int NodeCount,
     int ComponentCount, int ConnectedSpawnCount, int WalkLinkCount, int TraversalLinkCount);
+internal sealed record FpsArenaCollisionSummary(int Version, int TriangleCount,
+    int BvhNodeCount, int BvhLeafCount, int MaximumLeafTriangles);
 internal sealed record FpsArenaBuildResult(int SpawnPoints, int TrackTriangles,
     int PhysicalTriangles, int SupplementalTriangles, int CollisionMeshes,
     int NavigationNodes, int NavigationComponents, int ConnectedNavigationSpawns,
-    int NavigationWalkLinks, int NavigationTraversalLinks);
+    int NavigationWalkLinks, int NavigationTraversalLinks, int BvhNodes, int BvhLeaves,
+    int BvhMaximumLeafTriangles);
 
 internal static class FpsArenaAssetBuilder
 {
@@ -59,8 +64,12 @@ internal static class FpsArenaAssetBuilder
         string? layout, string outputPath, string? geometryOutputPath = null,
         string? navigationOutputPath = null,
         IEnumerable<string>? collisionIncludeMeshes = null,
-        IEnumerable<string>? collisionExcludeMeshes = null)
+        IEnumerable<string>? collisionExcludeMeshes = null,
+        float boundsPaddingMeters = 45)
     {
+        if (!float.IsFinite(boundsPaddingMeters) || boundsPaddingMeters is < 5 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(boundsPaddingMeters),
+                "FPS arena bounds padding must be between 5 and 100 metres");
         string trackRoot = Path.Combine(Path.GetFullPath(assettoCorsaRoot), "content", "tracks", track);
         string modelsIni = string.IsNullOrWhiteSpace(layout)
             ? Path.Combine(trackRoot, "models.ini")
@@ -113,10 +122,10 @@ internal static class FpsArenaAssetBuilder
             return new FpsArenaSpawn(FpsArenaPoint.From(pose.Position + Vector3.UnitY * 0.05f), yaw);
         }).ToArray();
 
-        float minX = grounded.Min(pose => pose.Position.X) - 45;
-        float maxX = grounded.Max(pose => pose.Position.X) + 45;
-        float minZ = grounded.Min(pose => pose.Position.Z) - 45;
-        float maxZ = grounded.Max(pose => pose.Position.Z) + 45;
+        float minX = grounded.Min(pose => pose.Position.X) - boundsPaddingMeters;
+        float maxX = grounded.Max(pose => pose.Position.X) + boundsPaddingMeters;
+        float minZ = grounded.Min(pose => pose.Position.Z) - boundsPaddingMeters;
+        float maxZ = grounded.Max(pose => pose.Position.Z) + boundsPaddingMeters;
         float minY = grounded.Min(pose => pose.Position.Y) - 2;
         float maxY = grounded.Max(pose => pose.Position.Y) + 20;
         var boundedPhysical = RacePhysicsAssetBuilder.DeduplicateTriangles(physicalTriangles)
@@ -145,6 +154,10 @@ internal static class FpsArenaAssetBuilder
                 navigation.Asset.CellSize, navigation.Asset.Nodes.Count,
                 navigation.Asset.ComponentCount, navigation.ConnectedSpawnPoints,
                 navigation.WalkLinks, navigation.TraversalLinks),
+            Collision = new FpsArenaCollisionSummary(1, surface.TriangleCount,
+                surface.BvhNodeCount, surface.BvhLeafCount,
+                surface.BvhMaximumLeafTriangles),
+            BoundsPaddingMeters = boundsPaddingMeters,
             CollisionIncludeMeshes = includePatterns,
             CollisionExcludeMeshes = excludePatterns,
         };
@@ -161,7 +174,9 @@ internal static class FpsArenaAssetBuilder
         return new FpsArenaBuildResult(spawns.Length, arenaTriangles.Length,
             boundedPhysical.Length, boundedSupplemental.Length, collisionMeshes,
             navigation.Asset.Nodes.Count, navigation.Asset.ComponentCount,
-            navigation.ConnectedSpawnPoints, navigation.WalkLinks, navigation.TraversalLinks);
+            navigation.ConnectedSpawnPoints, navigation.WalkLinks, navigation.TraversalLinks,
+            surface.BvhNodeCount, surface.BvhLeafCount,
+            surface.BvhMaximumLeafTriangles);
     }
 
     internal static bool ShouldIncludeMesh(string name, bool collisionProxy,

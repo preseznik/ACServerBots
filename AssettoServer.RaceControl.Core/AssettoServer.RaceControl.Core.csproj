@@ -17,6 +17,7 @@
     <EmbeddedResource Include="Assets\Fps\Modern\*.*" />
     <EmbeddedResource Include="Assets\Fps\Hud\*.ini" />
     <EmbeddedResource Include="Assets\Fps\Hud\*.lua" />
+    <EmbeddedResource Include="Assets\Fps\Hud\*.png" />
     <EmbeddedResource Include="Assets\Web\*" />
   </ItemGroup>
 </Project>

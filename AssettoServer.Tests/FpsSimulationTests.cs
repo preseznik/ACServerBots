@@ -169,6 +169,104 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void SprintStaminaExhaustsRecoversAndResetsOnSpawn()
+    {
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Runner", FpsSlotRole.Human)]);
+        Assert.That(simulation.ClaimHuman(0), Is.True);
+        var actor = simulation.Actors.Single();
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.UnitY, 0, 0,
+            FpsInputButtons.Sprint));
+
+        for (int tick = 0; tick < 105; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Stamina, Is.Zero.Within(0.01f));
+            Assert.That(actor.SprintExhausted, Is.True);
+        });
+
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+        for (int tick = 0; tick < 50; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Stamina, Is.GreaterThanOrEqualTo(
+                FpsSimulation.SprintExhaustionReleaseStamina));
+            Assert.That(actor.SprintExhausted, Is.False);
+        });
+
+        simulation.ReleaseHuman(0);
+        simulation.ClaimHuman(0);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Stamina, Is.EqualTo(FpsSimulation.MaximumStamina));
+            Assert.That(actor.SprintExhausted, Is.False);
+            Assert.That(actor.StaminaRecoveryDelay, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void HealthRegeneratesAfterDamageCooldownAndResetsOnFurtherDamage()
+    {
+        var simulation = new FpsSimulation(Configuration(),
+        [
+            new(0, "Shooter", FpsSlotRole.Human),
+            new(1, "Target", FpsSlotRole.Human),
+        ]);
+        simulation.ClaimHuman(0);
+        simulation.ClaimHuman(1);
+        var target = simulation.Actors.Single(actor => actor.Id == 1);
+
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, -0.129f,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, -0.129f,
+            FpsInputButtons.None));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(target.Health, Is.EqualTo(66));
+            Assert.That(target.HealthRegenerationDelay,
+                Is.EqualTo(FpsSimulation.HealthRegenerationDelaySeconds).Within(0.001f));
+            Assert.That(FpsSimulation.HealthRegenerationPerSecond,
+                Is.LessThan(FpsSimulation.StaminaRecoveryPerSecond));
+        });
+
+        for (int tick = 0; tick < 69; tick++) simulation.Step(0.05f);
+        Assert.That(target.Health, Is.EqualTo(66),
+            "Health must not regenerate during the 3.5-second damage cooldown");
+
+        simulation.Step(0.05f);
+        Assert.That(target.Health, Is.EqualTo(66),
+            "Fractional regeneration is accumulated instead of rounding up early");
+        for (int tick = 0; tick < 20; tick++) simulation.Step(0.05f);
+        Assert.That(target.Health, Is.EqualTo(81));
+
+        simulation.ApplyInput(0, new FpsInputCommand(3, Vector2.Zero, 0, -0.129f,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(4, Vector2.Zero, 0, -0.129f,
+            FpsInputButtons.None));
+        Assert.Multiple(() =>
+        {
+            Assert.That(target.HealthRegenerationDelay,
+                Is.EqualTo(FpsSimulation.HealthRegenerationDelaySeconds).Within(0.001f));
+            Assert.That(target.HealthRegenerationCarry, Is.Zero);
+        });
+
+        simulation.ReleaseHuman(1);
+        simulation.ClaimHuman(1);
+        Assert.Multiple(() =>
+        {
+            Assert.That(target.Health, Is.EqualTo(100));
+            Assert.That(target.HealthRegenerationDelay, Is.Zero);
+            Assert.That(target.HealthRegenerationCarry, Is.Zero);
+        });
+    }
+
+    [Test]
     public void SnapshotCollisionDirectionUsesCompactSentinelAndPreservesDirection()
     {
         Assert.That(FpsWorld.EncodeCollisionDirection(Vector2.Zero), Is.EqualTo(byte.MaxValue));
@@ -189,6 +287,31 @@ public sealed class FpsSimulationTests
                 Assert.That(Vector2.Dot(direction, decoded), Is.GreaterThan(0.999f));
             });
         }
+    }
+
+    [Test]
+    public void SnapshotActionStateRepeatsProneWithoutChangingTraversalEncoding()
+    {
+        const int index = 3;
+        uint lowBit = 1u << index;
+        uint highBit = 1u << (FpsSnapshotPacket.Capacity + index);
+        var actor = new FpsActorState
+        {
+            Id = 0,
+            Name = "Player",
+            Role = FpsSlotRole.Human,
+            Stance = FpsStance.Prone,
+        };
+
+        Assert.That(FpsWorld.EncodeActionState(actor, index), Is.EqualTo(highBit));
+
+        actor.Stance = FpsStance.Standing;
+        actor.IsMantling = true;
+        actor.MantleArcHeight = 0.18f;
+        Assert.That(FpsWorld.EncodeActionState(actor, index), Is.EqualTo(lowBit));
+
+        actor.MantleArcHeight = 0.72f;
+        Assert.That(FpsWorld.EncodeActionState(actor, index), Is.EqualTo(lowBit | highBit));
     }
 
     [Test]
@@ -600,6 +723,38 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void ShortSteepTerrainBevelProvidesContinuousGroundSupport()
+    {
+        const float bevelHalfWidth = 0.02f;
+        const float bevelRise = 0.12f;
+        var triangles = FlatFloor(-10, -bevelHalfWidth, -10, 10, 0)
+            .Concat(FlatFloor(bevelHalfWidth, 10, -10, 10, bevelRise)).ToList();
+        triangles.AddRange(
+        [
+            new Kn5Triangle(new Vector3(-bevelHalfWidth, 0, -10),
+                new Vector3(-bevelHalfWidth, 0, 10),
+                new Vector3(bevelHalfWidth, bevelRise, 10)),
+            new Kn5Triangle(new Vector3(-bevelHalfWidth, 0, -10),
+                new Vector3(bevelHalfWidth, bevelRise, 10),
+                new Vector3(bevelHalfWidth, bevelRise, -10)),
+        ]);
+        var surface = new FpsArenaSurface(triangles);
+
+        bool hasGround = surface.TryGetGroundHeight(0, 0, 0, out float bevelGround);
+        bool moved = surface.TryResolveMove(new Vector3(-0.5f, 0, 0),
+            new Vector3(0.5f, 0, 0), 0, 1.8f, out var resolved, out float groundY);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hasGround, Is.True);
+            Assert.That(bevelGround, Is.EqualTo(bevelRise * 0.5f).Within(0.001f));
+            Assert.That(moved, Is.True);
+            Assert.That(resolved.X, Is.EqualTo(0.5f).Within(0.001f));
+            Assert.That(groundY, Is.EqualTo(bevelRise).Within(0.001f));
+        });
+    }
+
+    [Test]
     public void MovementStepsOverCurbsWithinDefinedHeight()
     {
         const float curbHeight = 0.18f;
@@ -633,6 +788,262 @@ public sealed class FpsSimulationTests
             Assert.That(FpsArenaSurface.MaximumStepHeight, Is.EqualTo(0.48f));
             Assert.That(actor.Position.X, Is.GreaterThan(1.5f));
             Assert.That(actor.Position.Y, Is.EqualTo(curbHeight).Within(0.01f));
+        });
+    }
+
+    [Test]
+    public void ReachableWalkableGroundDetailDoesNotBecomeACapsuleWall()
+    {
+        const float detailHeight = 0.12f;
+        var triangles = FlatFloor(-10, 10, -10, 10, 0).ToList();
+        triangles.AddRange(FlatFloor(-0.45f, 0.45f, -10, 10, detailHeight));
+        var surface = new FpsArenaSurface(triangles);
+
+        bool blockedBeforeSupportReconciliation = surface.IsPositionBlocked(
+            new Vector3(0, 0, 0), 0, 1.8f);
+        bool moved = surface.TryResolveMove(new Vector3(-0.8f, 0, 0),
+            new Vector3(0.8f, 0, 0), 0, 1.8f, out var resolved, out _);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(blockedBeforeSupportReconciliation, Is.False,
+                "A walkable top inside the auto-step range is support, not a ceiling");
+            Assert.That(moved, Is.True);
+            Assert.That(resolved.X, Is.EqualTo(0.8f).Within(0.001f));
+        });
+    }
+
+    [Test]
+    public void MovementCrossesAutoStepHeightTerrainRidgeWithoutAnExplicitTop()
+    {
+        const float seamHeight = 0.46f;
+        var triangles = FlatFloor(-10, 10, -10, 10, 0).ToList();
+        triangles.AddRange(
+        [
+            new Kn5Triangle(new Vector3(0, 0, -10), new Vector3(0, seamHeight, 10),
+                new Vector3(0, seamHeight, -10)),
+            new Kn5Triangle(new Vector3(0, 0, -10), new Vector3(0, 0, 10),
+                new Vector3(0, seamHeight, 10)),
+        ]);
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Seam walker", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(triangles));
+        simulation.ClaimHuman(0);
+        var actor = simulation.Actors.Single();
+        actor.Position = new Vector3(-1, 0, 0);
+        actor.GroundY = 0;
+        simulation.ApplyInput(0, new FpsInputCommand(1, new Vector2(1, 0), 0, 0,
+            FpsInputButtons.None));
+
+        for (int tick = 0; tick < 10; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(FpsArenaSurface.MaximumTerrainSeamRise,
+                Is.EqualTo(FpsArenaSurface.MaximumStepHeight));
+            Assert.That(actor.Position.X, Is.GreaterThan(1.5f));
+            Assert.That(actor.Position.Y, Is.EqualTo(0).Within(0.001f));
+            Assert.That(actor.GeometryBlocked, Is.False);
+        });
+    }
+
+    [Test]
+    public void GroundedMovementLeavesNarrowImportedSupportWithoutFreezing()
+    {
+        // Nuketown contains thin decorative support islands above collision gaps. The
+        // grounded sweep used to stop at their edge because the next sample had no floor,
+        // even though there was no wall in front of the capsule.
+        var triangles = FlatFloor(-10, -0.65f, -10, 10, 0)
+            .Concat(FlatFloor(0.65f, 10, -10, 10, 0)).ToList();
+        triangles.AddRange(FlatFloor(-0.12f, 0.12f, -10, 10, 1.2f));
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Support walker", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(triangles));
+        simulation.ClaimHuman(0);
+        var actor = simulation.Actors.Single();
+        actor.Position = new Vector3(0, 1.2f, 0);
+        actor.GroundY = 1.2f;
+        actor.IsGrounded = true;
+        simulation.ApplyInput(0, new FpsInputCommand(1, new Vector2(1, 0), 0, 0,
+            FpsInputButtons.None));
+
+        for (int tick = 0; tick < 20; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Position.X, Is.GreaterThan(1.5f),
+                "Losing direct support must transition into movement, not act like a wall");
+            Assert.That(actor.GeometryBlocked, Is.False);
+        });
+    }
+
+    [Test]
+    public void SegmentedWallAboveLowTerrainSeamLimitRemainsSolid()
+    {
+        const float seamHeight = 0.22f;
+        const float wallHeight = 2.5f;
+        var triangles = FlatFloor(-10, 10, -10, 10, 0).ToList();
+        triangles.AddRange(
+        [
+            new Kn5Triangle(new Vector3(0, 0, -10), new Vector3(0, seamHeight, 10),
+                new Vector3(0, seamHeight, -10)),
+            new Kn5Triangle(new Vector3(0, 0, -10), new Vector3(0, 0, 10),
+                new Vector3(0, seamHeight, 10)),
+            new Kn5Triangle(new Vector3(0, seamHeight, -10),
+                new Vector3(0, wallHeight, 10), new Vector3(0, wallHeight, -10)),
+            new Kn5Triangle(new Vector3(0, seamHeight, -10),
+                new Vector3(0, seamHeight, 10), new Vector3(0, wallHeight, 10)),
+        ]);
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Wall runner", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(triangles));
+        simulation.ClaimHuman(0);
+        var actor = simulation.Actors.Single();
+        actor.Position = new Vector3(-1, 0, 0);
+        actor.GroundY = 0;
+        simulation.ApplyInput(0, new FpsInputCommand(1, new Vector2(1, 0), 0, 0,
+            FpsInputButtons.None));
+
+        for (int tick = 0; tick < 10; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Position.X,
+                Is.LessThanOrEqualTo(-FpsArenaSurface.ActorRadius + 0.001f));
+            Assert.That(actor.GeometryBlocked, Is.True);
+        });
+    }
+
+    [Test]
+    public void MovementBridgesTerrainCrackNarrowerThanCapsuleFootprint()
+    {
+        var triangles = FlatFloor(-10, -0.06f, -10, 10, 0)
+            .Concat(FlatFloor(0.06f, 10, -10, 10, 0)).ToList();
+        var surface = new FpsArenaSurface(triangles);
+
+        bool moved = surface.TryResolveMove(new Vector3(-0.5f, 0, 0),
+            new Vector3(0.5f, 0, 0), 0, 1.8f, out var resolved, out float groundY);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved, Is.True);
+            Assert.That(resolved.X, Is.EqualTo(0.5f).Within(0.001f));
+            Assert.That(groundY, Is.EqualTo(0).Within(0.001f));
+        });
+    }
+
+    [Test]
+    public void MovementBridgesNarrowCrackUsingLateralFootprintSupport()
+    {
+        var triangles = FlatFloor(-10, -0.06f, -10, 10, 0)
+            .Concat(FlatFloor(0.06f, 10, -10, 10, 0)).ToList();
+        var surface = new FpsArenaSurface(triangles);
+
+        bool moved = surface.TryResolveMove(new Vector3(0, 0, -0.08f),
+            new Vector3(0, 0, 0.08f), 0, 1.8f, out var resolved, out float groundY);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved, Is.True);
+            Assert.That(resolved.Z, Is.EqualTo(0.08f).Within(0.001f));
+            Assert.That(groundY, Is.EqualTo(0).Within(0.001f));
+        });
+    }
+
+    [Test]
+    public void MovementBridgesPreparedSideYardCollisionVoid()
+    {
+        const float gapHalfWidth = 0.525f;
+        var triangles = FlatFloor(-10, -gapHalfWidth, -10, 10, 0)
+            .Concat(FlatFloor(gapHalfWidth, 10, -10, 10, 0)).ToList();
+        var surface = new FpsArenaSurface(triangles);
+
+        bool moved = surface.TryResolveMove(new Vector3(-0.9f, 0, 0),
+            new Vector3(0.9f, 0, 0), 0, 1.8f, out var resolved, out float groundY);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(FpsArenaSurface.MaximumImportedGroundGapProbeRadius,
+                Is.EqualTo(1.2f).Within(0.001f));
+            Assert.That(moved, Is.True);
+            Assert.That(resolved.X, Is.EqualTo(0.9f).Within(0.001f));
+            Assert.That(groundY, Is.EqualTo(0).Within(0.001f));
+        });
+    }
+
+    [Test]
+    public void MovementDoesNotBridgeWideGapWithoutNearbyOpposingSupport()
+    {
+        var triangles = FlatFloor(-10, -1.3f, -10, 10, 0)
+            .Concat(FlatFloor(1.3f, 10, -10, 10, 0)).ToList();
+        var surface = new FpsArenaSurface(triangles);
+
+        bool moved = surface.TryResolveMove(new Vector3(-1.7f, 0, 0),
+            new Vector3(1.7f, 0, 0), 0, 1.8f, out var resolved, out _);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved, Is.True, "The sweep should advance as far as the ledge");
+            Assert.That(resolved.X, Is.LessThan(-1.15f));
+        });
+    }
+
+    [Test]
+    public void AirMovementCrossesUnsupportedTerrainCrackWithoutTreatingItAsAWall()
+    {
+        var triangles = FlatFloor(-2, -0.06f, -2, 2, 0)
+            .Concat(FlatFloor(0.06f, 2, -2, 2, 0)).ToList();
+        var surface = new FpsArenaSurface(triangles);
+
+        bool moved = surface.TryResolveAirMove(new Vector3(-0.2f, 0.6f, 0),
+            new Vector3(0.2f, 0.6f, 0), 1.8f, out var resolved, out float groundY);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved, Is.True);
+            Assert.That(resolved.X, Is.EqualTo(0.2f).Within(0.001f));
+            Assert.That(resolved.Y, Is.EqualTo(0.6f).Within(0.001f));
+            Assert.That(groundY, Is.EqualTo(0).Within(0.001f));
+        });
+    }
+
+    [Test]
+    public void UnsupportedAirMovementKeepsLastKnownGroundReference()
+    {
+        var surface = new FpsArenaSurface(FlatFloor(-4, -2, -2, 2, 0).ToList());
+
+        bool moved = surface.TryResolveAirMove(new Vector3(1, 0.6f, 0),
+            new Vector3(1.5f, 0.5f, 0), 1.8f, out var resolved, out float groundY,
+            unsupportedGroundY: 0);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved, Is.True);
+            Assert.That(resolved.X, Is.EqualTo(1.5f).Within(0.001f));
+            Assert.That(groundY, Is.EqualTo(0).Within(0.001f),
+                "Unsupported air samples must not recursively lower the ground plane");
+        });
+    }
+
+    [Test]
+    public void UnsupportedAirMovementStillCannotPassThroughWall()
+    {
+        var triangles = new List<Kn5Triangle>
+        {
+            new(new Vector3(0, -1, -2), new Vector3(0, 3, 2),
+                new Vector3(0, 3, -2)),
+            new(new Vector3(0, -1, -2), new Vector3(0, -1, 2),
+                new Vector3(0, 3, 2)),
+        };
+        var surface = new FpsArenaSurface(triangles);
+
+        bool moved = surface.TryResolveAirMove(new Vector3(-0.6f, 0.6f, 0),
+            new Vector3(0.6f, 0.6f, 0), 1.8f, out var resolved, out _);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved, Is.True, "The partial sweep should reach the wall");
+            Assert.That(resolved.X, Is.LessThanOrEqualTo(-FpsArenaSurface.ActorRadius + 0.01f));
         });
     }
 
@@ -1117,6 +1528,54 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void CollisionBvhBoundsLocalQueriesOnDenseGeometry()
+    {
+        var triangles = new List<Kn5Triangle>();
+        for (int index = 0; index < 4096; index++)
+        {
+            float x = index * 2;
+            triangles.Add(new Kn5Triangle(new Vector3(x, 0, -1),
+                new Vector3(x, 2, -1), new Vector3(x, 2, 1)));
+        }
+        var surface = new FpsArenaSurface(triangles);
+        surface.BeginTickDiagnostics();
+
+        bool blocked = surface.IsPositionBlocked(new Vector3(0, 0, 0), 0, 1.8f);
+        var diagnostics = surface.TickDiagnostics;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(blocked, Is.True);
+            Assert.That(surface.BvhNodeCount, Is.GreaterThan(1));
+            Assert.That(surface.BvhLeafCount, Is.GreaterThan(1));
+            Assert.That(surface.BvhMaximumLeafTriangles, Is.LessThanOrEqualTo(8));
+            Assert.That(diagnostics.BroadphaseQueries, Is.GreaterThan(0));
+            Assert.That(diagnostics.BroadphaseCandidates, Is.LessThan(64));
+        });
+    }
+
+    [Test]
+    public void DepenetrationWorkIsCappedWhenNoClearPoseExists()
+    {
+        var triangles = new List<Kn5Triangle>();
+        triangles.AddRange(FlatFloor(-5, 5, -5, 5, 0));
+        for (float x = -2; x <= 2.001f; x += 0.2f)
+            triangles.AddRange(VerticalWall(x, -3, 3, 0, 3));
+        var surface = new FpsArenaSurface(triangles);
+        surface.BeginTickDiagnostics();
+
+        bool resolved = surface.TryDepenetrate(Vector3.Zero, 0, 1.8f,
+            out _, out _);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolved, Is.False);
+            Assert.That(surface.TickDiagnostics.DepenetrationProbes,
+                Is.EqualTo(FpsArenaSurface.MaximumDepenetrationProbes));
+        });
+    }
+
+    [Test]
     public void JumpPreservesTakeoffMomentumAfterMovementInputIsReleased()
     {
         var simulation = new FpsSimulation(Configuration(),
@@ -1158,6 +1617,30 @@ public sealed class FpsSimulationTests
         {
             Assert.That(crouching.IsCrouching, Is.True);
             Assert.That(crouching.Position.Z, Is.LessThan(standing.Position.Z * 0.7f));
+        });
+    }
+
+    [Test]
+    public void FullyAimedMovementRunsAtFortyPercentOfHipFireSpeed()
+    {
+        float Run(FpsInputButtons buttons)
+        {
+            var simulation = new FpsSimulation(Configuration(),
+                [new(0, "Player", FpsSlotRole.Human)]);
+            simulation.ClaimHuman(0);
+            simulation.ApplyInput(0, new FpsInputCommand(1, new Vector2(0, 1), 0, 0, buttons));
+            for (int tick = 0; tick < 10; tick++) simulation.Step(0.05f);
+            return simulation.Actors.Single().Position.Z;
+        }
+
+        float hipFireDistance = Run(FpsInputButtons.None);
+        float aimedDistance = Run(FpsInputButtons.Aim);
+        Assert.Multiple(() =>
+        {
+            Assert.That(FpsSimulation.AimMovementSpeedScale, Is.EqualTo(0.4f));
+            Assert.That(aimedDistance,
+                Is.EqualTo(hipFireDistance * FpsSimulation.AimMovementSpeedScale)
+                    .Within(0.001f));
         });
     }
 
@@ -1221,6 +1704,74 @@ public sealed class FpsSimulationTests
         });
         simulation.ApplyInput(0, new FpsInputCommand(4, Vector2.Zero, 0, 0,
             FpsInputButtons.None));
+        simulation.Step(0.05f);
+        Assert.That(actor.Stance, Is.EqualTo(FpsStance.Crouching));
+    }
+
+    [Test]
+    public void ToggleCrouchLatchesOnShortPressAndStillSupportsHoldForProne()
+    {
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Player", FpsSlotRole.Human)]);
+        simulation.ClaimHuman(0);
+        const FpsInputButtons mode = FpsInputButtons.CrouchToggleMode;
+
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            mode | FpsInputButtons.Crouch));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0, mode));
+        simulation.Step(0.05f);
+        Assert.That(simulation.Actors.Single().Stance, Is.EqualTo(FpsStance.Crouching),
+            "Releasing the first short press must retain crouch in toggle mode");
+
+        simulation.ApplyInput(0, new FpsInputCommand(3, Vector2.Zero, 0, 0,
+            mode | FpsInputButtons.Crouch));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(4, Vector2.Zero, 0, 0, mode));
+        simulation.Step(0.05f);
+        Assert.That(simulation.Actors.Single().Stance, Is.EqualTo(FpsStance.Standing),
+            "A second short press must release toggled crouch");
+
+        simulation.ApplyInput(0, new FpsInputCommand(5, Vector2.Zero, 0, 0,
+            mode | FpsInputButtons.Crouch));
+        for (int tick = 0; tick < 14; tick++) simulation.Step(0.05f);
+        Assert.That(simulation.Actors.Single().Stance, Is.EqualTo(FpsStance.Prone),
+            "Holding crouch must still select prone in toggle mode");
+    }
+
+    [Test]
+    public void CrouchedJumpStandsAndDoesNotRecrouchUntilButtonIsReleased()
+    {
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Player", FpsSlotRole.Human)]);
+        simulation.ClaimHuman(0);
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Crouch));
+        simulation.Step(0.05f);
+        Assert.That(simulation.Actors.Single().Stance, Is.EqualTo(FpsStance.Crouching));
+
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.Crouch | FpsInputButtons.Jump));
+        simulation.Step(0.05f);
+        var actor = simulation.Actors.Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Stance, Is.EqualTo(FpsStance.Standing));
+            Assert.That(actor.IsGrounded, Is.False, "The crouch-exit press must still jump");
+            Assert.That(actor.VerticalVelocity, Is.GreaterThan(0));
+        });
+
+        simulation.ApplyInput(0, new FpsInputCommand(3, Vector2.Zero, 0, 0,
+            FpsInputButtons.Crouch));
+        for (int tick = 0; tick < 30; tick++) simulation.Step(0.05f);
+        Assert.That(actor.Stance, Is.EqualTo(FpsStance.Standing),
+            "Holding crouch through the jump must not immediately re-enter crouch");
+
+        simulation.ApplyInput(0, new FpsInputCommand(4, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(5, Vector2.Zero, 0, 0,
+            FpsInputButtons.Crouch));
         simulation.Step(0.05f);
         Assert.That(actor.Stance, Is.EqualTo(FpsStance.Crouching));
     }
@@ -1696,6 +2247,43 @@ public sealed class FpsSimulationTests
             Assert.That(hip.Sequence, Is.EqualTo(2));
             Assert.That(aimed.Sequence, Is.EqualTo(2));
             Assert.That(aimedDeviation, Is.LessThan(hipDeviation * 0.4f));
+        });
+    }
+
+    [Test]
+    public void CrouchingAndProneTightenAuthoritativeSustainedFireSpread()
+    {
+        FpsShotEvent SecondShot(FpsStance stance)
+        {
+            var simulation = new FpsSimulation(Configuration(),
+                [new(0, "Shooter", FpsSlotRole.Human)]);
+            simulation.ClaimHuman(0);
+            var shooter = simulation.Actors.Single();
+            shooter.Stance = stance;
+            shooter.CrouchLatched = stance == FpsStance.Crouching;
+            simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+                FpsInputButtons.Fire));
+            simulation.Step(0.05f);
+            for (int tick = 0; tick < 4; tick++)
+            {
+                simulation.Step(0.05f);
+                if (simulation.ShotEvents.Count > 0) return simulation.ShotEvents.Single();
+            }
+            Assert.Fail("Expected a second automatic-rifle shot");
+            return default;
+        }
+
+        static float Deviation(FpsShotEvent shot) => MathF.Sqrt(
+            shot.Direction.X * shot.Direction.X + shot.Direction.Y * shot.Direction.Y);
+
+        float standing = Deviation(SecondShot(FpsStance.Standing));
+        float crouching = Deviation(SecondShot(FpsStance.Crouching));
+        float prone = Deviation(SecondShot(FpsStance.Prone));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(crouching, Is.LessThan(standing * 0.7f));
+            Assert.That(prone, Is.LessThan(crouching * 0.85f));
         });
     }
 

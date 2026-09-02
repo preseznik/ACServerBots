@@ -157,6 +157,7 @@ public sealed class FpsOptions
     public double RespawnSeconds { get; set; } = 3;
     public double SpawnProtectionSeconds { get; set; } = 1;
     public string CarrierCarId { get; set; } = "bmw_m3_e30";
+    public double ArenaBoundsPaddingMeters { get; set; } = 45;
     public FpsBotOptions Bots { get; set; } = new();
     public FpsArenaDefinition? Arena { get; set; }
 }
@@ -183,7 +184,7 @@ public sealed class FpsBotOptions
 
 public sealed class FpsArenaDefinition
 {
-    public const int CurrentPreparationVersion = 3;
+    public const int CurrentPreparationVersion = 4;
 
     public int PreparationVersion { get; set; } = CurrentPreparationVersion;
     public string TrackId { get; set; } = string.Empty;
@@ -192,8 +193,19 @@ public sealed class FpsArenaDefinition
     public FpsPoint BoundsMax { get; set; } = new();
     public List<FpsSpawnPoint> SpawnPoints { get; set; } = [];
     public FpsNavigationSummary Navigation { get; set; } = new();
+    public FpsCollisionSummary? Collision { get; set; }
+    public double BoundsPaddingMeters { get; set; } = 45;
     public List<string> CollisionIncludeMeshes { get; set; } = [];
     public List<string> CollisionExcludeMeshes { get; set; } = [];
+}
+
+public sealed class FpsCollisionSummary
+{
+    public int Version { get; set; } = 1;
+    public int TriangleCount { get; set; }
+    public int BvhNodeCount { get; set; }
+    public int BvhLeafCount { get; set; }
+    public int MaximumLeafTriangles { get; set; }
 }
 
 public sealed class FpsNavigationSummary

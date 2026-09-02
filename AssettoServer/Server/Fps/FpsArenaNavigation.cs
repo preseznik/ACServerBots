@@ -34,11 +34,21 @@ internal sealed class FpsArenaNavigationAsset
     public const int CurrentVersion = 1;
     public const float DefaultCellSize = 0.6f;
 
+    private readonly PriorityQueue<PathCandidate, float> _openNodes = new();
+    private Dictionary<long, List<int>>? _nodeCells;
+    private float[]? _pathCosts;
+    private int[]? _pathPrevious;
+    private FpsNavigationLinkKind[]? _pathPreviousKinds;
+    private int[]? _pathSeenGeneration;
+    private int[]? _pathClosedGeneration;
+    private int _pathGeneration;
+
     public required float CellSize { get; init; }
     public required IReadOnlyList<FpsNavigationNode> Nodes { get; init; }
     public required IReadOnlyList<int> SpawnNodes { get; init; }
     public required int ComponentCount { get; init; }
     public required int PrimaryComponent { get; init; }
+    internal int LastPathExpandedNodes { get; private set; }
 
     public void Save(string path)
     {
@@ -132,25 +142,49 @@ internal sealed class FpsArenaNavigationAsset
     public int FindClosestNode(Vector3 position, int component = -1,
         float maximumDistance = 4)
     {
+        EnsureNodeIndex();
         int best = -1;
         float bestDistance = maximumDistance * maximumDistance;
-        for (int index = 0; index < Nodes.Count; index++)
+        int centerX = Cell(position.X);
+        int centerZ = Cell(position.Z);
+        int radius = (int)MathF.Ceiling(maximumDistance / CellSize) + 1;
+        for (int ring = 0; ring <= radius; ring++)
         {
-            var node = Nodes[index];
-            if (component >= 0 && node.Component != component) continue;
-            float vertical = MathF.Abs(node.Position.Y - position.Y);
-            if (vertical > MathF.Max(2, maximumDistance)) continue;
-            var delta = node.Position - position;
-            float distance = delta.X * delta.X + delta.Z * delta.Z + vertical * vertical * 0.25f;
-            if (distance >= bestDistance) continue;
-            bestDistance = distance;
-            best = index;
+            for (int x = centerX - ring; x <= centerX + ring; x++)
+            for (int z = centerZ - ring; z <= centerZ + ring; z++)
+            {
+                if (ring > 0 && Math.Abs(x - centerX) != ring
+                             && Math.Abs(z - centerZ) != ring)
+                    continue;
+                if (!_nodeCells!.TryGetValue(Key(x, z), out var candidates)) continue;
+                foreach (int index in candidates)
+                {
+                    var node = Nodes[index];
+                    if (component >= 0 && node.Component != component) continue;
+                    float vertical = MathF.Abs(node.Position.Y - position.Y);
+                    if (vertical > MathF.Max(2, maximumDistance)) continue;
+                    var delta = node.Position - position;
+                    float distance = delta.X * delta.X + delta.Z * delta.Z
+                                     + vertical * vertical * 0.25f;
+                    if (distance >= maximumDistance * maximumDistance
+                        || distance > bestDistance
+                        || distance == bestDistance && best >= 0 && index >= best)
+                        continue;
+                    bestDistance = distance;
+                    best = index;
+                }
+            }
+            float nextRingMinimum = (ring + 0.5f) * CellSize;
+            if (best >= 0 && nextRingMinimum * nextRingMinimum > bestDistance) break;
         }
         return best;
     }
 
-    public IReadOnlyList<FpsNavigationStep> FindPath(Vector3 start, Vector3 target)
+    public IReadOnlyList<FpsNavigationStep> FindPath(Vector3 start, Vector3 target,
+        int excludedFromNode = -1, int excludedTargetNode = -1,
+        FpsNavigationLinkKind excludedKind = FpsNavigationLinkKind.Walk)
     {
+        LastPathExpandedNodes = 0;
         int startNode = FindClosestNode(start);
         if (startNode < 0) return [];
         int targetNode = FindClosestNode(target);
@@ -160,34 +194,45 @@ internal sealed class FpsArenaNavigationAsset
             return [new FpsNavigationStep(targetNode, Nodes[targetNode].Position,
                 FpsNavigationLinkKind.Walk)];
 
-        var costs = Enumerable.Repeat(float.PositiveInfinity, Nodes.Count).ToArray();
-        var previous = Enumerable.Repeat(-1, Nodes.Count).ToArray();
-        var previousKinds = new FpsNavigationLinkKind[Nodes.Count];
-        var open = new PriorityQueue<int, float>();
-        costs[startNode] = 0;
-        open.Enqueue(startNode, 0);
-        while (open.TryDequeue(out int current, out _))
+        int generation = BeginPathSearch();
+        _pathCosts![startNode] = 0;
+        _pathPrevious![startNode] = -1;
+        _pathSeenGeneration![startNode] = generation;
+        _openNodes.Enqueue(new PathCandidate(startNode, 0), 0);
+        while (_openNodes.TryDequeue(out var candidate, out _))
         {
+            int current = candidate.Node;
+            if (_pathClosedGeneration![current] == generation
+                || _pathSeenGeneration[current] != generation
+                || candidate.Cost > _pathCosts![current] + 0.0001f)
+                continue;
+            _pathClosedGeneration[current] = generation;
+            LastPathExpandedNodes++;
             if (current == targetNode) break;
-            float currentCost = costs[current];
+            float currentCost = _pathCosts[current];
             foreach (var edge in Nodes[current].Edges)
             {
+                if (current == excludedFromNode && edge.TargetNode == excludedTargetNode
+                    && edge.Kind == excludedKind) continue;
                 if (Nodes[edge.TargetNode].Component != Nodes[startNode].Component) continue;
                 float cost = currentCost + edge.Cost;
-                if (cost >= costs[edge.TargetNode]) continue;
-                costs[edge.TargetNode] = cost;
-                previous[edge.TargetNode] = current;
-                previousKinds[edge.TargetNode] = edge.Kind;
+                if (_pathSeenGeneration![edge.TargetNode] == generation
+                    && cost >= _pathCosts[edge.TargetNode]) continue;
+                _pathSeenGeneration[edge.TargetNode] = generation;
+                _pathCosts[edge.TargetNode] = cost;
+                _pathPrevious![edge.TargetNode] = current;
+                _pathPreviousKinds![edge.TargetNode] = edge.Kind;
                 float heuristic = Vector3.Distance(Nodes[edge.TargetNode].Position,
                     Nodes[targetNode].Position);
-                open.Enqueue(edge.TargetNode, cost + heuristic);
+                _openNodes.Enqueue(new PathCandidate(edge.TargetNode, cost), cost + heuristic);
             }
         }
-        if (previous[targetNode] < 0) return [];
+        if (_pathSeenGeneration![targetNode] != generation
+            || _pathPrevious![targetNode] < 0) return [];
         var reversed = new List<FpsNavigationStep>();
-        for (int current = targetNode; current != startNode; current = previous[current])
+        for (int current = targetNode; current != startNode; current = _pathPrevious[current])
             reversed.Add(new FpsNavigationStep(current, Nodes[current].Position,
-                previousKinds[current]));
+                _pathPreviousKinds![current]));
         reversed.Reverse();
         return reversed;
     }
@@ -199,6 +244,45 @@ internal sealed class FpsArenaNavigationAsset
         return firstNode >= 0 && secondNode >= 0
                               && Nodes[firstNode].Component == Nodes[secondNode].Component;
     }
+
+    private void EnsureNodeIndex()
+    {
+        if (_nodeCells is not null) return;
+        _nodeCells = new Dictionary<long, List<int>>();
+        for (int index = 0; index < Nodes.Count; index++)
+        {
+            var position = Nodes[index].Position;
+            long key = Key(Cell(position.X), Cell(position.Z));
+            if (!_nodeCells.TryGetValue(key, out var nodes))
+                _nodeCells[key] = nodes = [];
+            nodes.Add(index);
+        }
+    }
+
+    private int BeginPathSearch()
+    {
+        if (_pathCosts?.Length != Nodes.Count)
+        {
+            _pathCosts = new float[Nodes.Count];
+            _pathPrevious = new int[Nodes.Count];
+            _pathPreviousKinds = new FpsNavigationLinkKind[Nodes.Count];
+            _pathSeenGeneration = new int[Nodes.Count];
+            _pathClosedGeneration = new int[Nodes.Count];
+            _pathGeneration = 0;
+        }
+        if (_pathGeneration == int.MaxValue)
+        {
+            Array.Clear(_pathSeenGeneration!);
+            Array.Clear(_pathClosedGeneration!);
+            _pathGeneration = 0;
+        }
+        _openNodes.Clear();
+        return ++_pathGeneration;
+    }
+
+    private int Cell(float value) => (int)MathF.Round(value / CellSize);
+    private static long Key(int x, int z) => ((long)x << 32) ^ (uint)z;
+    private readonly record struct PathCandidate(int Node, float Cost);
 
     private static void Write(BinaryWriter writer, Vector3 value)
     {
@@ -333,8 +417,13 @@ internal static class FpsArenaNavigationBuilder
         for (int index = 0; index < nodes.Count; index++)
         {
             var from = nodes[index];
+            int cellX = Cell(from.Position.X, cellSize);
+            int cellZ = Cell(from.Position.Z, cellSize);
             foreach (var directionCell in directions)
             {
+                if (HasWalkConnection(from, nodes, cellX + directionCell.X,
+                        cellZ + directionCell.Z, cellSize))
+                    continue;
                 var direction = Vector2.Normalize(new Vector2(directionCell.X, directionCell.Z));
                 if (TryAddProbedLink(nodes, from, direction, FpsNavigationLinkKind.Mantle,
                         (Vector3 current, Vector2 move, float ground, out Vector3 target,
@@ -353,8 +442,6 @@ internal static class FpsArenaNavigationBuilder
                     continue;
                 }
 
-                int cellX = Cell(from.Position.X, cellSize);
-                int cellZ = Cell(from.Position.Z, cellSize);
                 for (int distance = 2; distance <= 3; distance++)
                 {
                     if (!cells.TryGetValue(Key(cellX + directionCell.X * distance,
@@ -388,6 +475,13 @@ internal static class FpsArenaNavigationBuilder
         }
         return links;
     }
+
+    private static bool HasWalkConnection(FpsNavigationNode from,
+        IReadOnlyList<FpsNavigationNode> nodes, int targetCellX, int targetCellZ,
+        float cellSize) => from.Edges.Any(edge =>
+        edge.Kind == FpsNavigationLinkKind.Walk
+        && Cell(nodes[edge.TargetNode].Position.X, cellSize) == targetCellX
+        && Cell(nodes[edge.TargetNode].Position.Z, cellSize) == targetCellZ);
 
     private delegate bool TraversalProbe(Vector3 current, Vector2 direction, float groundY,
         out Vector3 target, out float targetGroundY);

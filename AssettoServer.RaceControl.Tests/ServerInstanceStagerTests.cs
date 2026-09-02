@@ -1,7 +1,9 @@
 using System.IO.Compression;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Infrastructure;
+using AssettoServer.RaceControl.Core.Models;
 using AssettoServer.RaceControl.Core.Staging;
+using AssettoServer.RaceControl.Core.Storage;
 using AssettoServer.RaceControl.Core.Validation;
 using NUnit.Framework;
 
@@ -114,6 +116,87 @@ public sealed class ServerInstanceStagerTests
             Assert.That(restoredSamples, Is.EqualTo("sample-one\nsample-two\n"));
             Assert.That(catalog.Count, Is.EqualTo(2));
             Assert.That(catalog.Count(item => item.IsCompactHistory), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task StageAsync_ReusesFpsAssetsCachedDuringArenaPreparation()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation(8, false, "car_one");
+        var paths = new RaceControlPaths(factory.DataRoot);
+        var catalog = factory.Scan();
+        var preset = factory.CreatePreset(4);
+        preset.Mode = EventMode.Fps;
+        preset.Fps.CarrierCarId = "car_one";
+        var arena = new FpsArenaDefinition
+        {
+            TrackId = "test_track",
+            BoundsMin = new() { X = -10, Y = -2, Z = -10 },
+            BoundsMax = new() { X = 10, Y = 5, Z = 10 },
+            SpawnPoints =
+            [
+                new() { Position = new() { X = -5, Y = 0, Z = 0 } },
+                new() { Position = new() { X = 5, Y = 0, Z = 0 } },
+            ],
+            Navigation = new()
+            {
+                NodeCount = 64,
+                ComponentCount = 1,
+                ConnectedSpawnCount = 2,
+            },
+        };
+        preset.Fps.Arena = arena;
+        string sourceGeometry = Path.Combine(factory.Root, "prepared-geometry.bin");
+        string sourceNavigation = Path.Combine(factory.Root, "prepared-navigation.bin");
+        byte[] geometry = [1, 2, 3, 4];
+        byte[] navigation = [5, 6, 7, 8];
+        await File.WriteAllBytesAsync(sourceGeometry, geometry);
+        await File.WriteAllBytesAsync(sourceNavigation, navigation);
+        var arenaStore = new FpsArenaStore(paths);
+        new FpsArenaPreparationService(arenaStore, paths).PersistPreparedArena(preset,
+            catalog.Tracks.Single(), arena, sourceGeometry, sourceNavigation);
+
+        var stager = new ServerInstanceStager(paths, new RaceControlValidator(),
+            new ServerConfigurationRenderer());
+        var instance = await stager.StageAsync(preset, catalog);
+        string presetRoot = Path.Combine(instance.RootPath, "presets",
+            ServerInstanceStager.PresetName);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(instance.PhysicsCacheHit, Is.True);
+            Assert.That(arenaStore.IsPrepared("test_track", string.Empty), Is.True);
+            Assert.That(File.ReadAllBytes(Path.Combine(presetRoot, "fps-arena-geometry.bin")),
+                Is.EqualTo(geometry));
+            Assert.That(File.ReadAllBytes(Path.Combine(presetRoot, "fps-arena-navigation.bin")),
+                Is.EqualTo(navigation));
+        });
+    }
+
+    [Test]
+    public void FpsAssetCache_IgnoresUnrelatedServerRebuildButTracksModelChanges()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation(8, false, "car_one");
+        var paths = new RaceControlPaths(factory.DataRoot);
+        var catalog = factory.Scan();
+        var preset = factory.CreatePreset(4);
+        var track = catalog.Tracks.Single();
+
+        var initial = PreparedPhysicsAssetCache.GetFpsPaths(paths, preset, track);
+        File.AppendAllText(Path.Combine(factory.PayloadRoot, "AssettoServer.exe"), " rebuilt");
+        var afterServerRebuild = PreparedPhysicsAssetCache.GetFpsPaths(paths, preset, track);
+        preset.Fps.ArenaBoundsPaddingMeters = 20;
+        var afterPaddingChange = PreparedPhysicsAssetCache.GetFpsPaths(paths, preset, track);
+        File.AppendAllText(Path.Combine(track.RootPath, "track.kn5"), " changed");
+        var afterTrackChange = PreparedPhysicsAssetCache.GetFpsPaths(paths, preset, track);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(afterServerRebuild, Is.EqualTo(initial));
+            Assert.That(afterPaddingChange, Is.Not.EqualTo(initial));
+            Assert.That(afterTrackChange, Is.Not.EqualTo(initial));
         });
     }
 

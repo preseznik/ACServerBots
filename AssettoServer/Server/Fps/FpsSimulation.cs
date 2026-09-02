@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using AssettoServer.Network.ClientMessages;
@@ -74,6 +75,9 @@ internal readonly record struct FpsShotEvent(byte ShooterId, uint Sequence, Vect
     Vector3 Direction, float Distance, FpsShotImpact Impact, byte TargetId);
 internal readonly record struct FpsBotDiagnosticEvent(byte ActorId, FpsBotMode Mode,
     string Message, bool Warning = false);
+internal readonly record struct FpsStepDiagnostics(double HumanMilliseconds,
+    double BotMilliseconds, double PostMilliseconds, double PathMilliseconds,
+    int PathPlans, FpsSurfaceDiagnostics Surface);
 
 internal sealed class FpsActorState
 {
@@ -97,6 +101,11 @@ internal sealed class FpsActorState
     public float WeaponHeat { get; set; }
     public int AmmoInMagazine { get; set; }
     public int ReserveMagazines { get; set; }
+    public float HealthRegenerationDelay { get; set; }
+    public float HealthRegenerationCarry { get; set; }
+    public float Stamina { get; set; } = FpsSimulation.MaximumStamina;
+    public bool SprintExhausted { get; set; }
+    public float StaminaRecoveryDelay { get; set; }
     public FpsWeaponType WeaponType { get; init; } = FpsWeaponType.AssaultRifle;
     public float ReloadRemaining { get; set; }
     public bool ReloadHeld { get; set; }
@@ -117,6 +126,8 @@ internal sealed class FpsActorState
     public bool CrouchHeld { get; set; }
     public float CrouchHeldSeconds { get; set; }
     public bool CrouchLatched { get; set; }
+    public bool CrouchToggleReleaseStands { get; set; }
+    public bool CrouchSuppressedUntilRelease { get; set; }
     public bool GeometryBlocked { get; set; }
     public Vector2 CollisionNormal { get; set; }
     public Vector3 LastSafePosition { get; set; }
@@ -140,8 +151,14 @@ internal sealed class FpsActorState
     public float BotTargetVisibleSeconds { get; set; }
     public float BotSearchRemaining { get; set; }
     public float BotPlanRemaining { get; set; }
+    public Vector3 BotPlannedTargetPosition { get; set; }
+    public bool HasBotPlannedTargetPosition { get; set; }
     public List<FpsNavigationStep> BotPath { get; } = [];
     public int BotPathIndex { get; set; }
+    public int BotBlockedTraversalFromNode { get; set; } = -1;
+    public int BotBlockedTraversalTargetNode { get; set; } = -1;
+    public FpsNavigationLinkKind BotBlockedTraversalKind { get; set; }
+    public float BotBlockedTraversalRemaining { get; set; }
     public float BotReactionRemaining { get; set; }
     public int BotBurstShotsRemaining { get; set; }
     public float BotBurstPauseRemaining { get; set; }
@@ -157,6 +174,14 @@ internal sealed class FpsSimulation
 {
     private const float WalkSpeed = 6;
     private const float SprintSpeed = 9;
+    internal const float MaximumStamina = 100;
+    internal const float SprintStaminaDrainPerSecond = 20;
+    internal const float StaminaRecoveryPerSecond = 18;
+    internal const float StaminaRecoveryDelaySeconds = 0.9f;
+    internal const float SprintExhaustionReleaseStamina = 25;
+    internal const float HealthRegenerationDelaySeconds = 3.5f;
+    internal const float HealthRegenerationPerSecond = 15;
+    internal const float AimMovementSpeedScale = 0.4f;
     private const float CrouchSpeed = 3.4f;
     private const float ProneSpeed = 1.8f;
     private const float ProneHoldSeconds = 0.65f;
@@ -172,6 +197,9 @@ internal sealed class FpsSimulation
     private const float RifleOcclusionEpsilon = 0.02f;
     private const float RifleMaximumSpreadRadians = 0.018f;
     private const float RifleAimSpreadMultiplier = 0.35f;
+    private const float RifleStandingSpreadMultiplier = 1.1f;
+    private const float RifleCrouchingSpreadMultiplier = 0.7f;
+    private const float RifleProneSpreadMultiplier = 0.55f;
     private const float RifleHeatPerShot = 0.18f;
     private const float RifleHeatRecoveryPerSecond = 0.45f;
     internal const int RifleMagazineCapacity = 40;
@@ -182,6 +210,9 @@ internal sealed class FpsSimulation
     private const float WeaponPickupCollectionDelaySeconds = 0.4f;
     private const float WeaponPickupRadius = 1.1f;
     private const int MaximumWeaponPickups = 32;
+    private const int MaximumBotPathPlansPerTick = 1;
+    private const float BotPathTargetReplanDistance = 2.4f;
+    private const float BotFailedTraversalCooldownSeconds = 3;
     private readonly FpsConfiguration _configuration;
     private readonly Dictionary<byte, FpsActorState> _actors;
     private readonly List<FpsKillEvent> _killEvents = [];
@@ -209,6 +240,9 @@ internal sealed class FpsSimulation
     public IReadOnlyList<FpsWeaponPickup> Pickups => _pickups;
     public IReadOnlyList<FpsPickupEvent> PickupEvents => _pickupEvents;
     public IReadOnlyList<FpsBotDiagnosticEvent> BotDiagnosticEvents => _botDiagnosticEvents;
+    internal int BotPathPlansLastStep { get; private set; }
+    internal FpsStepDiagnostics LastStepDiagnostics { get; private set; }
+    private double _pathMillisecondsLastStep;
 
     public FpsSimulation(FpsConfiguration configuration, IEnumerable<FpsSimulationSlot> slots,
         int seed = 1, FpsArenaSurface? surface = null,
@@ -277,14 +311,24 @@ internal sealed class FpsSimulation
         _awardEvents.Clear();
         _pickupEvents.Clear();
         _botDiagnosticEvents.Clear();
+        BotPathPlansLastStep = 0;
+        _pathMillisecondsLastStep = 0;
+        LastStepDiagnostics = default;
+        _surface?.BeginTickDiagnostics();
         if (MatchState != FpsMatchState.Running || !float.IsFinite(dt) || dt <= 0) return;
         dt = Math.Min(dt, 0.05f);
         RemainingSeconds = Math.Max(0, RemainingSeconds - dt);
         ElapsedSeconds += dt;
+        double humanMilliseconds = 0;
+        double botMilliseconds = 0;
+
+        foreach (var actor in _actors.Values.Where(actor => actor.Active && !actor.Dead))
+            StepHealthRegeneration(actor, dt);
 
         foreach (var actor in _actors.Values.OrderBy(actor => actor.Id))
         {
             if (!actor.Active) continue;
+            long actorStarted = Stopwatch.GetTimestamp();
             actor.FireCooldown = Math.Max(0, actor.FireCooldown - dt);
             actor.WeaponHeat = Math.Max(0,
                 actor.WeaponHeat - RifleHeatRecoveryPerSecond * dt);
@@ -296,6 +340,8 @@ internal sealed class FpsSimulation
             {
                 actor.RespawnRemaining -= dt;
                 if (actor.RespawnRemaining <= 0) Spawn(actor);
+                AddActorDuration(actor, actorStarted, ref humanMilliseconds,
+                    ref botMilliseconds);
                 continue;
             }
 
@@ -303,6 +349,8 @@ internal sealed class FpsSimulation
             {
                 StepMantle(actor, dt);
                 if (!actor.IsMantling) ValidateSafePose(actor);
+                AddActorDuration(actor, actorStarted, ref humanMilliseconds,
+                    ref botMilliseconds);
                 continue;
             }
 
@@ -311,12 +359,27 @@ internal sealed class FpsSimulation
             else StepBot(actor, dt);
             StepVertical(actor, dt);
             ValidateSafePose(actor);
+            AddActorDuration(actor, actorStarted, ref humanMilliseconds,
+                ref botMilliseconds);
         }
 
+        long postStarted = Stopwatch.GetTimestamp();
         SeparateActors();
         StepWeaponPickups(dt);
         if (RemainingSeconds <= 0 || _actors.Values.Any(actor => actor.Kills >= _configuration.KillLimit))
             FinishMatch();
+        LastStepDiagnostics = new FpsStepDiagnostics(humanMilliseconds, botMilliseconds,
+            Stopwatch.GetElapsedTime(postStarted).TotalMilliseconds,
+            _pathMillisecondsLastStep, BotPathPlansLastStep,
+            _surface?.TickDiagnostics ?? default);
+    }
+
+    private static void AddActorDuration(FpsActorState actor, long started,
+        ref double humanMilliseconds, ref double botMilliseconds)
+    {
+        double elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        if (actor.HumanControlled) humanMilliseconds += elapsed;
+        else botMilliseconds += elapsed;
     }
 
     private void StepHuman(FpsActorState actor, float dt)
@@ -330,7 +393,8 @@ internal sealed class FpsSimulation
         bool crouch = actor.Input.Buttons.HasFlag(FpsInputButtons.Crouch);
         bool jump = actor.Input.Buttons.HasFlag(FpsInputButtons.Jump);
         if (!jump) actor.TraversalConsumedForJumpHold = false;
-        bool jumpConsumed = UpdateStance(actor, crouch, jump, dt);
+        bool crouchToggleMode = actor.Input.Buttons.HasFlag(FpsInputButtons.CrouchToggleMode);
+        bool jumpConsumed = UpdateStance(actor, crouch, jump, crouchToggleMode, dt);
         Move(actor, actor.Input.Move, actor.Input.Buttons.HasFlag(FpsInputButtons.Sprint), dt);
         bool jumpStarted = jump && !actor.JumpHeld;
         actor.JumpHeldSeconds = jump ? actor.JumpHeldSeconds + dt : 0;
@@ -356,11 +420,13 @@ internal sealed class FpsSimulation
         if (actor.Input.Buttons.HasFlag(FpsInputButtons.Fire)) TryFire(actor);
     }
 
-    private static bool UpdateStance(FpsActorState actor, bool crouch, bool jump, float dt)
+    private static bool UpdateStance(FpsActorState actor, bool crouch, bool jump,
+        bool crouchToggleMode, float dt)
     {
         bool crouchPressed = crouch && !actor.CrouchHeld;
         bool jumpPressed = jump && !actor.JumpHeld;
         bool consumedJump = false;
+        if (!crouch) actor.CrouchSuppressedUntilRelease = false;
         if (actor.Stance == FpsStance.Prone)
         {
             if (crouchPressed || jumpPressed)
@@ -368,12 +434,65 @@ internal sealed class FpsSimulation
                 actor.Stance = FpsStance.Crouching;
                 actor.CrouchLatched = true;
                 actor.CrouchHeldSeconds = 0;
+                actor.CrouchToggleReleaseStands = false;
                 consumedJump = jumpPressed;
+            }
+        }
+        else if (actor.Stance == FpsStance.Crouching && jumpPressed)
+        {
+            // A crouched jump is a real jump and leaves the actor standing. If crouch is
+            // still held, do not immediately re-enter crouch on the following tick.
+            actor.Stance = FpsStance.Standing;
+            actor.CrouchLatched = false;
+            actor.CrouchHeldSeconds = 0;
+            actor.CrouchToggleReleaseStands = false;
+            actor.CrouchSuppressedUntilRelease = true;
+        }
+        else if (crouchToggleMode)
+        {
+            if (actor.Stance == FpsStance.Standing)
+            {
+                if (crouchPressed && !actor.CrouchSuppressedUntilRelease)
+                {
+                    actor.Stance = FpsStance.Crouching;
+                    actor.CrouchLatched = true;
+                    actor.CrouchHeldSeconds = dt;
+                    actor.CrouchToggleReleaseStands = false;
+                }
+            }
+            else if (crouchPressed)
+            {
+                // A second short press releases the latch. Delay standing until release
+                // so holding the same press can still select prone.
+                actor.CrouchHeldSeconds = dt;
+                actor.CrouchToggleReleaseStands = true;
+            }
+            else if (crouch)
+            {
+                actor.CrouchHeldSeconds += dt;
+                if (actor.CrouchHeldSeconds >= ProneHoldSeconds)
+                {
+                    actor.Stance = FpsStance.Prone;
+                    actor.CrouchLatched = false;
+                    actor.CrouchHeldSeconds = 0;
+                    actor.CrouchToggleReleaseStands = false;
+                }
+            }
+            else if (actor.CrouchHeld && actor.CrouchToggleReleaseStands)
+            {
+                actor.Stance = FpsStance.Standing;
+                actor.CrouchLatched = false;
+                actor.CrouchHeldSeconds = 0;
+                actor.CrouchToggleReleaseStands = false;
+            }
+            else if (actor.CrouchHeld)
+            {
+                actor.CrouchHeldSeconds = 0;
             }
         }
         else if (actor.Stance == FpsStance.Standing)
         {
-            if (crouch)
+            if (crouch && !actor.CrouchSuppressedUntilRelease)
             {
                 actor.Stance = FpsStance.Crouching;
                 actor.CrouchHeldSeconds = dt;
@@ -386,6 +505,7 @@ internal sealed class FpsSimulation
             {
                 actor.CrouchLatched = false;
                 actor.CrouchHeldSeconds = dt;
+                actor.CrouchToggleReleaseStands = false;
             }
         }
         else if (crouch)
@@ -401,6 +521,7 @@ internal sealed class FpsSimulation
         {
             actor.Stance = FpsStance.Standing;
             actor.CrouchHeldSeconds = 0;
+            actor.CrouchToggleReleaseStands = false;
         }
 
         actor.CrouchHeld = crouch;
@@ -453,6 +574,7 @@ internal sealed class FpsSimulation
         actor.Stance = actor.MantleFinishStance;
         actor.CrouchLatched = actor.Stance == FpsStance.Crouching;
         actor.CrouchHeldSeconds = 0;
+        actor.CrouchToggleReleaseStands = false;
     }
 
     private bool TryBeginMantle(FpsActorState actor, Vector2 input)
@@ -540,6 +662,8 @@ internal sealed class FpsSimulation
     private void StepBot(FpsActorState actor, float dt)
     {
         actor.BotPlanRemaining = Math.Max(0, actor.BotPlanRemaining - dt);
+        actor.BotBlockedTraversalRemaining = Math.Max(0,
+            actor.BotBlockedTraversalRemaining - dt);
         actor.BotBurstPauseRemaining = Math.Max(0, actor.BotBurstPauseRemaining - dt);
         actor.BotStrafeRemaining = Math.Max(0, actor.BotStrafeRemaining - dt);
         var target = GetBotTarget(actor);
@@ -667,6 +791,7 @@ internal sealed class FpsSimulation
         actor.BotReactionRemaining = BotReactionDelaySeconds(actor.Difficulty);
         actor.BotSearchRemaining = Lerp(2, 8, actor.Aggression);
         actor.BotPlanRemaining = 0;
+        actor.HasBotPlannedTargetPosition = false;
         actor.BotPath.Clear();
         actor.BotPathIndex = 0;
         _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, FpsBotMode.Acquire,
@@ -743,13 +868,34 @@ internal sealed class FpsSimulation
             return true;
         }
 
-        if (actor.BotPath.Count == 0 && actor.BotPlanRemaining > 0) return false;
-        if (actor.BotPlanRemaining <= 0 || actor.BotPathIndex >= actor.BotPath.Count)
+        if (PlanarDistance(actor.Position, target) < 0.42f) return false;
+        bool pathExhausted = actor.BotPath.Count == 0
+                             || actor.BotPathIndex >= actor.BotPath.Count;
+        bool targetMoved = actor.HasBotPlannedTargetPosition
+                           && PlanarDistance(actor.BotPlannedTargetPosition, target)
+                           >= BotPathTargetReplanDistance;
+        bool needsPlan = pathExhausted || targetMoved;
+        if (needsPlan && actor.BotPlanRemaining <= 0
+                      && BotPathPlansLastStep < MaximumBotPathPlansPerTick)
         {
+            BotPathPlansLastStep++;
             actor.BotPlanRemaining = 0.2f;
             actor.BotPath.Clear();
-            actor.BotPath.AddRange(_navigation.FindPath(actor.Position, target));
+            long started = Stopwatch.GetTimestamp();
+            bool excludesTraversal = actor.BotBlockedTraversalRemaining > 0;
+            actor.BotPath.AddRange(_navigation.FindPath(actor.Position, target,
+                excludesTraversal ? actor.BotBlockedTraversalFromNode : -1,
+                excludesTraversal ? actor.BotBlockedTraversalTargetNode : -1,
+                actor.BotBlockedTraversalKind));
+            double elapsedMilliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            _pathMillisecondsLastStep += elapsedMilliseconds;
             actor.BotPathIndex = 0;
+            actor.BotPlannedTargetPosition = target;
+            actor.HasBotPlannedTargetPosition = true;
+            if (elapsedMilliseconds >= 8)
+                _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, actor.BotMode,
+                    $"slow-path elapsed={elapsedMilliseconds:F1}ms expanded={_navigation.LastPathExpandedNodes} nodes={_navigation.Nodes.Count}",
+                    true));
             if (actor.BotPath.Count == 0)
             {
                 _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, actor.BotMode,
@@ -758,6 +904,9 @@ internal sealed class FpsSimulation
                 return false;
             }
         }
+
+        if (actor.BotPath.Count == 0 || actor.BotPathIndex >= actor.BotPath.Count)
+            return false;
 
         while (actor.BotPathIndex < actor.BotPath.Count
                && PlanarDistance(actor.Position,
@@ -775,10 +924,17 @@ internal sealed class FpsSimulation
         {
             if (!BeginBotTraversal(actor, step))
             {
-                actor.BotPlanRemaining = 0;
+                actor.BotBlockedTraversalFromNode = actor.BotPathIndex > 0
+                    ? actor.BotPath[actor.BotPathIndex - 1].NodeIndex
+                    : _navigation.FindClosestNode(actor.Position);
+                actor.BotBlockedTraversalTargetNode = step.NodeIndex;
+                actor.BotBlockedTraversalKind = step.Kind;
+                actor.BotBlockedTraversalRemaining = BotFailedTraversalCooldownSeconds;
+                actor.BotPlanRemaining = 0.25f;
+                actor.HasBotPlannedTargetPosition = false;
                 actor.BotPath.Clear();
                 _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, actor.BotMode,
-                    $"traversal-failed kind={step.Kind}"));
+                    $"traversal-failed kind={step.Kind} edge={actor.BotBlockedTraversalFromNode}->{step.NodeIndex} cooldown={BotFailedTraversalCooldownSeconds:F1}s"));
                 return false;
             }
             return true;
@@ -837,6 +993,7 @@ internal sealed class FpsSimulation
             return true;
         actor.BotStrafeDirection *= -1;
         actor.BotPlanRemaining = 0;
+        actor.HasBotPlannedTargetPosition = false;
         actor.BotPath.Clear();
         actor.BotPathIndex = 0;
         return false;
@@ -877,6 +1034,7 @@ internal sealed class FpsSimulation
         actor.BotStuckFailures++;
         actor.BotMode = FpsBotMode.Recover;
         actor.BotPlanRemaining = 0;
+        actor.HasBotPlannedTargetPosition = false;
         actor.BotPath.Clear();
         _botDiagnosticEvents.Add(new FpsBotDiagnosticEvent(actor.Id, FpsBotMode.Recover,
             $"stuck-replan attempt={actor.BotStuckFailures}"));
@@ -889,6 +1047,7 @@ internal sealed class FpsSimulation
     private void MoveWorld(FpsActorState actor, Vector2 movement, bool sprint, float dt)
     {
         if (movement.LengthSquared() > 1) movement = Vector2.Normalize(movement);
+        sprint = UpdateStamina(actor, sprint, movement.LengthSquared() > 0.0001f, dt);
         float speed = actor.IsProne ? ProneSpeed
             : actor.IsCrouching ? CrouchSpeed : sprint ? SprintSpeed : WalkSpeed;
         speed *= BotMovementSpeedScale(actor.Difficulty);
@@ -911,9 +1070,12 @@ internal sealed class FpsSimulation
         var forward = new Vector2(MathF.Sin(actor.Yaw), MathF.Cos(actor.Yaw));
         var right = new Vector2(forward.Y, -forward.X);
         var movement = forward * input.Y + right * input.X;
+        sprint = UpdateStamina(actor, sprint, movement.LengthSquared() > 0.0001f, dt);
         float speed = actor.IsProne ? ProneSpeed
             : actor.IsCrouching ? CrouchSpeed
             : sprint ? SprintSpeed : WalkSpeed;
+        if (actor.Input.Buttons.HasFlag(FpsInputButtons.Aim))
+            speed *= AimMovementSpeedScale;
         var desiredVelocity = movement * speed;
         actor.HorizontalVelocity = actor.IsGrounded
             ? desiredVelocity
@@ -925,6 +1087,58 @@ internal sealed class FpsSimulation
         var max = _configuration.Arena.BoundsMax;
         TryMoveActor(actor, new Vector3(Math.Clamp(position.X, min.X, max.X), actor.Position.Y,
             Math.Clamp(position.Z, min.Z, max.Z)));
+    }
+
+    private static bool UpdateStamina(FpsActorState actor, bool sprintRequested,
+        bool moving, float dt)
+    {
+        bool canSprint = sprintRequested && moving && actor.IsGrounded
+                         && !actor.IsCrouching && !actor.IsProne
+                         && !actor.SprintExhausted && actor.Stamina > 0;
+        if (canSprint)
+        {
+            actor.Stamina = Math.Max(0, actor.Stamina - SprintStaminaDrainPerSecond * dt);
+            actor.StaminaRecoveryDelay = StaminaRecoveryDelaySeconds;
+            if (actor.Stamina <= 0)
+            {
+                actor.Stamina = 0;
+                actor.SprintExhausted = true;
+                canSprint = false;
+            }
+        }
+        else
+        {
+            actor.StaminaRecoveryDelay = Math.Max(0, actor.StaminaRecoveryDelay - dt);
+            if (actor.StaminaRecoveryDelay <= 0)
+            {
+                actor.Stamina = Math.Min(MaximumStamina,
+                    actor.Stamina + StaminaRecoveryPerSecond * dt);
+                if (actor.SprintExhausted && actor.Stamina >= SprintExhaustionReleaseStamina)
+                    actor.SprintExhausted = false;
+            }
+        }
+
+        return canSprint;
+    }
+
+    private void StepHealthRegeneration(FpsActorState actor, float dt)
+    {
+        actor.HealthRegenerationDelay = Math.Max(0, actor.HealthRegenerationDelay - dt);
+        int maximumHealth = _configuration.Bots.Health;
+        if (actor.Health >= maximumHealth)
+        {
+            actor.Health = maximumHealth;
+            actor.HealthRegenerationCarry = 0;
+            return;
+        }
+        if (actor.HealthRegenerationDelay > 0) return;
+
+        actor.HealthRegenerationCarry += HealthRegenerationPerSecond * dt;
+        int recovered = (int)MathF.Floor(actor.HealthRegenerationCarry + 1e-6f);
+        if (recovered <= 0) return;
+        actor.Health = Math.Min(maximumHealth, actor.Health + recovered);
+        actor.HealthRegenerationCarry -= recovered;
+        if (actor.Health >= maximumHealth) actor.HealthRegenerationCarry = 0;
     }
 
     private void TryMoveActor(FpsActorState actor, Vector3 desired)
@@ -957,8 +1171,11 @@ internal sealed class FpsSimulation
             float requestedPlanarDistance = Vector2.Distance(new Vector2(previous.X, previous.Z),
                 new Vector2(desired.X, desired.Z));
             if (requestedPlanarDistance > supportedDistance + 0.01f
+                && _surface.HasWalkableLandingAhead(resolved, desired, actor.GroundY,
+                    actorHeight)
                 && _surface.TryResolveAirMove(resolved, desired, actorHeight,
-                    out var airResolved, out float landingGroundY)
+                    out var airResolved, out float landingGroundY,
+                    allowUnsupportedGround: true, unsupportedGroundY: actor.GroundY)
                 && Vector2.Distance(new Vector2(previous.X, previous.Z),
                     new Vector2(airResolved.X, airResolved.Z)) > supportedDistance + 0.001f)
             {
@@ -972,7 +1189,7 @@ internal sealed class FpsSimulation
         else
         {
             resolvedMove = _surface.TryResolveAirMove(actor.Position, desired, actorHeight,
-                out resolved, out groundY);
+                out resolved, out groundY, unsupportedGroundY: actor.GroundY);
         }
 
         if (!resolvedMove)
@@ -1085,7 +1302,14 @@ internal sealed class FpsSimulation
         float aimSpreadMultiplier = attacker.Input.Buttons.HasFlag(FpsInputButtons.Aim)
             ? RifleAimSpreadMultiplier
             : 1;
-        float spread = attacker.WeaponHeat * RifleMaximumSpreadRadians * aimSpreadMultiplier;
+        float stanceSpreadMultiplier = attacker.Stance switch
+        {
+            FpsStance.Crouching => RifleCrouchingSpreadMultiplier,
+            FpsStance.Prone => RifleProneSpreadMultiplier,
+            _ => RifleStandingSpreadMultiplier,
+        };
+        float spread = attacker.WeaponHeat * RifleMaximumSpreadRadians
+            * aimSpreadMultiplier * stanceSpreadMultiplier;
         float baseYaw = attacker.Yaw;
         float basePitch = attacker.Pitch;
         if (intendedTarget is not null)
@@ -1136,6 +1360,8 @@ internal sealed class FpsSimulation
         if (hit is null) return;
         int healthBefore = hit.Health;
         hit.DamageContributors.Add(attacker.Id);
+        hit.HealthRegenerationDelay = HealthRegenerationDelaySeconds;
+        hit.HealthRegenerationCarry = 0;
         hit.Health -= (int)RifleDamage;
         _hitEvents.Add(new FpsHitEvent(attacker.Id, hit.Id, (ushort)Math.Max(0, hit.Health)));
         if (hit.Health > 0) return;
@@ -1325,6 +1551,8 @@ internal sealed class FpsSimulation
         actor.CrouchHeld = false;
         actor.CrouchHeldSeconds = 0;
         actor.CrouchLatched = false;
+        actor.CrouchToggleReleaseStands = false;
+        actor.CrouchSuppressedUntilRelease = false;
         actor.GeometryBlocked = false;
         actor.HorizontalVelocity = Vector2.Zero;
         actor.IsMantling = false;
@@ -1339,6 +1567,11 @@ internal sealed class FpsSimulation
         actor.WeaponHeat = 0;
         actor.AmmoInMagazine = RifleMagazineCapacity;
         actor.ReserveMagazines = RifleInitialReserveMagazines;
+        actor.HealthRegenerationDelay = 0;
+        actor.HealthRegenerationCarry = 0;
+        actor.Stamina = MaximumStamina;
+        actor.SprintExhausted = false;
+        actor.StaminaRecoveryDelay = 0;
         actor.ReloadRemaining = 0;
         actor.ReloadHeld = false;
         actor.DamageContributors.Clear();
@@ -1348,8 +1581,12 @@ internal sealed class FpsSimulation
         actor.BotTargetVisibleSeconds = 0;
         actor.BotSearchRemaining = 0;
         actor.BotPlanRemaining = 0;
+        actor.HasBotPlannedTargetPosition = false;
         actor.BotPath.Clear();
         actor.BotPathIndex = 0;
+        actor.BotBlockedTraversalFromNode = -1;
+        actor.BotBlockedTraversalTargetNode = -1;
+        actor.BotBlockedTraversalRemaining = 0;
         actor.BotReactionRemaining = 0;
         actor.BotBurstShotsRemaining = 0;
         actor.BotBurstPauseRemaining = 0;

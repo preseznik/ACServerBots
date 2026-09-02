@@ -198,6 +198,16 @@ public sealed class FpsClientScriptTests
                 "math.lerp(0.38, 0.14, fpsVisual.ads) * downwardCurve"));
             Assert.That(script, Does.Contain("- downwardPull - viewmodelKick"));
             Assert.That(script, Does.Contain("local cameraRecoilScale = math.lerp(1, 0.45, fpsVisual.ads)"));
+            Assert.That(script, Does.Contain("function fpsVisual.stanceRecoilMultiplier(stance)"));
+            Assert.That(script, Does.Contain("stance == 2 and 0.55 or stance == 1 and 0.7 or 1.08"));
+            Assert.That(script, Does.Contain(
+                "pitch + 0.011 * cameraRecoilScale * stanceRecoilScale"));
+            Assert.That(script, Does.Contain("ac.LightSource(ac.LightType.Regular)"));
+            Assert.That(script, Does.Contain("muzzleLightLifetime = 0.055"));
+            Assert.That(script, Does.Contain("state.light.range = 5.5"));
+            Assert.That(script, Does.Contain("light.shadows = false"));
+            Assert.That(script, Does.Contain("fpsVisual.updateMuzzleLights(visualNow)"));
+            Assert.That(script, Does.Contain("state.light:dispose()"));
             Assert.That(script, Does.Contain("(fpsVisual.adsInput > 0.5 and 32 or 0)"));
             Assert.That(script, Does.Contain("if fpsVisual.adsInput > 0.05 then sprint = false end"));
             Assert.That(script, Does.Contain("ac.isKeyDown(ac.KeyIndex.Space)"));
@@ -229,6 +239,20 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("[ASRC FPS] prediction hard correction:"));
             Assert.That(updateDefinition, Does.Not.Contain("predictionCollisionLocked"));
             Assert.That(script, Does.Contain("bit.band(actor.flags, 128)"));
+            Assert.That(script, Does.Contain("function fpsVisual.actorStance(actor)"));
+            Assert.That(script, Does.Contain("if actor.id == localSessionID then return localStance end"));
+            Assert.That(script, Does.Contain("bit.band(actionState, 2) ~= 0"));
+            Assert.That(script, Does.Contain("modernAssetRevision = 8"));
+            Assert.That(script, Does.Contain("fpsVisual.crouchSuppressedUntilRelease = true"));
+            Assert.That(script, Does.Contain(
+                "operatorStanceGroundOffsets = { [1] = -0.50, [2] = -0.50 }"));
+            Assert.That(script, Does.Contain(
+                "actor.modernModel:setPosition(vec3(0, stanceGroundOffset, 0))"));
+            Assert.That(script, Does.Not.Contain("actorVisualGroundOffset"));
+            Assert.That(script, Does.Contain("if not dead then scenePosition = avatarPosition end"));
+            Assert.That(script, Does.Not.Contain("actorScenePosition"));
+            Assert.That(script, Does.Contain(
+                "local aimingMovementScale = fpsVisual.adsInput > 0.5 and 0.4 or 1"));
             Assert.That(script, Does.Contain("cameraHeight = math.lerp"));
             Assert.That(script, Does.Contain("physics.raycastTrack"));
             Assert.That(script, Does.Contain("localTrackProbeMovement"));
@@ -272,11 +296,13 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("web.loadRemoteAssets"));
             Assert.That(script, Does.Contain("ac.getServerIP()"));
             Assert.That(script, Does.Contain("ac.getServerPortHTTP()"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v6.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v7.zip"));
+            Assert.That(script, Does.Contain("fileName = 'asrc_carbine_hud.png'"));
+            Assert.That(script, Does.Contain("ui.drawImage(fpsVisual.hudWeapon.imagePath"));
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
             Assert.That(script, Does.Contain("asrc_operator_skin.png"));
             Assert.That(script, Does.Contain("__ASRC_FPS_THEME__"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v7.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v8.zip"));
             Assert.That(script, Does.Contain("asrc_modern_operator_carbine.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_pickup.kn5"));
@@ -359,6 +385,9 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("ac.Particles.Smoke"));
             Assert.That(snapshotDefinition, Does.Contain("ammo = ac.StructItem.array"));
             Assert.That(snapshotDefinition, Does.Contain("reserveMagazines = ac.StructItem.array"));
+            Assert.That(snapshotDefinition, Does.Contain("vitals = ac.StructItem.array"));
+            Assert.That(snapshotDefinition, Does.Contain(
+                "actor.stamina = bit.rshift(message.vitals[i], 8)"));
             Assert.That(snapshotDefinition, Does.Contain("reloadRemaining = ac.StructItem.array"));
             Assert.That(snapshotDefinition, Does.Contain("spawnCounts = ac.StructItem.array"));
             Assert.That(snapshotDefinition, Does.Contain("remote actor respawn reconciled:"));
@@ -371,10 +400,14 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("operatorUV.boot"));
             Assert.That(script, Does.Contain("procedural-skinned-operator"));
             Assert.That(script, Does.Contain("RELOADING  %.1fs"));
-            Assert.That(script, Does.Contain("%02d  |  %d MAGS"));
+            Assert.That(script, Does.Contain("%d RESERVE MAGS"));
             Assert.That(script, Does.Not.Contain("ASSAULT RIFLE  |  INFINITE"));
             Assert.That(script, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v3')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v4')"));
+            Assert.That(script, Does.Contain("localStamina = ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain(
+                "fpsVisual.stamina.value - fpsVisual.stamina.drainPerSecond * dt"));
+            Assert.That(script, Does.Contain("STAMINA  %d%%"));
             Assert.That(script, Does.Contain("adsActive = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain(
                 "hud.bridge.adsActive = fpsVisual.ads > 0.05 and 1 or 0"));
@@ -392,6 +425,9 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("hud.radarReveal[message.shooterID] = effectClock + 2"));
             Assert.That(script, Does.Contain("bit.band(actor.flags, 8) == 0"));
             Assert.That(script, Does.Contain("hud.radarReveal[id] = nil"));
+            Assert.That(script, Does.Contain("function hud.drawFallbackRadar"));
+            Assert.That(script, Does.Contain("COMBAT RADAR  40 m"));
+            Assert.That(script, Does.Contain("local right = -(offset.x * rightX + offset.z * rightZ)"));
             Assert.That(script, Does.Contain("function hud.exclusiveCallback(mode)"));
             Assert.That(script, Does.Contain("ui.onExclusiveHUD(hud.exclusiveCallback, true)"));
             Assert.That(script, Does.Contain("hud.drawingFallback = true"));
@@ -415,6 +451,17 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("ac.ControlButton('asrc.fps/"));
             Assert.That(script, Does.Not.Contain("ui.beginToolWindow('asrc-fps-controls-bindings'"));
             Assert.That(script, Does.Contain("FPS CONTROLS"));
+            Assert.That(script, Does.Contain("HIP-FIRE AIM SENSITIVITY"));
+            Assert.That(script, Does.Contain("ADS AIM SENSITIVITY"));
+            Assert.That(script, Does.Contain("crouchToggle = false"));
+            Assert.That(script, Does.Contain("hud.controlSettings.crouchToggle"));
+            Assert.That(script, Does.Contain("(crouchToggleMode and 64 or 0)"));
+            Assert.That(script, Does.Contain("modeLabel = hud.controlSettings.crouchToggle and 'TOGGLE' or 'HOLD'"));
+            Assert.That(script, Does.Contain("hipSensitivity = 1.0"));
+            Assert.That(script, Does.Contain("adsSensitivity = 0.8"));
+            Assert.That(script, Does.Contain("hud.aimSensitivity(fpsVisual.adsInput)"));
+            Assert.That(script, Does.Contain("mouse.x * 0.0022 * aimSensitivity"));
+            Assert.That(script, Does.Contain("rightX * dt * 2.8 * aimSensitivity"));
             Assert.That(script, Does.Contain("TIME & WEATHER"));
             Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsEnvironmentRequest')"));
             Assert.That(script, Does.Contain("Authoritative WeatherFX controls"));

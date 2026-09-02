@@ -19,12 +19,14 @@ public sealed class FpsBotScaleTests
         var samples = new double[600];
         int shots = 0;
         int hits = 0;
+        int maximumPathPlans = 0;
         for (int tick = 0; tick < samples.Length; tick++)
         {
             long started = Stopwatch.GetTimestamp();
             simulation.Step(1f / 60);
             shots += simulation.ShotEvents.Count;
             hits += simulation.HitEvents.Count;
+            maximumPathPlans = Math.Max(maximumPathPlans, simulation.BotPathPlansLastStep);
             samples[tick] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         }
         Array.Sort(samples);
@@ -37,6 +39,8 @@ public sealed class FpsBotScaleTests
             Assert.That(simulation.Actors, Has.Count.EqualTo(actorCount));
             Assert.That(simulation.Actors, Has.All.Matches<FpsActorState>(actor => actor.Active));
             Assert.That(simulation.Actors.Sum(actor => actor.Kills), Is.GreaterThan(0));
+            Assert.That(maximumPathPlans, Is.LessThanOrEqualTo(1),
+                "Path planning must be spread across simulation ticks.");
             if (actorCount == 8)
                 Assert.That(p95, Is.LessThan(8.3),
                     "Eight bots must leave at least half of the 60 Hz tick budget free.");

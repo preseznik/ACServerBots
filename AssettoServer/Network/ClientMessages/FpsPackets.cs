@@ -13,6 +13,9 @@ public enum FpsInputButtons : byte
     Crouch = 8,
     Reload = 16,
     Aim = 32,
+    // The input packet still carries the physical crouch button. This flag tells the
+    // authoritative stance state machine whether a short press should latch crouch.
+    CrouchToggleMode = 64,
 }
 
 [OnlineEvent(Key = "ASRC_FpsInput", Udp = true)]
@@ -99,7 +102,9 @@ public sealed class FpsSnapshotPacket : OnlineEvent<FpsSnapshotPacket>
     [OnlineEventField(Name = "collisionDirections", Size = Capacity)] public byte[] CollisionDirections = new byte[Capacity];
     [OnlineEventField(Name = "yaws", Size = Capacity)] public float[] Yaws = new float[Capacity];
     [OnlineEventField(Name = "pitches", Size = Capacity)] public float[] Pitches = new float[Capacity];
-    [OnlineEventField(Name = "health", Size = Capacity)] public ushort[] Health = new ushort[Capacity];
+    // Low byte is health (configured maximum is 200); high byte is stamina (0..100).
+    // Packing both vitals keeps this UDP event below CSP's silent payload-drop ceiling.
+    [OnlineEventField(Name = "vitals", Size = Capacity)] public ushort[] Vitals = new ushort[Capacity];
     [OnlineEventField(Name = "kills", Size = Capacity)] public ushort[] Kills = new ushort[Capacity];
     [OnlineEventField(Name = "deaths", Size = Capacity)] public ushort[] Deaths = new ushort[Capacity];
     [OnlineEventField(Name = "ammo", Size = Capacity)] public byte[] Ammo = new byte[Capacity];
@@ -121,6 +126,7 @@ public sealed class FpsMatchPacket : OnlineEvent<FpsMatchPacket>
     [OnlineEventField(Name = "state")] public byte State;
     [OnlineEventField(Name = "remainingSeconds")] public float RemainingSeconds;
     [OnlineEventField(Name = "killLimit")] public ushort KillLimit;
+    [OnlineEventField(Name = "maximumHealth")] public ushort MaximumHealth;
     [OnlineEventField(Name = "winnerID")] public byte WinnerId = byte.MaxValue;
     [OnlineEventField(Name = "weatherType")] public byte WeatherType;
     [OnlineEventField(Name = "timeOfDaySeconds")] public uint TimeOfDaySeconds;

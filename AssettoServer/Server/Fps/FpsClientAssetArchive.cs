@@ -8,12 +8,13 @@ namespace AssettoServer.Server.Fps;
 
 internal static class FpsClientAssetArchive
 {
-    public const string Route = "/fps/assets/asrc-fps-assets-v6.zip";
-    public const string FileName = "asrc-fps-assets-v6.zip";
+    public const string Route = "/fps/assets/asrc-fps-assets-v7.zip";
+    public const string FileName = "asrc-fps-assets-v7.zip";
     public const string ViewmodelFileName = "asrc_assault_rifle_viewmodel.kn5";
     public const string WorldModelFileName = "asrc_assault_rifle_world.kn5";
     public const string RifleDiffuseFileName = "asrc_rifle_diffuse.png";
     public const string OperatorSkinFileName = "asrc_operator_skin.png";
+    public const string HudWeaponImageFileName = "asrc_carbine_hud.png";
 
     private static readonly Lazy<byte[]> Archive = new(CreateArchive);
 
@@ -32,6 +33,8 @@ internal static class FpsClientAssetArchive
                 "AssettoServer.Server.Fps.Assets.asrc_rifle_diffuse.png");
             AddPng(archive, OperatorSkinFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_operator_skin.png");
+            AddPng(archive, HudWeaponImageFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_carbine_hud.png");
         }
 
         return output.ToArray();

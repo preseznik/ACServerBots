@@ -215,6 +215,13 @@
                                         <CheckBox Content="Show FPS arenas only" IsChecked="{Binding ShowPreparedFpsArenasOnly}"
                                                   ToolTip="Filter the arena list to layouts with a current Race Control FPS sidecar in AppData." />
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <TextBlock Text="Bounds padding (m)" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource MutedTextBrush}" />
+                                            <TextBox Text="{Binding Preset.Fps.ArenaBoundsPaddingMeters}"
+                                                     Width="70" Margin="8,0,0,0"
+                                                     ToolTip="Horizontal margin around spawn extents used during preparation. Use a smaller value for compact arenas; reprepare after changing it." />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                             <Button Content="Prepare as FPS arena" Command="{Binding PrepareFpsArenaCommand}"
                                                     ToolTip="Generate bounded play space and safe spawn transforms from this layout without modifying installed track files." />
                                             <Button Content="Export FPS Client Pack" Command="{Binding ExportFpsClientPackCommand}" Margin="7,0,0,0"

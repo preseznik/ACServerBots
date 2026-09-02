@@ -5,12 +5,12 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 3
+local bridgeProtocol = 4
 local actorCapacity = 32
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v3'),
+  ac.StructItem.key('asrc.fps.hud.v4'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -19,6 +19,8 @@ local bridge = ac.connect({
   gameplayActive = ac.StructItem.byte(),
   localActorID = ac.StructItem.byte(),
   localHealth = ac.StructItem.uint16(),
+  localMaximumHealth = ac.StructItem.uint16(),
+  localStamina = ac.StructItem.byte(),
   localAmmo = ac.StructItem.byte(),
   localReserveMagazines = ac.StructItem.byte(),
   localReloadRemaining = ac.StructItem.float(),
@@ -59,6 +61,10 @@ local bridge = ac.connect({
 local ranking = {}
 local appCursorInitialized = false
 local mismatchLogged = false
+local assettoRoot = ac.getFolder(ac.FolderID.Root)
+local weaponImagePath = (assettoRoot ~= nil and assettoRoot ~= '')
+  and (assettoRoot .. '/apps/lua/asrc_fps_hud/asrc_carbine_hud.png')
+  or 'asrc_carbine_hud.png'
 
 local function bridgeString(value)
   if type(value) == 'string' then return value end
@@ -164,35 +170,81 @@ end
 
 local function drawStatusWidgets(size, scale, margin)
   local bottom = size.y - margin
-  local leftWidth = 250 * scale
-  local rightWidth = 300 * scale
-  panel(vec2(margin, bottom - 94 * scale), vec2(margin + leftWidth, bottom), scale, 0.8)
-  ui.setCursor(vec2(margin + 14 * scale, bottom - 82 * scale))
-  ui.pushFont(ui.Font.Title)
+  local height = 148 * scale
+  local leftWidth = 330 * scale
+  local rightWidth = 390 * scale
+  local leftMin = vec2(margin, bottom - height)
+  local leftMax = vec2(margin + leftWidth, bottom)
+  panel(leftMin, leftMax, scale, 0.86)
+  ui.drawRectFilled(leftMin, vec2(leftMin.x + 4 * scale, leftMax.y),
+    rgbm(0.22, 0.82, 0.98, 0.95), 2 * scale)
+  ui.setCursor(leftMin + vec2(16, 10) * scale)
+  ui.textColored('OPERATOR STATUS', rgbm(0.55, 0.78, 0.9, 0.9))
+  ui.setCursor(leftMin + vec2(16, 31) * scale)
   local healthColor = bridge.localHealth <= 25 and rgbm(1, 0.2, 0.16, 1) or rgbm.colors.white
-  ui.textColored(string.format('HEALTH  %d', bridge.localHealth), healthColor)
+  ui.pushFont(ui.Font.Title)
+  ui.textColored(string.format('HEALTH   %d', bridge.localHealth), healthColor)
+  ui.popFont()
+  local healthRatio = math.clamp(bridge.localHealth / math.max(1, bridge.localMaximumHealth), 0, 1)
+  local healthBarMin = leftMin + vec2(16, 61) * scale
+  local healthBarMax = leftMin + vec2(314, 72) * scale
+  ui.drawRectFilled(healthBarMin, healthBarMax, rgbm(0.08, 0.12, 0.16, 0.94), 3 * scale)
+  ui.drawRectFilled(healthBarMin, vec2(healthBarMin.x
+    + (healthBarMax.x - healthBarMin.x) * healthRatio,
+    healthBarMax.y), healthRatio <= 0.25 and rgbm(1, 0.2, 0.16, 1)
+      or rgbm(0.25, 0.88, 0.72, 1), 3 * scale)
+
+  ui.setCursor(leftMin + vec2(16, 79) * scale)
+  ui.textColored(string.format('STAMINA  %d%%', bridge.localStamina),
+    bridge.localStamina <= 20 and rgbm(1, 0.58, 0.16, 1) or rgbm(0.75, 0.88, 0.95, 1))
+  local staminaBarMin = leftMin + vec2(16, 101) * scale
+  local staminaBarMax = leftMin + vec2(314, 111) * scale
+  ui.drawRectFilled(staminaBarMin, staminaBarMax, rgbm(0.08, 0.12, 0.16, 0.94), 3 * scale)
+  ui.drawRectFilled(staminaBarMin, vec2(staminaBarMin.x
+    + (staminaBarMax.x - staminaBarMin.x) * math.clamp(bridge.localStamina / 100, 0, 1),
+    staminaBarMax.y),
+    bridge.localStamina <= 20 and rgbm(1, 0.58, 0.16, 1)
+      or rgbm(0.25, 0.72, 1, 1), 3 * scale)
+  ui.setCursor(leftMin + vec2(16, 119) * scale)
   ui.text(string.format('K %d   D %d   SCORE %d', bridge.localKills, bridge.localDeaths,
     bridge.localScore))
-  ui.popFont()
   local linkText = bridge.linkState == 1 and 'LINK: ACTIVE'
     or bridge.linkState == 2 and 'LINK: INPUT SEND BLOCKED' or 'LINK: WAITING FOR PLAYER STATE'
+  ui.setCursor(leftMin + vec2(190, 119) * scale)
   ui.textColored(linkText, bridge.linkState == 1 and rgbm(0.35, 1, 0.45, 1)
     or rgbm(1, 0.55, 0.2, 1))
 
   local right = size.x - margin
-  panel(vec2(right - rightWidth, bottom - 94 * scale), vec2(right, bottom), scale, 0.8)
-  ui.setCursor(vec2(right - rightWidth + 12 * scale, bottom - 82 * scale))
+  local rightMin = vec2(right - rightWidth, bottom - height)
+  local rightMax = vec2(right, bottom)
+  panel(rightMin, rightMax, scale, 0.86)
+  ui.drawRectFilled(vec2(rightMax.x - 4 * scale, rightMin.y), rightMax,
+    rgbm(0.22, 0.82, 0.98, 0.95), 2 * scale)
+  ui.drawImage(weaponImagePath, rightMin + vec2(8, 26) * scale,
+    rightMin + vec2(252, 124) * scale, rgbm(1, 1, 1, 0.98))
+  ui.setCursor(rightMin + vec2(16, 10) * scale)
   if bridge.localReloadRemaining > 0 then
     ui.text(string.format('RELOADING  %.1fs', bridge.localReloadRemaining))
   else
     ui.text('ASSAULT RIFLE')
   end
-  ui.setCursor(vec2(right - rightWidth + 12 * scale, bottom - 58 * scale))
+  ui.setCursor(rightMin + vec2(258, 32) * scale)
   ui.pushFont(ui.Font.Title)
-  ui.text(string.format('%02d  |  %d MAGS', bridge.localAmmo, bridge.localReserveMagazines))
+  ui.text(string.format('%02d', bridge.localAmmo))
   ui.popFont()
-  ui.setCursor(vec2(right - rightWidth + 12 * scale, bottom - 28 * scale))
+  ui.setCursor(rightMin + vec2(258, 64) * scale)
+  ui.text(string.format('%d RESERVE MAGS', bridge.localReserveMagazines))
+  ui.setCursor(rightMin + vec2(258, 89) * scale)
   ui.text('R  RELOAD')
+  if bridge.localReloadRemaining > 0 then
+    local reloadMin = rightMin + vec2(258, 115) * scale
+    local reloadMax = rightMin + vec2(374, 125) * scale
+    ui.drawRectFilled(reloadMin, reloadMax, rgbm(0.08, 0.12, 0.16, 0.94), 3 * scale)
+    ui.drawRectFilled(reloadMin, vec2(reloadMin.x
+      + (reloadMax.x - reloadMin.x) * math.clamp(1 - bridge.localReloadRemaining / 1.8, 0, 1),
+      reloadMax.y),
+      rgbm(1, 0.7, 0.2, 1), 3 * scale)
+  end
 end
 
 local function drawMatchAndFeed(size, scale, margin)

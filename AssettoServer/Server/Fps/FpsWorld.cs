@@ -56,6 +56,7 @@ public sealed class FpsWorld : IHostedService
     private readonly Dictionary<byte, long> _lastClientViewmodelDiagnosticTicks = [];
     private double _simulationMillisecondsTotal;
     private double _simulationMillisecondsMaximum;
+    private FpsStepDiagnostics _maximumStepDiagnostics;
     private int _simulationDurationSamples;
     private long _lastEnvironmentRequestTicks;
 
@@ -127,10 +128,11 @@ public sealed class FpsWorld : IHostedService
         _server.Update += OnUpdate;
         _entryCarManager.ClientConnected += OnClientConnected;
         _entryCarManager.ClientDisconnected += OnClientDisconnected;
-        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills, theme {Theme}, {Triangles} collision triangles, {Nodes} navigation nodes in {Components} components",
+        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills, theme {Theme}, {Triangles} collision triangles in BVH {BvhNodes} nodes/{BvhLeaves} leaves/max {BvhMaximum} triangles, {Nodes} navigation nodes in {Components} components",
             _simulation.Actors.Count, _configuration.Extra.Fps.TimeLimitMinutes,
             _configuration.Extra.Fps.KillLimit, _configuration.Extra.Fps.Theme,
-            surface.TriangleCount,
+            surface.TriangleCount, surface.BvhNodeCount, surface.BvhLeafCount,
+            surface.BvhMaximumLeafTriangles,
             navigation.Nodes.Count, navigation.ComponentCount);
         foreach (var actor in _simulation.Actors.Where(actor => actor.Active).OrderBy(actor => actor.Id))
         {
@@ -407,8 +409,11 @@ public sealed class FpsWorld : IHostedService
             _simulation.Step(1f / _configuration.Server.RefreshRateHz);
             double simulationMilliseconds = Stopwatch.GetElapsedTime(simulationStart).TotalMilliseconds;
             _simulationMillisecondsTotal += simulationMilliseconds;
-            _simulationMillisecondsMaximum = Math.Max(_simulationMillisecondsMaximum,
-                simulationMilliseconds);
+            if (simulationMilliseconds > _simulationMillisecondsMaximum)
+            {
+                _simulationMillisecondsMaximum = simulationMilliseconds;
+                _maximumStepDiagnostics = _simulation.LastStepDiagnostics;
+            }
             _simulationDurationSamples++;
             LogSpawnChanges();
             LogMovementTransitions();
@@ -517,11 +522,21 @@ public sealed class FpsWorld : IHostedService
                 if (_simulationDurationSamples > 0)
                 {
                     Log.Debug(
-                        "FPS simulation tick cost: average={Average:F3} ms, maximum={Maximum:F3} ms over {Samples} ticks",
+                        "FPS simulation tick cost: average={Average:F3} ms, maximum={Maximum:F3} ms over {Samples} ticks; maximum phases human={Human:F3} ms bot={Bot:F3} ms post={Post:F3} ms path={Path:F3} ms plans={Plans}; surface queries={Queries} candidates={Candidates} max-query={MaximumCandidates} depenetration={Depenetration}",
                         _simulationMillisecondsTotal / _simulationDurationSamples,
-                        _simulationMillisecondsMaximum, _simulationDurationSamples);
+                        _simulationMillisecondsMaximum, _simulationDurationSamples,
+                        _maximumStepDiagnostics.HumanMilliseconds,
+                        _maximumStepDiagnostics.BotMilliseconds,
+                        _maximumStepDiagnostics.PostMilliseconds,
+                        _maximumStepDiagnostics.PathMilliseconds,
+                        _maximumStepDiagnostics.PathPlans,
+                        _maximumStepDiagnostics.Surface.BroadphaseQueries,
+                        _maximumStepDiagnostics.Surface.BroadphaseCandidates,
+                        _maximumStepDiagnostics.Surface.MaximumCandidatesPerQuery,
+                        _maximumStepDiagnostics.Surface.DepenetrationProbes);
                     _simulationMillisecondsTotal = 0;
                     _simulationMillisecondsMaximum = 0;
+                    _maximumStepDiagnostics = default;
                     _simulationDurationSamples = 0;
                 }
             }
@@ -627,19 +642,17 @@ public sealed class FpsWorld : IHostedService
                     | (actor.HumanControlled ? 4 : 0) | (actor.SpawnProtectionRemaining > 0 ? 8 : 0)
                     | (actor.IsGrounded ? 16 : 0) | (actor.IsCrouching ? 32 : 0)
                     | (actor.GeometryBlocked ? 64 : 0) | (actor.IsProne ? 128 : 0));
-                if (actor.IsMantling)
-                {
-                    packet.ActionStates |= 1u << index;
-                    if (actor.MantleArcHeight > 0.5f)
-                        packet.ActionStates |= 1u << (FpsSnapshotPacket.Capacity + index);
-                }
+                packet.ActionStates |= EncodeActionState(actor, index);
                 packet.SpawnCounts[index] = actor.SpawnCount;
                 packet.Positions[index] = actor.Position;
                 packet.GroundYs[index] = actor.GroundY;
                 packet.CollisionDirections[index] = EncodeCollisionDirection(actor.CollisionNormal);
                 packet.Yaws[index] = actor.Yaw;
                 packet.Pitches[index] = actor.Pitch;
-                packet.Health[index] = (ushort)Math.Max(0, actor.Health);
+                int health = Math.Clamp(actor.Health, 0, byte.MaxValue);
+                int stamina = Math.Clamp((int)MathF.Round(actor.Stamina), 0,
+                    (int)FpsSimulation.MaximumStamina);
+                packet.Vitals[index] = (ushort)(health | stamina << 8);
                 packet.Kills[index] = actor.Kills;
                 packet.Deaths[index] = actor.Deaths;
                 packet.Ammo[index] = (byte)Math.Clamp(actor.AmmoInMagazine, 0, byte.MaxValue);
@@ -665,6 +678,27 @@ public sealed class FpsWorld : IHostedService
         return (byte)Math.Clamp((int)MathF.Round(normalized * 254), 0, 254);
     }
 
+    internal static uint EncodeActionState(FpsActorState actor, int index)
+    {
+        uint state = 0;
+        if (actor.IsMantling)
+        {
+            state |= 1u << index;
+            if (actor.MantleArcHeight > 0.5f)
+                state |= 1u << (FpsSnapshotPacket.Capacity + index);
+        }
+        else if (actor.IsProne)
+        {
+            // The upper traversal bit is otherwise unused outside a mantle/vault.
+            // Repeat prone here so CSP preview builds do not have to recover it solely
+            // from bit 7 of the compact byte flags field. Packet layout and protocol v1
+            // remain unchanged; older clients continue to use the existing flag.
+            state |= 1u << (FpsSnapshotPacket.Capacity + index);
+        }
+
+        return state;
+    }
+
     private void SendMatch(ACTcpClient client)
     {
         if (_simulation is null) return;
@@ -673,6 +707,8 @@ public sealed class FpsWorld : IHostedService
             State = (byte)_simulation.MatchState,
             RemainingSeconds = _simulation.RemainingSeconds,
             KillLimit = (ushort)_configuration.Extra.Fps.KillLimit,
+            MaximumHealth = (ushort)Math.Clamp(_configuration.Extra.Fps.Bots.Health, 1,
+                ushort.MaxValue),
             WinnerId = _simulation.WinnerId,
             WeatherType = (byte)_weatherManager.CurrentWeather.UpcomingType.WeatherFxType,
             TimeOfDaySeconds = (uint)(_weatherManager.CurrentDateTime.Hour * 3600

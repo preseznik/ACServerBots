@@ -1446,8 +1446,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 ProgressValue = (update.Fraction ?? 0) * 100;
                 AppendLog($"[{update.Stage}] {update.Message}");
             });
-            Preset.Fps.Arena = await new FpsArenaPreparationService(_fpsArenaStore)
-                .PrepareAsync(Preset, progress);
+            Preset.Fps.Arena = await new FpsArenaPreparationService(_fpsArenaStore, _paths)
+                .PrepareAsync(Preset, SelectedTrack, progress);
             OnPropertyChanged(nameof(FpsArenaStatus));
             OnPropertyChanged(nameof(SelectedTrackDetails));
             if (ShowPreparedFpsArenasOnly) RefreshTrackFilter();

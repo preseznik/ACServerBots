@@ -143,6 +143,115 @@ public sealed class FpsNavigationTests
         });
     }
 
+    [Test]
+    public void FlatWalkableGridDoesNotGenerateRedundantTraversalLinks()
+    {
+        var surface = new FpsArenaSurface(Floor(-6, 6, -6, 6, 0).ToArray());
+        var result = FpsArenaNavigationBuilder.Build(surface,
+            new FpsArenaPoint(-6, -1, -6), new FpsArenaPoint(6, 3, 6),
+            [Spawn(-4, 0, 0), Spawn(4, 0, 0)]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.WalkLinks, Is.GreaterThan(0));
+            Assert.That(result.TraversalLinks, Is.Zero,
+                "Ordinary walk neighbors must not also receive jump or mantle links.");
+            Assert.That(result.Asset.FindPath(new Vector3(-4, 0, 0),
+                new Vector3(4, 0, 0)), Is.Not.Empty);
+        });
+    }
+
+    [Test]
+    public void LargeGridPathSearchExpandsEachNodeAtMostOnceAndReusesState()
+    {
+        const int width = 80;
+        var nodes = new FpsNavigationNode[width * width];
+        for (int z = 0; z < width; z++)
+        for (int x = 0; x < width; x++)
+            nodes[z * width + x] = new FpsNavigationNode
+            {
+                Position = new Vector3(x * 0.6f, 0, z * 0.6f),
+                Component = 0,
+            };
+        for (int z = 0; z < width; z++)
+        for (int x = 0; x < width; x++)
+        {
+            int index = z * width + x;
+            if (x + 1 < width)
+                nodes[index].Edges.Add(new FpsNavigationEdge(index + 1,
+                    FpsNavigationLinkKind.Walk, 0.6f));
+            if (x > 0)
+                nodes[index].Edges.Add(new FpsNavigationEdge(index - 1,
+                    FpsNavigationLinkKind.Walk, 0.6f));
+            if (z + 1 < width)
+                nodes[index].Edges.Add(new FpsNavigationEdge(index + width,
+                    FpsNavigationLinkKind.Walk, 0.6f));
+            if (z > 0)
+                nodes[index].Edges.Add(new FpsNavigationEdge(index - width,
+                    FpsNavigationLinkKind.Walk, 0.6f));
+        }
+        var navigation = new FpsArenaNavigationAsset
+        {
+            CellSize = 0.6f,
+            Nodes = nodes,
+            SpawnNodes = [0, nodes.Length - 1],
+            ComponentCount = 1,
+            PrimaryComponent = 0,
+        };
+
+        var first = navigation.FindPath(nodes[0].Position, nodes[^1].Position);
+        int firstExpanded = navigation.LastPathExpandedNodes;
+        var second = navigation.FindPath(nodes[0].Position, nodes[^1].Position);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first, Is.Not.Empty);
+            Assert.That(second, Is.EqualTo(first));
+            Assert.That(firstExpanded, Is.LessThanOrEqualTo(nodes.Length));
+            Assert.That(navigation.LastPathExpandedNodes, Is.LessThanOrEqualTo(nodes.Length));
+        });
+    }
+
+    [Test]
+    public void PathSearchCanQuarantineOneFailedTraversalEdge()
+    {
+        var nodes = new[]
+        {
+            Node(0, 0),
+            Node(1, 0),
+            Node(0, 2),
+            Node(2, 0),
+        };
+        nodes[0].Edges.Add(new FpsNavigationEdge(1, FpsNavigationLinkKind.Mantle, 1));
+        nodes[1].Edges.Add(new FpsNavigationEdge(3, FpsNavigationLinkKind.Walk, 1));
+        nodes[0].Edges.Add(new FpsNavigationEdge(2, FpsNavigationLinkKind.Walk, 2));
+        nodes[2].Edges.Add(new FpsNavigationEdge(3, FpsNavigationLinkKind.Walk, 2));
+        var navigation = new FpsArenaNavigationAsset
+        {
+            CellSize = 0.6f,
+            Nodes = nodes,
+            SpawnNodes = [0, 3],
+            ComponentCount = 1,
+            PrimaryComponent = 0,
+        };
+
+        var ordinary = navigation.FindPath(nodes[0].Position, nodes[3].Position);
+        var quarantined = navigation.FindPath(nodes[0].Position, nodes[3].Position,
+            0, 1, FpsNavigationLinkKind.Mantle);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ordinary.Select(step => step.NodeIndex), Is.EqualTo(new[] { 1, 3 }));
+            Assert.That(quarantined.Select(step => step.NodeIndex), Is.EqualTo(new[] { 2, 3 }));
+        });
+
+        static FpsNavigationNode Node(float x, float z) => new()
+        {
+            Position = new Vector3(x, 0, z),
+            Component = 0,
+        };
+    }
+
     private static FpsArenaSpawn Spawn(float x, float y, float z) =>
         new(new FpsArenaPoint(x, y, z), 0);
 

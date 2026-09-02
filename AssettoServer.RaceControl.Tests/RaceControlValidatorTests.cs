@@ -168,6 +168,13 @@ public sealed class RaceControlValidatorTests
                 ComponentCount = 1,
                 ConnectedSpawnCount = 2,
             },
+            Collision = new()
+            {
+                TriangleCount = 100,
+                BvhNodeCount = 10,
+                BvhLeafCount = 5,
+                MaximumLeafTriangles = 20,
+            },
         };
 
         var result = new RaceControlValidator().Validate(preset, factory.Scan());
@@ -181,6 +188,8 @@ public sealed class RaceControlValidatorTests
                 message.Field == "Fps.Theme" && message.Message.Contains("Blocks", StringComparison.Ordinal)));
             Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
                 message.Field == "Fps.Arena" && message.Message.Contains("does not match", StringComparison.OrdinalIgnoreCase)));
+            Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
+                message.Field == "Fps.Arena" && message.Message.Contains("collision BVH", StringComparison.OrdinalIgnoreCase)));
             Assert.That(result.Messages, Has.None.Matches<ValidationMessage>(message =>
                 message.Message.Contains("fast_lane", StringComparison.OrdinalIgnoreCase)));
         });
@@ -211,6 +220,13 @@ public sealed class RaceControlValidatorTests
                 NodeCount = 64,
                 ComponentCount = 1,
                 ConnectedSpawnCount = 2,
+            },
+            Collision = new()
+            {
+                TriangleCount = 100,
+                BvhNodeCount = 31,
+                BvhLeafCount = 16,
+                MaximumLeafTriangles = 8,
             },
         };
 

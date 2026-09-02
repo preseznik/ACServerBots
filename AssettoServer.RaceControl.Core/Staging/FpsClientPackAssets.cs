@@ -17,6 +17,7 @@ public static class FpsClientPackAssets
         "content/objects3D/asrc_fps/asrc_operator_skin.png";
     public const string HudManifestPath = "apps/lua/asrc_fps_hud/manifest.ini";
     public const string HudScriptPath = "apps/lua/asrc_fps_hud/asrc_fps_hud.lua";
+    public const string HudWeaponImagePath = "apps/lua/asrc_fps_hud/asrc_carbine_hud.png";
 
     public static byte[] GetRifleViewmodel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_assault_rifle_viewmodel.kn5");
@@ -35,6 +36,9 @@ public static class FpsClientPackAssets
 
     public static byte[] GetHudScript() => ReadEmbeddedText(
         "AssettoServer.RaceControl.Core.Assets.Fps.Hud.asrc_fps_hud.lua");
+
+    public static byte[] GetHudWeaponImage() => ReadEmbeddedPng(
+        "AssettoServer.RaceControl.Core.Assets.Fps.Hud.asrc_carbine_hud.png");
 
     public static IReadOnlyList<(string Path, byte[] Data)> GetModernAssets()
     {

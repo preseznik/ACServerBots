@@ -153,6 +153,8 @@
                           LogicalName="AssettoServer.Server.Fps.Assets.asrc_rifle_diffuse.png" />
         <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_operator_skin.png"
                           LogicalName="AssettoServer.Server.Fps.Assets.asrc_operator_skin.png" />
+        <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\Hud\asrc_carbine_hud.png"
+                          LogicalName="AssettoServer.Server.Fps.Assets.asrc_carbine_hud.png" />
         <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\Modern\*.*"
                           LogicalName="AssettoServer.Server.Fps.ModernAssets.%(Filename)%(Extension)" />
         <None Remove="Assets\logo_42.png" />

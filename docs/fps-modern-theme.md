@@ -83,8 +83,16 @@ knees folding backward, shins returning under the hips, and the rifle lowered wi
 remains at 0.77 m. The asset validator rejects missing stance tracks,
 insufficient hip/knee/hand changes, and motion clips without a real crouch/crawl cycle. Locomotion
 crossfades over roughly 120 ms. Death freezes on its final frame. Snapshot flags provide stance and
-grounded state; a compact two-bit-per-actor traversal field distinguishes active mantles from vaults
-without changing FPS protocol version 1.
+grounded state. Offline Blender validation alone is not sufficient for stance grounding: the KN5 to
+KSANIM coordinate conversion writes the crouch and prone hips track 50 cm above the standing track
+in CSP animation space. Preview520 therefore applies an exact -0.50 m world-up correction to the
+dynamically animated KN5 child for those two stances. The confirmed actor root stays at the
+authoritative position and never receives a stance offset, so collision, hitboxes, interpolation,
+and corpse anchoring remain unchanged. Prone is selected from immediate local stance in third
+person and is repeated in the otherwise-unused upper traversal bit when no traversal is active, so
+remote CSP clients do not depend solely on bit 7 of the compact flags byte. The same compact
+two-bit-per-actor field still distinguishes active mantles from vaults without changing FPS protocol
+version 1.
 
 On the client, the authored death clip is combined with a deterministic full-body collapse. The
 clip buckles both knees, twists the torso, releases both arms and hands, and is validated to differ
@@ -120,8 +128,9 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 ## Runtime ownership and fallback
 
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
-downloads `/fps/assets/asrc-fps-modern-v7.zip` through the same `web.loadRemoteAssets()` path as the
-existing rifle. Client pack version 15 also installs both themes under the project-owned
+downloads `/fps/assets/asrc-fps-modern-v8.zip` through the same `web.loadRemoteAssets()` path as the
+existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
+embedded KN5 or KSANIM changes. Client pack version 17 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
 The confirmed `native-scene-v21-angle-lerp-fix` actor root remains the sole owner of authoritative

@@ -51,8 +51,8 @@ in a live Fire Pit match: visible bot models now follow and face their authorita
 
 ## Hybrid HUD ownership
 
-Client pack version 15 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
-script publishes presentation state through the local shared structure `asrc.fps.hud.v3`; no gameplay
+Client pack version 17 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+script publishes presentation state through the local shared structure `asrc.fps.hud.v4`; no gameplay
 packet or server protocol changes are involved.
 
 While both sides exchange a current version-1 heartbeat, the app draws the modular FPS HUD through
@@ -63,9 +63,12 @@ can explicitly yield to the native AC/CSP menu. If the app is absent, disabled, 
 for more than 0.5 seconds, the online script resumes its complete exclusive gameplay HUD. A bridge
 mismatch is logged once and must never produce a blank frame.
 
-Bridge v3 adds an ADS presentation flag. The companion HUD and the online fallback both suppress
-the ordinary four-line crosshair while ADS is active, but retain authoritative hitmarkers and award
-popups. Older HUD apps fail the bridge-version check and automatically yield to the complete fallback.
+Bridge v4 carries ADS presentation, configured maximum health, and predicted/authoritative stamina.
+The companion HUD and the online fallback both suppress the ordinary four-line crosshair while ADS
+is active, but retain authoritative hitmarkers and award popups. Both paths use matching lower-corner
+panels with health and stamina bars plus actual rendered carbine artwork, ammunition, reserve
+magazines, and reload progress. Older HUD apps fail the bridge-version check and automatically yield
+to the complete fallback.
 
 The first combat radar is player-up and limited to 40 m. A living, non-protected opponent is revealed
 only by a clear client track-geometry raycast or for two seconds after its authoritative shot event.

@@ -79,11 +79,15 @@ public class OnlineEventGeneratorTests
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Contain($"uint8_t ammo[{FpsSnapshotPacket.Capacity}]"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
+                Does.Contain($"uint16_t vitals[{FpsSnapshotPacket.Capacity}]"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Contain($"uint8_t collisionDirections[{FpsSnapshotPacket.Capacity}]"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Not.Contain("vec2 collisionNormals"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Structure,
                 Does.Contain($"float reloadRemaining[{FpsSnapshotPacket.Capacity}]"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsMatch").Structure,
+                Does.Contain("uint16_t maximumHealth"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsShot").Structure,
                 Does.Contain("uint8_t impact"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsShot").Structure,

@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 15;
-    public const int BridgeProtocol = 3;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v15.zip";
+    public const int ClientPackVersion = 17;
+    public const int BridgeProtocol = 4;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v17.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -19,6 +19,7 @@ public static class FpsClientPackBuilder
         byte[] operatorSkin = FpsClientPackAssets.GetOperatorSkin();
         byte[] hudManifest = FpsClientPackAssets.GetHudManifest();
         byte[] hudScript = FpsClientPackAssets.GetHudScript();
+        byte[] hudWeaponImage = FpsClientPackAssets.GetHudWeaponImage();
         byte[] rifleAudio = FpsClientPackAssets.CreateRifleWave();
         IReadOnlyList<(string Path, byte[] Data)> modernAssets =
             FpsClientPackAssets.GetModernAssets();
@@ -66,12 +67,14 @@ public static class FpsClientPackBuilder
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v3",
+                    bridge = "asrc.fps.hud.v4",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),
                     scriptPath = FpsClientPackAssets.HudScriptPath,
                     scriptSha256 = FpsClientPackAssets.Sha256(hudScript),
+                    weaponImagePath = FpsClientPackAssets.HudWeaponImagePath,
+                    weaponImageSha256 = FpsClientPackAssets.Sha256(hudWeaponImage),
                     onlineFallback = true,
                 },
             }, new JsonSerializerOptions { WriteIndented = true }, cancellationToken);
@@ -92,7 +95,7 @@ public static class FpsClientPackBuilder
                 the Assetto Corsa installation root. It installs the project-owned assault-rifle
                 models and operator UV skin under content/objects3D/asrc_fps, plus rifle sound
                 under extension/audio/asrc_fps. It also installs the presentation-only ASRC FPS
-                HUD under apps/lua/asrc_fps_hud. Client pack v9 also contains the animated Modern
+                HUD under apps/lua/asrc_fps_hud. Client pack v17 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.
@@ -120,6 +123,8 @@ public static class FpsClientPackBuilder
         await WriteEntryAsync(archive, FpsClientPackAssets.HudManifestPath, hudManifest,
             cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.HudScriptPath, hudScript,
+            cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.HudWeaponImagePath, hudWeaponImage,
             cancellationToken);
         await WriteEntryAsync(archive, "extension/audio/asrc_fps/rifle.wav", rifleAudio,
             cancellationToken);
