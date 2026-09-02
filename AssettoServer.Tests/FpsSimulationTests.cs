@@ -972,6 +972,40 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void MovementSmoothsAlternatingImportedFloorSupportWithoutBlocking()
+    {
+        const float raisedSupport = 0.18f;
+        var triangles = FlatFloor(-10, 0, -10, 10, 0)
+            .Concat(FlatFloor(0, 10, -10, 10, raisedSupport)).ToList();
+        var surface = new FpsArenaSurface(triangles);
+
+        var current = new Vector3(-0.02f, 0, 0);
+        bool moved = surface.TryResolveMove(current, new Vector3(0.03f, 0, 0),
+            0, 1.8f, out var resolved, out float groundY);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(FpsArenaSurface.MaximumGroundContinuityHeight,
+                Is.GreaterThanOrEqualTo(raisedSupport));
+            Assert.That(moved, Is.True);
+            Assert.That(resolved.X, Is.EqualTo(0.03f).Within(0.001f));
+            Assert.That(groundY, Is.EqualTo(
+                FpsArenaSurface.MaximumGroundContinuityChangePerSweep).Within(0.001f));
+        });
+
+        current = resolved with { Y = groundY };
+        for (int step = 0; step < 8; step++)
+        {
+            Assert.That(surface.TryResolveMove(current,
+                current + new Vector3(0.04f, 0, 0), groundY, 1.8f,
+                out resolved, out groundY), Is.True);
+            current = resolved with { Y = groundY };
+        }
+        Assert.That(groundY, Is.EqualTo(raisedSupport).Within(0.001f),
+            "Continuity smoothing must converge to a sustained real support plane");
+    }
+
+    [Test]
     public void MovementDoesNotBridgeWideGapWithoutNearbyOpposingSupport()
     {
         var triangles = FlatFloor(-10, -1.3f, -10, 10, 0)

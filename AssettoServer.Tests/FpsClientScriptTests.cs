@@ -204,10 +204,15 @@ public sealed class FpsClientScriptTests
                 "pitch + 0.011 * cameraRecoilScale * stanceRecoilScale"));
             Assert.That(script, Does.Contain("ac.LightSource(ac.LightType.Regular)"));
             Assert.That(script, Does.Contain("muzzleLightLifetime = 0.055"));
-            Assert.That(script, Does.Contain("state.light.range = 5.5"));
+            Assert.That(script, Does.Contain("muzzleLightRange = 2.25"));
+            Assert.That(script, Does.Contain("state.light.range = fpsVisual.muzzleLightRange"));
             Assert.That(script, Does.Contain("light.shadows = false"));
             Assert.That(script, Does.Contain("fpsVisual.updateMuzzleLights(visualNow)"));
             Assert.That(script, Does.Contain("state.light:dispose()"));
+            Assert.That(script, Does.Contain("and not thirdPersonEnabled"));
+            Assert.That(script, Does.Contain(
+                "local renderedBase = actor.render:lengthSquared() > 0.001 and actor.render or actor.target"));
+            Assert.That(script, Does.Contain("local renderedYaw = actor.yaw or actor.targetYaw"));
             Assert.That(script, Does.Contain("(fpsVisual.adsInput > 0.5 and 32 or 0)"));
             Assert.That(script, Does.Contain("if fpsVisual.adsInput > 0.05 then sprint = false end"));
             Assert.That(script, Does.Contain("ac.isKeyDown(ac.KeyIndex.Space)"));

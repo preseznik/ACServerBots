@@ -32,6 +32,7 @@ local fpsVisual = {
   muzzleLights = {},
   muzzleLightUnavailable = false,
   muzzleLightLifetime = 0.055,
+  muzzleLightRange = 2.25,
   muzzleLightReuseSeconds = 1,
   corpseLifetime = 3.75,
   corpseFallSeconds = 0.72,
@@ -1177,7 +1178,7 @@ function fpsVisual.illuminateMuzzle(shooterID, position, now)
   local ok, err = pcall(function()
     state.light.position:set(position)
     state.light.color = rgb(5.4, 2.35, 0.65)
-    state.light.range = 5.5
+    state.light.range = fpsVisual.muzzleLightRange
     state.expiresAt = now + fpsVisual.muzzleLightLifetime
     state.disposeAt = now + fpsVisual.muzzleLightReuseSeconds
   end)
@@ -1219,7 +1220,8 @@ local shotEvent = ac.OnlineEvent({
   end
   local actor = actors[message.shooterID]
   local muzzleOrigin = message.origin:clone()
-  if message.shooterID == localSessionID and localMuzzlePosition:lengthSquared() > 0.001 then
+  if message.shooterID == localSessionID and not thirdPersonEnabled
+      and localMuzzlePosition:lengthSquared() > 0.001 then
     muzzleOrigin:set(localMuzzlePosition)
     local stanceRecoilScale = fpsVisual.stanceRecoilMultiplier(localStance)
     viewmodelKick = stanceRecoilScale
@@ -1228,9 +1230,19 @@ local shotEvent = ac.OnlineEvent({
     pitch = math.min(1.45, pitch + 0.011 * cameraRecoilScale * stanceRecoilScale)
   elseif actor ~= nil then
     actor.animationFireUntil = effectClock + 0.12
-    local forward = vec3(math.sin(actor.targetYaw), 0, math.cos(actor.targetYaw))
-    local right = vec3(forward.z, 0, -forward.x)
-    muzzleOrigin:set(actor.target + vec3(0, 1.14, 0) + forward * 0.72 + right * 0.20)
+    -- Anchor third-person flashes to the pose actually rendered on this client. Using the
+    -- latest authoritative target made a remote light appear ahead of an interpolated model.
+    local renderedBase = actor.render:lengthSquared() > 0.001 and actor.render or actor.target
+    local renderedYaw = actor.yaw or actor.targetYaw
+    local cosPitch = math.cos(actor.pitch or 0)
+    local forward = vec3(math.sin(renderedYaw) * cosPitch, math.sin(actor.pitch or 0),
+      math.cos(renderedYaw) * cosPitch)
+    local right = vec3(math.cos(renderedYaw), 0, -math.sin(renderedYaw))
+    local stance = bit.band(actor.actionState or 0, 2) ~= 0 and 2
+      or bit.band(actor.actionState or 0, 1) ~= 0 and 1 or 0
+    local muzzleHeight = stance == 2 and 0.48 or stance == 1 and 0.86 or 1.14
+    muzzleOrigin:set(renderedBase + vec3(0, muzzleHeight, 0)
+      + forward * 0.72 + right * 0.20)
   end
   local distance = math.clamp(message.distance, 0.05, 120)
   local targetPoint = message.origin + message.direction * distance

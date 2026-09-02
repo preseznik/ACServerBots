@@ -87,6 +87,11 @@ internal sealed class FpsArenaSurface
     private const float CrouchingHeight = 1.15f;
     private const float ProneHeight = 0.65f;
     private const float MaximumSweepStep = 0.08f;
+    // Decorative imported floor bands can alternate among overlapping support planes even
+    // though the rendered lane is visually flat. Limit only those sub-knee-height changes per
+    // sweep so the authoritative capsule converges to the real support without a one-frame pop.
+    internal const float MaximumGroundContinuityHeight = 0.22f;
+    internal const float MaximumGroundContinuityChangePerSweep = 0.025f;
     // Some imported AC meshes omit collision from a visually continuous floor strip. Probe
     // a few bounded radii so grounded movement can bridge Nuketown's 45-50 cm colored ring
     // and its measured 1.05 m side-yard void, but only when comparable support exists on both
@@ -531,8 +536,13 @@ internal sealed class FpsArenaSurface
         Vector3 movement, out Vector3 resolved, out float groundY, out Vector2 blockingNormal)
     {
         blockingNormal = default;
-        if (!TryGetStepGroundHeight(position, movement, currentGroundY, out groundY)
-            || TryGetBlockingNormal(position, groundY, actorHeight, movement,
+        if (!TryGetStepGroundHeight(position, movement, currentGroundY, out groundY))
+        {
+            resolved = default;
+            return false;
+        }
+        groundY = PreserveMinorGroundContinuity(currentGroundY, groundY);
+        if (TryGetBlockingNormal(position, groundY, actorHeight, movement,
                 out blockingNormal))
         {
             resolved = default;
@@ -540,6 +550,16 @@ internal sealed class FpsArenaSurface
         }
         resolved = position;
         return true;
+    }
+
+    private static float PreserveMinorGroundContinuity(float currentGroundY,
+        float candidateGroundY)
+    {
+        float delta = candidateGroundY - currentGroundY;
+        if (MathF.Abs(delta) > MaximumGroundContinuityHeight) return candidateGroundY;
+        return currentGroundY + Math.Clamp(delta,
+            -MaximumGroundContinuityChangePerSweep,
+            MaximumGroundContinuityChangePerSweep);
     }
 
     private bool TryGetStepGroundHeight(Vector3 position, Vector3 movement,
