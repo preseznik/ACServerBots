@@ -6,7 +6,7 @@ namespace AssettoServer.Tests;
 public sealed class FpsClientAssetArchiveTests
 {
     [Test]
-    public void Archive_ContainsRealDesertEaglePlaceholdersTexturesArtworkAndAttribution()
+    public void Archive_ContainsRealPistolsPlaceholdersTexturesArtworkAndAttribution()
     {
         byte[] bytes = FpsClientAssetArchive.GetArchive();
         using var stream = new MemoryStream(bytes);
@@ -15,7 +15,7 @@ public sealed class FpsClientAssetArchiveTests
         Assert.That(bytes, Has.Length.GreaterThan(10_000));
         Assert.That(bytes.AsSpan(0, 2).SequenceEqual("PK"u8), Is.True);
         Assert.That(FpsClientAssetArchive.Route,
-            Is.EqualTo("/fps/assets/asrc-fps-assets-v9.zip"));
+            Is.EqualTo("/fps/assets/asrc-fps-assets-v19.zip"));
         Assert.That(archive.Entries.Select(entry => entry.FullName), Is.EquivalentTo(new[]
         {
             FpsClientAssetArchive.ViewmodelFileName,
@@ -23,10 +23,15 @@ public sealed class FpsClientAssetArchiveTests
             FpsClientAssetArchive.DesertEagleViewmodelFileName,
             FpsClientAssetArchive.DesertEagleWorldModelFileName,
             FpsClientAssetArchive.DesertEagleAttributionFileName,
+            FpsClientAssetArchive.Colt1911ViewmodelFileName,
+            FpsClientAssetArchive.Colt1911WorldModelFileName,
+            FpsClientAssetArchive.Colt1911AttributionFileName,
             FpsClientAssetArchive.RifleDiffuseFileName,
             FpsClientAssetArchive.OperatorSkinFileName,
             FpsClientAssetArchive.HudWeaponImageFileName,
-        }.Concat(FpsClientAssetArchive.PlaceholderItemFileNames)));
+        }.Concat(FpsClientAssetArchive.DesertEagleAnimationFileNames)
+            .Concat(FpsClientAssetArchive.Colt1911AnimationFileNames)
+            .Concat(FpsClientAssetArchive.PlaceholderItemFileNames)));
 
         Assert.Multiple(() =>
         {
@@ -37,15 +42,21 @@ public sealed class FpsClientAssetArchiveTests
                 {
                     using var reader = new StreamReader(asset);
                     string attribution = reader.ReadToEnd();
-                    Assert.That(attribution, Does.Contain("ELIZION"));
+                    string expectedAuthor = entry.FullName ==
+                        FpsClientAssetArchive.Colt1911AttributionFileName ? "DanaeH" : "ELIZION";
+                    Assert.That(attribution, Does.Contain(expectedAuthor));
                     Assert.That(attribution, Does.Contain("CC BY 4.0"));
                     continue;
                 }
                 var magic = new byte[8];
                 asset.ReadExactly(magic);
-                bool valid = entry.FullName.EndsWith(".kn5", StringComparison.Ordinal)
-                    ? magic.AsSpan(0, 6).SequenceEqual("sc6969"u8)
-                    : magic.AsSpan().SequenceEqual(
+                bool valid;
+                if (entry.FullName.EndsWith(".kn5", StringComparison.Ordinal))
+                    valid = magic.AsSpan(0, 6).SequenceEqual("sc6969"u8);
+                else if (entry.FullName.EndsWith(".ksanim", StringComparison.Ordinal))
+                    valid = BitConverter.ToUInt32(magic, 0) == 2;
+                else
+                    valid = magic.AsSpan().SequenceEqual(
                         new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a });
                 Assert.That(valid, Is.True, entry.FullName);
                 Assert.That(entry.Length, Is.GreaterThan(1_024), entry.FullName);
@@ -54,9 +65,24 @@ public sealed class FpsClientAssetArchiveTests
             byte[] rifle = ReadEntry(archive, FpsClientAssetArchive.WorldModelFileName);
             byte[] desertEagle = ReadEntry(archive,
                 FpsClientAssetArchive.DesertEagleWorldModelFileName);
+            byte[] desertEagleViewmodel = ReadEntry(archive,
+                FpsClientAssetArchive.DesertEagleViewmodelFileName);
+            Assert.That(desertEagleViewmodel, Has.Length.GreaterThan(24_000_000));
             Assert.That(desertEagle, Has.Length.GreaterThan(6_000_000));
             Assert.That(desertEagle.SequenceEqual(rifle), Is.False,
                 "The Desert Eagle must not regress to the rifle placeholder payload");
+            foreach (string animation in FpsClientAssetArchive.DesertEagleAnimationFileNames)
+                Assert.That(ReadEntry(archive, animation), Has.Length.GreaterThan(10_000), animation);
+            byte[] colt1911 = ReadEntry(archive,
+                FpsClientAssetArchive.Colt1911WorldModelFileName);
+            byte[] colt1911Viewmodel = ReadEntry(archive,
+                FpsClientAssetArchive.Colt1911ViewmodelFileName);
+            Assert.That(colt1911Viewmodel, Has.Length.GreaterThan(10_000_000));
+            Assert.That(colt1911, Has.Length.GreaterThan(1_000_000));
+            Assert.That(colt1911.SequenceEqual(rifle), Is.False,
+                "The Colt 1911 must not regress to the rifle placeholder payload");
+            foreach (string animation in FpsClientAssetArchive.Colt1911AnimationFileNames)
+                Assert.That(ReadEntry(archive, animation), Has.Length.GreaterThan(10_000), animation);
         });
     }
 

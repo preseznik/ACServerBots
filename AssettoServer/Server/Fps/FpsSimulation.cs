@@ -1494,7 +1494,8 @@ internal sealed class FpsSimulation
         if (attacker.AmmoInMagazine == 0) BeginReload(attacker);
 
         if (hit is null) return;
-        ApplyDamage(attacker, hit, firearm.Damage, (byte)attacker.WeaponType,
+        ApplyDamage(attacker, hit, firearm.DamageAtDistance(hitDistance),
+            (byte)attacker.WeaponType,
             hitHeightRatio);
     }
 

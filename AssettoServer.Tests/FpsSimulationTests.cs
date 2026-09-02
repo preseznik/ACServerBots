@@ -42,6 +42,67 @@ public sealed class FpsSimulationTests
         });
     }
 
+    [TestCase(FpsWeaponType.AssaultRifle, 20f, 34)]
+    [TestCase(FpsWeaponType.AssaultRifle, 20.01f, 24)]
+    [TestCase(FpsWeaponType.AssaultRifle, 45f, 24)]
+    [TestCase(FpsWeaponType.AssaultRifle, 45.01f, 17)]
+    [TestCase(FpsWeaponType.CompactSmg, 20f, 25)]
+    [TestCase(FpsWeaponType.CompactSmg, 30f, 18)]
+    [TestCase(FpsWeaponType.CompactSmg, 50f, 13)]
+    [TestCase(FpsWeaponType.DesertEagle, 8f, 55)]
+    [TestCase(FpsWeaponType.DesertEagle, 8.01f, 39)]
+    [TestCase(FpsWeaponType.DesertEagle, 15f, 39)]
+    [TestCase(FpsWeaponType.DesertEagle, 15.01f, 28)]
+    [TestCase(FpsWeaponType.Colt1911, 8f, 34)]
+    [TestCase(FpsWeaponType.Colt1911, 12f, 24)]
+    [TestCase(FpsWeaponType.Colt1911, 16f, 17)]
+    public void FirearmEffectiveRangeSelectsDamageBand(FpsWeaponType weapon,
+        float distance, int expectedDamage)
+    {
+        Assert.That(FpsItems.Firearm(weapon).DamageAtDistance(distance),
+            Is.EqualTo(expectedDamage));
+    }
+
+    [TestCase(FpsWeaponType.AssaultRifle, 10f, 34)]
+    [TestCase(FpsWeaponType.AssaultRifle, 30f, 24)]
+    [TestCase(FpsWeaponType.AssaultRifle, 50f, 17)]
+    [TestCase(FpsWeaponType.DesertEagle, 5f, 55)]
+    [TestCase(FpsWeaponType.DesertEagle, 12f, 39)]
+    [TestCase(FpsWeaponType.DesertEagle, 20f, 28)]
+    public void AuthoritativeHitDamageUsesWeaponEffectiveRange(FpsWeaponType weapon,
+        float targetDistance, int expectedDamage)
+    {
+        var simulation = new FpsSimulation(Configuration(),
+        [
+            new(0, "Shooter", FpsSlotRole.Human),
+            new(1, "Target", FpsSlotRole.Human),
+        ]);
+        simulation.ClaimHuman(0);
+        simulation.ClaimHuman(1);
+        var actors = simulation.Actors.OrderBy(actor => actor.Id).ToArray();
+        actors[0].Position = Vector3.Zero;
+        actors[1].Position = new Vector3(0, 0, targetDistance);
+        if (weapon is FpsWeaponType.DesertEagle or FpsWeaponType.Colt1911)
+        {
+            actors[0].Loadout = new FpsLoadout(FpsWeaponType.AssaultRifle,
+                FpsLethalType.FragGrenade, weapon);
+            actors[0].ActiveWeaponSlot = 1;
+            actors[0].AmmoInMagazine = FpsItems.Firearm(weapon).MagazineCapacity;
+        }
+
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire, actors[0].ActiveWeaponSlot));
+        simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.ShotEvents.Single().Impact,
+                Is.EqualTo(FpsShotImpact.Actor));
+            Assert.That(actors[1].Health, Is.EqualTo(100 - expectedDamage));
+            Assert.That(simulation.HitEvents, Has.Count.EqualTo(1));
+        });
+    }
+
     [Test]
     public void KillAndAssistScoresAreAwardedOncePerVictimLife()
     {

@@ -35,5 +35,25 @@ The FPS loadout uses the downloadable Desert Eagle model and textures by ELIZION
 
 The model parts are regrouped by material, reoriented around the grip, textures are
 downsampled for real-time use, and the FBX source is converted to Assetto Corsa KN5.
+The first-person derivative combines that geometry with the separately licensed
+project carbine's existing arm mesh, skeleton, textures, and animation tracks.
+The shipped derivative replaces the copied carbine tracks with project-authored
+pistol hand-placement and magazine-reload animation on that same skeleton.
+The CC BY 4.0 license text is available at
+https://creativecommons.org/licenses/by/4.0/.
+
+## M1911 3D model
+
+The FPS loadout uses the downloadable M1911 pistol, magazine, and textures by DanaeH.
+
+- Source: https://sketchfab.com/3d-models/m1911-pistol-with-magazine-and-bullet-131085c22ece47a08076d8ddc0b9f21a
+- Author: DanaeH
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+The pistol is reoriented and regrouped around its grip, the separately authored
+magazine is inserted into the weapon, loose cartridge display geometry is omitted,
+textures are downsampled, and the FBX source is converted to Assetto Corsa KN5.
+The first-person derivative combines that geometry with the project carbine's
+existing right-arm mesh and skeleton plus project-authored pistol animation tracks.
 The CC BY 4.0 license text is available at
 https://creativecommons.org/licenses/by/4.0/.

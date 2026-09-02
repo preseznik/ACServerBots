@@ -8,8 +8,8 @@ namespace AssettoServer.Server.Fps;
 
 internal static class FpsClientAssetArchive
 {
-    public const string Route = "/fps/assets/asrc-fps-assets-v9.zip";
-    public const string FileName = "asrc-fps-assets-v9.zip";
+    public const string Route = "/fps/assets/asrc-fps-assets-v19.zip";
+    public const string FileName = "asrc-fps-assets-v19.zip";
     public const string ViewmodelFileName = "asrc_assault_rifle_viewmodel.kn5";
     public const string WorldModelFileName = "asrc_assault_rifle_world.kn5";
     public const string RifleDiffuseFileName = "asrc_rifle_diffuse.png";
@@ -18,12 +18,29 @@ internal static class FpsClientAssetArchive
     public const string DesertEagleViewmodelFileName = "asrc_desert_eagle_viewmodel.kn5";
     public const string DesertEagleWorldModelFileName = "asrc_desert_eagle_world.kn5";
     public const string DesertEagleAttributionFileName = "desert-eagle-attribution.txt";
+    public static readonly string[] DesertEagleAnimationFileNames =
+    [
+        "asrc_desert_eagle_idle.ksanim",
+        "asrc_desert_eagle_fire.ksanim",
+        "asrc_desert_eagle_equip.ksanim",
+        "asrc_desert_eagle_sprint.ksanim",
+        "asrc_desert_eagle_reload.ksanim",
+    ];
+    public const string Colt1911ViewmodelFileName = "asrc_colt_1911_viewmodel.kn5";
+    public const string Colt1911WorldModelFileName = "asrc_colt_1911_world.kn5";
+    public const string Colt1911AttributionFileName = "colt-1911-attribution.txt";
+    public static readonly string[] Colt1911AnimationFileNames =
+    [
+        "asrc_colt_1911_idle.ksanim",
+        "asrc_colt_1911_fire.ksanim",
+        "asrc_colt_1911_equip.ksanim",
+        "asrc_colt_1911_sprint.ksanim",
+        "asrc_colt_1911_reload.ksanim",
+    ];
     public static readonly string[] PlaceholderItemFileNames =
     [
         "asrc_compact_smg_viewmodel.kn5",
         "asrc_compact_smg_world.kn5",
-        "asrc_colt_1911_viewmodel.kn5",
-        "asrc_colt_1911_world.kn5",
         "asrc_frag_grenade_world.kn5",
         "asrc_sticky_grenade_world.kn5",
     ];
@@ -45,6 +62,16 @@ internal static class FpsClientAssetArchive
                 "AssettoServer.Server.Fps.Assets.asrc_desert_eagle_viewmodel.kn5");
             AddKn5(archive, DesertEagleWorldModelFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_desert_eagle_world.kn5");
+            foreach (string fileName in DesertEagleAnimationFileNames)
+                AddKsanim(archive, fileName,
+                    $"AssettoServer.Server.Fps.Assets.{fileName}");
+            AddKn5(archive, Colt1911ViewmodelFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_colt_1911_viewmodel.kn5");
+            AddKn5(archive, Colt1911WorldModelFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_colt_1911_world.kn5");
+            foreach (string fileName in Colt1911AnimationFileNames)
+                AddKsanim(archive, fileName,
+                    $"AssettoServer.Server.Fps.Assets.{fileName}");
             foreach (string fileName in PlaceholderItemFileNames)
                 AddKn5(archive, fileName,
                     "AssettoServer.Server.Fps.Assets.asrc_assault_rifle_world.kn5");
@@ -55,7 +82,9 @@ internal static class FpsClientAssetArchive
             AddPng(archive, HudWeaponImageFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_carbine_hud.png");
             AddText(archive, DesertEagleAttributionFileName,
-                "AssettoServer.Server.Fps.Assets.asrc_desert_eagle_attribution.txt");
+                "AssettoServer.Server.Fps.Assets.asrc_desert_eagle_attribution.txt", "ELIZION");
+            AddText(archive, Colt1911AttributionFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_colt_1911_attribution.txt", "DanaeH");
         }
 
         return output.ToArray();
@@ -97,7 +126,25 @@ internal static class FpsClientAssetArchive
         resource.CopyTo(destination);
     }
 
-    private static void AddText(ZipArchive archive, string fileName, string resourceName)
+    private static void AddKsanim(ZipArchive archive, string fileName, string resourceName)
+    {
+        using Stream resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+                                ?? throw new InvalidOperationException(
+                                    $"Embedded FPS client animation was not found: {resourceName}");
+        Span<byte> version = stackalloc byte[4];
+        resource.ReadExactly(version);
+        if (resource.Length < 32 || BitConverter.ToUInt32(version) != 2)
+            throw new InvalidDataException(
+                $"Embedded FPS client animation is not a valid KSANIM: {resourceName}");
+        resource.Position = 0;
+
+        ZipArchiveEntry entry = archive.CreateEntry(fileName, CompressionLevel.Optimal);
+        using Stream destination = entry.Open();
+        resource.CopyTo(destination);
+    }
+
+    private static void AddText(ZipArchive archive, string fileName, string resourceName,
+        string expectedAuthor)
     {
         using Stream resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
                                 ?? throw new InvalidOperationException(
@@ -105,7 +152,7 @@ internal static class FpsClientAssetArchive
         using var reader = new StreamReader(resource, leaveOpen: true);
         string text = reader.ReadToEnd();
         if (!text.Contains("CC BY 4.0", StringComparison.Ordinal)
-            || !text.Contains("ELIZION", StringComparison.Ordinal))
+            || !text.Contains(expectedAuthor, StringComparison.Ordinal))
             throw new InvalidDataException($"Embedded FPS attribution is invalid: {resourceName}");
         ZipArchiveEntry entry = archive.CreateEntry(fileName, CompressionLevel.Optimal);
         using var writer = new StreamWriter(entry.Open());

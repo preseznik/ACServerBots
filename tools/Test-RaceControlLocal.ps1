@@ -216,10 +216,16 @@ try {
         $httpClient = [Net.Http.HttpClient]::new()
         $httpClient.Timeout = [TimeSpan]::FromSeconds(2)
         try {
-            $assetUrls = @(
-                'http://127.0.0.1:18081/fps/assets/asrc-fps-assets-v8.zip',
-                'http://127.0.0.1:18081/fps/assets/asrc-fps-modern-v8.zip'
-            )
+            $serverExecutable = Join-Path $serverPayload 'AssettoServer.exe'
+            $assetRoutes = @(& rg -a -o '/fps/assets/asrc-fps-(assets|modern)-v[0-9]+\.zip' $serverExecutable |
+                Sort-Object -Unique)
+            if ($LASTEXITCODE -ne 0) {
+                throw "Could not inspect packaged FPS asset routes in $serverExecutable."
+            }
+            if ($assetRoutes.Count -ne 2) {
+                throw "Expected one base and one Modern packaged FPS asset archive route; found $($assetRoutes.Count)."
+            }
+            $assetUrls = @($assetRoutes | ForEach-Object { "http://127.0.0.1:18081$_" })
             foreach ($assetUrl in $assetUrls) {
                 $assetDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
                 $assetArchiveBytes = $null

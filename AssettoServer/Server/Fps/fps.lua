@@ -29,6 +29,7 @@ local fpsVisual = {
   carrierControlsOverrideErrorLogged = false,
   viewmodelFireUntil = 0,
   viewmodelEquipUntil = 0,
+  viewmodelPistolPoseSeedPending = false,
   muzzleLights = {},
   muzzleLightUnavailable = false,
   muzzleLightLifetime = 0.055,
@@ -49,18 +50,34 @@ local fpsVisual = {
     exhaustionRelease = 25,
   },
   hudWeapon = {
-    archivePath = '/fps/assets/asrc-fps-assets-v9.zip',
+    archivePath = '/fps/assets/asrc-fps-assets-v19.zip',
     fileName = 'asrc_carbine_hud.png',
     imagePath = nil,
     loading = false,
     failed = false,
   },
-  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v9.zip',
+  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v19.zip',
   loadoutAssetFolder = nil,
   loadoutAssetsLoading = false,
   loadoutAssetsFailed = false,
   desertEagleViewmodelFileName = 'asrc_desert_eagle_viewmodel.kn5',
   desertEagleWorldModelFileName = 'asrc_desert_eagle_world.kn5',
+  desertEagleClips = {
+    idle = 'asrc_desert_eagle_idle.ksanim',
+    fire = 'asrc_desert_eagle_fire.ksanim',
+    equip = 'asrc_desert_eagle_equip.ksanim',
+    sprint = 'asrc_desert_eagle_sprint.ksanim',
+    reload = 'asrc_desert_eagle_reload.ksanim',
+  },
+  colt1911ViewmodelFileName = 'asrc_colt_1911_viewmodel.kn5',
+  colt1911WorldModelFileName = 'asrc_colt_1911_world.kn5',
+  colt1911Clips = {
+    idle = 'asrc_colt_1911_idle.ksanim',
+    fire = 'asrc_colt_1911_fire.ksanim',
+    equip = 'asrc_colt_1911_equip.ksanim',
+    sprint = 'asrc_colt_1911_sprint.ksanim',
+    reload = 'asrc_colt_1911_reload.ksanim',
+  },
   loadedViewmodelAsset = nil,
   pickups = {},
   operatorClips = {
@@ -179,7 +196,7 @@ local function clientAssetPath(relativePath)
 end
 local rifleAudioRelativePath = 'extension/audio/asrc_fps/rifle.wav'
 local rifleAudioPath = clientAssetPath(rifleAudioRelativePath)
-local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v9.zip'
+local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v19.zip'
 local rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
 local rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
 local rifleDiffuseFileName = 'asrc_rifle_diffuse.png'
@@ -239,6 +256,7 @@ local crouchLatched = false
 local cameraHeight = 1.65
 local thirdPersonEnabled = false
 local thirdPersonToggleWasHeld = false
+local weaponSwitchWasHeld = false
 local localAvatarReady = false
 local localAvatarKind = 'none'
 local localAvatarErrorLogged = false
@@ -660,7 +678,7 @@ function fpsVisual.setActorWeaponVisible(actor, visible)
     actor.weaponRoot:setVisible(visible, false)
   end
   if actor.weaponMesh ~= nil and actor.weaponMesh ~= false then
-    actor.weaponMesh:setVisible(visible and actor.weaponAsset ~= 3, false)
+    actor.weaponMesh:setVisible(visible and not fpsVisual.isPistolAsset(actor.weaponAsset), false)
   end
 end
 
@@ -1151,6 +1169,7 @@ hud.snapshotEvent = ac.OnlineEvent({
         predictionClearSnapshots = 0
         jumpWasHeld = false
         crouchWasHeld = false
+        weaponSwitchWasHeld = false
         crouchHeldSeconds = 0
         crouchLatched = false
         fpsVisual.crouchToggleReleaseStands = false
@@ -1782,7 +1801,7 @@ function fpsVisual.fallback(reason)
   rifleAssetsLoading = false
   rifleAssetsFailed = false
   rifleAssetWaitLogged = false
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v9.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v19.zip'
   rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
   fpsVisual.pickupFileName = rifleWorldModelFileName
@@ -1791,6 +1810,7 @@ function fpsVisual.fallback(reason)
   rifleViewmodelPath = nil
   rifleWorldModelPath = nil
   fpsVisual.loadedViewmodelAsset = nil
+  fpsVisual.viewmodelPistolPoseSeedPending = false
   rifleDiffusePath = nil
   operatorSkinPath = nil
   fpsVisual.pickupPath = nil
@@ -1836,34 +1856,59 @@ function fpsVisual.activeWeapon(actor)
 end
 
 function fpsVisual.weaponAssetKey(actor)
-  return fpsVisual.activeWeapon(actor) == 3 and 3 or 1
+  local weapon = fpsVisual.activeWeapon(actor)
+  return fpsVisual.isPistolAsset(weapon) and weapon or 1
+end
+
+function fpsVisual.isPistolAsset(assetKey)
+  return assetKey == 3 or assetKey == 4
+end
+
+function fpsVisual.pistolClips(assetKey)
+  return assetKey == 4 and fpsVisual.colt1911Clips or fpsVisual.desertEagleClips
+end
+
+function fpsVisual.pistolViewmodelFileName(assetKey)
+  return assetKey == 4 and fpsVisual.colt1911ViewmodelFileName
+    or fpsVisual.desertEagleViewmodelFileName
+end
+
+function fpsVisual.pistolWorldModelFileName(assetKey)
+  return assetKey == 4 and fpsVisual.colt1911WorldModelFileName
+    or fpsVisual.desertEagleWorldModelFileName
 end
 
 function fpsVisual.viewmodelPath(assetKey)
-  if assetKey == 3 and fpsVisual.loadoutAssetFolder ~= nil then
-    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.desertEagleViewmodelFileName
+  if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder ~= nil then
+    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.pistolViewmodelFileName(assetKey)
   end
   return rifleViewmodelPath
 end
 
 function fpsVisual.worldModelPath(assetKey)
-  if assetKey == 3 and fpsVisual.loadoutAssetFolder ~= nil then
-    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.desertEagleWorldModelFileName
+  if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder ~= nil then
+    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.pistolWorldModelFileName(assetKey)
   end
   return rifleWorldModelPath
 end
 
 function fpsVisual.actorWeaponPosition(actor)
   local kick = actor.weaponKick or 0
-  if actor.weaponAsset == 3 then return vec3(0.22, 1.13, 0.39 - kick * 0.04) end
+  if fpsVisual.isPistolAsset(actor.weaponAsset) then
+    return vec3(0.22, 1.13, 0.39 - kick * 0.04)
+  end
   return vec3(0.22, 1.13, 0.08 - kick * 0.07)
 end
 
 function fpsVisual.requestLoadoutAssets()
   if fpsVisual.loadoutAssetFolder ~= nil or fpsVisual.loadoutAssetsLoading
       or fpsVisual.loadoutAssetsFailed then return end
-  if not fpsVisual.modern and rifleAssetFolder ~= nil then
-    fpsVisual.loadoutAssetFolder = rifleAssetFolder
+  if not fpsVisual.modern then
+    if rifleAssetFolder ~= nil then
+      fpsVisual.loadoutAssetFolder = rifleAssetFolder
+    else
+      requestRifleAssets()
+    end
     return
   end
   local archiveUrl = getAssetArchiveUrl(fpsVisual.loadoutAssetArchivePath)
@@ -1882,6 +1927,12 @@ function fpsVisual.requestLoadoutAssets()
       return
     end
     fpsVisual.loadoutAssetFolder = folder
+    local weapon = fpsVisual.hudWeapon
+    if weapon.archivePath == fpsVisual.loadoutAssetArchivePath then
+      weapon.imagePath = folder .. '/' .. weapon.fileName
+      weapon.loading = false
+      weapon.failed = false
+    end
     ac.log('[ASRC FPS] loadout weapon assets cached: ' .. folder)
   end)
 end
@@ -1889,6 +1940,19 @@ end
 function hud.requestWeaponImage()
   local weapon = fpsVisual.hudWeapon
   if weapon.imagePath ~= nil or weapon.loading or weapon.failed then return end
+  -- CSP extracts each remote-assets URL into one shared cache folder. Starting a
+  -- second request for the same URL races its temporary-file finalization, so the
+  -- HUD image must consume the loadout archive request instead of downloading it.
+  if weapon.archivePath == fpsVisual.loadoutAssetArchivePath then
+    if fpsVisual.loadoutAssetFolder ~= nil then
+      weapon.imagePath = fpsVisual.loadoutAssetFolder .. '/' .. weapon.fileName
+    elseif fpsVisual.loadoutAssetsFailed then
+      weapon.failed = true
+    else
+      fpsVisual.requestLoadoutAssets()
+    end
+    return
+  end
   local archiveUrl = getAssetArchiveUrl(weapon.archivePath)
   if archiveUrl == nil then return end
   weapon.loading = true
@@ -1973,6 +2037,7 @@ local function ensureLocalViewmodel()
     viewmodelDirectDrawCompletions = 0
     viewmodelStagesSeen['native-scene:deferred'] = nil
     viewmodelStagesSeen['native-scene:ready'] = nil
+    fpsVisual.viewmodelPistolPoseSeedPending = false
   end
   if viewmodelRoot ~= nil then return viewmodelRoot ~= false end
   if rifleAssetFolder == nil then
@@ -1980,8 +2045,8 @@ local function ensureLocalViewmodel()
     requestRifleAssets()
     return false
   end
-  if assetKey == 3 and fpsVisual.loadoutAssetFolder == nil then
-    markViewmodelStage('loadout-asset-wait', fpsVisual.desertEagleViewmodelFileName)
+  if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
+    markViewmodelStage('loadout-asset-wait', fpsVisual.pistolViewmodelFileName(assetKey))
     fpsVisual.requestLoadoutAssets()
     return false
   end
@@ -2007,10 +2072,21 @@ local function ensureLocalViewmodel()
     model:setCullMode(render.CullMode.None)
     model:setDepthMode(render.DepthMode.Normal)
     model:setMotionStencil(1)
-    if assetKey ~= 3 and rifleDiffusePath ~= nil then
+    if not fpsVisual.isPistolAsset(assetKey) and rifleDiffusePath ~= nil then
       pcall(function() model:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
     end
-    if fpsVisual.modern and assetKey ~= 3 then
+    if fpsVisual.isPistolAsset(assetKey) then
+      -- A newly loaded KN5 starts in its authored two-arm rest pose. CSP skips
+      -- constant bone channels in the non-reload clips, but evaluates the
+      -- support arm in reload because that channel moves. Seed reload frame 0
+      -- for one hidden scene update before equip so every fresh pistol instance
+      -- begins with the support shoulder below the view frustum.
+      model:setAnimation(fpsVisual.loadoutAssetFolder .. '/'
+        .. fpsVisual.pistolClips(assetKey).reload, 0, true)
+      fpsVisual.viewmodelPistolPoseSeedPending = true
+      fpsVisual.viewmodelEquipUntil = effectClock + 0.55
+    elseif fpsVisual.modern then
+      fpsVisual.viewmodelPistolPoseSeedPending = false
       model:setAnimation(fpsVisual.asset(fpsVisual.viewmodelClips.equip), 0, true)
       fpsVisual.viewmodelEquipUntil = effectClock + 0.55
     end
@@ -2021,14 +2097,14 @@ local function ensureLocalViewmodel()
     if viewmodelHolder ~= nil then viewmodelHolder:dispose() end
     viewmodelHolder = nil
     fpsVisual.loadedViewmodelAsset = assetKey
-    if fpsVisual.modern and assetKey ~= 3 then
+    if fpsVisual.modern and not fpsVisual.isPistolAsset(assetKey) then
       viewmodelRoot = nil
       fpsVisual.fallback('viewmodel load: ' .. tostring(result))
       return false
     end
     viewmodelRoot = false
     clientPackError = fpsVisual.error
-      or (assetKey == 3 and 'FPS DESERT EAGLE VIEWMODEL ERROR - CHECK LIVE LOG'
+      or (fpsVisual.isPistolAsset(assetKey) and 'FPS PISTOL VIEWMODEL ERROR - CHECK LIVE LOG'
         or 'FPS RIFLE MODEL ERROR - CACHED VIEWMODEL COULD NOT BE LOADED')
     ac.warn('[ASRC FPS] cached weapon viewmodel failed: ' .. tostring(result)
       .. '; cached path ' .. tostring(viewmodelPath) .. '; using 2D fallback')
@@ -2172,11 +2248,11 @@ local function ensureAvatar(actor)
     actor.weaponRoot = nil
     actor.weaponAsset = assetKey
   end
-  if assetKey == 3 and fpsVisual.loadoutAssetFolder == nil then
+  if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
     fpsVisual.requestLoadoutAssets()
     return
   end
-  if fpsVisual.modern and assetKey ~= 3 then
+  if fpsVisual.modern and not fpsVisual.isPistolAsset(assetKey) then
     actor.weaponRoot = false
     return
   end
@@ -2189,10 +2265,10 @@ local function ensureAvatar(actor)
   end)
   actor.weaponRoot = weaponOk and weapon or nil
   if actor.weaponRoot == nil then
-    if assetKey == 3 then
+    if fpsVisual.isPistolAsset(assetKey) then
       actor.weaponRoot = false
-      clientPackError = 'FPS DESERT EAGLE WORLD MODEL ERROR - CHECK LIVE LOG'
-      ac.warn('[ASRC FPS] cached Desert Eagle world model unavailable at '
+      clientPackError = 'FPS PISTOL WORLD MODEL ERROR - CHECK LIVE LOG'
+      ac.warn('[ASRC FPS] cached pistol world model unavailable at '
         .. tostring(worldModelPath))
       return
     end
@@ -2204,7 +2280,7 @@ local function ensureAvatar(actor)
     end
   end
   if actor.weaponRoot ~= nil then
-    if assetKey ~= 3 and rifleDiffusePath ~= nil then
+    if not fpsVisual.isPistolAsset(assetKey) and rifleDiffusePath ~= nil then
       pcall(function() actor.weaponRoot:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
     end
     actor.weaponRoot:setPosition(fpsVisual.actorWeaponPosition(actor))
@@ -2214,14 +2290,14 @@ end
 function fpsVisual.updatePickups()
   if rifleAssetFolder == nil then return end
   for _, pickup in pairs(fpsVisual.pickups) do
-    local assetKey = pickup.weaponType == 3 and 3 or 1
-    if assetKey == 3 and fpsVisual.loadoutAssetFolder == nil then
+    local assetKey = fpsVisual.isPistolAsset(pickup.weaponType) and pickup.weaponType or 1
+    if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
       fpsVisual.requestLoadoutAssets()
     elseif pickup.root == nil then
       local loaded, rootOrError = pcall(function()
         local root = carsRoot:createBoundingSphereNode('ASRC_FPS_PICKUP_' .. pickup.id, 1.2)
         if root == nil then error('pickup holder could not be created') end
-        local modelPath = assetKey == 3 and fpsVisual.worldModelPath(assetKey)
+        local modelPath = fpsVisual.isPistolAsset(assetKey) and fpsVisual.worldModelPath(assetKey)
           or fpsVisual.pickupPath
         local model = root:loadKN5({filename = modelPath, forceRenderableOn = true})
         if model == nil then
@@ -2647,13 +2723,20 @@ function fpsVisual.updateActorAnimation(actor, dt)
 end
 
 function fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint)
-  if not fpsVisual.modern or fpsVisual.loadedViewmodelAsset == 3
+  if (not fpsVisual.modern and not fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset))
       or viewmodelRoot == nil or viewmodelRoot == false then return true end
+  if fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)
+      and fpsVisual.viewmodelPistolPoseSeedPending then
+    fpsVisual.viewmodelPistolPoseSeedPending = false
+    return true
+  end
   fpsVisual.viewmodelPhase = ((fpsVisual.viewmodelPhase or 0) + dt * 1.15) % 1
   local clip = 'idle'
   local position = fpsVisual.viewmodelPhase
   if actor.reloadRemaining > 0 then
-    clip = actor.ammo == 0 and 'reload_empty' or 'reload'
+    clip = fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)
+      and 'reload'
+      or (actor.ammo == 0 and 'reload_empty' or 'reload')
     position = math.clamp(1 - actor.reloadRemaining / 1.8, 0, 1)
   elseif fpsVisual.viewmodelFireUntil > effectClock then
     clip = 'fire'
@@ -2665,10 +2748,19 @@ function fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint)
     clip = 'sprint'
   end
   local ok, err = pcall(function()
-    viewmodelRoot:setAnimation(fpsVisual.asset(fpsVisual.viewmodelClips[clip]), position, true)
+    local animationPath = fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)
+      and (fpsVisual.loadoutAssetFolder .. '/'
+        .. fpsVisual.pistolClips(fpsVisual.loadedViewmodelAsset)[clip])
+      or fpsVisual.asset(fpsVisual.viewmodelClips[clip])
+    viewmodelRoot:setAnimation(animationPath, position, true)
   end)
   if not ok then
-    fpsVisual.fallback('viewmodel animation: ' .. tostring(err))
+    if fpsVisual.modern then
+      fpsVisual.fallback('viewmodel animation: ' .. tostring(err))
+    else
+      clientPackError = 'FPS PISTOL ANIMATION ERROR - CHECK LIVE LOG'
+      ac.warn('[ASRC FPS] pistol viewmodel animation failed: ' .. tostring(err))
+    end
     return false
   end
   return true
@@ -2682,7 +2774,8 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   if not visible or camera == nil or not camera:active() then return end
   viewmodelKick = viewmodelKick * math.exp(-dt * 17)
   local moving = move:lengthSquared() > 0.01
-  local modernViewmodel = fpsVisual.modern and fpsVisual.loadedViewmodelAsset ~= 3
+  local pistolViewmodel = fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)
+  local modernViewmodel = fpsVisual.modern or pistolViewmodel
   if not fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint) then return end
   if moving then viewmodelBobTime = viewmodelBobTime + dt * (sprint and 12 or 8) end
   -- Camera and weapon scene transforms are submitted together in frameBegin. Keeping
@@ -2707,16 +2800,23 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
     and math.clamp((0.9 - wallHit) / 0.75, 0, 1) or 0
   viewmodelWallRetraction = math.lerp(viewmodelWallRetraction, wallRetractionTarget,
     1 - math.exp(-dt * 18))
-  local hipForward = modernViewmodel and 0.32 or 0.30
-  local hipRight = modernViewmodel and -0.18 or 0.22
-  local hipUp = modernViewmodel and -0.32 or -0.20
+  local hipForward = pistolViewmodel and 0.39 or (modernViewmodel and 0.32 or 0.30)
+  local hipRight = pistolViewmodel and -0.15 or (modernViewmodel and -0.18 or 0.22)
+  local hipUp = pistolViewmodel and -0.24 or (modernViewmodel and -0.32 or -0.20)
   -- The Modern KN5 faces back toward its root, so its apparent screen-right
   -- direction is opposite the holder translation. These calibrated offsets put
   -- the optic axis on the camera look vector and bring the rear sight close
   -- enough to read as true ADS instead of a zoomed hip-fire pose.
-  local adsForward = modernViewmodel and 0.12 or 0.38
-  local adsRight = modernViewmodel and 0.0003 or 0.00
-  local adsUp = modernViewmodel and -0.2218 or -0.10
+  local adsForward = pistolViewmodel and 0.34 or (modernViewmodel and 0.12 or 0.38)
+  local adsRight = pistolViewmodel and 0.035 or (modernViewmodel and 0.0003 or 0.00)
+  local adsUp = pistolViewmodel and -0.12 or (modernViewmodel and -0.2218 or -0.10)
+  local pistolReloadPhase = pistolViewmodel and actor.reloadRemaining > 0
+    and math.clamp(1 - actor.reloadRemaining / 1.8, 0, 1) or 0
+  local pistolReloadLower = fpsVisual.smoothstep01(
+    math.clamp(pistolReloadPhase / 0.22, 0, 1))
+  local pistolReloadRaise = fpsVisual.smoothstep01(
+    math.clamp((pistolReloadPhase - 0.72) / 0.28, 0, 1))
+  local pistolReloadWeight = pistolReloadLower * (1 - pistolReloadRaise)
   local visualKickScale = math.lerp(1, 0.35, fpsVisual.ads)
   -- At steep downward pitch the source arms extend beyond their authored first-person
   -- framing. Pull the Modern rig toward the camera on a smooth cubic curve so close
@@ -2733,14 +2833,24 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
     + viewUp * (math.lerp(hipUp, adsUp, fpsVisual.ads)
       - bobY - sprintLower + viewmodelKick * 0.012 * visualKickScale
       - viewmodelWallRetraction * 0.12)
+    + right * (0.035 * pistolReloadWeight)
+    - viewUp * (0.035 * pistolReloadWeight)
   viewmodelLastPosition = position:clone()
   viewmodelRenderPosition = position:clone()
-  viewmodelRenderLook = look:clone()
-  viewmodelRenderUp = viewUp:clone()
+  local pistolReloadAngle = math.rad(22) * pistolReloadWeight
+  if pistolReloadAngle > 0 then
+    local reloadCos = math.cos(pistolReloadAngle)
+    local reloadSin = math.sin(pistolReloadAngle)
+    viewmodelRenderLook = look * reloadCos - viewUp * reloadSin
+    viewmodelRenderUp = viewUp * reloadCos + look * reloadSin
+  else
+    viewmodelRenderLook = look:clone()
+    viewmodelRenderUp = viewUp:clone()
+  end
   localMuzzlePosition:set(position
-    + look * (fpsVisual.loadedViewmodelAsset == 3 and 0.58
+    + look * (pistolViewmodel and 0.58
       or (modernViewmodel and 0.67 or 0.99))
-    + viewUp * (fpsVisual.loadedViewmodelAsset == 3 and 0.10
+    + viewUp * (pistolViewmodel and 0.10
       or (modernViewmodel and 0.08 or 0.02)))
   viewmodelUpdateCompletions = viewmodelUpdateCompletions + 1
   if not viewmodelStagesSeen['native-transform:ready'] then
@@ -3339,12 +3449,20 @@ function script.update(dt)
     local crouch = hud.bindingDown('crouch', ac.isKeyDown(ac.KeyIndex.C))
     local crouchToggleMode = hud.controlSettings.crouchToggle == true
     local reload = hud.bindingDown('reload', ac.isKeyDown(ac.KeyIndex.R))
+    local gamepadWeaponSwitch = ac.isGamepadButtonPressed(0, ac.GamepadButton.Y)
+    local gamepadGrenade = ac.isGamepadButtonPressed(0, ac.GamepadButton.RightShoulder)
     local grenade = hud.bindingDown('grenade', ac.isKeyDown(ac.KeyIndex.G))
+      or gamepadGrenade
     if not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D1) then
       hud.loadout.activeSlot = 0
     elseif not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D2) then
       hud.loadout.activeSlot = 1
+    elseif not cursorUnlocked and gamepadWeaponSwitch and not weaponSwitchWasHeld then
+      hud.loadout.activeSlot = hud.loadout.activeSlot == 0 and 1 or 0
+      ac.log('[ASRC FPS] Xbox Y switched weapon slot to '
+        .. tostring(hud.loadout.activeSlot + 1))
     end
+    weaponSwitchWasHeld = gamepadWeaponSwitch
     jumpStarted = jump and not jumpWasHeld
     local crouchPressed = crouch and not crouchWasHeld
     local jumpConsumed = false
@@ -3474,6 +3592,7 @@ function script.update(dt)
     fpsVisual.adsInput = 0
     fpsVisual.ads = 0
     thirdPersonToggleWasHeld = false
+    weaponSwitchWasHeld = false
     jumpWasHeld = false
     predictedHorizontalVelocity = vec2()
     predictedAirborne = false
@@ -4082,6 +4201,9 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
   ui.setCursor(left + vec2(0, 49) * scale)
   ui.textColored('Select an action, then press a keyboard or mouse button.',
     rgbm(0.55, 0.76, 0.9, 1))
+  ui.setCursor(left + vec2(0, 68) * scale)
+  ui.textColored('XBOX:  Y  SWITCH WEAPON    •    RB  GRENADE',
+    rgbm(0.72, 0.8, 0.86, 1))
 
   for index = 1, #controls do
     local item = controls[index]

@@ -23,12 +23,30 @@ public static class FpsClientPackAssets
         "content/objects3D/asrc_fps/asrc_desert_eagle_viewmodel.kn5";
     public const string DesertEagleWorldModelPath =
         "content/objects3D/asrc_fps/asrc_desert_eagle_world.kn5";
+    public static readonly string[] DesertEagleAnimationPaths =
+    [
+        "content/objects3D/asrc_fps/asrc_desert_eagle_idle.ksanim",
+        "content/objects3D/asrc_fps/asrc_desert_eagle_fire.ksanim",
+        "content/objects3D/asrc_fps/asrc_desert_eagle_equip.ksanim",
+        "content/objects3D/asrc_fps/asrc_desert_eagle_sprint.ksanim",
+        "content/objects3D/asrc_fps/asrc_desert_eagle_reload.ksanim",
+    ];
     public const string DesertEagleAttributionPath =
         "content/objects3D/asrc_fps/attribution/desert-eagle.txt";
     public const string Colt1911ViewmodelPath =
         "content/objects3D/asrc_fps/asrc_colt_1911_viewmodel.kn5";
     public const string Colt1911WorldModelPath =
         "content/objects3D/asrc_fps/asrc_colt_1911_world.kn5";
+    public static readonly string[] Colt1911AnimationPaths =
+    [
+        "content/objects3D/asrc_fps/asrc_colt_1911_idle.ksanim",
+        "content/objects3D/asrc_fps/asrc_colt_1911_fire.ksanim",
+        "content/objects3D/asrc_fps/asrc_colt_1911_equip.ksanim",
+        "content/objects3D/asrc_fps/asrc_colt_1911_sprint.ksanim",
+        "content/objects3D/asrc_fps/asrc_colt_1911_reload.ksanim",
+    ];
+    public const string Colt1911AttributionPath =
+        "content/objects3D/asrc_fps/attribution/colt-1911.txt";
     public const string FragGrenadeWorldModelPath =
         "content/objects3D/asrc_fps/asrc_frag_grenade_world.kn5";
     public const string StickyGrenadeWorldModelPath =
@@ -49,8 +67,25 @@ public static class FpsClientPackAssets
     public static byte[] GetDesertEagleWorldModel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_desert_eagle_world.kn5");
 
+    public static IReadOnlyList<(string Path, byte[] Data)> GetDesertEagleAnimations() =>
+        DesertEagleAnimationPaths.Select(path => (path, ReadEmbeddedKsanim(
+            $"AssettoServer.RaceControl.Core.Assets.Fps.{Path.GetFileName(path)}"))).ToArray();
+
     public static byte[] GetDesertEagleAttribution() => ReadEmbeddedText(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_desert_eagle_attribution.txt");
+
+    public static byte[] GetColt1911Viewmodel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_colt_1911_viewmodel.kn5");
+
+    public static byte[] GetColt1911WorldModel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_colt_1911_world.kn5");
+
+    public static IReadOnlyList<(string Path, byte[] Data)> GetColt1911Animations() =>
+        Colt1911AnimationPaths.Select(path => (path, ReadEmbeddedKsanim(
+            $"AssettoServer.RaceControl.Core.Assets.Fps.{Path.GetFileName(path)}"))).ToArray();
+
+    public static byte[] GetColt1911Attribution() => ReadEmbeddedText(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_colt_1911_attribution.txt");
 
     public static byte[] GetRifleDiffuse() => ReadEmbeddedPng(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_rifle_diffuse.png");
@@ -156,6 +191,20 @@ public static class FpsClientPackAssets
         ReadOnlySpan<byte> pngMagic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
         if (data.Length < 1024 || !data.AsSpan(0, pngMagic.Length).SequenceEqual(pngMagic))
             throw new InvalidDataException($"Embedded FPS client asset is not a valid PNG: {resourceName}");
+        return data;
+    }
+
+    private static byte[] ReadEmbeddedKsanim(string resourceName)
+    {
+        using Stream stream = typeof(FpsClientPackAssets).Assembly.GetManifestResourceStream(resourceName)
+                              ?? throw new InvalidOperationException(
+                                  $"Embedded FPS client animation was not found: {resourceName}");
+        using var output = new MemoryStream();
+        stream.CopyTo(output);
+        byte[] data = output.ToArray();
+        if (data.Length < 32 || BitConverter.ToUInt32(data, 0) != 2)
+            throw new InvalidDataException(
+                $"Embedded FPS client animation is not a valid KSANIM: {resourceName}");
         return data;
     }
 

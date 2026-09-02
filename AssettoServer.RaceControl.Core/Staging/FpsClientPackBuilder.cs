@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 19;
+    public const int ClientPackVersion = 28;
     public const int BridgeProtocol = 5;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v19.zip";
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v28.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -17,7 +17,14 @@ public static class FpsClientPackBuilder
         byte[] rifleWorldModel = FpsClientPackAssets.GetRifleWorldModel();
         byte[] desertEagleViewmodel = FpsClientPackAssets.GetDesertEagleViewmodel();
         byte[] desertEagleWorldModel = FpsClientPackAssets.GetDesertEagleWorldModel();
+        IReadOnlyList<(string Path, byte[] Data)> desertEagleAnimations =
+            FpsClientPackAssets.GetDesertEagleAnimations();
         byte[] desertEagleAttribution = FpsClientPackAssets.GetDesertEagleAttribution();
+        byte[] colt1911Viewmodel = FpsClientPackAssets.GetColt1911Viewmodel();
+        byte[] colt1911WorldModel = FpsClientPackAssets.GetColt1911WorldModel();
+        IReadOnlyList<(string Path, byte[] Data)> colt1911Animations =
+            FpsClientPackAssets.GetColt1911Animations();
+        byte[] colt1911Attribution = FpsClientPackAssets.GetColt1911Attribution();
         byte[] rifleDiffuse = FpsClientPackAssets.GetRifleDiffuse();
         byte[] operatorSkin = FpsClientPackAssets.GetOperatorSkin();
         byte[] hudManifest = FpsClientPackAssets.GetHudManifest();
@@ -75,11 +82,25 @@ public static class FpsClientPackBuilder
                         viewmodelSha256 = FpsClientPackAssets.Sha256(desertEagleViewmodel),
                         worldModelPath = FpsClientPackAssets.DesertEagleWorldModelPath,
                         worldModelSha256 = FpsClientPackAssets.Sha256(desertEagleWorldModel),
+                        animations = desertEagleAnimations.Select(asset => new
+                        {
+                            path = asset.Path,
+                            sha256 = FpsClientPackAssets.Sha256(asset.Data),
+                        }),
                         attributionPath = FpsClientPackAssets.DesertEagleAttributionPath,
                         attributionSha256 = FpsClientPackAssets.Sha256(desertEagleAttribution) },
-                    new { id = 4, name = "Colt 1911", kind = "secondary", placeholder = true,
+                    new { id = 4, name = "Colt 1911", kind = "secondary", placeholder = false,
                         viewmodelPath = FpsClientPackAssets.Colt1911ViewmodelPath,
-                        worldModelPath = FpsClientPackAssets.Colt1911WorldModelPath },
+                        viewmodelSha256 = FpsClientPackAssets.Sha256(colt1911Viewmodel),
+                        worldModelPath = FpsClientPackAssets.Colt1911WorldModelPath,
+                        worldModelSha256 = FpsClientPackAssets.Sha256(colt1911WorldModel),
+                        animations = colt1911Animations.Select(asset => new
+                        {
+                            path = asset.Path,
+                            sha256 = FpsClientPackAssets.Sha256(asset.Data),
+                        }),
+                        attributionPath = FpsClientPackAssets.Colt1911AttributionPath,
+                        attributionSha256 = FpsClientPackAssets.Sha256(colt1911Attribution) },
                     new { id = 16, name = "Frag Grenade", kind = "lethal", placeholder = true,
                         viewmodelPath = string.Empty,
                         worldModelPath = FpsClientPackAssets.FragGrenadeWorldModelPath },
@@ -118,11 +139,13 @@ public static class FpsClientPackBuilder
 
                 The server delivers the CSP online script automatically. Extract this ZIP into
                 the Assetto Corsa installation root. It installs the project-owned assault-rifle
-                models, the CC BY Desert Eagle, placeholder SMG/Colt/grenade models and
+                models, the CC BY Desert Eagle and Colt 1911 with reused skinned carbine
+                arms, pistol-specific firing-hand poses and reload-only support-hand motion,
+                placeholder SMG/grenade models and
                 operator UV skin under
                 content/objects3D/asrc_fps, plus rifle sound
                 under extension/audio/asrc_fps. It also installs the presentation-only ASRC FPS
-                HUD under apps/lua/asrc_fps_hud. Client pack v19 also contains the animated Modern
+                HUD under apps/lua/asrc_fps_hud. Client pack v28 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.
@@ -155,12 +178,18 @@ public static class FpsClientPackBuilder
             desertEagleViewmodel, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.DesertEagleWorldModelPath,
             desertEagleWorldModel, cancellationToken);
+        foreach ((string path, byte[] data) in desertEagleAnimations)
+            await WriteEntryAsync(archive, path, data, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.DesertEagleAttributionPath,
             desertEagleAttribution, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.Colt1911ViewmodelPath,
-            rifleViewmodel, cancellationToken);
+            colt1911Viewmodel, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.Colt1911WorldModelPath,
-            rifleWorldModel, cancellationToken);
+            colt1911WorldModel, cancellationToken);
+        foreach ((string path, byte[] data) in colt1911Animations)
+            await WriteEntryAsync(archive, path, data, cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.Colt1911AttributionPath,
+            colt1911Attribution, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.FragGrenadeWorldModelPath,
             rifleWorldModel, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.StickyGrenadeWorldModelPath,

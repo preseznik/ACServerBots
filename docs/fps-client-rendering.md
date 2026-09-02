@@ -49,14 +49,27 @@ in a live Fire Pit match: visible bot models now follow and face their authorita
   `blendAnimation()` may change the child pose only; they never own world position or yaw. See the
   [Modern visual theme handoff](fps-modern-theme.md) for the exporter, fallback, and preview520 gate.
 
-## Desert Eagle asset ownership
+## Pistol asset ownership
 
 The Desert Eagle is no longer a rifle alias. `tools/Build-FpsDesertEagleAssets.ps1` reads the
 downloaded ELIZION FBX and textures from the external `.resources` tree, caps first-person body and
 slide color at 1024², caps the world payload at 512², converts both variants through the pinned KN5
 exporter, and then runs a Blender-independent KN5 structure and budget validator. The generated
-viewmodel retains lightweight project-owned arms; the world model is gun-only and anchored at its
-grip. Both Blocks and Modern request base asset archive v9 for this loadout item. Modern hides its
+viewmodel reuses the animated carbine's textured anatomical arms and original 49-bone arm rig,
+then adds constant weapon and magazine bones. Project-authored idle, fire, equip, sprint, and reload
+tracks preserve the right-hand firing grip, align the complete arm chain behind the pistol, and
+extract/reinsert the separately skinned magazine over the authoritative 1.8-second reload. The
+support arm is exported but its shoulder chain remains below the view frustum in idle, fire, equip,
+and sprint; reload alone brings its wrist to the magazine and returns it off-screen. This avoids
+relying on CSP's inconsistent per-skinned-mesh visibility. Each newly loaded pistol first evaluates
+reload frame zero during the holder's hidden update, because CSP otherwise leaves constant non-reload
+bone channels in the KN5 rest pose after weapon switching. The generator renders hip, ADS, and reload
+acceptance previews through the same camera-relative offsets and FOV used by CSP. The pistol uses dedicated
+hip/ADS framing instead of the Modern rifle's near-camera offsets. The world model
+remains gun-only and anchored at its grip. Both Blocks and Modern request base asset
+archive v19 for this loadout item. The HUD image and
+loadout model consume one shared CSP remote-assets request for that URL to avoid concurrent cache
+finalization. Modern hides its
 baked carbine mesh while the pistol is active. Local first person, local/remote third person, and
 dropped pickups all choose the model from the authoritative active weapon ID.
 
@@ -65,9 +78,23 @@ licensed CC BY 4.0. Every server archive and exported client pack that carries t
 `desert-eagle-attribution.txt`; the portable launcher additionally ships `THIRD_PARTY_NOTICES.md`.
 The source FBX and textures remain outside the repository.
 
+The Colt 1911 follows the same ownership and runtime path. `tools/Build-FpsColt1911Assets.ps1`
+reads DanaeH's external M1911 FBX and its pistol/magazine texture sets, rotates the source onto
+the established weapon axis, inserts the separately authored magazine into the grip, and omits
+the loose cartridge display geometry. The resulting 11,303-triangle world KN5 and
+25,003-triangle two-arm viewmodel retain distinct body, slide, and magazine nodes. Five
+Colt-specific KSANIM files reuse the accepted firing-hand pose, bring the support hand in only for
+reload, and drive the Colt magazine. Colt and Desert Eagle both use the same calibrated pistol
+hip/ADS framing, but select independent KN5 and KSANIM files by authoritative weapon ID. Base asset
+archive v19 and client pack 28 include the Colt model, animations, and
+`colt-1911-attribution.txt` attribution notice.
+
+The source model is [M1911 Pistol with magazine and bullet by DanaeH](https://sketchfab.com/3d-models/m1911-pistol-with-magazine-and-bullet-131085c22ece47a08076d8ddc0b9f21a),
+licensed CC BY 4.0. The source FBX and textures remain outside the repository.
+
 ## Hybrid HUD ownership
 
-Client pack version 19 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+Client pack version 28 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
 script publishes presentation state through the local shared structure `asrc.fps.hud.v5`. Bridge v5
 adds the active main/secondary slot, item IDs, and lethal count; it remains presentation-only.
 

@@ -184,13 +184,24 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("selectInput(keyboardY, rawY, 0)"));
             Assert.That(script, Does.Not.Contain("clampStick(mapped.gas - mapped.brake)"));
             Assert.That(script, Does.Contain("ac.GamepadAxis.LeftTrigger"));
+            Assert.That(script, Does.Contain("ac.GamepadButton.Y"));
+            Assert.That(script, Does.Contain("ac.GamepadButton.RightShoulder"));
+            Assert.That(script, Does.Contain(
+                "gamepadWeaponSwitch and not weaponSwitchWasHeld"));
+            Assert.That(script, Does.Contain(
+                "hud.loadout.activeSlot = hud.loadout.activeSlot == 0 and 1 or 0"));
+            Assert.That(script, Does.Contain(
+                "XBOX:  Y  SWITCH WEAPON    •    RB  GRENADE"));
             Assert.That(script, Does.Contain("ac.KeyIndex.RightButton"));
             Assert.That(script, Does.Contain("ui.mouseDown(ui.MouseButton.Right)"));
             Assert.That(script, Does.Contain("math.lerp(72, 56, fpsVisual.ads)"));
             Assert.That(script, Does.Contain("math.lerp(hipRight, adsRight, fpsVisual.ads)"));
-            Assert.That(script, Does.Contain("local adsForward = modernViewmodel and 0.12"));
-            Assert.That(script, Does.Contain("local adsRight = modernViewmodel and 0.0003"));
-            Assert.That(script, Does.Contain("local adsUp = modernViewmodel and -0.2218"));
+            Assert.That(script, Does.Contain(
+                "local adsForward = pistolViewmodel and 0.34 or (modernViewmodel and 0.12 or 0.38)"));
+            Assert.That(script, Does.Contain(
+                "local adsRight = pistolViewmodel and 0.035 or (modernViewmodel and 0.0003 or 0.00)"));
+            Assert.That(script, Does.Contain(
+                "local adsUp = pistolViewmodel and -0.12 or (modernViewmodel and -0.2218 or -0.10)"));
             Assert.That(script, Does.Contain("local visualKickScale = math.lerp(1, 0.35, fpsVisual.ads)"));
             Assert.That(script, Does.Contain(
                 "local downwardLook = math.clamp((-pitch - math.rad(35)) / math.rad(45), 0, 1)"));
@@ -306,11 +317,41 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("web.loadRemoteAssets"));
             Assert.That(script, Does.Contain("ac.getServerIP()"));
             Assert.That(script, Does.Contain("ac.getServerPortHTTP()"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v9.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v19.zip"));
             Assert.That(script, Does.Contain("asrc_desert_eagle_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_desert_eagle_world.kn5"));
+            Assert.That(script, Does.Contain("asrc_desert_eagle_idle.ksanim"));
+            Assert.That(script, Does.Contain("asrc_desert_eagle_fire.ksanim"));
+            Assert.That(script, Does.Contain("asrc_desert_eagle_equip.ksanim"));
+            Assert.That(script, Does.Contain("asrc_desert_eagle_sprint.ksanim"));
+            Assert.That(script, Does.Contain("asrc_desert_eagle_reload.ksanim"));
+            Assert.That(script, Does.Contain("asrc_colt_1911_viewmodel.kn5"));
+            Assert.That(script, Does.Contain("asrc_colt_1911_world.kn5"));
+            Assert.That(script, Does.Contain("asrc_colt_1911_idle.ksanim"));
+            Assert.That(script, Does.Contain("asrc_colt_1911_fire.ksanim"));
+            Assert.That(script, Does.Contain("asrc_colt_1911_equip.ksanim"));
+            Assert.That(script, Does.Contain("asrc_colt_1911_sprint.ksanim"));
+            Assert.That(script, Does.Contain("asrc_colt_1911_reload.ksanim"));
+            Assert.That(script, Does.Contain("viewmodelPistolPoseSeedPending = false"));
+            Assert.That(script, Does.Contain(
+                "fpsVisual.pistolClips(assetKey).reload, 0, true"));
+            Assert.That(script, Does.Contain(
+                "and fpsVisual.viewmodelPistolPoseSeedPending then"));
+            Assert.That(script, Does.Contain(
+                "if actor.reloadRemaining > 0 then"));
+            Assert.That(script, Does.Contain(
+                "clip = fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)"));
+            Assert.That(script, Does.Contain(
+                "fpsVisual.pistolClips(fpsVisual.loadedViewmodelAsset)[clip]"));
+            Assert.That(script, Does.Not.Contain("viewmodelSupportArm"));
+            Assert.That(script, Does.Contain(
+                "fpsVisual.modern or pistolViewmodel"));
+            Assert.That(script, Does.Contain(
+                "weapon.archivePath == fpsVisual.loadoutAssetArchivePath"));
+            Assert.That(script, Does.Contain("fpsVisual.requestLoadoutAssets()"));
             Assert.That(script, Does.Contain("fpsVisual.weaponAssetKey(actor)"));
-            Assert.That(script, Does.Contain("actor.weaponMesh:setVisible(visible and actor.weaponAsset ~= 3"));
+            Assert.That(script, Does.Contain(
+                "actor.weaponMesh:setVisible(visible and not fpsVisual.isPistolAsset(actor.weaponAsset)"));
             Assert.That(script, Does.Contain("fileName = 'asrc_carbine_hud.png'"));
             Assert.That(script, Does.Contain("ui.drawImage(fpsVisual.hudWeapon.imagePath"));
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
@@ -325,6 +366,17 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("function fpsVisual.updatePickups()"));
             Assert.That(script, Does.Contain("modernViewmodel and 0.32"));
             Assert.That(script, Does.Contain("modernViewmodel and -0.18"));
+            Assert.That(script, Does.Contain("pistolViewmodel and 0.39"));
+            Assert.That(script, Does.Contain("pistolViewmodel and -0.15"));
+            Assert.That(script, Does.Contain("pistolViewmodel and -0.24"));
+            Assert.That(script, Does.Contain("pistolViewmodel and -0.12"));
+            Assert.That(script, Does.Contain(
+                "local pistolReloadPhase = pistolViewmodel and actor.reloadRemaining > 0"));
+            Assert.That(script, Does.Contain("local pistolReloadAngle = math.rad(22)"));
+            Assert.That(script, Does.Contain(
+                "viewmodelRenderLook = look * reloadCos - viewUp * reloadSin"));
+            Assert.That(script, Does.Contain(
+                "viewmodelRenderUp = viewUp * reloadCos + look * reloadSin"));
             Assert.That(script, Does.Contain("modernViewmodel and -0.32"));
             Assert.That(script, Does.Contain("modernViewmodel and 0.67"));
             Assert.That(script, Does.Contain("asrc_modern_operator_vault.ksanim"));

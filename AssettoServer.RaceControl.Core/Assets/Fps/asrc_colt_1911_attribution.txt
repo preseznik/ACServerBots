@@ -1,0 +1,9 @@
+M1911 Pistol with magazine and bullet by DanaeH
+Source: https://sketchfab.com/3d-models/m1911-pistol-with-magazine-and-bullet-131085c22ece47a08076d8ddc0b9f21a
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/
+
+Changes: reoriented and regrouped for Assetto Corsa, inserted the separately
+authored magazine into the grip, omitted loose cartridge display geometry,
+downsampled textures, and combined the pistol with the project's existing
+right-arm viewmodel skeleton and project-authored pistol animation tracks.

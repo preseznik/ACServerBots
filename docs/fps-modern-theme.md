@@ -130,13 +130,18 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
 downloads `/fps/assets/asrc-fps-modern-v8.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5 or KSANIM changes. Client pack version 19 also installs both themes under the project-owned
+embedded KN5 or KSANIM changes. Client pack version 28 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
-Secondary Desert Eagle rendering remains a separate rigid KN5 path shared with Blocks. Modern also
-requests base asset archive v9, hides `ASRC_CARBINE_WORLD` while weapon ID 3 is active, and attaches
-the rigid pistol at the operator's weapon root. The Modern animation set remains carbine-authored;
-item-specific pistol hand poses and reload animation are a later animation pass.
+Secondary Desert Eagle and Colt 1911 rendering use separate rigid KN5 paths shared with Blocks. Modern
+also requests base asset archive v19, hides `ASRC_CARBINE_WORLD` while weapon ID 3 or 4 is active, and
+attaches the rigid pistol at the operator's weapon root. First person now uses a dedicated skinned
+weapon-specific pistol KN5 which retains the anatomical carbine arms and 49-bone arm rig while replacing
+the rifle and optic meshes. Each pistol has five project-authored KSANIM tracks for idle, fire, equip,
+sprint, and reload motion. The support shoulder is animated below the view frustum for every clip
+except reload, when the left hand follows the separately skinned magazine. The viewmodel holder also
+tilts the complete pistol rig down 22 degrees during that reload window. Third-person hand posing remains a
+later animation pass; the existing rigid world pistol attachment is unchanged.
 
 The confirmed `native-scene-v21-angle-lerp-fix` actor root remains the sole owner of authoritative
 world position and yaw. A Modern model is an animated child of that root. KSANIM never writes world
