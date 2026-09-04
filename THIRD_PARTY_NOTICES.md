@@ -72,3 +72,31 @@ Corsa KN5. The first-person derivative combines that geometry with the project
 carbine's existing arm mesh, skeleton, and animation ranges, plus a separately
 animated magazine for normal and empty reloads. The CC BY 4.0 license text is
 available at https://creativecommons.org/licenses/by/4.0/.
+
+## M67 Grenade 3D model
+
+The FPS loadout uses the downloadable M67 grenade model and textures by Tiago
+Lopes (drobluda).
+
+- Source: https://sketchfab.com/3d-models/m67-grenade-d202644dfaf441a0a145befbd7add45a
+- Author: Tiago Lopes (drobluda)
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+The model is scaled, reoriented, texture-capped, and converted to Assetto Corsa
+KN5. Its first-person derivative combines that geometry with the project
+carbine's arm mesh and skeleton plus a project-authored throw animation. The CC
+BY 4.0 license text is available at https://creativecommons.org/licenses/by/4.0/.
+
+## Futuristic Grenade 3D model
+
+The FPS loadout adapts the downloadable Futuristic Grenade model and textures by
+Simplix as its Semtex-style Sticky Grenade.
+
+- Source: https://sketchfab.com/3d-models/futuristic-grenade-d3a36ead60b54d4bbc86571fb246db32
+- Author: Simplix
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+The model is reoriented, texture-capped, and converted to Assetto Corsa KN5. Its
+first-person derivative combines that geometry with the project carbine's arm
+mesh and skeleton plus a project-authored throw animation. The CC BY 4.0 license
+text is available at https://creativecommons.org/licenses/by/4.0/.

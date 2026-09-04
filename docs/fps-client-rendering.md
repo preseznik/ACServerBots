@@ -61,7 +61,7 @@ two constant bones keep the MP5 rigid while normal and empty reload clips extrac
 and reinsert its magazine. The 14,248-triangle world model is gun-only and grip
 anchored. Blocks and Modern select both variants by authoritative weapon ID 2;
 Modern hides its baked carbine while the MP5 attachment is active. Base asset
-archive v20 and client pack 29 carry the models, six animations, and
+archive v21 and client pack 30 carry the models, six animations, and
 `compact-smg-attribution.txt`.
 
 The source model is [MP5 Submachine Gun by Rotuma](https://sketchfab.com/3d-models/mp5-submachine-gun-a73b61932a0e4eecb5db5c63c158aa24),
@@ -83,7 +83,7 @@ bone channels in the KN5 rest pose after weapon switching. The generator renders
 acceptance previews through the same camera-relative offsets and FOV used by CSP. The pistol uses dedicated
 hip/ADS framing instead of the Modern rifle's near-camera offsets. The world model
 remains gun-only and anchored at its grip. Both Blocks and Modern request base asset
-archive v20 for this loadout item. The HUD image and
+archive v21 for this loadout item. The HUD image and
 loadout model consume one shared CSP remote-assets request for that URL to avoid concurrent cache
 finalization. Modern hides its
 baked carbine mesh while the pistol is active. Local first person, local/remote third person, and
@@ -107,15 +107,40 @@ Colt-specific KSANIM files reuse the accepted firing-hand pose, bring the suppor
 reload, and drive the Colt magazine. Colt and Desert Eagle use the same calibrated pistol hip
 framing and weapon-specific ADS horizontal offsets, but select independent KN5 and KSANIM files
 by authoritative weapon ID. Base asset
-archive v20 and client pack 29 include the Colt model, animations, and
+archive v21 and client pack 30 include the Colt model, animations, and
 `colt-1911-attribution.txt` attribution notice.
 
 The source model is [M1911 Pistol with magazine and bullet by DanaeH](https://sketchfab.com/3d-models/m1911-pistol-with-magazine-and-bullet-131085c22ece47a08076d8ddc0b9f21a),
 licensed CC BY 4.0. The source FBX and textures remain outside the repository.
 
+## Grenade asset ownership
+
+`tools/Build-FpsGrenadeAssets.ps1` converts the externally stored M67 and Semtex-like source FBXs
+into separate world and first-person KN5s. The first-person variants reuse the established carbine
+arm skeleton and each has a project-authored 48-frame throw clip: the support hand enters for the
+pin interaction, the throwing arm winds up, and the held mesh leaves the viewmodel at the server's
+0.28-second release point. Pressing the lethal control primes the grenade and advances the clip to
+its held pose; the fuse runs while the control remains held. Releasing the control resumes the clip
+and starts that 0.28-second release transition. If the fuse expires first, the authoritative grenade
+explodes at the firing hand and kills its owner through the normal radial-damage event. The world
+variants contain grenade geometry only and follow the server-authoritative projectile snapshots.
+Frag grenades bounce, then settle at a six-centimetre surface clearance once their rebound energy is
+spent; Sticky grenades attach to actors or collision geometry.
+
+Base asset archive v21 and client pack 30 include both model variants, both throw clips, attribution
+notices, and a dedicated explosion WAV. A detonation event disposes the projectile model and emits
+sparks, smoke, flame, and a short-lived orange light at the authoritative explosion position. The
+structural validator enforces mesh, shader, texture, triangle, animation-target, and release-motion
+budgets before these generated assets are accepted.
+
+The sources are [M67 Grenade by Tiago Lopes](https://sketchfab.com/3d-models/m67-grenade-d202644dfaf441a0a145befbd7add45a)
+and [Futuristic Grenade by Simplix](https://sketchfab.com/3d-models/futuristic-grenade-d3a36ead60b54d4bbc86571fb246db32),
+both licensed CC BY 4.0. Source files remain outside the repository; every distributed archive carries
+the corresponding attribution notice.
+
 ## Hybrid HUD ownership
 
-Client pack version 29 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+Client pack version 30 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
 script publishes presentation state through the local shared structure `asrc.fps.hud.v5`. Bridge v5
 adds the active main/secondary slot, item IDs, and lethal count; it remains presentation-only.
 

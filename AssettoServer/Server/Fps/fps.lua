@@ -30,6 +30,17 @@ local fpsVisual = {
   viewmodelFireUntil = 0,
   viewmodelEquipUntil = 0,
   viewmodelPistolPoseSeedPending = false,
+  activeGrenadeType = nil,
+  grenadePrimeStarted = 0,
+  grenadeReleasedAt = nil,
+  grenadePrimeDuration = 0.32,
+  grenadeHoldPhase = 0.30,
+  grenadeReleasePhase = 0.39,
+  grenadeReleasePoint = 0.28,
+  grenadeReleaseDuration = 0.8,
+  grenadeInputHeld = false,
+  explosionLights = {},
+  explosionLightUnavailable = false,
   muzzleLights = {},
   muzzleLightUnavailable = false,
   muzzleLightLifetime = 0.055,
@@ -50,13 +61,13 @@ local fpsVisual = {
     exhaustionRelease = 25,
   },
   hudWeapon = {
-    archivePath = '/fps/assets/asrc-fps-assets-v20.zip',
+    archivePath = '/fps/assets/asrc-fps-assets-v21.zip',
     fileName = 'asrc_carbine_hud.png',
     imagePath = nil,
     loading = false,
     failed = false,
   },
-  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v20.zip',
+  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v21.zip',
   loadoutAssetFolder = nil,
   loadoutAssetsLoading = false,
   loadoutAssetsFailed = false,
@@ -88,6 +99,12 @@ local fpsVisual = {
     sprint = 'asrc_colt_1911_sprint.ksanim',
     reload = 'asrc_colt_1911_reload.ksanim',
   },
+  fragGrenadeViewmodelFileName = 'asrc_frag_grenade_viewmodel.kn5',
+  fragGrenadeWorldModelFileName = 'asrc_frag_grenade_world.kn5',
+  fragGrenadeClips = { throw = 'asrc_frag_grenade_throw.ksanim' },
+  stickyGrenadeViewmodelFileName = 'asrc_sticky_grenade_viewmodel.kn5',
+  stickyGrenadeWorldModelFileName = 'asrc_sticky_grenade_world.kn5',
+  stickyGrenadeClips = { throw = 'asrc_sticky_grenade_throw.ksanim' },
   loadedViewmodelAsset = nil,
   pickups = {},
   operatorClips = {
@@ -206,7 +223,8 @@ local function clientAssetPath(relativePath)
 end
 local rifleAudioRelativePath = 'extension/audio/asrc_fps/rifle.wav'
 local rifleAudioPath = clientAssetPath(rifleAudioRelativePath)
-local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v20.zip'
+local explosionAudioPath = clientAssetPath('extension/audio/asrc_fps/explosion.wav')
+local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v21.zip'
 local rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
 local rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
 local rifleDiffuseFileName = 'asrc_rifle_diffuse.png'
@@ -308,6 +326,7 @@ local hiddenCarrierRoots = {}
 local createRifleModel
 local requestRifleAssets
 local playRifleSound
+local playExplosionSound
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
@@ -459,6 +478,19 @@ pcall(function()
     color = rgbm(0.18, 0.18, 0.18, 0.38), colorConsistency = 0.8,
     thickness = 0.65, life = 0.55, size = 0.055, spreadK = 0.7,
     growK = 0.65, targetYVelocity = 0.12,
+  })
+  fpsVisual.explosionSparks = ac.Particles.Sparks({
+    color = rgbm(1, 0.52, 0.12, 1), life = 0.85, size = 0.055,
+    directionSpread = 1.0, positionSpread = 0.12,
+  })
+  fpsVisual.explosionSmoke = ac.Particles.Smoke({
+    color = rgbm(0.12, 0.10, 0.08, 0.92), colorConsistency = 0.55,
+    thickness = 1.15, life = 2.4, size = 0.42, spreadK = 1.25,
+    growK = 1.4, targetYVelocity = 1.7,
+  })
+  fpsVisual.explosionFlame = ac.Particles.Flame({
+    color = rgbm(1, 0.34, 0.04, 1), size = 0.36,
+    temperatureMultiplier = 1.25, flameIntensity = 1.35,
   })
 end)
 
@@ -1387,6 +1419,48 @@ function fpsVisual.updateMuzzleLights(now)
   end
 end
 
+function fpsVisual.illuminateExplosion(grenadeID, position, now)
+  if fpsVisual.explosionLightUnavailable then return end
+  local ok, lightOrError = pcall(function()
+    local light = ac.LightSource(ac.LightType.Regular)
+    light.position:set(position + vec3(0, 0.35, 0))
+    light.color = rgb(8.5, 2.1, 0.32)
+    light.range = 13
+    light.spot = 0
+    light.diffuseConcentration = 0.35
+    light.specularMultiplier = 0.7
+    light.rangeGradientOffset = 0
+    light.fadeAt = 120
+    light.fadeSmooth = 8
+    light.volumetricLight = true
+    light.skipLightMap = true
+    light.affectsCars = true
+    light.showInReflections = true
+    light.shadows = false
+    return light
+  end)
+  if not ok or lightOrError == nil then
+    fpsVisual.explosionLightUnavailable = true
+    ac.warn('[ASRC FPS] dynamic explosion lighting unavailable: ' .. tostring(lightOrError))
+    return
+  end
+  fpsVisual.explosionLights[grenadeID] = {
+    light = lightOrError, bornAt = now, expiresAt = now + 0.42,
+  }
+end
+
+function fpsVisual.updateExplosionLights(now)
+  for grenadeID, state in pairs(fpsVisual.explosionLights) do
+    local life = math.clamp((state.expiresAt - now) / 0.42, 0, 1)
+    state.light.range = 13 * life * life
+    state.light.color = rgb(8.5 * life, 2.1 * life, 0.32 * life)
+    if now >= state.expiresAt then
+      pcall(function() state.light:dispose() end)
+      fpsVisual.explosionLights[grenadeID] = nil
+    end
+  end
+end
+
 hud.shotEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsShot'),
   shooterID = ac.StructItem.byte(),
@@ -1503,6 +1577,14 @@ hud.shotEvent = ac.OnlineEvent({
 end, nil, true)
 
 fpsVisual.grenades = {}
+function fpsVisual.removeGrenade(id)
+  local grenade = fpsVisual.grenades[id]
+  if grenade ~= nil and grenade.root ~= nil and grenade.root ~= false then
+    pcall(function() grenade.root:dispose() end)
+  end
+  fpsVisual.grenades[id] = nil
+end
+
 fpsVisual.grenadeSnapshotEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsGrenadeSnapshot'),
   sequence = ac.StructItem.uint32(),
@@ -1530,7 +1612,7 @@ fpsVisual.grenadeSnapshotEvent = ac.OnlineEvent({
   end
   for id, grenade in pairs(fpsVisual.grenades) do
     if grenade.seenAt ~= effectClock and effectClock - (grenade.seenAt or 0) > 0.15 then
-      fpsVisual.grenades[id] = nil
+      fpsVisual.removeGrenade(id)
     end
   end
 end, nil, true)
@@ -1543,16 +1625,33 @@ fpsVisual.grenadeExplodedEvent = ac.OnlineEvent({
   position = ac.StructItem.vec3(),
 }, function(sender, message)
   if sender ~= nil then return end
-  fpsVisual.grenades[message.grenadeID] = nil
-  for i = 1, 18 do
-    local angle = i / 18 * math.pi * 2
+  fpsVisual.removeGrenade(message.grenadeID)
+  if message.ownerID == localSessionID and fpsVisual.activeGrenadeType ~= nil then
+    fpsVisual.activeGrenadeType = nil
+    fpsVisual.grenadeReleasedAt = nil
+  end
+  local origin = message.position:clone()
+  if fpsVisual.explosionSparks ~= nil then
+    fpsVisual.explosionSparks:emit(origin + vec3(0, 0.12, 0), vec3(0, 4.5, 0), 42)
+  end
+  if fpsVisual.explosionSmoke ~= nil then
+    fpsVisual.explosionSmoke:emit(origin + vec3(0, 0.18, 0), vec3(0, 1.5, 0), 18)
+  end
+  if fpsVisual.explosionFlame ~= nil then
+    fpsVisual.explosionFlame:emit(origin + vec3(0, 0.16, 0), vec3(0, 1.8, 0), 12)
+  end
+  for i = 1, 36 do
+    local angle = i / 36 * math.pi * 2
+    local speed = 3.8 + (i % 7) * 0.72
     sparks[#sparks + 1] = {
-      position = message.position:clone(),
-      velocity = vec3(math.cos(angle) * 4, 1.2 + (i % 4), math.sin(angle) * 4),
-      ttl = 0.45,
+      position = origin + vec3(0, 0.12, 0),
+      velocity = vec3(math.cos(angle) * speed, 1.8 + (i % 6) * 0.8,
+        math.sin(angle) * speed),
+      ttl = 0.55 + (i % 5) * 0.09,
     }
   end
-  if playRifleSound ~= nil then playRifleSound(message.position, false) end
+  fpsVisual.illuminateExplosion(message.grenadeID, origin, ui.time())
+  if playExplosionSound ~= nil then playExplosionSound(origin) end
 end)
 
 local function uvRegion(column, row, x0, y0, x1, y1)
@@ -1811,7 +1910,7 @@ function fpsVisual.fallback(reason)
   rifleAssetsLoading = false
   rifleAssetsFailed = false
   rifleAssetWaitLogged = false
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v20.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v21.zip'
   rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
   fpsVisual.pickupFileName = rifleWorldModelFileName
@@ -1870,15 +1969,27 @@ function fpsVisual.weaponAssetKey(actor)
   return fpsVisual.isLoadoutAsset(weapon) and weapon or 1
 end
 
+function fpsVisual.desiredViewmodelAsset(actor)
+  return fpsVisual.activeGrenadeType or fpsVisual.weaponAssetKey(actor)
+end
+
 function fpsVisual.isPistolAsset(assetKey)
   return assetKey == 3 or assetKey == 4
 end
 
+function fpsVisual.isGrenadeAsset(assetKey)
+  return assetKey == 16 or assetKey == 17
+end
+
 function fpsVisual.isLoadoutAsset(assetKey)
   return assetKey == 2 or fpsVisual.isPistolAsset(assetKey)
+    or fpsVisual.isGrenadeAsset(assetKey)
 end
 
 function fpsVisual.loadoutClips(assetKey)
+  if fpsVisual.isGrenadeAsset(assetKey) then
+    return assetKey == 17 and fpsVisual.stickyGrenadeClips or fpsVisual.fragGrenadeClips
+  end
   return assetKey == 2 and fpsVisual.compactSmgClips
     or fpsVisual.pistolClips(assetKey)
 end
@@ -1898,11 +2009,19 @@ function fpsVisual.pistolWorldModelFileName(assetKey)
 end
 
 function fpsVisual.loadoutViewmodelFileName(assetKey)
+  if fpsVisual.isGrenadeAsset(assetKey) then
+    return assetKey == 17 and fpsVisual.stickyGrenadeViewmodelFileName
+      or fpsVisual.fragGrenadeViewmodelFileName
+  end
   return assetKey == 2 and fpsVisual.compactSmgViewmodelFileName
     or fpsVisual.pistolViewmodelFileName(assetKey)
 end
 
 function fpsVisual.loadoutWorldModelFileName(assetKey)
+  if fpsVisual.isGrenadeAsset(assetKey) then
+    return assetKey == 17 and fpsVisual.stickyGrenadeWorldModelFileName
+      or fpsVisual.fragGrenadeWorldModelFileName
+  end
   return assetKey == 2 and fpsVisual.compactSmgWorldModelFileName
     or fpsVisual.pistolWorldModelFileName(assetKey)
 end
@@ -2061,7 +2180,7 @@ end
 
 local function ensureLocalViewmodel()
   local actor = actors[localSessionID]
-  local assetKey = fpsVisual.weaponAssetKey(actor)
+  local assetKey = fpsVisual.desiredViewmodelAsset(actor)
   if viewmodelRoot ~= nil and fpsVisual.loadedViewmodelAsset ~= assetKey then
     if viewmodelHolder ~= nil then pcall(function() viewmodelHolder:dispose() end) end
     viewmodelHolder = nil
@@ -2110,7 +2229,12 @@ local function ensureLocalViewmodel()
     if not fpsVisual.isLoadoutAsset(assetKey) and rifleDiffusePath ~= nil then
       pcall(function() model:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
     end
-    if fpsVisual.isPistolAsset(assetKey) then
+    if fpsVisual.isGrenadeAsset(assetKey) then
+      model:setAnimation(fpsVisual.loadoutAssetFolder .. '/'
+        .. fpsVisual.loadoutClips(assetKey).throw, 0, true)
+      fpsVisual.viewmodelPistolPoseSeedPending = false
+      fpsVisual.viewmodelEquipUntil = 0
+    elseif fpsVisual.isPistolAsset(assetKey) then
       -- A newly loaded KN5 starts in its authored two-arm rest pose. CSP skips
       -- constant bone channels in the non-reload clips, but evaluates the
       -- support arm in reload because that channel moves. Seed reload frame 0
@@ -2229,6 +2353,28 @@ playRifleSound = function(position, localShot)
   if not localShot then event:setPosition(position) end
   event:start()
   rifleSounds[#rifleSounds + 1] = {event = event, ttl = 0.6}
+end
+
+playExplosionSound = function(position)
+  local ok, event = pcall(function()
+    return ac.AudioEvent.fromFile({
+      filename = explosionAudioPath,
+      use3D = true,
+      useOcclusion = true,
+      loop = false,
+      minDistance = 2,
+      maxDistance = 260,
+    }, true)
+  end)
+  if not ok or event == nil or not event:isValid() then
+    if event ~= nil then event:dispose() end
+    event = ac.AudioEvent('event:/collisions/car/metal', false, false)
+  end
+  if event == nil or not event:isValid() then return end
+  event.volume = 1.0
+  event:setPosition(position)
+  event:start()
+  rifleSounds[#rifleSounds + 1] = {event = event, ttl = 1.3}
 end
 
 local function ensureAvatar(actor)
@@ -2373,6 +2519,51 @@ function fpsVisual.updatePickups()
       pickup.root:setPosition(pickup.position + vec3(0, height, 0) + ac.getSim().originShift)
       pickup.root:setOrientation(forward, up)
       pickup.root:setVisible(gameplayActive, false)
+    end
+  end
+end
+
+function fpsVisual.updateGrenadeModels()
+  if next(fpsVisual.grenades) == nil then return end
+  if fpsVisual.loadoutAssetFolder == nil then
+    fpsVisual.requestLoadoutAssets()
+    return
+  end
+  for _, grenade in pairs(fpsVisual.grenades) do
+    if grenade.root == nil then
+      local loaded, rootOrError = pcall(function()
+        local root = carsRoot:createBoundingSphereNode('ASRC_FPS_GRENADE_' .. grenade.id, 0.45)
+        if root == nil then error('grenade holder could not be created') end
+        local path = fpsVisual.worldModelPath(grenade.type)
+        local model = root:loadKN5({filename = path, forceRenderableOn = true})
+        if model == nil then
+          root:dispose()
+          error('grenade KN5 could not be loaded: ' .. tostring(path))
+        end
+        model:setShadows(true)
+        model:setCullMode(render.CullMode.Back)
+        model:setDepthMode(render.DepthMode.Normal)
+        model:setMotionStencil(1)
+        root:setVirtualCarFlag(true)
+        root:setMotionStencil(1)
+        grenade.model = model
+        return root
+      end)
+      if loaded then
+        grenade.root = rootOrError
+        grenade.root:clearMotion()
+      else
+        grenade.root = false
+        ac.warn('[ASRC FPS] grenade world model failed: ' .. tostring(rootOrError))
+      end
+    end
+    if grenade.root ~= nil and grenade.root ~= false then
+      local moving = grenade.velocity ~= nil and grenade.velocity:lengthSquared() > 0.01
+      local forward = moving and grenade.velocity:clone():normalize() or vec3(0, 0, 1)
+      local up = math.abs(forward.y) > 0.92 and vec3(1, 0, 0) or vec3(0, 1, 0)
+      grenade.root:setPosition(grenade.position + ac.getSim().originShift)
+      grenade.root:setOrientation(forward, up)
+      grenade.root:setVisible(gameplayActive, false)
     end
   end
 end
@@ -2600,7 +2791,8 @@ end
 local function applyFpsCamera(actor, dt)
   if actor == nil or camera == nil or not camera:active() then return false end
   local look = vec3(math.sin(yaw) * math.cos(pitch), math.sin(pitch), math.cos(yaw) * math.cos(pitch))
-  local adsAllowed = not thirdPersonEnabled and actor.reloadRemaining <= 0 and not viewmodelSprint
+  local adsAllowed = not thirdPersonEnabled and actor.reloadRemaining <= 0
+    and not viewmodelSprint and fpsVisual.activeGrenadeType == nil
   local adsTarget = adsAllowed and fpsVisual.adsInput or 0
   local adsSpeed = adsTarget > fpsVisual.ads and 15 or 11
   fpsVisual.ads = math.lerp(fpsVisual.ads, adsTarget, 1 - math.exp(-dt * adsSpeed))
@@ -2770,6 +2962,33 @@ function fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint)
     fpsVisual.viewmodelPistolPoseSeedPending = false
     return true
   end
+  if fpsVisual.isGrenadeAsset(fpsVisual.loadedViewmodelAsset) then
+    local position
+    if fpsVisual.grenadeReleasedAt == nil then
+      position = fpsVisual.grenadeHoldPhase * math.clamp(
+        (effectClock - fpsVisual.grenadePrimeStarted) / fpsVisual.grenadePrimeDuration, 0, 1)
+    else
+      local elapsed = math.max(0, effectClock - fpsVisual.grenadeReleasedAt)
+      if elapsed <= fpsVisual.grenadeReleasePoint then
+        position = math.lerp(fpsVisual.grenadeHoldPhase, fpsVisual.grenadeReleasePhase,
+          elapsed / fpsVisual.grenadeReleasePoint)
+      else
+        position = math.lerp(fpsVisual.grenadeReleasePhase, 1, math.clamp(
+          (elapsed - fpsVisual.grenadeReleasePoint)
+            / (fpsVisual.grenadeReleaseDuration - fpsVisual.grenadeReleasePoint), 0, 1))
+      end
+    end
+    local ok, err = pcall(function()
+      viewmodelRoot:setAnimation(fpsVisual.loadoutAssetFolder .. '/'
+        .. fpsVisual.loadoutClips(fpsVisual.loadedViewmodelAsset).throw, position, true)
+    end)
+    if not ok then
+      clientPackError = 'FPS GRENADE ANIMATION ERROR - CHECK LIVE LOG'
+      ac.warn('[ASRC FPS] grenade throw animation failed: ' .. tostring(err))
+      return false
+    end
+    return true
+  end
   fpsVisual.viewmodelPhase = ((fpsVisual.viewmodelPhase or 0) + dt * 1.15) % 1
   local clip = 'idle'
   local position = fpsVisual.viewmodelPhase
@@ -2815,6 +3034,7 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   viewmodelKick = viewmodelKick * math.exp(-dt * 17)
   local moving = move:lengthSquared() > 0.01
   local pistolViewmodel = fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)
+  local grenadeViewmodel = fpsVisual.isGrenadeAsset(fpsVisual.loadedViewmodelAsset)
   local modernViewmodel = fpsVisual.modern
     or fpsVisual.isLoadoutAsset(fpsVisual.loadedViewmodelAsset)
   if not fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint) then return end
@@ -2841,20 +3061,26 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
     and math.clamp((0.9 - wallHit) / 0.75, 0, 1) or 0
   viewmodelWallRetraction = math.lerp(viewmodelWallRetraction, wallRetractionTarget,
     1 - math.exp(-dt * 18))
-  local hipForward = pistolViewmodel and 0.39 or (modernViewmodel and 0.32 or 0.30)
-  local hipRight = pistolViewmodel and -0.15 or (modernViewmodel and -0.18 or 0.22)
-  local hipUp = pistolViewmodel and -0.24 or (modernViewmodel and -0.32 or -0.20)
+  local hipForward = grenadeViewmodel and 0.37
+    or (pistolViewmodel and 0.39 or (modernViewmodel and 0.32 or 0.30))
+  local hipRight = grenadeViewmodel and -0.11
+    or (pistolViewmodel and -0.15 or (modernViewmodel and -0.18 or 0.22))
+  local hipUp = grenadeViewmodel and -0.25
+    or (pistolViewmodel and -0.24 or (modernViewmodel and -0.32 or -0.20))
   -- The Modern KN5 faces back toward its root, so its apparent screen-right
   -- direction is opposite the holder translation. These calibrated offsets put
   -- the optic axis on the camera look vector and bring the rear sight close
   -- enough to read as true ADS instead of a zoomed hip-fire pose.
-  local adsForward = pistolViewmodel and 0.34 or (modernViewmodel and 0.12 or 0.38)
+  local adsForward = grenadeViewmodel and hipForward
+    or (pistolViewmodel and 0.34 or (modernViewmodel and 0.12 or 0.38))
   -- The pistol KN5 faces back toward its holder, so decreasing this camera-right
   -- translation moves the rendered Desert Eagle toward screen-right.
   local pistolAdsRight = fpsVisual.loadedViewmodelAsset == 3 and 0.025 or 0.035
-  local adsRight = pistolViewmodel and pistolAdsRight
+  local adsRight = grenadeViewmodel and hipRight or (pistolViewmodel and pistolAdsRight
     or (modernViewmodel and 0.0003 or 0.00)
-  local adsUp = pistolViewmodel and -0.12 or (modernViewmodel and -0.2218 or -0.10)
+  )
+  local adsUp = grenadeViewmodel and hipUp
+    or (pistolViewmodel and -0.12 or (modernViewmodel and -0.2218 or -0.10))
   local pistolReloadPhase = pistolViewmodel and actor.reloadRemaining > 0
     and math.clamp(1 - actor.reloadRemaining / 1.8, 0, 1) or 0
   local pistolReloadLower = fpsVisual.smoothstep01(
@@ -3051,8 +3277,7 @@ local function effectUp(direction)
 end
 
 local function drawDirectShotEffects()
-  if #tracers == 0 and #impacts == 0 and #sparks == 0
-      and next(fpsVisual.grenades) == nil then return end
+  if #tracers == 0 and #impacts == 0 and #sparks == 0 then return end
   if not ensureShotEffectTemplates() then return end
 
   local rendered = 0
@@ -3094,12 +3319,6 @@ local function drawDirectShotEffects()
       end
     end
 
-    for _, grenade in pairs(fpsVisual.grenades) do
-      local direction = grenade.velocity ~= nil and grenade.velocity:lengthSquared() > 0.001
-        and grenade.velocity:clone():normalize() or vec3(0, 0, 1)
-      render.setTransform(grenade.position, direction, vec3(0, 1, 0), true)
-      if render.mesh(sparkRenderParams) ~= false then rendered = rendered + 1 end
-    end
   end)
   render.setTransform(vec3(), vec3(0, 0, 1), vec3(0, 1, 0))
   render.setCullMode(render.CullMode.Back)
@@ -3265,8 +3484,20 @@ function script.update(dt)
   local sprint = false
   local jumpStarted = false
   gameplayActive = fpsGameplayIsActive()
+  if fpsVisual.activeGrenadeType ~= nil
+      and fpsVisual.grenadeReleasedAt ~= nil
+      and effectClock - fpsVisual.grenadeReleasedAt >= fpsVisual.grenadeReleaseDuration then
+    fpsVisual.activeGrenadeType = nil
+    fpsVisual.grenadeReleasedAt = nil
+  end
+  if not gameplayActive then
+    fpsVisual.activeGrenadeType = nil
+    fpsVisual.grenadeReleasedAt = nil
+    fpsVisual.grenadeInputHeld = false
+  end
   if gameplayActive then hud.requestWeaponImage() end
   fpsVisual.updatePickups()
+  fpsVisual.updateGrenadeModels()
   -- The companion HUD can win exclusive UI ownership before this script sees
   -- a gameplay-mode callback. Reset pause ownership on the simulation state
   -- transition instead, which is observed by script.update() in either case.
@@ -3498,6 +3729,24 @@ function script.update(dt)
     local gamepadGrenade = ac.isGamepadButtonPressed(0, ac.GamepadButton.RightShoulder)
     local grenade = hud.bindingDown('grenade', ac.isKeyDown(ac.KeyIndex.G))
       or gamepadGrenade
+    if grenade and not fpsVisual.grenadeInputHeld and not cursorUnlocked
+        and localActor ~= nil and (localActor.lethalsRemaining or 0) > 0
+        and fpsVisual.activeGrenadeType == nil then
+      fpsVisual.activeGrenadeType = localActor.lethal or hud.loadout.lethal
+      fpsVisual.grenadePrimeStarted = effectClock
+      fpsVisual.grenadeReleasedAt = nil
+      fpsVisual.adsInput = 0
+      ac.log('[ASRC FPS] local grenade cooking started: type='
+        .. tostring(fpsVisual.activeGrenadeType))
+    end
+    if not grenade and fpsVisual.grenadeInputHeld
+        and fpsVisual.activeGrenadeType ~= nil
+        and fpsVisual.grenadeReleasedAt == nil then
+      fpsVisual.grenadeReleasedAt = effectClock
+      ac.log('[ASRC FPS] local cooked grenade released: type='
+        .. tostring(fpsVisual.activeGrenadeType))
+    end
+    fpsVisual.grenadeInputHeld = grenade
     if not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D1) then
       hud.loadout.activeSlot = 0
     elseif not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D2) then
@@ -3763,6 +4012,7 @@ function script.update(dt)
   effectClock = effectClock + dt
   local visualNow = ui.time()
   fpsVisual.updateMuzzleLights(visualNow)
+  fpsVisual.updateExplosionLights(visualNow)
   for i = #tracers, 1, -1 do
     if tracers[i].expiresAt <= visualNow then table.remove(tracers, i) end
   end

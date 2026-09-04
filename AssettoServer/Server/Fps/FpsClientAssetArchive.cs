@@ -8,8 +8,8 @@ namespace AssettoServer.Server.Fps;
 
 internal static class FpsClientAssetArchive
 {
-    public const string Route = "/fps/assets/asrc-fps-assets-v20.zip";
-    public const string FileName = "asrc-fps-assets-v20.zip";
+    public const string Route = "/fps/assets/asrc-fps-assets-v21.zip";
+    public const string FileName = "asrc-fps-assets-v21.zip";
     public const string ViewmodelFileName = "asrc_assault_rifle_viewmodel.kn5";
     public const string WorldModelFileName = "asrc_assault_rifle_world.kn5";
     public const string RifleDiffuseFileName = "asrc_rifle_diffuse.png";
@@ -49,10 +49,20 @@ internal static class FpsClientAssetArchive
         "asrc_colt_1911_sprint.ksanim",
         "asrc_colt_1911_reload.ksanim",
     ];
-    public static readonly string[] PlaceholderItemFileNames =
+    public const string FragGrenadeViewmodelFileName = "asrc_frag_grenade_viewmodel.kn5";
+    public const string FragGrenadeWorldModelFileName = "asrc_frag_grenade_world.kn5";
+    public const string FragGrenadeThrowFileName = "asrc_frag_grenade_throw.ksanim";
+    public const string FragGrenadeAttributionFileName = "frag-grenade-attribution.txt";
+    public const string StickyGrenadeViewmodelFileName = "asrc_sticky_grenade_viewmodel.kn5";
+    public const string StickyGrenadeWorldModelFileName = "asrc_sticky_grenade_world.kn5";
+    public const string StickyGrenadeThrowFileName = "asrc_sticky_grenade_throw.ksanim";
+    public const string StickyGrenadeAttributionFileName = "sticky-grenade-attribution.txt";
+    public static readonly string[] GrenadeModelFileNames =
     [
-        "asrc_frag_grenade_world.kn5",
-        "asrc_sticky_grenade_world.kn5",
+        FragGrenadeViewmodelFileName,
+        FragGrenadeWorldModelFileName,
+        StickyGrenadeViewmodelFileName,
+        StickyGrenadeWorldModelFileName,
     ];
 
     private static readonly Lazy<byte[]> Archive = new(CreateArchive);
@@ -89,9 +99,12 @@ internal static class FpsClientAssetArchive
             foreach (string fileName in Colt1911AnimationFileNames)
                 AddKsanim(archive, fileName,
                     $"AssettoServer.Server.Fps.Assets.{fileName}");
-            foreach (string fileName in PlaceholderItemFileNames)
-                AddKn5(archive, fileName,
-                    "AssettoServer.Server.Fps.Assets.asrc_assault_rifle_world.kn5");
+            foreach (string fileName in GrenadeModelFileNames)
+                AddKn5(archive, fileName, $"AssettoServer.Server.Fps.Assets.{fileName}");
+            AddKsanim(archive, FragGrenadeThrowFileName,
+                $"AssettoServer.Server.Fps.Assets.{FragGrenadeThrowFileName}");
+            AddKsanim(archive, StickyGrenadeThrowFileName,
+                $"AssettoServer.Server.Fps.Assets.{StickyGrenadeThrowFileName}");
             AddPng(archive, RifleDiffuseFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_rifle_diffuse.png");
             AddPng(archive, OperatorSkinFileName,
@@ -104,6 +117,10 @@ internal static class FpsClientAssetArchive
                 "AssettoServer.Server.Fps.Assets.asrc_colt_1911_attribution.txt", "DanaeH");
             AddText(archive, CompactSmgAttributionFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_compact_smg_attribution.txt", "Rotuma");
+            AddText(archive, FragGrenadeAttributionFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_frag_grenade_attribution.txt", "Tiago Lopes");
+            AddText(archive, StickyGrenadeAttributionFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_sticky_grenade_attribution.txt", "Simplix");
         }
 
         return output.ToArray();

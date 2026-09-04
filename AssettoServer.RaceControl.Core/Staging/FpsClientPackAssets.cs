@@ -60,8 +60,20 @@ public static class FpsClientPackAssets
         "content/objects3D/asrc_fps/attribution/colt-1911.txt";
     public const string FragGrenadeWorldModelPath =
         "content/objects3D/asrc_fps/asrc_frag_grenade_world.kn5";
+    public const string FragGrenadeViewmodelPath =
+        "content/objects3D/asrc_fps/asrc_frag_grenade_viewmodel.kn5";
+    public const string FragGrenadeThrowPath =
+        "content/objects3D/asrc_fps/asrc_frag_grenade_throw.ksanim";
+    public const string FragGrenadeAttributionPath =
+        "content/objects3D/asrc_fps/attribution/frag-grenade.txt";
     public const string StickyGrenadeWorldModelPath =
         "content/objects3D/asrc_fps/asrc_sticky_grenade_world.kn5";
+    public const string StickyGrenadeViewmodelPath =
+        "content/objects3D/asrc_fps/asrc_sticky_grenade_viewmodel.kn5";
+    public const string StickyGrenadeThrowPath =
+        "content/objects3D/asrc_fps/asrc_sticky_grenade_throw.ksanim";
+    public const string StickyGrenadeAttributionPath =
+        "content/objects3D/asrc_fps/attribution/sticky-grenade.txt";
     public const string HudManifestPath = "apps/lua/asrc_fps_hud/manifest.ini";
     public const string HudScriptPath = "apps/lua/asrc_fps_hud/asrc_fps_hud.lua";
     public const string HudWeaponImagePath = "apps/lua/asrc_fps_hud/asrc_carbine_hud.png";
@@ -110,6 +122,30 @@ public static class FpsClientPackAssets
 
     public static byte[] GetColt1911Attribution() => ReadEmbeddedText(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_colt_1911_attribution.txt");
+
+    public static byte[] GetFragGrenadeViewmodel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_frag_grenade_viewmodel.kn5");
+
+    public static byte[] GetFragGrenadeWorldModel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_frag_grenade_world.kn5");
+
+    public static byte[] GetFragGrenadeThrow() => ReadEmbeddedKsanim(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_frag_grenade_throw.ksanim");
+
+    public static byte[] GetFragGrenadeAttribution() => ReadEmbeddedText(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_frag_grenade_attribution.txt");
+
+    public static byte[] GetStickyGrenadeViewmodel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_sticky_grenade_viewmodel.kn5");
+
+    public static byte[] GetStickyGrenadeWorldModel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_sticky_grenade_world.kn5");
+
+    public static byte[] GetStickyGrenadeThrow() => ReadEmbeddedKsanim(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_sticky_grenade_throw.ksanim");
+
+    public static byte[] GetStickyGrenadeAttribution() => ReadEmbeddedText(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_sticky_grenade_attribution.txt");
 
     public static byte[] GetRifleDiffuse() => ReadEmbeddedPng(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_rifle_diffuse.png");
@@ -185,6 +221,46 @@ public static class FpsClientPackAssets
             float thump = MathF.Sin(MathF.Tau * (105 - time * 180) * time) * 0.32f;
             float crack = time < 0.012f ? (1 - time / 0.012f) * 0.42f : 0;
             float sample = Math.Clamp((white * 0.68f + thump) * envelope + crack, -1, 1);
+            writer.Write((short)(sample * short.MaxValue));
+        }
+        writer.Flush();
+        return stream.ToArray();
+    }
+
+    public static byte[] CreateExplosionWave()
+    {
+        const int sampleRate = 44_100;
+        const float durationSeconds = 1.15f;
+        int sampleCount = (int)(sampleRate * durationSeconds);
+        using var stream = new MemoryStream(44 + sampleCount * sizeof(short));
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + sampleCount * sizeof(short));
+        writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write((short)1);
+        writer.Write(sampleRate);
+        writer.Write(sampleRate * sizeof(short));
+        writer.Write((short)sizeof(short));
+        writer.Write((short)16);
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write(sampleCount * sizeof(short));
+
+        uint noise = 0x67CE11u;
+        float lowPass = 0;
+        for (int index = 0; index < sampleCount; index++)
+        {
+            float time = index / (float)sampleRate;
+            noise = unchecked(noise * 1_664_525u + 1_013_904_223u);
+            float white = ((noise >> 8) & 0xffff) / 32767.5f - 1;
+            lowPass += (white - lowPass) * 0.065f;
+            float blast = MathF.Exp(-time * 4.8f);
+            float crack = time < 0.018f ? (1 - time / 0.018f) : 0;
+            float sub = MathF.Sin(MathF.Tau * (72 - time * 26) * time)
+                        * MathF.Exp(-time * 3.1f);
+            float sample = Math.Clamp(lowPass * blast * 2.2f + sub * 0.62f
+                                      + white * crack * 0.8f, -1, 1);
             writer.Write((short)(sample * short.MaxValue));
         }
         writer.Flush();

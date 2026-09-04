@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 29;
+    public const int ClientPackVersion = 30;
     public const int BridgeProtocol = 5;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v29.zip";
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v30.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -30,12 +30,21 @@ public static class FpsClientPackBuilder
         IReadOnlyList<(string Path, byte[] Data)> colt1911Animations =
             FpsClientPackAssets.GetColt1911Animations();
         byte[] colt1911Attribution = FpsClientPackAssets.GetColt1911Attribution();
+        byte[] fragGrenadeViewmodel = FpsClientPackAssets.GetFragGrenadeViewmodel();
+        byte[] fragGrenadeWorldModel = FpsClientPackAssets.GetFragGrenadeWorldModel();
+        byte[] fragGrenadeThrow = FpsClientPackAssets.GetFragGrenadeThrow();
+        byte[] fragGrenadeAttribution = FpsClientPackAssets.GetFragGrenadeAttribution();
+        byte[] stickyGrenadeViewmodel = FpsClientPackAssets.GetStickyGrenadeViewmodel();
+        byte[] stickyGrenadeWorldModel = FpsClientPackAssets.GetStickyGrenadeWorldModel();
+        byte[] stickyGrenadeThrow = FpsClientPackAssets.GetStickyGrenadeThrow();
+        byte[] stickyGrenadeAttribution = FpsClientPackAssets.GetStickyGrenadeAttribution();
         byte[] rifleDiffuse = FpsClientPackAssets.GetRifleDiffuse();
         byte[] operatorSkin = FpsClientPackAssets.GetOperatorSkin();
         byte[] hudManifest = FpsClientPackAssets.GetHudManifest();
         byte[] hudScript = FpsClientPackAssets.GetHudScript();
         byte[] hudWeaponImage = FpsClientPackAssets.GetHudWeaponImage();
         byte[] rifleAudio = FpsClientPackAssets.CreateRifleWave();
+        byte[] explosionAudio = FpsClientPackAssets.CreateExplosionWave();
         IReadOnlyList<(string Path, byte[] Data)> modernAssets =
             FpsClientPackAssets.GetModernAssets();
 
@@ -115,12 +124,24 @@ public static class FpsClientPackBuilder
                         }),
                         attributionPath = FpsClientPackAssets.Colt1911AttributionPath,
                         attributionSha256 = FpsClientPackAssets.Sha256(colt1911Attribution) },
-                    new { id = 16, name = "Frag Grenade", kind = "lethal", placeholder = true,
-                        viewmodelPath = string.Empty,
-                        worldModelPath = FpsClientPackAssets.FragGrenadeWorldModelPath },
-                    new { id = 17, name = "Sticky Grenade", kind = "lethal", placeholder = true,
-                        viewmodelPath = string.Empty,
-                        worldModelPath = FpsClientPackAssets.StickyGrenadeWorldModelPath },
+                    new { id = 16, name = "Frag Grenade", kind = "lethal", placeholder = false,
+                        viewmodelPath = FpsClientPackAssets.FragGrenadeViewmodelPath,
+                        viewmodelSha256 = FpsClientPackAssets.Sha256(fragGrenadeViewmodel),
+                        worldModelPath = FpsClientPackAssets.FragGrenadeWorldModelPath,
+                        worldModelSha256 = FpsClientPackAssets.Sha256(fragGrenadeWorldModel),
+                        throwAnimationPath = FpsClientPackAssets.FragGrenadeThrowPath,
+                        throwAnimationSha256 = FpsClientPackAssets.Sha256(fragGrenadeThrow),
+                        attributionPath = FpsClientPackAssets.FragGrenadeAttributionPath,
+                        attributionSha256 = FpsClientPackAssets.Sha256(fragGrenadeAttribution) },
+                    new { id = 17, name = "Sticky Grenade", kind = "lethal", placeholder = false,
+                        viewmodelPath = FpsClientPackAssets.StickyGrenadeViewmodelPath,
+                        viewmodelSha256 = FpsClientPackAssets.Sha256(stickyGrenadeViewmodel),
+                        worldModelPath = FpsClientPackAssets.StickyGrenadeWorldModelPath,
+                        worldModelSha256 = FpsClientPackAssets.Sha256(stickyGrenadeWorldModel),
+                        throwAnimationPath = FpsClientPackAssets.StickyGrenadeThrowPath,
+                        throwAnimationSha256 = FpsClientPackAssets.Sha256(stickyGrenadeThrow),
+                        attributionPath = FpsClientPackAssets.StickyGrenadeAttributionPath,
+                        attributionSha256 = FpsClientPackAssets.Sha256(stickyGrenadeAttribution) },
                 },
                 operatorSkinPath = FpsClientPackAssets.OperatorSkinPath,
                 operatorSkinSha256 = FpsClientPackAssets.Sha256(operatorSkin),
@@ -155,11 +176,11 @@ public static class FpsClientPackBuilder
                 the Assetto Corsa installation root. It installs the project-owned assault-rifle
                 models, the CC BY MP5 SMG, Desert Eagle and Colt 1911 with reused
                 skinned carbine arms, weapon-specific hand poses and magazine motion,
-                placeholder grenade models and
+                real M67 and Semtex-style grenade models, first-person throw animations and
                 operator UV skin under
                 content/objects3D/asrc_fps, plus rifle sound
                 under extension/audio/asrc_fps. It also installs the presentation-only ASRC FPS
-                HUD under apps/lua/asrc_fps_hud. Client pack v29 also contains the animated Modern
+                HUD under apps/lua/asrc_fps_hud. Client pack v30 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.
@@ -208,10 +229,22 @@ public static class FpsClientPackBuilder
             await WriteEntryAsync(archive, path, data, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.Colt1911AttributionPath,
             colt1911Attribution, cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.FragGrenadeViewmodelPath,
+            fragGrenadeViewmodel, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.FragGrenadeWorldModelPath,
-            rifleWorldModel, cancellationToken);
+            fragGrenadeWorldModel, cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.FragGrenadeThrowPath,
+            fragGrenadeThrow, cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.FragGrenadeAttributionPath,
+            fragGrenadeAttribution, cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.StickyGrenadeViewmodelPath,
+            stickyGrenadeViewmodel, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.StickyGrenadeWorldModelPath,
-            rifleWorldModel, cancellationToken);
+            stickyGrenadeWorldModel, cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.StickyGrenadeThrowPath,
+            stickyGrenadeThrow, cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.StickyGrenadeAttributionPath,
+            stickyGrenadeAttribution, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.HudManifestPath, hudManifest,
             cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.HudScriptPath, hudScript,
@@ -219,6 +252,8 @@ public static class FpsClientPackBuilder
         await WriteEntryAsync(archive, FpsClientPackAssets.HudWeaponImagePath, hudWeaponImage,
             cancellationToken);
         await WriteEntryAsync(archive, "extension/audio/asrc_fps/rifle.wav", rifleAudio,
+            cancellationToken);
+        await WriteEntryAsync(archive, "extension/audio/asrc_fps/explosion.wav", explosionAudio,
             cancellationToken);
         foreach ((string path, byte[] data) in modernAssets)
             await WriteEntryAsync(archive, path, data, cancellationToken);

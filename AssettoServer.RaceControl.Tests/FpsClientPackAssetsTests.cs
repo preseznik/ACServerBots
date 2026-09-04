@@ -9,7 +9,7 @@ namespace AssettoServer.RaceControl.Tests;
 public sealed class FpsClientPackAssetsTests
 {
     [Test]
-    public void RifleSmgAndPistolModelsAreEmbeddedValidAssets()
+    public void WeaponAndGrenadeModelsAreEmbeddedValidAssets()
     {
         byte[] viewmodel = FpsClientPackAssets.GetRifleViewmodel();
         byte[] worldModel = FpsClientPackAssets.GetRifleWorldModel();
@@ -25,6 +25,12 @@ public sealed class FpsClientPackAssetsTests
         byte[] colt1911WorldModel = FpsClientPackAssets.GetColt1911WorldModel();
         IReadOnlyList<(string Path, byte[] Data)> colt1911Animations =
             FpsClientPackAssets.GetColt1911Animations();
+        byte[] fragViewmodel = FpsClientPackAssets.GetFragGrenadeViewmodel();
+        byte[] fragWorld = FpsClientPackAssets.GetFragGrenadeWorldModel();
+        byte[] fragThrow = FpsClientPackAssets.GetFragGrenadeThrow();
+        byte[] stickyViewmodel = FpsClientPackAssets.GetStickyGrenadeViewmodel();
+        byte[] stickyWorld = FpsClientPackAssets.GetStickyGrenadeWorldModel();
+        byte[] stickyThrow = FpsClientPackAssets.GetStickyGrenadeThrow();
         IReadOnlyList<(string Path, byte[] Data)> modernAssets =
             FpsClientPackAssets.GetModernAssets();
 
@@ -90,6 +96,18 @@ public sealed class FpsClientPackAssetsTests
                 Has.Some.EndsWith("asrc_colt_1911_reload.ksanim"));
             Assert.That(Encoding.UTF8.GetString(FpsClientPackAssets.GetColt1911Attribution()),
                 Does.Contain("DanaeH"));
+            Assert.That(Encoding.ASCII.GetString(fragViewmodel, 0, 6), Is.EqualTo("sc6969"));
+            Assert.That(Encoding.ASCII.GetString(fragWorld, 0, 6), Is.EqualTo("sc6969"));
+            Assert.That(BitConverter.ToUInt32(fragThrow, 0), Is.EqualTo(2));
+            Assert.That(Encoding.ASCII.GetString(stickyViewmodel, 0, 6), Is.EqualTo("sc6969"));
+            Assert.That(Encoding.ASCII.GetString(stickyWorld, 0, 6), Is.EqualTo("sc6969"));
+            Assert.That(BitConverter.ToUInt32(stickyThrow, 0), Is.EqualTo(2));
+            Assert.That(fragWorld.SequenceEqual(worldModel), Is.False);
+            Assert.That(stickyWorld.SequenceEqual(worldModel), Is.False);
+            Assert.That(Encoding.UTF8.GetString(FpsClientPackAssets.GetFragGrenadeAttribution()),
+                Does.Contain("Tiago Lopes"));
+            Assert.That(Encoding.UTF8.GetString(FpsClientPackAssets.GetStickyGrenadeAttribution()),
+                Does.Contain("Simplix"));
         });
     }
 
@@ -116,9 +134,10 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public void RifleWaveIsAPlayableMonoPcmAsset()
+    public void WeaponAndExplosionWavesArePlayableMonoPcmAssets()
     {
         byte[] wave = FpsClientPackAssets.CreateRifleWave();
+        byte[] explosion = FpsClientPackAssets.CreateExplosionWave();
         using var reader = new BinaryReader(new MemoryStream(wave), Encoding.ASCII);
 
         Assert.Multiple(() =>
@@ -131,6 +150,8 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(reader.ReadInt16(), Is.EqualTo(1));
             Assert.That(reader.ReadInt32(), Is.EqualTo(44_100));
             Assert.That(wave.Length, Is.GreaterThan(19_000));
+            Assert.That(Encoding.ASCII.GetString(explosion, 0, 4), Is.EqualTo("RIFF"));
+            Assert.That(explosion, Has.Length.GreaterThan(100_000));
         });
     }
 
@@ -176,7 +197,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV29ContainsAnimatedSmgPistolsPlaceholderGrenadesAndBothThemes()
+    public async Task ClientPackV30ContainsAnimatedWeaponsGrenadesAndBothThemes()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -186,10 +207,10 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(29));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(30));
             Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(5));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v29.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v30.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
@@ -210,8 +231,15 @@ public sealed class FpsClientPackAssetsTests
                 Assert.That(entries.Keys, Does.Contain(animation));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.Colt1911AttributionPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.FragGrenadeWorldModelPath));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.FragGrenadeViewmodelPath));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.FragGrenadeThrowPath));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.FragGrenadeAttributionPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.StickyGrenadeWorldModelPath));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.StickyGrenadeViewmodelPath));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.StickyGrenadeThrowPath));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.StickyGrenadeAttributionPath));
             Assert.That(entries.Keys, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
+            Assert.That(entries.Keys, Does.Contain("extension/audio/asrc_fps/explosion.wav"));
             Assert.That(entries.Keys, Does.Contain(
                 $"{FpsClientPackAssets.ModernAssetDirectory}asrc_modern_operator_carbine.kn5"));
             Assert.That(entries.Keys, Does.Contain(
@@ -237,10 +265,14 @@ public sealed class FpsClientPackAssetsTests
             .Single(item => item.GetProperty("id").GetInt32() == 3);
         JsonElement colt1911 = root.GetProperty("loadoutItems").EnumerateArray()
             .Single(item => item.GetProperty("id").GetInt32() == 4);
+        JsonElement frag = root.GetProperty("loadoutItems").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetInt32() == 16);
+        JsonElement sticky = root.GetProperty("loadoutItems").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetInt32() == 17);
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(2));
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(29));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(30));
             Assert.That(root.GetProperty("loadoutItems").GetArrayLength(), Is.EqualTo(5));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),
@@ -320,7 +352,29 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(ReadEntry(entries[FpsClientPackAssets.Colt1911WorldModelPath])
                 .SequenceEqual(ReadEntry(entries[FpsClientPackAssets.RifleWorldModelPath])),
                 Is.False);
+            AssertGrenadeManifest(frag, FpsClientPackAssets.FragGrenadeViewmodelPath,
+                FpsClientPackAssets.FragGrenadeWorldModelPath,
+                FpsClientPackAssets.FragGrenadeThrowPath,
+                FpsClientPackAssets.FragGrenadeAttributionPath);
+            AssertGrenadeManifest(sticky, FpsClientPackAssets.StickyGrenadeViewmodelPath,
+                FpsClientPackAssets.StickyGrenadeWorldModelPath,
+                FpsClientPackAssets.StickyGrenadeThrowPath,
+                FpsClientPackAssets.StickyGrenadeAttributionPath);
         });
+
+        void AssertGrenadeManifest(JsonElement item, string viewmodelPath,
+            string worldModelPath, string throwPath, string attributionPath)
+        {
+            Assert.That(item.GetProperty("placeholder").GetBoolean(), Is.False);
+            Assert.That(item.GetProperty("viewmodelSha256").GetString(),
+                Is.EqualTo(FpsClientPackAssets.Sha256(ReadEntry(entries[viewmodelPath]))));
+            Assert.That(item.GetProperty("worldModelSha256").GetString(),
+                Is.EqualTo(FpsClientPackAssets.Sha256(ReadEntry(entries[worldModelPath]))));
+            Assert.That(item.GetProperty("throwAnimationSha256").GetString(),
+                Is.EqualTo(FpsClientPackAssets.Sha256(ReadEntry(entries[throwPath]))));
+            Assert.That(item.GetProperty("attributionSha256").GetString(),
+                Is.EqualTo(FpsClientPackAssets.Sha256(ReadEntry(entries[attributionPath]))));
+        }
     }
 
     [Test]

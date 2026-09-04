@@ -362,7 +362,22 @@ public sealed class FpsSimulationTests
         frag.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
             FpsInputButtons.ThrowLethal));
         frag.Step(0.01f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(frag.Grenades, Is.Empty,
+                "holding the button must cook the grenade without releasing it");
+            Assert.That(fragActors[0].LethalsRemaining, Is.Zero);
+            Assert.That(fragActors[0].PendingLethal,
+                Is.EqualTo(FpsLethalType.FragGrenade));
+        });
+        for (int tick = 0; tick < 8; tick++) frag.Step(0.05f);
+        Assert.That(frag.Grenades, Is.Empty);
+        frag.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+        for (int tick = 0; tick < 6; tick++) frag.Step(0.05f);
         var grenade = frag.Grenades.Single();
+        Assert.That(grenade.RemainingSeconds, Is.LessThan(2.35f),
+            "the projectile fuse must retain time already spent cooking and releasing");
         grenade.Position = fragActors[1].Position + Vector3.UnitY;
         grenade.Velocity = Vector3.Zero;
         grenade.RemainingSeconds = 0.01f;
@@ -389,7 +404,10 @@ public sealed class FpsSimulationTests
         var stickyActors = sticky.Actors.OrderBy(actor => actor.Id).ToArray();
         sticky.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
             FpsInputButtons.ThrowLethal));
-        sticky.Step(0.01f);
+        sticky.Step(0.05f);
+        sticky.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+        for (int tick = 0; tick < 6; tick++) sticky.Step(0.05f);
         var stickyGrenade = sticky.Grenades.Single();
         stickyGrenade.Position = stickyActors[1].Position + Vector3.UnitY;
         stickyGrenade.Velocity = Vector3.UnitZ;
@@ -398,6 +416,75 @@ public sealed class FpsSimulationTests
         stickyActors[1].Dead = true;
         sticky.Step(0.01f);
         Assert.That(stickyGrenade.AttachedActorId, Is.EqualTo(byte.MaxValue));
+    }
+
+    [Test]
+    public void HoldingLethalPastItsFuseExplodesInHandAndKillsProtectedOwner()
+    {
+        var simulation = new FpsSimulation(Configuration(),
+        [
+            new(0, "Cook", FpsSlotRole.Human),
+            new(1, "Nearby", FpsSlotRole.Human),
+        ]);
+        simulation.ClaimHuman(0);
+        simulation.ClaimHuman(1);
+        var actors = simulation.Actors.OrderBy(actor => actor.Id).ToArray();
+        actors[0].Position = Vector3.Zero;
+        actors[0].Health = 300;
+        actors[0].SpawnProtectionRemaining = 10;
+        actors[1].Position = new Vector3(0.5f, 0, 0);
+        actors[1].SpawnProtectionRemaining = 0;
+
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.ThrowLethal));
+        for (int tick = 0; tick < 70 && !actors[0].Dead; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actors[0].Dead, Is.True,
+                "overcooking must kill the owner even during spawn protection");
+            Assert.That(actors[1].Dead, Is.True,
+                "the normal radial damage path must still affect nearby actors");
+            Assert.That(simulation.Grenades, Is.Empty);
+            Assert.That(simulation.GrenadeExplosionEvents, Has.Count.EqualTo(1));
+            Assert.That(simulation.KillEvents.Any(kill => kill.VictimId == 0
+                && kill.KillerId == byte.MaxValue), Is.True);
+        });
+    }
+
+    [Test]
+    public void FragGrenadeSettlesAboveWalkableSurfaceUntilDetonation()
+    {
+        var surface = new FpsArenaSurface(FlatFloor(-40, 40, -40, 40, 0).ToArray());
+        var simulation = new FpsSimulation(Configuration(),
+            [new(0, "Thrower", FpsSlotRole.Human)], surface: surface);
+        simulation.ClaimHuman(0);
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.ThrowLethal));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+
+        for (int tick = 0; tick < 6; tick++) simulation.Step(0.05f);
+        Assert.That(simulation.Grenades, Has.Count.EqualTo(1));
+        float minimumY = float.PositiveInfinity;
+        float restingY = float.NaN;
+        for (int tick = 0; tick < 55 && simulation.Grenades.Count > 0; tick++)
+        {
+            simulation.Step(0.05f);
+            if (simulation.Grenades.Count == 0) break;
+            var grenade = simulation.Grenades.Single();
+            minimumY = Math.Min(minimumY, grenade.Position.Y);
+            if (grenade.AtRest) restingY = grenade.Position.Y;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(minimumY, Is.GreaterThanOrEqualTo(
+                FpsSimulation.GrenadeGroundClearance - 0.005f));
+            Assert.That(restingY, Is.EqualTo(FpsSimulation.GrenadeGroundClearance)
+                .Within(0.005f), "a spent bounce must become a stable ground contact");
+        });
     }
 
     [Test]

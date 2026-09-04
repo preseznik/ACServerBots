@@ -6,7 +6,7 @@ namespace AssettoServer.Tests;
 public sealed class FpsClientAssetArchiveTests
 {
     [Test]
-    public void Archive_ContainsRealSmgPistolsPlaceholderGrenadesTexturesAndAttribution()
+    public void Archive_ContainsRealWeaponsGrenadesAnimationsTexturesAndAttribution()
     {
         byte[] bytes = FpsClientAssetArchive.GetArchive();
         using var stream = new MemoryStream(bytes);
@@ -15,7 +15,7 @@ public sealed class FpsClientAssetArchiveTests
         Assert.That(bytes, Has.Length.GreaterThan(10_000));
         Assert.That(bytes.AsSpan(0, 2).SequenceEqual("PK"u8), Is.True);
         Assert.That(FpsClientAssetArchive.Route,
-            Is.EqualTo("/fps/assets/asrc-fps-assets-v20.zip"));
+            Is.EqualTo("/fps/assets/asrc-fps-assets-v21.zip"));
         Assert.That(archive.Entries.Select(entry => entry.FullName), Is.EquivalentTo(new[]
         {
             FpsClientAssetArchive.ViewmodelFileName,
@@ -29,13 +29,17 @@ public sealed class FpsClientAssetArchiveTests
             FpsClientAssetArchive.Colt1911ViewmodelFileName,
             FpsClientAssetArchive.Colt1911WorldModelFileName,
             FpsClientAssetArchive.Colt1911AttributionFileName,
+            FpsClientAssetArchive.FragGrenadeThrowFileName,
+            FpsClientAssetArchive.FragGrenadeAttributionFileName,
+            FpsClientAssetArchive.StickyGrenadeThrowFileName,
+            FpsClientAssetArchive.StickyGrenadeAttributionFileName,
             FpsClientAssetArchive.RifleDiffuseFileName,
             FpsClientAssetArchive.OperatorSkinFileName,
             FpsClientAssetArchive.HudWeaponImageFileName,
         }.Concat(FpsClientAssetArchive.CompactSmgAnimationFileNames)
             .Concat(FpsClientAssetArchive.DesertEagleAnimationFileNames)
             .Concat(FpsClientAssetArchive.Colt1911AnimationFileNames)
-            .Concat(FpsClientAssetArchive.PlaceholderItemFileNames)));
+            .Concat(FpsClientAssetArchive.GrenadeModelFileNames)));
 
         Assert.Multiple(() =>
         {
@@ -52,6 +56,10 @@ public sealed class FpsClientAssetArchiveTests
                             "Rotuma",
                         var name when name == FpsClientAssetArchive.Colt1911AttributionFileName =>
                             "DanaeH",
+                        var name when name == FpsClientAssetArchive.FragGrenadeAttributionFileName =>
+                            "Tiago Lopes",
+                        var name when name == FpsClientAssetArchive.StickyGrenadeAttributionFileName =>
+                            "Simplix",
                         _ => "ELIZION",
                     };
                     Assert.That(attribution, Does.Contain(expectedAuthor));
@@ -103,6 +111,17 @@ public sealed class FpsClientAssetArchiveTests
                 "The Colt 1911 must not regress to the rifle placeholder payload");
             foreach (string animation in FpsClientAssetArchive.Colt1911AnimationFileNames)
                 Assert.That(ReadEntry(archive, animation), Has.Length.GreaterThan(10_000), animation);
+            byte[] frag = ReadEntry(archive, FpsClientAssetArchive.FragGrenadeWorldModelFileName);
+            byte[] sticky = ReadEntry(archive,
+                FpsClientAssetArchive.StickyGrenadeWorldModelFileName);
+            Assert.That(frag, Has.Length.GreaterThan(4_000_000));
+            Assert.That(sticky, Has.Length.GreaterThan(900_000));
+            Assert.That(frag.SequenceEqual(rifle), Is.False);
+            Assert.That(sticky.SequenceEqual(rifle), Is.False);
+            Assert.That(ReadEntry(archive, FpsClientAssetArchive.FragGrenadeThrowFileName),
+                Has.Length.GreaterThan(90_000));
+            Assert.That(ReadEntry(archive, FpsClientAssetArchive.StickyGrenadeThrowFileName),
+                Has.Length.GreaterThan(90_000));
         });
     }
 

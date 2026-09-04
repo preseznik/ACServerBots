@@ -197,13 +197,13 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("math.lerp(72, 56, fpsVisual.ads)"));
             Assert.That(script, Does.Contain("math.lerp(hipRight, adsRight, fpsVisual.ads)"));
             Assert.That(script, Does.Contain(
-                "local adsForward = pistolViewmodel and 0.34 or (modernViewmodel and 0.12 or 0.38)"));
+                "local adsForward = grenadeViewmodel and hipForward"));
             Assert.That(script, Does.Contain(
                 "local pistolAdsRight = fpsVisual.loadedViewmodelAsset == 3 and 0.025 or 0.035"));
             Assert.That(script, Does.Contain(
-                "local adsRight = pistolViewmodel and pistolAdsRight"));
+                "local adsRight = grenadeViewmodel and hipRight or (pistolViewmodel and pistolAdsRight"));
             Assert.That(script, Does.Contain(
-                "local adsUp = pistolViewmodel and -0.12 or (modernViewmodel and -0.2218 or -0.10)"));
+                "local adsUp = grenadeViewmodel and hipUp"));
             Assert.That(script, Does.Contain("local visualKickScale = math.lerp(1, 0.35, fpsVisual.ads)"));
             Assert.That(script, Does.Contain(
                 "local downwardLook = math.clamp((-pitch - math.rad(35)) / math.rad(45), 0, 1)"));
@@ -319,7 +319,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("web.loadRemoteAssets"));
             Assert.That(script, Does.Contain("ac.getServerIP()"));
             Assert.That(script, Does.Contain("ac.getServerPortHTTP()"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v20.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v21.zip"));
             Assert.That(script, Does.Contain("asrc_compact_smg_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_compact_smg_world.kn5"));
             Assert.That(script, Does.Contain("asrc_compact_smg_reload_empty.ksanim"));
@@ -337,6 +337,20 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("asrc_colt_1911_equip.ksanim"));
             Assert.That(script, Does.Contain("asrc_colt_1911_sprint.ksanim"));
             Assert.That(script, Does.Contain("asrc_colt_1911_reload.ksanim"));
+            Assert.That(script, Does.Contain("asrc_frag_grenade_viewmodel.kn5"));
+            Assert.That(script, Does.Contain("asrc_frag_grenade_world.kn5"));
+            Assert.That(script, Does.Contain("asrc_frag_grenade_throw.ksanim"));
+            Assert.That(script, Does.Contain("asrc_sticky_grenade_viewmodel.kn5"));
+            Assert.That(script, Does.Contain("asrc_sticky_grenade_world.kn5"));
+            Assert.That(script, Does.Contain("asrc_sticky_grenade_throw.ksanim"));
+            Assert.That(script, Does.Contain("fpsVisual.updateGrenadeModels()"));
+            Assert.That(script, Does.Contain("fpsVisual.activeGrenadeType = localActor.lethal"));
+            Assert.That(script, Does.Contain("fpsVisual.grenadeReleasedAt = effectClock"));
+            Assert.That(script, Does.Contain("fpsVisual.grenadeHoldPhase"));
+            Assert.That(script, Does.Contain("fpsVisual.grenadeReleasePoint"));
+            Assert.That(script, Does.Contain("local cooked grenade released"));
+            Assert.That(script, Does.Contain("fpsVisual.explosionSmoke:emit"));
+            Assert.That(script, Does.Contain("fpsVisual.illuminateExplosion"));
             Assert.That(script, Does.Contain("viewmodelPistolPoseSeedPending = false"));
             Assert.That(script, Does.Contain(
                 "fpsVisual.pistolClips(assetKey).reload, 0, true"));
@@ -478,6 +492,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("%d RESERVE MAGS"));
             Assert.That(script, Does.Not.Contain("ASSAULT RIFLE  |  INFINITE"));
             Assert.That(script, Does.Contain("extension/audio/asrc_fps/rifle.wav"));
+            Assert.That(script, Does.Contain("extension/audio/asrc_fps/explosion.wav"));
             Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v5')"));
             Assert.That(script, Does.Contain("localStamina = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain(

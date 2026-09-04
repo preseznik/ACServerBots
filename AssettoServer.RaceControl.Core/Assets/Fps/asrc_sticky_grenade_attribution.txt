@@ -1,0 +1,10 @@
+Futuristic Grenade by Simplix
+Source: https://sketchfab.com/3d-models/futuristic-grenade-d3a36ead60b54d4bbc86571fb246db32
+License: Creative Commons Attribution 4.0 (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/
+
+Changes by the AssettoServer Race Control project:
+- adapted as the game's Semtex-style sticky grenade
+- textures resized for first-person and world rendering budgets
+- combined with the project's existing carbine arms and a new throw animation
+- converted from FBX to KN5/KSANIM

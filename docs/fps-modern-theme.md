@@ -130,11 +130,11 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
 downloads `/fps/assets/asrc-fps-modern-v8.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5 or KSANIM changes. Client pack version 29 also installs both themes under the project-owned
+embedded KN5 or KSANIM changes. Client pack version 30 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
 MP5 SMG, Desert Eagle, and Colt 1911 rendering use separate rigid KN5 paths shared with Blocks.
-Modern also requests base asset archive v20, hides `ASRC_CARBINE_WORLD` while weapon ID 2, 3, or 4 is
+Modern also requests base asset archive v21, hides `ASRC_CARBINE_WORLD` while weapon ID 2, 3, or 4 is
 active, and attaches the selected rigid weapon at the operator's weapon root. The SMG viewmodel retains
 the complete carbine arm rig and animation ranges, with a dedicated magazine bone used by normal and
 empty reload clips. First-person pistols use a dedicated skinned
@@ -144,6 +144,11 @@ sprint, and reload motion. The support shoulder is animated below the view frust
 except reload, when the left hand follows the separately skinned magazine. The viewmodel holder also
 tilts the complete pistol rig down 22 degrees during that reload window. Third-person hand posing remains a
 later animation pass; the existing rigid world pistol attachment is unchanged.
+
+Grenade IDs 16 and 17 select dedicated M67 and Semtex-like first-person KN5s while a local throw is
+active and dedicated rigid world KN5s for authoritative projectiles. Each viewmodel reuses the arm
+skeleton with its own 48-frame throw clip. Detonation replaces the projectile with sparks, smoke,
+flame, a fading orange light, and dedicated positional explosion audio.
 
 The confirmed `native-scene-v21-angle-lerp-fix` actor root remains the sole owner of authoritative
 world position and yaw. A Modern model is an animated child of that root. KSANIM never writes world

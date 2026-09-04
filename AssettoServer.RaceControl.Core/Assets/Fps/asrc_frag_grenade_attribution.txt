@@ -1,0 +1,10 @@
+M67 GRENADE by Tiago Lopes (drobluda)
+Source: https://sketchfab.com/3d-models/m67-grenade-d202644dfaf441a0a145befbd7add45a
+License: Creative Commons Attribution 4.0 (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/
+
+Changes by the AssettoServer Race Control project:
+- scaled and reoriented for Assetto Corsa/CSP gameplay
+- textures resized for first-person and world rendering budgets
+- combined with the project's existing carbine arms and a new throw animation
+- converted from FBX to KN5/KSANIM
