@@ -1,0 +1,9 @@
+MP5 Submachine Gun by Rotuma
+Source: https://sketchfab.com/3d-models/mp5-submachine-gun-a73b61932a0e4eecb5db5c63c158aa24
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/
+
+Changes: regrouped into body and magazine meshes, re-anchored at the pistol
+grip, downsampled textures, converted to Assetto Corsa KN5, and combined with
+the project's existing carbine arms, skeleton, animation ranges, and a new
+detachable-magazine reload track.

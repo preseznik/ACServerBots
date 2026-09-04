@@ -6,7 +6,7 @@ namespace AssettoServer.Tests;
 public sealed class FpsClientAssetArchiveTests
 {
     [Test]
-    public void Archive_ContainsRealPistolsPlaceholdersTexturesArtworkAndAttribution()
+    public void Archive_ContainsRealSmgPistolsPlaceholderGrenadesTexturesAndAttribution()
     {
         byte[] bytes = FpsClientAssetArchive.GetArchive();
         using var stream = new MemoryStream(bytes);
@@ -15,11 +15,14 @@ public sealed class FpsClientAssetArchiveTests
         Assert.That(bytes, Has.Length.GreaterThan(10_000));
         Assert.That(bytes.AsSpan(0, 2).SequenceEqual("PK"u8), Is.True);
         Assert.That(FpsClientAssetArchive.Route,
-            Is.EqualTo("/fps/assets/asrc-fps-assets-v19.zip"));
+            Is.EqualTo("/fps/assets/asrc-fps-assets-v20.zip"));
         Assert.That(archive.Entries.Select(entry => entry.FullName), Is.EquivalentTo(new[]
         {
             FpsClientAssetArchive.ViewmodelFileName,
             FpsClientAssetArchive.WorldModelFileName,
+            FpsClientAssetArchive.CompactSmgViewmodelFileName,
+            FpsClientAssetArchive.CompactSmgWorldModelFileName,
+            FpsClientAssetArchive.CompactSmgAttributionFileName,
             FpsClientAssetArchive.DesertEagleViewmodelFileName,
             FpsClientAssetArchive.DesertEagleWorldModelFileName,
             FpsClientAssetArchive.DesertEagleAttributionFileName,
@@ -29,7 +32,8 @@ public sealed class FpsClientAssetArchiveTests
             FpsClientAssetArchive.RifleDiffuseFileName,
             FpsClientAssetArchive.OperatorSkinFileName,
             FpsClientAssetArchive.HudWeaponImageFileName,
-        }.Concat(FpsClientAssetArchive.DesertEagleAnimationFileNames)
+        }.Concat(FpsClientAssetArchive.CompactSmgAnimationFileNames)
+            .Concat(FpsClientAssetArchive.DesertEagleAnimationFileNames)
             .Concat(FpsClientAssetArchive.Colt1911AnimationFileNames)
             .Concat(FpsClientAssetArchive.PlaceholderItemFileNames)));
 
@@ -42,8 +46,14 @@ public sealed class FpsClientAssetArchiveTests
                 {
                     using var reader = new StreamReader(asset);
                     string attribution = reader.ReadToEnd();
-                    string expectedAuthor = entry.FullName ==
-                        FpsClientAssetArchive.Colt1911AttributionFileName ? "DanaeH" : "ELIZION";
+                    string expectedAuthor = entry.FullName switch
+                    {
+                        var name when name == FpsClientAssetArchive.CompactSmgAttributionFileName =>
+                            "Rotuma",
+                        var name when name == FpsClientAssetArchive.Colt1911AttributionFileName =>
+                            "DanaeH",
+                        _ => "ELIZION",
+                    };
                     Assert.That(attribution, Does.Contain(expectedAuthor));
                     Assert.That(attribution, Does.Contain("CC BY 4.0"));
                     continue;
@@ -63,6 +73,16 @@ public sealed class FpsClientAssetArchiveTests
             }
 
             byte[] rifle = ReadEntry(archive, FpsClientAssetArchive.WorldModelFileName);
+            byte[] compactSmg = ReadEntry(archive,
+                FpsClientAssetArchive.CompactSmgWorldModelFileName);
+            byte[] compactSmgViewmodel = ReadEntry(archive,
+                FpsClientAssetArchive.CompactSmgViewmodelFileName);
+            Assert.That(compactSmgViewmodel, Has.Length.GreaterThan(30_000_000));
+            Assert.That(compactSmg, Has.Length.GreaterThan(3_000_000));
+            Assert.That(compactSmg.SequenceEqual(rifle), Is.False,
+                "The Compact SMG must not regress to the rifle placeholder payload");
+            foreach (string animation in FpsClientAssetArchive.CompactSmgAnimationFileNames)
+                Assert.That(ReadEntry(archive, animation), Has.Length.GreaterThan(10_000), animation);
             byte[] desertEagle = ReadEntry(archive,
                 FpsClientAssetArchive.DesertEagleWorldModelFileName);
             byte[] desertEagleViewmodel = ReadEntry(archive,

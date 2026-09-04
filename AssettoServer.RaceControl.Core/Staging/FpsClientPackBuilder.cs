@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 28;
+    public const int ClientPackVersion = 29;
     public const int BridgeProtocol = 5;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v28.zip";
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v29.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -15,6 +15,11 @@ public static class FpsClientPackBuilder
     {
         byte[] rifleViewmodel = FpsClientPackAssets.GetRifleViewmodel();
         byte[] rifleWorldModel = FpsClientPackAssets.GetRifleWorldModel();
+        byte[] compactSmgViewmodel = FpsClientPackAssets.GetCompactSmgViewmodel();
+        byte[] compactSmgWorldModel = FpsClientPackAssets.GetCompactSmgWorldModel();
+        IReadOnlyList<(string Path, byte[] Data)> compactSmgAnimations =
+            FpsClientPackAssets.GetCompactSmgAnimations();
+        byte[] compactSmgAttribution = FpsClientPackAssets.GetCompactSmgAttribution();
         byte[] desertEagleViewmodel = FpsClientPackAssets.GetDesertEagleViewmodel();
         byte[] desertEagleWorldModel = FpsClientPackAssets.GetDesertEagleWorldModel();
         IReadOnlyList<(string Path, byte[] Data)> desertEagleAnimations =
@@ -74,9 +79,18 @@ public static class FpsClientPackBuilder
                 },
                 loadoutItems = new object[]
                 {
-                    new { id = 2, name = "Compact SMG", kind = "main", placeholder = true,
+                    new { id = 2, name = "MP5 SMG", kind = "main", placeholder = false,
                         viewmodelPath = FpsClientPackAssets.CompactSmgViewmodelPath,
-                        worldModelPath = FpsClientPackAssets.CompactSmgWorldModelPath },
+                        viewmodelSha256 = FpsClientPackAssets.Sha256(compactSmgViewmodel),
+                        worldModelPath = FpsClientPackAssets.CompactSmgWorldModelPath,
+                        worldModelSha256 = FpsClientPackAssets.Sha256(compactSmgWorldModel),
+                        animations = compactSmgAnimations.Select(asset => new
+                        {
+                            path = asset.Path,
+                            sha256 = FpsClientPackAssets.Sha256(asset.Data),
+                        }),
+                        attributionPath = FpsClientPackAssets.CompactSmgAttributionPath,
+                        attributionSha256 = FpsClientPackAssets.Sha256(compactSmgAttribution) },
                     new { id = 3, name = "Desert Eagle", kind = "secondary", placeholder = false,
                         viewmodelPath = FpsClientPackAssets.DesertEagleViewmodelPath,
                         viewmodelSha256 = FpsClientPackAssets.Sha256(desertEagleViewmodel),
@@ -139,13 +153,13 @@ public static class FpsClientPackBuilder
 
                 The server delivers the CSP online script automatically. Extract this ZIP into
                 the Assetto Corsa installation root. It installs the project-owned assault-rifle
-                models, the CC BY Desert Eagle and Colt 1911 with reused skinned carbine
-                arms, pistol-specific firing-hand poses and reload-only support-hand motion,
-                placeholder SMG/grenade models and
+                models, the CC BY MP5 SMG, Desert Eagle and Colt 1911 with reused
+                skinned carbine arms, weapon-specific hand poses and magazine motion,
+                placeholder grenade models and
                 operator UV skin under
                 content/objects3D/asrc_fps, plus rifle sound
                 under extension/audio/asrc_fps. It also installs the presentation-only ASRC FPS
-                HUD under apps/lua/asrc_fps_hud. Client pack v28 also contains the animated Modern
+                HUD under apps/lua/asrc_fps_hud. Client pack v29 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.
@@ -171,9 +185,13 @@ public static class FpsClientPackBuilder
         await WriteEntryAsync(archive, FpsClientPackAssets.OperatorSkinPath, operatorSkin,
             cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.CompactSmgViewmodelPath,
-            rifleViewmodel, cancellationToken);
+            compactSmgViewmodel, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.CompactSmgWorldModelPath,
-            rifleWorldModel, cancellationToken);
+            compactSmgWorldModel, cancellationToken);
+        foreach ((string path, byte[] data) in compactSmgAnimations)
+            await WriteEntryAsync(archive, path, data, cancellationToken);
+        await WriteEntryAsync(archive, FpsClientPackAssets.CompactSmgAttributionPath,
+            compactSmgAttribution, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.DesertEagleViewmodelPath,
             desertEagleViewmodel, cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.DesertEagleWorldModelPath,

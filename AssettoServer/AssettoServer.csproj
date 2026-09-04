@@ -149,6 +149,14 @@
                           LogicalName="AssettoServer.Server.Fps.Assets.asrc_assault_rifle_viewmodel.kn5" />
         <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_assault_rifle_world.kn5"
                           LogicalName="AssettoServer.Server.Fps.Assets.asrc_assault_rifle_world.kn5" />
+        <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_compact_smg_viewmodel.kn5"
+                          LogicalName="AssettoServer.Server.Fps.Assets.asrc_compact_smg_viewmodel.kn5" />
+        <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_compact_smg_world.kn5"
+                          LogicalName="AssettoServer.Server.Fps.Assets.asrc_compact_smg_world.kn5" />
+        <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_compact_smg_*.ksanim"
+                          LogicalName="AssettoServer.Server.Fps.Assets.%(Filename)%(Extension)" />
+        <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_compact_smg_attribution.txt"
+                          LogicalName="AssettoServer.Server.Fps.Assets.asrc_compact_smg_attribution.txt" />
         <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_desert_eagle_viewmodel.kn5"
                           LogicalName="AssettoServer.Server.Fps.Assets.asrc_desert_eagle_viewmodel.kn5" />
         <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_desert_eagle_world.kn5"

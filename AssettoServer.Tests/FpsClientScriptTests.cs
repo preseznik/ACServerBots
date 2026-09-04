@@ -199,7 +199,9 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain(
                 "local adsForward = pistolViewmodel and 0.34 or (modernViewmodel and 0.12 or 0.38)"));
             Assert.That(script, Does.Contain(
-                "local adsRight = pistolViewmodel and 0.035 or (modernViewmodel and 0.0003 or 0.00)"));
+                "local pistolAdsRight = fpsVisual.loadedViewmodelAsset == 3 and 0.025 or 0.035"));
+            Assert.That(script, Does.Contain(
+                "local adsRight = pistolViewmodel and pistolAdsRight"));
             Assert.That(script, Does.Contain(
                 "local adsUp = pistolViewmodel and -0.12 or (modernViewmodel and -0.2218 or -0.10)"));
             Assert.That(script, Does.Contain("local visualKickScale = math.lerp(1, 0.35, fpsVisual.ads)"));
@@ -317,7 +319,10 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("web.loadRemoteAssets"));
             Assert.That(script, Does.Contain("ac.getServerIP()"));
             Assert.That(script, Does.Contain("ac.getServerPortHTTP()"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v19.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v20.zip"));
+            Assert.That(script, Does.Contain("asrc_compact_smg_viewmodel.kn5"));
+            Assert.That(script, Does.Contain("asrc_compact_smg_world.kn5"));
+            Assert.That(script, Does.Contain("asrc_compact_smg_reload_empty.ksanim"));
             Assert.That(script, Does.Contain("asrc_desert_eagle_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_desert_eagle_world.kn5"));
             Assert.That(script, Does.Contain("asrc_desert_eagle_idle.ksanim"));
@@ -342,16 +347,16 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain(
                 "clip = fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)"));
             Assert.That(script, Does.Contain(
-                "fpsVisual.pistolClips(fpsVisual.loadedViewmodelAsset)[clip]"));
+                "fpsVisual.loadoutClips(fpsVisual.loadedViewmodelAsset)[clip]"));
             Assert.That(script, Does.Not.Contain("viewmodelSupportArm"));
             Assert.That(script, Does.Contain(
-                "fpsVisual.modern or pistolViewmodel"));
+                "or fpsVisual.isLoadoutAsset(fpsVisual.loadedViewmodelAsset)"));
             Assert.That(script, Does.Contain(
                 "weapon.archivePath == fpsVisual.loadoutAssetArchivePath"));
             Assert.That(script, Does.Contain("fpsVisual.requestLoadoutAssets()"));
             Assert.That(script, Does.Contain("fpsVisual.weaponAssetKey(actor)"));
             Assert.That(script, Does.Contain(
-                "actor.weaponMesh:setVisible(visible and not fpsVisual.isPistolAsset(actor.weaponAsset)"));
+                "actor.weaponMesh:setVisible(visible and not fpsVisual.isLoadoutAsset(actor.weaponAsset)"));
             Assert.That(script, Does.Contain("fileName = 'asrc_carbine_hud.png'"));
             Assert.That(script, Does.Contain("ui.drawImage(fpsVisual.hudWeapon.imagePath"));
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));

@@ -51,6 +51,22 @@ in a live Fire Pit match: visible bot models now follow and face their authorita
 
 ## Pistol asset ownership
 
+The MP5 SMG is no longer a rifle alias. `tools/Build-FpsMp5Assets.ps1`
+extracts Rotuma's downloaded MP5 FBX from the external `.resources` tree into
+a guarded temporary directory, aligns the trigger and grip to the proven carbine
+hand pose, caps first-person textures at 2048² and world textures at 512², and
+exports separate body and magazine meshes. The 27,948-triangle viewmodel reuses
+the complete carbine arm mesh, 49-bone skeleton, and six source animation ranges;
+two constant bones keep the MP5 rigid while normal and empty reload clips extract
+and reinsert its magazine. The 14,248-triangle world model is gun-only and grip
+anchored. Blocks and Modern select both variants by authoritative weapon ID 2;
+Modern hides its baked carbine while the MP5 attachment is active. Base asset
+archive v20 and client pack 29 carry the models, six animations, and
+`compact-smg-attribution.txt`.
+
+The source model is [MP5 Submachine Gun by Rotuma](https://sketchfab.com/3d-models/mp5-submachine-gun-a73b61932a0e4eecb5db5c63c158aa24),
+licensed CC BY 4.0. The source archive and textures remain outside the repository.
+
 The Desert Eagle is no longer a rifle alias. `tools/Build-FpsDesertEagleAssets.ps1` reads the
 downloaded ELIZION FBX and textures from the external `.resources` tree, caps first-person body and
 slide color at 1024², caps the world payload at 512², converts both variants through the pinned KN5
@@ -67,7 +83,7 @@ bone channels in the KN5 rest pose after weapon switching. The generator renders
 acceptance previews through the same camera-relative offsets and FOV used by CSP. The pistol uses dedicated
 hip/ADS framing instead of the Modern rifle's near-camera offsets. The world model
 remains gun-only and anchored at its grip. Both Blocks and Modern request base asset
-archive v19 for this loadout item. The HUD image and
+archive v20 for this loadout item. The HUD image and
 loadout model consume one shared CSP remote-assets request for that URL to avoid concurrent cache
 finalization. Modern hides its
 baked carbine mesh while the pistol is active. Local first person, local/remote third person, and
@@ -78,15 +94,20 @@ licensed CC BY 4.0. Every server archive and exported client pack that carries t
 `desert-eagle-attribution.txt`; the portable launcher additionally ships `THIRD_PARTY_NOTICES.md`.
 The source FBX and textures remain outside the repository.
 
+The Desert Eagle uses a 1 cm holder-left ADS correction relative to the Colt so its backward-facing
+KN5 moves camera-right on screen and its exported iron-sight axis meets the authoritative
+camera-center hit ray. Hip-fire framing and the Colt ADS offset remain unchanged.
+
 The Colt 1911 follows the same ownership and runtime path. `tools/Build-FpsColt1911Assets.ps1`
 reads DanaeH's external M1911 FBX and its pistol/magazine texture sets, rotates the source onto
 the established weapon axis, inserts the separately authored magazine into the grip, and omits
 the loose cartridge display geometry. The resulting 11,303-triangle world KN5 and
 25,003-triangle two-arm viewmodel retain distinct body, slide, and magazine nodes. Five
 Colt-specific KSANIM files reuse the accepted firing-hand pose, bring the support hand in only for
-reload, and drive the Colt magazine. Colt and Desert Eagle both use the same calibrated pistol
-hip/ADS framing, but select independent KN5 and KSANIM files by authoritative weapon ID. Base asset
-archive v19 and client pack 28 include the Colt model, animations, and
+reload, and drive the Colt magazine. Colt and Desert Eagle use the same calibrated pistol hip
+framing and weapon-specific ADS horizontal offsets, but select independent KN5 and KSANIM files
+by authoritative weapon ID. Base asset
+archive v20 and client pack 29 include the Colt model, animations, and
 `colt-1911-attribution.txt` attribution notice.
 
 The source model is [M1911 Pistol with magazine and bullet by DanaeH](https://sketchfab.com/3d-models/m1911-pistol-with-magazine-and-bullet-131085c22ece47a08076d8ddc0b9f21a),
@@ -94,7 +115,7 @@ licensed CC BY 4.0. The source FBX and textures remain outside the repository.
 
 ## Hybrid HUD ownership
 
-Client pack version 28 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+Client pack version 29 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
 script publishes presentation state through the local shared structure `asrc.fps.hud.v5`. Bridge v5
 adds the active main/secondary slot, item IDs, and lethal count; it remains presentation-only.
 

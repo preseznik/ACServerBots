@@ -19,6 +19,17 @@ public static class FpsClientPackAssets
         "content/objects3D/asrc_fps/asrc_compact_smg_viewmodel.kn5";
     public const string CompactSmgWorldModelPath =
         "content/objects3D/asrc_fps/asrc_compact_smg_world.kn5";
+    public static readonly string[] CompactSmgAnimationPaths =
+    [
+        "content/objects3D/asrc_fps/asrc_compact_smg_idle.ksanim",
+        "content/objects3D/asrc_fps/asrc_compact_smg_fire.ksanim",
+        "content/objects3D/asrc_fps/asrc_compact_smg_reload.ksanim",
+        "content/objects3D/asrc_fps/asrc_compact_smg_reload_empty.ksanim",
+        "content/objects3D/asrc_fps/asrc_compact_smg_equip.ksanim",
+        "content/objects3D/asrc_fps/asrc_compact_smg_sprint.ksanim",
+    ];
+    public const string CompactSmgAttributionPath =
+        "content/objects3D/asrc_fps/attribution/compact-smg.txt";
     public const string DesertEagleViewmodelPath =
         "content/objects3D/asrc_fps/asrc_desert_eagle_viewmodel.kn5";
     public const string DesertEagleWorldModelPath =
@@ -60,6 +71,19 @@ public static class FpsClientPackAssets
 
     public static byte[] GetRifleWorldModel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_assault_rifle_world.kn5");
+
+    public static byte[] GetCompactSmgViewmodel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_compact_smg_viewmodel.kn5");
+
+    public static byte[] GetCompactSmgWorldModel() => ReadEmbeddedKn5(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_compact_smg_world.kn5");
+
+    public static IReadOnlyList<(string Path, byte[] Data)> GetCompactSmgAnimations() =>
+        CompactSmgAnimationPaths.Select(path => (path, ReadEmbeddedKsanim(
+            $"AssettoServer.RaceControl.Core.Assets.Fps.{Path.GetFileName(path)}"))).ToArray();
+
+    public static byte[] GetCompactSmgAttribution() => ReadEmbeddedText(
+        "AssettoServer.RaceControl.Core.Assets.Fps.asrc_compact_smg_attribution.txt");
 
     public static byte[] GetDesertEagleViewmodel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_desert_eagle_viewmodel.kn5");

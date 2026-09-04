@@ -9,10 +9,14 @@ namespace AssettoServer.RaceControl.Tests;
 public sealed class FpsClientPackAssetsTests
 {
     [Test]
-    public void RifleAndPistolModelsAreEmbeddedValidAssets()
+    public void RifleSmgAndPistolModelsAreEmbeddedValidAssets()
     {
         byte[] viewmodel = FpsClientPackAssets.GetRifleViewmodel();
         byte[] worldModel = FpsClientPackAssets.GetRifleWorldModel();
+        byte[] compactSmgViewmodel = FpsClientPackAssets.GetCompactSmgViewmodel();
+        byte[] compactSmgWorldModel = FpsClientPackAssets.GetCompactSmgWorldModel();
+        IReadOnlyList<(string Path, byte[] Data)> compactSmgAnimations =
+            FpsClientPackAssets.GetCompactSmgAnimations();
         byte[] desertEagleViewmodel = FpsClientPackAssets.GetDesertEagleViewmodel();
         byte[] desertEagleWorldModel = FpsClientPackAssets.GetDesertEagleWorldModel();
         IReadOnlyList<(string Path, byte[] Data)> desertEagleAnimations =
@@ -33,6 +37,20 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(FpsClientPackAssets.Sha256(viewmodel), Has.Length.EqualTo(64));
             Assert.That(FpsClientPackAssets.RifleViewmodelPath, Does.EndWith(".kn5"));
             Assert.That(FpsClientPackAssets.RifleWorldModelPath, Does.EndWith(".kn5"));
+            Assert.That(Encoding.ASCII.GetString(compactSmgViewmodel, 0, 6),
+                Is.EqualTo("sc6969"));
+            Assert.That(compactSmgViewmodel, Has.Length.GreaterThan(30_000_000));
+            Assert.That(Encoding.ASCII.GetString(compactSmgWorldModel, 0, 6),
+                Is.EqualTo("sc6969"));
+            Assert.That(compactSmgWorldModel, Has.Length.GreaterThan(3_000_000));
+            Assert.That(compactSmgWorldModel.SequenceEqual(worldModel), Is.False);
+            Assert.That(compactSmgAnimations, Has.Count.EqualTo(6));
+            Assert.That(compactSmgAnimations.All(asset =>
+                BitConverter.ToUInt32(asset.Data, 0) == 2), Is.True);
+            Assert.That(compactSmgAnimations.Select(asset => asset.Path),
+                Has.Some.EndsWith("asrc_compact_smg_reload_empty.ksanim"));
+            Assert.That(Encoding.UTF8.GetString(FpsClientPackAssets.GetCompactSmgAttribution()),
+                Does.Contain("Rotuma"));
             Assert.That(Encoding.ASCII.GetString(desertEagleViewmodel, 0, 6),
                 Is.EqualTo("sc6969"));
             Assert.That(desertEagleViewmodel, Has.Length.GreaterThan(24_000_000));
@@ -158,7 +176,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV28ContainsAnimatedPistolsPlaceholdersBothThemesAndOwnedPaths()
+    public async Task ClientPackV29ContainsAnimatedSmgPistolsPlaceholderGrenadesAndBothThemes()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -168,10 +186,10 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(28));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(29));
             Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(5));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v28.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v29.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
@@ -179,6 +197,10 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudWeaponImagePath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.RifleViewmodelPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.CompactSmgViewmodelPath));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.CompactSmgWorldModelPath));
+            foreach (string animation in FpsClientPackAssets.CompactSmgAnimationPaths)
+                Assert.That(entries.Keys, Does.Contain(animation));
+            Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.CompactSmgAttributionPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.DesertEagleWorldModelPath));
             foreach (string animation in FpsClientPackAssets.DesertEagleAnimationPaths)
                 Assert.That(entries.Keys, Does.Contain(animation));
@@ -209,6 +231,8 @@ public sealed class FpsClientPackAssetsTests
         using JsonDocument document = JsonDocument.Parse(manifestBytes);
         JsonElement root = document.RootElement;
         JsonElement hud = root.GetProperty("hud");
+        JsonElement compactSmg = root.GetProperty("loadoutItems").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetInt32() == 2);
         JsonElement desertEagle = root.GetProperty("loadoutItems").EnumerateArray()
             .Single(item => item.GetProperty("id").GetInt32() == 3);
         JsonElement colt1911 = root.GetProperty("loadoutItems").EnumerateArray()
@@ -216,7 +240,7 @@ public sealed class FpsClientPackAssetsTests
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(2));
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(28));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(29));
             Assert.That(root.GetProperty("loadoutItems").GetArrayLength(), Is.EqualTo(5));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),
@@ -236,6 +260,26 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(hud.GetProperty("weaponImageSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(
                     ReadEntry(entries[FpsClientPackAssets.HudWeaponImagePath]))));
+            Assert.That(compactSmg.GetProperty("placeholder").GetBoolean(), Is.False);
+            Assert.That(compactSmg.GetProperty("viewmodelSha256").GetString(),
+                Is.EqualTo(FpsClientPackAssets.Sha256(
+                    ReadEntry(entries[FpsClientPackAssets.CompactSmgViewmodelPath]))));
+            Assert.That(compactSmg.GetProperty("worldModelSha256").GetString(),
+                Is.EqualTo(FpsClientPackAssets.Sha256(
+                    ReadEntry(entries[FpsClientPackAssets.CompactSmgWorldModelPath]))));
+            Assert.That(compactSmg.GetProperty("animations").GetArrayLength(), Is.EqualTo(6));
+            foreach (JsonElement animation in compactSmg.GetProperty("animations").EnumerateArray())
+            {
+                string path = animation.GetProperty("path").GetString()!;
+                Assert.That(animation.GetProperty("sha256").GetString(),
+                    Is.EqualTo(FpsClientPackAssets.Sha256(ReadEntry(entries[path]))));
+            }
+            Assert.That(compactSmg.GetProperty("attributionSha256").GetString(),
+                Is.EqualTo(FpsClientPackAssets.Sha256(
+                    ReadEntry(entries[FpsClientPackAssets.CompactSmgAttributionPath]))));
+            Assert.That(ReadEntry(entries[FpsClientPackAssets.CompactSmgWorldModelPath])
+                .SequenceEqual(ReadEntry(entries[FpsClientPackAssets.RifleWorldModelPath])),
+                Is.False);
             Assert.That(desertEagle.GetProperty("placeholder").GetBoolean(), Is.False);
             Assert.That(desertEagle.GetProperty("viewmodelSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(

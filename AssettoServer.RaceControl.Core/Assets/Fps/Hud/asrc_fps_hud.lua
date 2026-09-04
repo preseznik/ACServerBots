@@ -71,7 +71,7 @@ local weaponImagePath = (assettoRoot ~= nil and assettoRoot ~= '')
   and (assettoRoot .. '/apps/lua/asrc_fps_hud/asrc_carbine_hud.png')
   or 'asrc_carbine_hud.png'
 local itemNames = {
-  [1] = 'ASSAULT RIFLE', [2] = 'COMPACT SMG',
+  [1] = 'ASSAULT RIFLE', [2] = 'MP5 SMG',
   [3] = 'DESERT EAGLE', [4] = 'COLT 1911',
   [16] = 'FRAG GRENADE', [17] = 'STICKY GRENADE',
 }

@@ -50,16 +50,26 @@ local fpsVisual = {
     exhaustionRelease = 25,
   },
   hudWeapon = {
-    archivePath = '/fps/assets/asrc-fps-assets-v19.zip',
+    archivePath = '/fps/assets/asrc-fps-assets-v20.zip',
     fileName = 'asrc_carbine_hud.png',
     imagePath = nil,
     loading = false,
     failed = false,
   },
-  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v19.zip',
+  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v20.zip',
   loadoutAssetFolder = nil,
   loadoutAssetsLoading = false,
   loadoutAssetsFailed = false,
+  compactSmgViewmodelFileName = 'asrc_compact_smg_viewmodel.kn5',
+  compactSmgWorldModelFileName = 'asrc_compact_smg_world.kn5',
+  compactSmgClips = {
+    idle = 'asrc_compact_smg_idle.ksanim',
+    fire = 'asrc_compact_smg_fire.ksanim',
+    reload = 'asrc_compact_smg_reload.ksanim',
+    reload_empty = 'asrc_compact_smg_reload_empty.ksanim',
+    equip = 'asrc_compact_smg_equip.ksanim',
+    sprint = 'asrc_compact_smg_sprint.ksanim',
+  },
   desertEagleViewmodelFileName = 'asrc_desert_eagle_viewmodel.kn5',
   desertEagleWorldModelFileName = 'asrc_desert_eagle_world.kn5',
   desertEagleClips = {
@@ -196,7 +206,7 @@ local function clientAssetPath(relativePath)
 end
 local rifleAudioRelativePath = 'extension/audio/asrc_fps/rifle.wav'
 local rifleAudioPath = clientAssetPath(rifleAudioRelativePath)
-local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v19.zip'
+local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v20.zip'
 local rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
 local rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
 local rifleDiffuseFileName = 'asrc_rifle_diffuse.png'
@@ -377,7 +387,7 @@ hud.loadoutStorage = ac.storage({
   secondaryWeapon = 4,
 }, 'asrc.fps.loadout.')
 hud.itemNames = {
-  [1] = 'ASSAULT RIFLE', [2] = 'COMPACT SMG',
+  [1] = 'ASSAULT RIFLE', [2] = 'MP5 SMG',
   [3] = 'DESERT EAGLE', [4] = 'COLT 1911',
   [16] = 'FRAG GRENADE', [17] = 'STICKY GRENADE',
 }
@@ -678,7 +688,7 @@ function fpsVisual.setActorWeaponVisible(actor, visible)
     actor.weaponRoot:setVisible(visible, false)
   end
   if actor.weaponMesh ~= nil and actor.weaponMesh ~= false then
-    actor.weaponMesh:setVisible(visible and not fpsVisual.isPistolAsset(actor.weaponAsset), false)
+    actor.weaponMesh:setVisible(visible and not fpsVisual.isLoadoutAsset(actor.weaponAsset), false)
   end
 end
 
@@ -1801,7 +1811,7 @@ function fpsVisual.fallback(reason)
   rifleAssetsLoading = false
   rifleAssetsFailed = false
   rifleAssetWaitLogged = false
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v19.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v20.zip'
   rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
   fpsVisual.pickupFileName = rifleWorldModelFileName
@@ -1857,11 +1867,20 @@ end
 
 function fpsVisual.weaponAssetKey(actor)
   local weapon = fpsVisual.activeWeapon(actor)
-  return fpsVisual.isPistolAsset(weapon) and weapon or 1
+  return fpsVisual.isLoadoutAsset(weapon) and weapon or 1
 end
 
 function fpsVisual.isPistolAsset(assetKey)
   return assetKey == 3 or assetKey == 4
+end
+
+function fpsVisual.isLoadoutAsset(assetKey)
+  return assetKey == 2 or fpsVisual.isPistolAsset(assetKey)
+end
+
+function fpsVisual.loadoutClips(assetKey)
+  return assetKey == 2 and fpsVisual.compactSmgClips
+    or fpsVisual.pistolClips(assetKey)
 end
 
 function fpsVisual.pistolClips(assetKey)
@@ -1878,16 +1897,26 @@ function fpsVisual.pistolWorldModelFileName(assetKey)
     or fpsVisual.desertEagleWorldModelFileName
 end
 
+function fpsVisual.loadoutViewmodelFileName(assetKey)
+  return assetKey == 2 and fpsVisual.compactSmgViewmodelFileName
+    or fpsVisual.pistolViewmodelFileName(assetKey)
+end
+
+function fpsVisual.loadoutWorldModelFileName(assetKey)
+  return assetKey == 2 and fpsVisual.compactSmgWorldModelFileName
+    or fpsVisual.pistolWorldModelFileName(assetKey)
+end
+
 function fpsVisual.viewmodelPath(assetKey)
-  if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder ~= nil then
-    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.pistolViewmodelFileName(assetKey)
+  if fpsVisual.isLoadoutAsset(assetKey) and fpsVisual.loadoutAssetFolder ~= nil then
+    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.loadoutViewmodelFileName(assetKey)
   end
   return rifleViewmodelPath
 end
 
 function fpsVisual.worldModelPath(assetKey)
-  if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder ~= nil then
-    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.pistolWorldModelFileName(assetKey)
+  if fpsVisual.isLoadoutAsset(assetKey) and fpsVisual.loadoutAssetFolder ~= nil then
+    return fpsVisual.loadoutAssetFolder .. '/' .. fpsVisual.loadoutWorldModelFileName(assetKey)
   end
   return rifleWorldModelPath
 end
@@ -1896,6 +1925,12 @@ function fpsVisual.actorWeaponPosition(actor)
   local kick = actor.weaponKick or 0
   if fpsVisual.isPistolAsset(actor.weaponAsset) then
     return vec3(0.22, 1.13, 0.39 - kick * 0.04)
+  end
+  if actor.weaponAsset == 2 then
+    -- The rigid MP5, like both pistols, is exported with its grip at the root.
+    -- Place that root at the animated hand rather than using the procedural
+    -- rifle's receiver-relative attachment offset.
+    return vec3(0.22, 1.13, 0.39 - kick * 0.07)
   end
   return vec3(0.22, 1.13, 0.08 - kick * 0.07)
 end
@@ -1917,7 +1952,7 @@ function fpsVisual.requestLoadoutAssets()
   web.loadRemoteAssets({
     url = archiveUrl,
     headers = {},
-    crucial = fpsVisual.desertEagleViewmodelFileName,
+    crucial = fpsVisual.compactSmgViewmodelFileName,
   }, function(err, folder)
     fpsVisual.loadoutAssetsLoading = false
     if (err ~= nil and err ~= '') or folder == nil or folder == '' then
@@ -2045,8 +2080,8 @@ local function ensureLocalViewmodel()
     requestRifleAssets()
     return false
   end
-  if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
-    markViewmodelStage('loadout-asset-wait', fpsVisual.pistolViewmodelFileName(assetKey))
+  if fpsVisual.isLoadoutAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
+    markViewmodelStage('loadout-asset-wait', fpsVisual.loadoutViewmodelFileName(assetKey))
     fpsVisual.requestLoadoutAssets()
     return false
   end
@@ -2072,7 +2107,7 @@ local function ensureLocalViewmodel()
     model:setCullMode(render.CullMode.None)
     model:setDepthMode(render.DepthMode.Normal)
     model:setMotionStencil(1)
-    if not fpsVisual.isPistolAsset(assetKey) and rifleDiffusePath ~= nil then
+    if not fpsVisual.isLoadoutAsset(assetKey) and rifleDiffusePath ~= nil then
       pcall(function() model:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
     end
     if fpsVisual.isPistolAsset(assetKey) then
@@ -2084,6 +2119,11 @@ local function ensureLocalViewmodel()
       model:setAnimation(fpsVisual.loadoutAssetFolder .. '/'
         .. fpsVisual.pistolClips(assetKey).reload, 0, true)
       fpsVisual.viewmodelPistolPoseSeedPending = true
+      fpsVisual.viewmodelEquipUntil = effectClock + 0.55
+    elseif fpsVisual.isLoadoutAsset(assetKey) then
+      fpsVisual.viewmodelPistolPoseSeedPending = false
+      model:setAnimation(fpsVisual.loadoutAssetFolder .. '/'
+        .. fpsVisual.loadoutClips(assetKey).equip, 0, true)
       fpsVisual.viewmodelEquipUntil = effectClock + 0.55
     elseif fpsVisual.modern then
       fpsVisual.viewmodelPistolPoseSeedPending = false
@@ -2097,14 +2137,14 @@ local function ensureLocalViewmodel()
     if viewmodelHolder ~= nil then viewmodelHolder:dispose() end
     viewmodelHolder = nil
     fpsVisual.loadedViewmodelAsset = assetKey
-    if fpsVisual.modern and not fpsVisual.isPistolAsset(assetKey) then
+    if fpsVisual.modern and not fpsVisual.isLoadoutAsset(assetKey) then
       viewmodelRoot = nil
       fpsVisual.fallback('viewmodel load: ' .. tostring(result))
       return false
     end
     viewmodelRoot = false
     clientPackError = fpsVisual.error
-      or (fpsVisual.isPistolAsset(assetKey) and 'FPS PISTOL VIEWMODEL ERROR - CHECK LIVE LOG'
+      or (fpsVisual.isLoadoutAsset(assetKey) and 'FPS LOADOUT VIEWMODEL ERROR - CHECK LIVE LOG'
         or 'FPS RIFLE MODEL ERROR - CACHED VIEWMODEL COULD NOT BE LOADED')
     ac.warn('[ASRC FPS] cached weapon viewmodel failed: ' .. tostring(result)
       .. '; cached path ' .. tostring(viewmodelPath) .. '; using 2D fallback')
@@ -2248,11 +2288,11 @@ local function ensureAvatar(actor)
     actor.weaponRoot = nil
     actor.weaponAsset = assetKey
   end
-  if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
+  if fpsVisual.isLoadoutAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
     fpsVisual.requestLoadoutAssets()
     return
   end
-  if fpsVisual.modern and not fpsVisual.isPistolAsset(assetKey) then
+  if fpsVisual.modern and not fpsVisual.isLoadoutAsset(assetKey) then
     actor.weaponRoot = false
     return
   end
@@ -2265,10 +2305,10 @@ local function ensureAvatar(actor)
   end)
   actor.weaponRoot = weaponOk and weapon or nil
   if actor.weaponRoot == nil then
-    if fpsVisual.isPistolAsset(assetKey) then
+    if fpsVisual.isLoadoutAsset(assetKey) then
       actor.weaponRoot = false
-      clientPackError = 'FPS PISTOL WORLD MODEL ERROR - CHECK LIVE LOG'
-      ac.warn('[ASRC FPS] cached pistol world model unavailable at '
+      clientPackError = 'FPS LOADOUT WORLD MODEL ERROR - CHECK LIVE LOG'
+      ac.warn('[ASRC FPS] cached loadout world model unavailable at '
         .. tostring(worldModelPath))
       return
     end
@@ -2280,7 +2320,7 @@ local function ensureAvatar(actor)
     end
   end
   if actor.weaponRoot ~= nil then
-    if not fpsVisual.isPistolAsset(assetKey) and rifleDiffusePath ~= nil then
+    if not fpsVisual.isLoadoutAsset(assetKey) and rifleDiffusePath ~= nil then
       pcall(function() actor.weaponRoot:setMaterialTexture('txDiffuse', rifleDiffusePath) end)
     end
     actor.weaponRoot:setPosition(fpsVisual.actorWeaponPosition(actor))
@@ -2290,14 +2330,14 @@ end
 function fpsVisual.updatePickups()
   if rifleAssetFolder == nil then return end
   for _, pickup in pairs(fpsVisual.pickups) do
-    local assetKey = fpsVisual.isPistolAsset(pickup.weaponType) and pickup.weaponType or 1
-    if fpsVisual.isPistolAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
+    local assetKey = fpsVisual.isLoadoutAsset(pickup.weaponType) and pickup.weaponType or 1
+    if fpsVisual.isLoadoutAsset(assetKey) and fpsVisual.loadoutAssetFolder == nil then
       fpsVisual.requestLoadoutAssets()
     elseif pickup.root == nil then
       local loaded, rootOrError = pcall(function()
         local root = carsRoot:createBoundingSphereNode('ASRC_FPS_PICKUP_' .. pickup.id, 1.2)
         if root == nil then error('pickup holder could not be created') end
-        local modelPath = fpsVisual.isPistolAsset(assetKey) and fpsVisual.worldModelPath(assetKey)
+        local modelPath = fpsVisual.isLoadoutAsset(assetKey) and fpsVisual.worldModelPath(assetKey)
           or fpsVisual.pickupPath
         local model = root:loadKN5({filename = modelPath, forceRenderableOn = true})
         if model == nil then
@@ -2723,7 +2763,7 @@ function fpsVisual.updateActorAnimation(actor, dt)
 end
 
 function fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint)
-  if (not fpsVisual.modern and not fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset))
+  if (not fpsVisual.modern and not fpsVisual.isLoadoutAsset(fpsVisual.loadedViewmodelAsset))
       or viewmodelRoot == nil or viewmodelRoot == false then return true end
   if fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)
       and fpsVisual.viewmodelPistolPoseSeedPending then
@@ -2748,9 +2788,9 @@ function fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint)
     clip = 'sprint'
   end
   local ok, err = pcall(function()
-    local animationPath = fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)
+    local animationPath = fpsVisual.isLoadoutAsset(fpsVisual.loadedViewmodelAsset)
       and (fpsVisual.loadoutAssetFolder .. '/'
-        .. fpsVisual.pistolClips(fpsVisual.loadedViewmodelAsset)[clip])
+        .. fpsVisual.loadoutClips(fpsVisual.loadedViewmodelAsset)[clip])
       or fpsVisual.asset(fpsVisual.viewmodelClips[clip])
     viewmodelRoot:setAnimation(animationPath, position, true)
   end)
@@ -2775,7 +2815,8 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   viewmodelKick = viewmodelKick * math.exp(-dt * 17)
   local moving = move:lengthSquared() > 0.01
   local pistolViewmodel = fpsVisual.isPistolAsset(fpsVisual.loadedViewmodelAsset)
-  local modernViewmodel = fpsVisual.modern or pistolViewmodel
+  local modernViewmodel = fpsVisual.modern
+    or fpsVisual.isLoadoutAsset(fpsVisual.loadedViewmodelAsset)
   if not fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint) then return end
   if moving then viewmodelBobTime = viewmodelBobTime + dt * (sprint and 12 or 8) end
   -- Camera and weapon scene transforms are submitted together in frameBegin. Keeping
@@ -2808,7 +2849,11 @@ local function updateRifleViewmodel(dt, actor, move, sprint)
   -- the optic axis on the camera look vector and bring the rear sight close
   -- enough to read as true ADS instead of a zoomed hip-fire pose.
   local adsForward = pistolViewmodel and 0.34 or (modernViewmodel and 0.12 or 0.38)
-  local adsRight = pistolViewmodel and 0.035 or (modernViewmodel and 0.0003 or 0.00)
+  -- The pistol KN5 faces back toward its holder, so decreasing this camera-right
+  -- translation moves the rendered Desert Eagle toward screen-right.
+  local pistolAdsRight = fpsVisual.loadedViewmodelAsset == 3 and 0.025 or 0.035
+  local adsRight = pistolViewmodel and pistolAdsRight
+    or (modernViewmodel and 0.0003 or 0.00)
   local adsUp = pistolViewmodel and -0.12 or (modernViewmodel and -0.2218 or -0.10)
   local pistolReloadPhase = pistolViewmodel and actor.reloadRemaining > 0
     and math.clamp(1 - actor.reloadRemaining / 1.8, 0, 1) or 0

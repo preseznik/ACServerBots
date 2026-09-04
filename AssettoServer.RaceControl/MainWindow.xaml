@@ -616,7 +616,7 @@
                                 <TextBlock Text="Loadouts" Style="{StaticResource SectionTitle}" />
                                 <TextBlock Text="Allowed main weapons" Style="{StaticResource FieldLabel}" />
                                 <CheckBox Content="Assault Rifle" IsChecked="{Binding AllowAssaultRifle}" />
-                                <CheckBox Content="Compact SMG" IsChecked="{Binding AllowCompactSmg}" />
+                                <CheckBox Content="MP5 SMG" IsChecked="{Binding AllowCompactSmg}" />
                                 <TextBlock Text="Allowed lethal equipment" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
                                 <CheckBox Content="Frag Grenade" IsChecked="{Binding AllowFragGrenade}" />
                                 <CheckBox Content="Sticky Grenade" IsChecked="{Binding AllowStickyGrenade}" />

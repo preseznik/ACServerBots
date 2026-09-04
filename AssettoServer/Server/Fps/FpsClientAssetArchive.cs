@@ -8,13 +8,25 @@ namespace AssettoServer.Server.Fps;
 
 internal static class FpsClientAssetArchive
 {
-    public const string Route = "/fps/assets/asrc-fps-assets-v19.zip";
-    public const string FileName = "asrc-fps-assets-v19.zip";
+    public const string Route = "/fps/assets/asrc-fps-assets-v20.zip";
+    public const string FileName = "asrc-fps-assets-v20.zip";
     public const string ViewmodelFileName = "asrc_assault_rifle_viewmodel.kn5";
     public const string WorldModelFileName = "asrc_assault_rifle_world.kn5";
     public const string RifleDiffuseFileName = "asrc_rifle_diffuse.png";
     public const string OperatorSkinFileName = "asrc_operator_skin.png";
     public const string HudWeaponImageFileName = "asrc_carbine_hud.png";
+    public const string CompactSmgViewmodelFileName = "asrc_compact_smg_viewmodel.kn5";
+    public const string CompactSmgWorldModelFileName = "asrc_compact_smg_world.kn5";
+    public const string CompactSmgAttributionFileName = "compact-smg-attribution.txt";
+    public static readonly string[] CompactSmgAnimationFileNames =
+    [
+        "asrc_compact_smg_idle.ksanim",
+        "asrc_compact_smg_fire.ksanim",
+        "asrc_compact_smg_reload.ksanim",
+        "asrc_compact_smg_reload_empty.ksanim",
+        "asrc_compact_smg_equip.ksanim",
+        "asrc_compact_smg_sprint.ksanim",
+    ];
     public const string DesertEagleViewmodelFileName = "asrc_desert_eagle_viewmodel.kn5";
     public const string DesertEagleWorldModelFileName = "asrc_desert_eagle_world.kn5";
     public const string DesertEagleAttributionFileName = "desert-eagle-attribution.txt";
@@ -39,8 +51,6 @@ internal static class FpsClientAssetArchive
     ];
     public static readonly string[] PlaceholderItemFileNames =
     [
-        "asrc_compact_smg_viewmodel.kn5",
-        "asrc_compact_smg_world.kn5",
         "asrc_frag_grenade_world.kn5",
         "asrc_sticky_grenade_world.kn5",
     ];
@@ -58,6 +68,13 @@ internal static class FpsClientAssetArchive
                 "AssettoServer.Server.Fps.Assets.asrc_assault_rifle_viewmodel.kn5");
             AddKn5(archive, WorldModelFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_assault_rifle_world.kn5");
+            AddKn5(archive, CompactSmgViewmodelFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_compact_smg_viewmodel.kn5");
+            AddKn5(archive, CompactSmgWorldModelFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_compact_smg_world.kn5");
+            foreach (string fileName in CompactSmgAnimationFileNames)
+                AddKsanim(archive, fileName,
+                    $"AssettoServer.Server.Fps.Assets.{fileName}");
             AddKn5(archive, DesertEagleViewmodelFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_desert_eagle_viewmodel.kn5");
             AddKn5(archive, DesertEagleWorldModelFileName,
@@ -85,6 +102,8 @@ internal static class FpsClientAssetArchive
                 "AssettoServer.Server.Fps.Assets.asrc_desert_eagle_attribution.txt", "ELIZION");
             AddText(archive, Colt1911AttributionFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_colt_1911_attribution.txt", "DanaeH");
+            AddText(archive, CompactSmgAttributionFileName,
+                "AssettoServer.Server.Fps.Assets.asrc_compact_smg_attribution.txt", "Rotuma");
         }
 
         return output.ToArray();

@@ -57,3 +57,18 @@ The first-person derivative combines that geometry with the project carbine's
 existing right-arm mesh and skeleton plus project-authored pistol animation tracks.
 The CC BY 4.0 license text is available at
 https://creativecommons.org/licenses/by/4.0/.
+
+## MP5 Submachine Gun 3D model
+
+The FPS loadout uses the downloadable MP5 model and textures by Rotuma.
+
+- Source: https://sketchfab.com/3d-models/mp5-submachine-gun-a73b61932a0e4eecb5db5c63c158aa24
+- Author: Rotuma
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+The model is regrouped into rigid body and magazine meshes, anchored at the
+grip, texture-capped for first- and third-person use, and converted to Assetto
+Corsa KN5. The first-person derivative combines that geometry with the project
+carbine's existing arm mesh, skeleton, and animation ranges, plus a separately
+animated magazine for normal and empty reloads. The CC BY 4.0 license text is
+available at https://creativecommons.org/licenses/by/4.0/.

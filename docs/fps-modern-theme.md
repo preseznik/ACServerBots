@@ -130,12 +130,14 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
 downloads `/fps/assets/asrc-fps-modern-v8.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5 or KSANIM changes. Client pack version 28 also installs both themes under the project-owned
+embedded KN5 or KSANIM changes. Client pack version 29 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
-Secondary Desert Eagle and Colt 1911 rendering use separate rigid KN5 paths shared with Blocks. Modern
-also requests base asset archive v19, hides `ASRC_CARBINE_WORLD` while weapon ID 3 or 4 is active, and
-attaches the rigid pistol at the operator's weapon root. First person now uses a dedicated skinned
+MP5 SMG, Desert Eagle, and Colt 1911 rendering use separate rigid KN5 paths shared with Blocks.
+Modern also requests base asset archive v20, hides `ASRC_CARBINE_WORLD` while weapon ID 2, 3, or 4 is
+active, and attaches the selected rigid weapon at the operator's weapon root. The SMG viewmodel retains
+the complete carbine arm rig and animation ranges, with a dedicated magazine bone used by normal and
+empty reload clips. First-person pistols use a dedicated skinned
 weapon-specific pistol KN5 which retains the anatomical carbine arms and 49-bone arm rig while replacing
 the rifle and optic meshes. Each pistol has five project-authored KSANIM tracks for idle, fire, equip,
 sprint, and reload motion. The support shoulder is animated below the view frustum for every clip
