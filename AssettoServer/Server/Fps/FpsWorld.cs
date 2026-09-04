@@ -196,13 +196,15 @@ public sealed class FpsWorld : IHostedService
     {
         if (client.EntryCar.FpsRole == FpsSlotRole.Spectator) return;
         bool claimed;
+        FpsActorState? claimedActor = null;
         lock (_sync)
         {
             claimed = _simulation?.ClaimHuman(client.SessionId,
-                requireLoadoutConfirmation: true) == true;
+                requireLoadoutConfirmation: true, playerName: client.Name) == true;
             if (claimed)
             {
                 var actor = _simulation!.Actors.Single(actor => actor.Id == client.SessionId);
+                claimedActor = actor;
                 _knownSpawnCounts[actor.Id] = actor.SpawnCount;
                 _knownLoadoutStates[actor.Id] = LoadoutSignature(actor);
                 _lastDiagnosticPositions[actor.Id] = actor.Position;
@@ -214,13 +216,17 @@ public sealed class FpsWorld : IHostedService
             }
         }
         if (claimed)
+        {
+            BroadcastRoster(claimedActor!, client);
             client.Logger.Information("FPS participant claimed actor {ActorId}", client.SessionId);
+        }
         else
             client.Logger.Warning("FPS participant could not claim actor {ActorId}", client.SessionId);
     }
 
     private void OnClientDisconnected(ACTcpClient client, EventArgs args)
     {
+        FpsActorState? releasedActor = null;
         lock (_sync)
         {
             var actor = _simulation?.Actors.SingleOrDefault(actor => actor.Id == client.SessionId);
@@ -230,6 +236,7 @@ public sealed class FpsWorld : IHostedService
                     actor.Id, actor.Position, actor.LastInputSequence, actor.Input.Move,
                     actor.Active, actor.Dead);
             _simulation?.ReleaseHuman(client.SessionId);
+            releasedActor = actor;
             _clientsWithAcceptedInput.Remove(client.SessionId);
             _clientsWithActiveInput.Remove(client.SessionId);
             _clientsWithAcceptedShot.Remove(client.SessionId);
@@ -238,6 +245,7 @@ public sealed class FpsWorld : IHostedService
             _lastMovementStates.Remove(client.SessionId);
             _knownLoadoutStates.Remove(client.SessionId);
         }
+        if (releasedActor is not null) BroadcastRoster(releasedActor, client);
     }
 
     private void OnClientDiagnostic(ACTcpClient client, FpsClientDiagnosticPacket packet)
@@ -335,14 +343,7 @@ public sealed class FpsWorld : IHostedService
             if (_simulation is null) return;
             SendLoadoutCatalog(client);
             foreach (var actor in _simulation.Actors.OrderBy(actor => actor.Id))
-            {
-                client.SendPacket(new FpsRosterPacket
-                {
-                    ActorId = actor.Id,
-                    Role = (byte)actor.Role,
-                    Name = actor.Name.Length <= 32 ? actor.Name : actor.Name[..32],
-                });
-            }
+                SendRoster(client, actor);
             SendMatch(client);
             SendSnapshots(client);
             SendGrenadeSnapshots(client);
@@ -633,9 +634,10 @@ public sealed class FpsWorld : IHostedService
             var delta = actor.Position - previous;
             _lastDiagnosticPositions[actor.Id] = actor.Position;
             Log.Information(
-                "FPS actor input effect: actor={ActorId}, position={Position}, ground={GroundY:F3}, verticalVelocity={VerticalVelocity:F3}, grounded={Grounded}, mantling={Mantling}, geometryBlocked={GeometryBlocked}, delta={Delta}, distance={Distance:F3}, inputSequence={Sequence}, inputMove={Move}, inputButtons={Buttons}, hasInput={HasInput}, active={Active}, dead={Dead}, ammo={Ammo}, reserveMagazines={ReserveMagazines}, reloadRemaining={ReloadRemaining:F2}, match={MatchState}",
+                "FPS actor input effect: actor={ActorId}, position={Position}, ground={GroundY:F3}, verticalVelocity={VerticalVelocity:F3}, grounded={Grounded}, mantling={Mantling}, geometryBlocked={GeometryBlocked}, outOfBoundsRemaining={OutOfBoundsRemaining:F2}, delta={Delta}, distance={Distance:F3}, inputSequence={Sequence}, inputMove={Move}, inputButtons={Buttons}, hasInput={HasInput}, active={Active}, dead={Dead}, ammo={Ammo}, reserveMagazines={ReserveMagazines}, reloadRemaining={ReloadRemaining:F2}, match={MatchState}",
                 actor.Id, actor.Position, actor.GroundY, actor.VerticalVelocity,
                 actor.IsGrounded, actor.IsMantling, actor.GeometryBlocked,
+                actor.OutOfBoundsRemaining,
                 delta, delta.Length(), actor.LastInputSequence,
                 actor.Input.Move, actor.Input.Buttons, actor.HasInput, actor.Active, actor.Dead,
                 actor.AmmoInMagazine, actor.ReserveMagazines, actor.ReloadRemaining,
@@ -726,6 +728,45 @@ public sealed class FpsWorld : IHostedService
                     client.SendPacketUdp(in packet);
             }
         }
+        if (only is not null) SendBoundaryState(only);
+        else
+        {
+            foreach (var client in _entryCarManager.ConnectedCars.Values.Select(car => car.Client)
+                         .OfType<ACTcpClient>())
+                SendBoundaryState(client);
+        }
+    }
+
+    private void SendBoundaryState(ACTcpClient client)
+    {
+        if (_simulation is null) return;
+        var actor = _simulation.Actors.FirstOrDefault(candidate =>
+            candidate.Id == client.SessionId);
+        bool outside = actor is { Active: true, Dead: false, OutOfBoundsRemaining: > 0 };
+        client.SendPacket(new FpsBoundaryPacket
+        {
+            Outside = outside ? (byte)1 : (byte)0,
+            RemainingSeconds = outside ? actor!.OutOfBoundsRemaining : 0,
+        });
+    }
+
+    private static FpsRosterPacket CreateRosterPacket(FpsActorState actor) => new()
+    {
+        ActorId = actor.Id,
+        Role = (byte)actor.Role,
+        Name = actor.Name.Length <= 32 ? actor.Name : actor.Name[..32],
+    };
+
+    private static void SendRoster(ACTcpClient client, FpsActorState actor) =>
+        client.SendPacket(CreateRosterPacket(actor));
+
+    private void BroadcastRoster(FpsActorState actor, ACTcpClient excludedClient)
+    {
+        var packet = CreateRosterPacket(actor);
+        foreach (var client in _entryCarManager.ConnectedCars.Values.Select(car => car.Client)
+                     .OfType<ACTcpClient>().Where(client => client != excludedClient
+                                                           && client.HasStartedHandshake))
+            client.SendPacket(packet);
     }
 
     private void SendGrenadeSnapshots(ACTcpClient? only = null)

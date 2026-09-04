@@ -161,6 +161,13 @@ public sealed class FpsSnapshotPacket : OnlineEvent<FpsSnapshotPacket>
     [OnlineEventField(Name = "reloadRemaining", Size = Capacity)] public float[] ReloadRemaining = new float[Capacity];
 }
 
+[OnlineEvent(Key = "ASRC_FpsBoundary")]
+public sealed class FpsBoundaryPacket : OnlineEvent<FpsBoundaryPacket>
+{
+    [OnlineEventField(Name = "outside")] public byte Outside;
+    [OnlineEventField(Name = "remainingSeconds")] public float RemainingSeconds;
+}
+
 [OnlineEvent(Key = "ASRC_FpsRoster")]
 public sealed class FpsRosterPacket : OnlineEvent<FpsRosterPacket>
 {

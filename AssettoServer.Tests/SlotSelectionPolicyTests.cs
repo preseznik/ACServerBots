@@ -1,5 +1,6 @@
 using AssettoServer.Server;
 using AssettoServer.Server.Configuration.Extra;
+using AssettoServer.Server.Configuration.Kunos;
 using NUnit.Framework;
 
 namespace AssettoServer.Tests;
@@ -76,6 +77,40 @@ public sealed class SlotSelectionPolicyTests
         });
     }
 
+    [Test]
+    public void ConnectionPriorityPrefersHumanFpsSlotsButDoesNotOverrideExactRequests()
+    {
+        var candidates = new[]
+        {
+            new FpsCandidate(0, FpsSlotRole.Auto),
+            new FpsCandidate(1, FpsSlotRole.Auto),
+            new FpsCandidate(2, FpsSlotRole.Bot),
+            new FpsCandidate(3, FpsSlotRole.Human),
+        };
+        static int Priority(FpsCandidate candidate) => candidate.Role switch
+        {
+            FpsSlotRole.Human => 0,
+            FpsSlotRole.Auto => 1,
+            FpsSlotRole.Bot => 2,
+            _ => 3,
+        };
+
+        var ordinary = SlotSelectionPolicy.OrderForConnection(candidates,
+            RaceJoinSlotSelection.First, _ => false, supportsSpectating: false,
+            explicitSlotRequest: false, _ => 0, candidate => candidate.Slot,
+            connectionPriority: Priority).Select(candidate => candidate.Slot).ToArray();
+        var exact = SlotSelectionPolicy.OrderForConnection([candidates[1]],
+            RaceJoinSlotSelection.First, _ => false, supportsSpectating: false,
+            explicitSlotRequest: true, _ => 0, candidate => candidate.Slot,
+            connectionPriority: Priority).Select(candidate => candidate.Slot).ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ordinary, Is.EqualTo(new[] { 3, 0, 1, 2 }));
+            Assert.That(exact, Is.EqualTo(new[] { 1 }));
+        });
+    }
+
     private static int[] Order(RaceJoinSlotSelection selection, Random? random = null) =>
         SlotSelectionPolicy.Order(Candidates, selection,
                 candidate => candidate.ReservationPriority, candidate => candidate.Slot, random)
@@ -84,4 +119,5 @@ public sealed class SlotSelectionPolicyTests
 
     private sealed record Candidate(int Slot, int ReservationPriority);
     private sealed record SpectatorCandidate(int Slot, bool IsSpectator);
+    private sealed record FpsCandidate(int Slot, FpsSlotRole Role);
 }

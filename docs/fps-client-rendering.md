@@ -61,7 +61,7 @@ two constant bones keep the MP5 rigid while normal and empty reload clips extrac
 and reinsert its magazine. The 14,248-triangle world model is gun-only and grip
 anchored. Blocks and Modern select both variants by authoritative weapon ID 2;
 Modern hides its baked carbine while the MP5 attachment is active. Base asset
-archive v21 and client pack 30 carry the models, six animations, and
+archive v21 and client pack 34 carry the models, six animations, and
 `compact-smg-attribution.txt`.
 
 The source model is [MP5 Submachine Gun by Rotuma](https://sketchfab.com/3d-models/mp5-submachine-gun-a73b61932a0e4eecb5db5c63c158aa24),
@@ -107,7 +107,7 @@ Colt-specific KSANIM files reuse the accepted firing-hand pose, bring the suppor
 reload, and drive the Colt magazine. Colt and Desert Eagle use the same calibrated pistol hip
 framing and weapon-specific ADS horizontal offsets, but select independent KN5 and KSANIM files
 by authoritative weapon ID. Base asset
-archive v21 and client pack 30 include the Colt model, animations, and
+archive v21 and client pack 34 include the Colt model, animations, and
 `colt-1911-attribution.txt` attribution notice.
 
 The source model is [M1911 Pistol with magazine and bullet by DanaeH](https://sketchfab.com/3d-models/m1911-pistol-with-magazine-and-bullet-131085c22ece47a08076d8ddc0b9f21a),
@@ -125,10 +125,11 @@ and starts that 0.28-second release transition. If the fuse expires first, the a
 explodes at the firing hand and kills its owner through the normal radial-damage event. The world
 variants contain grenade geometry only and follow the server-authoritative projectile snapshots.
 Frag grenades bounce, then settle at a six-centimetre surface clearance once their rebound energy is
-spent; Sticky grenades attach to actors or collision geometry.
+spent; Sticky grenades attach to actors or collision geometry. Their server-authoritative damage
+radii are 7.5 m for Frag and 6.5 m for Sticky, with line-of-sight falloff retained.
 
-Base asset archive v21 and client pack 30 include both model variants, both throw clips, attribution
-notices, and a dedicated explosion WAV. A detonation event disposes the projectile model and emits
+Base asset archive v21 and client pack 34 include both model variants, both throw clips, attribution
+notices, and the generated FPS audio catalog. A detonation event disposes the projectile model and emits
 sparks, smoke, flame, and a short-lived orange light at the authoritative explosion position. The
 structural validator enforces mesh, shader, texture, triangle, animation-target, and release-motion
 budgets before these generated assets are accepted.
@@ -138,13 +139,73 @@ and [Futuristic Grenade by Simplix](https://sketchfab.com/3d-models/futuristic-g
 both licensed CC BY 4.0. Source files remain outside the repository; every distributed archive carries
 the corresponding attribution notice.
 
+## FPS audio catalog
+
+Client pack 34 installs 54 generated, non-looping WAV clips under
+`extension/audio/asrc_fps`: 12 weapon-shot variants, six weapon-operation cues, eight locomotion
+cues, eight movement reactions, seven combat vocals, five bullet impacts, six grenade cues, a
+magazine pickup, and a local kill confirmation. Every accepted file is mono 44.1 kHz 16-bit PCM,
+peak-limited to -1 dBFS, and listed with its prompt, model, generation date, duration, and SHA-256 in
+`audio-manifest.json`. `NOTICE.txt` records the confirmed paid-plan generation and redistribution
+basis. The API key is read only from `ELEVENLABS_API_KEY` by `tools/Generate-FpsAudio.ps1`; raw and
+normalized candidates remain under ignored `.artifacts/fps-audio`, and accepted assets are replaced
+only with the script's explicit overwrite switch. `-ClipId` limits regeneration to named catalog IDs,
+preserves every unchanged clip's generation date, and still rebuilds and validates the complete
+manifest; effectively silent provider results are retried up to the configured attempt limit.
+
+The server-delivered online client owns cue selection but not file playback or gameplay outcomes.
+CSP runs online scripts without filesystem I/O, so `fps.lua` relays versioned, validated cue data over
+the local `asrc.fps.audio.v1` shared event. The installed background HUD app owns `AudioEvent.fromFile`
+and can read the packaged WAVs. This relay does not change packet protocol 2 or typed HUD bridge v6.
+Reliable shot, hit, kill, award, pickup, and grenade-explosion packets select weapon-specific fire,
+hard/body impact, throttled hurt, one death cue per spawn generation, local feedback, and Frag/Sticky
+explosion variants. Snapshot position, grounded, stance, traversal, reload, and active-slot transitions
+derive footsteps, crawling, jump, landing, traversal, reload, and equip presentation. Local grenade
+input plays prime and release immediately; the first server snapshot of another player's grenade plays
+its spatial throw cue.
+
+The two traversal grunts are brief, non-verbal exertion breaths for mantle/vault actions: the effort
+sound made while pulling over a ledge or clearing an obstacle. They are not navigation prompts,
+dialogue, or generic movement loops.
+
+Local cues are 2D and remote/world cues are 3D, position-tracked, occluded, and distance-limited.
+Source gains are 0.85 local/0.72 remote for fire, 1.0 explosions, 0.45 locomotion, 0.55 weapon
+operations, 0.60 vocals and movement reactions, 0.50 impacts, and 0.35 feedback. The HUD app validates
+that relayed filenames remain inside `extension/audio/asrc_fps`, checks file existence, and retains each
+event before starting it. Its 64-event pool disposes the oldest event before admitting another and
+releases events after their bounded one-shot lifetime. A post-start validity probe is diagnostic only.
+All camera-mode multipliers are set to 1 so the FPS camera cannot inherit AC's quiet interior-camera
+mix. Local 2D cues disable the 3D reverb response; remote/world cues retain it. Relay, file, creation,
+start, and post-start validity failures identify the clip and stage in the CSP log. If the compatible HUD
+app is absent, weapon fire and explosions use the existing carrier/collision one-shot fallback with
+one-time logging; optional cues remain silent. Death, respawn, roster replacement, and gameplay exit
+clear per-actor playback state, and gameplay exit disposes the complete pool.
+
+Live acceptance remains a listening gate:
+
+- fire each weapon in single and sustained modes, then reload and switch both slots;
+- walk, sprint, crouch, crawl, jump, land lightly and heavily, mantle, and vault;
+- verify hurt throttling, one death cue per life, respawn reset, both impact classes, pickup, kill
+  confirmation, grenade prime/throw, and both explosion families;
+- confirm local immediacy, remote position/occlusion/attenuation, sustained MP5 pool stability, and no
+  stuck audio after pause, resume, death, respawn, or gameplay exit.
+
+## Playable-area countdown
+
+Client pack 34 registers the small, reliable `ASRC_FpsBoundary` event and carries
+its remaining seconds through HUD bridge v6. This standalone state must use the
+ordered online-event channel; it is not part of the UDP snapshot schema. The app
+and online fallback render the same large centred warning and whole-second
+countdown over a dark red screen tint. The server alone determines inside/outside
+state and elimination; the client only presents it.
+
 ## Hybrid HUD ownership
 
-Client pack version 30 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
-script publishes presentation state through the local shared structure `asrc.fps.hud.v5`. Bridge v5
+Client pack version 34 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+script publishes presentation state through the local shared structure `asrc.fps.hud.v6`. Bridge v6
 adds the active main/secondary slot, item IDs, and lethal count; it remains presentation-only.
 
-While both sides exchange a current version-5 heartbeat, the app draws the modular FPS HUD through
+While both sides exchange a current version-6 heartbeat, the app draws the modular FPS HUD through
 `ui.onExclusiveHUD()` and suppresses regular AC UI and third-party apps only in active gameplay. The
 app returns normal control in pre-match menus, results, replay, and non-FPS sessions. In `pause` mode,
 the server-delivered online script owns a match-specific menu and standings panel; its options action
@@ -152,7 +213,7 @@ can explicitly yield to the native AC/CSP menu. If the app is absent, disabled, 
 for more than 0.5 seconds, the online script resumes its complete exclusive gameplay HUD. A bridge
 mismatch is logged once and must never produce a blank frame.
 
-Bridge v5 carries ADS presentation, configured maximum health, predicted/authoritative stamina, and
+Bridge v6 carries ADS presentation, configured maximum health, predicted/authoritative stamina, and
 the current loadout presentation.
 The companion HUD and the online fallback both suppress the ordinary four-line crosshair while ADS
 is active, but retain authoritative hitmarkers and award popups. Both paths use matching lower-corner

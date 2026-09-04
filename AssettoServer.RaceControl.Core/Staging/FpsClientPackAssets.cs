@@ -6,7 +6,12 @@ public static class FpsClientPackAssets
 {
     private const string ModernResourcePrefix =
         "AssettoServer.RaceControl.Core.Assets.Fps.Modern.";
+    private const string AudioResourcePrefix =
+        "AssettoServer.RaceControl.Core.Assets.Fps.Audio.";
     public const string ModernAssetDirectory = "content/objects3D/asrc_fps/modern/";
+    public const string AudioAssetDirectory = "extension/audio/asrc_fps/";
+    public const string AudioManifestPath = AudioAssetDirectory + "audio-manifest.json";
+    public const string AudioNoticePath = AudioAssetDirectory + "NOTICE.txt";
     public const string RifleViewmodelPath =
         "content/objects3D/asrc_fps/asrc_assault_rifle_viewmodel.kn5";
     public const string RifleWorldModelPath =
@@ -162,6 +167,28 @@ public static class FpsClientPackAssets
     public static byte[] GetHudWeaponImage() => ReadEmbeddedPng(
         "AssettoServer.RaceControl.Core.Assets.Fps.Hud.asrc_carbine_hud.png");
 
+    public static IReadOnlyList<(string Path, byte[] Data)> GetAudioAssets()
+    {
+        var assets = new List<(string Path, byte[] Data)>();
+        var assembly = typeof(FpsClientPackAssets).Assembly;
+        foreach (string resourceName in assembly.GetManifestResourceNames()
+                     .Where(name => name.StartsWith(AudioResourcePrefix,
+                         StringComparison.Ordinal))
+                     .OrderBy(name => name, StringComparer.Ordinal))
+        {
+            string fileName = resourceName[AudioResourcePrefix.Length..];
+            using Stream stream = assembly.GetManifestResourceStream(resourceName)
+                ?? throw new InvalidOperationException(
+                    $"Embedded FPS audio asset was not found: {resourceName}");
+            using var output = new MemoryStream();
+            stream.CopyTo(output);
+            assets.Add(($"{AudioAssetDirectory}{fileName}", output.ToArray()));
+        }
+
+        ValidateAudioAssetSet(assets);
+        return assets;
+    }
+
     public static IReadOnlyList<(string Path, byte[] Data)> GetModernAssets()
     {
         var assets = new List<(string Path, byte[] Data)>();
@@ -190,82 +217,6 @@ public static class FpsClientPackAssets
 
     public static string Sha256(byte[] data) => Convert.ToHexString(
         System.Security.Cryptography.SHA256.HashData(data)).ToLowerInvariant();
-
-    public static byte[] CreateRifleWave()
-    {
-        const int sampleRate = 44_100;
-        const float durationSeconds = 0.22f;
-        int sampleCount = (int)(sampleRate * durationSeconds);
-        using var stream = new MemoryStream(44 + sampleCount * sizeof(short));
-        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
-        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-        writer.Write(36 + sampleCount * sizeof(short));
-        writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
-        writer.Write(16);
-        writer.Write((short)1);
-        writer.Write((short)1);
-        writer.Write(sampleRate);
-        writer.Write(sampleRate * sizeof(short));
-        writer.Write((short)sizeof(short));
-        writer.Write((short)16);
-        writer.Write(Encoding.ASCII.GetBytes("data"));
-        writer.Write(sampleCount * sizeof(short));
-
-        uint noise = 0xC0FFEEu;
-        for (int index = 0; index < sampleCount; index++)
-        {
-            float time = index / (float)sampleRate;
-            noise = unchecked(noise * 1_664_525u + 1_013_904_223u);
-            float white = ((noise >> 8) & 0xffff) / 32767.5f - 1;
-            float envelope = MathF.Exp(-time * 21);
-            float thump = MathF.Sin(MathF.Tau * (105 - time * 180) * time) * 0.32f;
-            float crack = time < 0.012f ? (1 - time / 0.012f) * 0.42f : 0;
-            float sample = Math.Clamp((white * 0.68f + thump) * envelope + crack, -1, 1);
-            writer.Write((short)(sample * short.MaxValue));
-        }
-        writer.Flush();
-        return stream.ToArray();
-    }
-
-    public static byte[] CreateExplosionWave()
-    {
-        const int sampleRate = 44_100;
-        const float durationSeconds = 1.15f;
-        int sampleCount = (int)(sampleRate * durationSeconds);
-        using var stream = new MemoryStream(44 + sampleCount * sizeof(short));
-        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
-        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-        writer.Write(36 + sampleCount * sizeof(short));
-        writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
-        writer.Write(16);
-        writer.Write((short)1);
-        writer.Write((short)1);
-        writer.Write(sampleRate);
-        writer.Write(sampleRate * sizeof(short));
-        writer.Write((short)sizeof(short));
-        writer.Write((short)16);
-        writer.Write(Encoding.ASCII.GetBytes("data"));
-        writer.Write(sampleCount * sizeof(short));
-
-        uint noise = 0x67CE11u;
-        float lowPass = 0;
-        for (int index = 0; index < sampleCount; index++)
-        {
-            float time = index / (float)sampleRate;
-            noise = unchecked(noise * 1_664_525u + 1_013_904_223u);
-            float white = ((noise >> 8) & 0xffff) / 32767.5f - 1;
-            lowPass += (white - lowPass) * 0.065f;
-            float blast = MathF.Exp(-time * 4.8f);
-            float crack = time < 0.018f ? (1 - time / 0.018f) : 0;
-            float sub = MathF.Sin(MathF.Tau * (72 - time * 26) * time)
-                        * MathF.Exp(-time * 3.1f);
-            float sample = Math.Clamp(lowPass * blast * 2.2f + sub * 0.62f
-                                      + white * crack * 0.8f, -1, 1);
-            writer.Write((short)(sample * short.MaxValue));
-        }
-        writer.Flush();
-        return stream.ToArray();
-    }
 
     private static byte[] ReadEmbeddedKn5(string resourceName)
     {
@@ -378,4 +329,107 @@ public static class FpsClientPackAssets
             || !root.GetProperty("validation").GetProperty("uniqueNodeNames").GetBoolean())
             throw new InvalidDataException("Embedded Modern FPS model integrity is invalid");
     }
+
+    private static void ValidateAudioAssetSet(
+        IReadOnlyList<(string Path, byte[] Data)> assets)
+    {
+        var waves = assets.Where(asset => asset.Path.EndsWith(".wav",
+            StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (waves.Length != 54 || assets.Count != 56)
+            throw new InvalidDataException(
+                $"Embedded FPS audio set must contain 54 WAVs, a manifest and a notice; found {assets.Count} assets");
+
+        byte[] manifestData = assets.Single(asset => asset.Path == AudioManifestPath).Data;
+        byte[] noticeData = assets.Single(asset => asset.Path == AudioNoticePath).Data;
+        if (noticeData.Length < 200 || noticeData.Any(value => value == 0))
+            throw new InvalidDataException("Embedded FPS audio notice is invalid");
+
+        using var document = System.Text.Json.JsonDocument.Parse(manifestData);
+        System.Text.Json.JsonElement root = document.RootElement;
+        if (root.GetProperty("schemaVersion").GetInt32() != 1
+            || root.GetProperty("catalogVersion").GetInt32() != 1
+            || !root.GetProperty("generator").GetProperty(
+                "commercialLicenseConfirmedByUser").GetBoolean())
+            throw new InvalidDataException("Embedded FPS audio manifest header is invalid");
+        var clips = root.GetProperty("clips").EnumerateArray().ToArray();
+        if (clips.Length != 54)
+            throw new InvalidDataException("Embedded FPS audio manifest must contain 54 clips");
+        var clipsByPath = clips.ToDictionary(clip => clip.GetProperty("path").GetString()
+                                                    ?? string.Empty,
+            StringComparer.Ordinal);
+        foreach ((string path, byte[] data) in waves)
+        {
+            if (!clipsByPath.TryGetValue(path, out System.Text.Json.JsonElement clip))
+                throw new InvalidDataException($"Embedded FPS WAV is missing from its manifest: {path}");
+            if (string.IsNullOrWhiteSpace(clip.GetProperty("prompt").GetString())
+                || clip.GetProperty("model").GetString()
+                != root.GetProperty("generator").GetProperty("model").GetString()
+                || !DateTimeOffset.TryParse(clip.GetProperty("generatedAtUtc").GetString(),
+                    out _))
+                throw new InvalidDataException(
+                    $"Embedded FPS WAV provenance is incomplete: {path}");
+            FpsWaveMetadata metadata = ValidateWave(path, data);
+            if (clip.GetProperty("sha256").GetString() != Sha256(data)
+                || clip.GetProperty("sampleRate").GetInt32() != metadata.SampleRate
+                || clip.GetProperty("channels").GetInt32() != metadata.Channels
+                || clip.GetProperty("codec").GetString() != "pcm_s16le"
+                || Math.Abs(clip.GetProperty("peakDb").GetDouble() - metadata.PeakDb) > 0.05
+                || Math.Abs(clip.GetProperty("durationSeconds").GetDouble()
+                            - metadata.DurationSeconds) > 0.002)
+                throw new InvalidDataException($"Embedded FPS WAV metadata does not match: {path}");
+        }
+    }
+
+    private static FpsWaveMetadata ValidateWave(string path, byte[] data)
+    {
+        if (data.Length < 44 || !data.AsSpan(0, 4).SequenceEqual("RIFF"u8)
+                             || !data.AsSpan(8, 4).SequenceEqual("WAVE"u8))
+            throw new InvalidDataException($"Embedded FPS audio is not a RIFF/WAVE file: {path}");
+        using var reader = new BinaryReader(new MemoryStream(data), Encoding.ASCII);
+        reader.BaseStream.Position = 12;
+        short audioFormat = 0;
+        short channels = 0;
+        int sampleRate = 0;
+        short bitsPerSample = 0;
+        int dataBytes = 0;
+        int dataOffset = 0;
+        while (reader.BaseStream.Position + 8 <= reader.BaseStream.Length)
+        {
+            string chunk = Encoding.ASCII.GetString(reader.ReadBytes(4));
+            int length = reader.ReadInt32();
+            long next = reader.BaseStream.Position + length + (length & 1);
+            if (length < 0 || next > reader.BaseStream.Length)
+                throw new InvalidDataException($"Embedded FPS WAV has an invalid chunk: {path}");
+            if (chunk == "fmt " && length >= 16)
+            {
+                audioFormat = reader.ReadInt16();
+                channels = reader.ReadInt16();
+                sampleRate = reader.ReadInt32();
+                reader.BaseStream.Position += 6;
+                bitsPerSample = reader.ReadInt16();
+            }
+            else if (chunk == "data")
+            {
+                dataBytes = length;
+                dataOffset = checked((int)reader.BaseStream.Position);
+            }
+            reader.BaseStream.Position = next;
+        }
+        if (audioFormat != 1 || channels != 1 || sampleRate != 44_100
+            || bitsPerSample != 16 || dataBytes <= 0)
+            throw new InvalidDataException(
+                $"Embedded FPS WAV must be mono 44.1 kHz 16-bit PCM: {path}");
+        int peak = 0;
+        for (int offset = dataOffset; offset + 1 < dataOffset + dataBytes; offset += 2)
+            peak = Math.Max(peak, Math.Abs((int)BitConverter.ToInt16(data, offset)));
+        double peakDb = peak > 0 ? 20 * Math.Log10(peak / 32768d) : double.NegativeInfinity;
+        if (peakDb is < -1.1 or > -0.8)
+            throw new InvalidDataException(
+                $"Embedded FPS WAV peak must be normalized to -1 dBFS: {path} ({peakDb:F2} dBFS)");
+        return new FpsWaveMetadata(sampleRate, channels,
+            (double)dataBytes / (sampleRate * channels * (bitsPerSample / 8)), peakDb);
+    }
+
+    private readonly record struct FpsWaveMetadata(int SampleRate, int Channels,
+        double DurationSeconds, double PeakDb);
 }

@@ -307,6 +307,7 @@ internal static class FpsArenaNavigationBuilder
     public static FpsArenaNavigationBuildResult Build(FpsArenaSurface surface,
         FpsArenaPoint boundsMin, FpsArenaPoint boundsMax,
         IReadOnlyList<FpsArenaSpawn> spawns,
+        IReadOnlyList<Vector3>? playableBoundary = null,
         float cellSize = FpsArenaNavigationAsset.DefaultCellSize)
     {
         if (spawns.Count < 2) throw new InvalidDataException("FPS navigation needs at least two spawns");
@@ -322,6 +323,8 @@ internal static class FpsArenaNavigationBuilder
         {
             float worldX = x * cellSize;
             float worldZ = z * cellSize;
+            if (playableBoundary is { Count: >= 3 }
+                && !FpsPlayableArea.Contains(playableBoundary, worldX, worldZ)) continue;
             surface.CollectWalkableHeights(worldX, worldZ, boundsMin.Y, boundsMax.Y, heights);
             foreach (float height in heights)
             {

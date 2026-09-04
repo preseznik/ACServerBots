@@ -58,8 +58,8 @@ internal static class FpsItems
 
     public static FpsLethalDefinition Lethal(FpsLethalType lethal) => lethal switch
     {
-        FpsLethalType.FragGrenade => new(3, 16, 6, 125, 20, false),
-        FpsLethalType.StickyGrenade => new(2.2f, 18, 5, 120, 15, true),
+        FpsLethalType.FragGrenade => new(3, 16, 7.5f, 125, 20, false),
+        FpsLethalType.StickyGrenade => new(2.2f, 18, 6.5f, 120, 15, true),
         _ => throw new ArgumentOutOfRangeException(nameof(lethal), lethal,
             "Unknown FPS lethal"),
     };

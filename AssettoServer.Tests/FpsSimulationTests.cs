@@ -419,6 +419,18 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
+    public void GrenadeBlastRadiiUseWiderBalanceValues()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(FpsItems.Lethal(FpsLethalType.FragGrenade).DamageRadius,
+                Is.EqualTo(7.5f));
+            Assert.That(FpsItems.Lethal(FpsLethalType.StickyGrenade).DamageRadius,
+                Is.EqualTo(6.5f));
+        });
+    }
+
+    [Test]
     public void HoldingLethalPastItsFuseExplodesInHandAndKillsProtectedOwner()
     {
         var simulation = new FpsSimulation(Configuration(),
@@ -618,6 +630,7 @@ public sealed class FpsSimulationTests
         {
             Id = 0,
             Name = "Player",
+            ConfiguredName = "Player",
             Role = FpsSlotRole.Human,
             Stance = FpsStance.Prone,
         };
@@ -983,6 +996,24 @@ public sealed class FpsSimulationTests
         {
             Assert.That(actor.Active, Is.True);
             Assert.That(actor.HumanControlled, Is.False);
+        });
+    }
+
+    [Test]
+    public void HumanClaimUsesHandshakeNameAndRestoresConfiguredAutoNameOnDisconnect()
+    {
+        var simulation = CreateSimulation(FpsSlotRole.Auto, FpsSlotRole.Bot);
+        var actor = simulation.Actors.Single(candidate => candidate.Id == 0);
+
+        Assert.That(simulation.ClaimHuman(0, playerName: "Content Manager Name"), Is.True);
+        Assert.That(actor.Name, Is.EqualTo("Content Manager Name"));
+
+        simulation.ReleaseHuman(0);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Name, Is.EqualTo("First"));
+            Assert.That(actor.HumanControlled, Is.False);
+            Assert.That(actor.Active, Is.True);
         });
     }
 
@@ -3060,6 +3091,45 @@ public sealed class FpsSimulationTests
         triangles.Add(new Kn5Triangle(new Vector3(minX, landingY, landingZ),
             new Vector3(maxX, landingY, 2), new Vector3(maxX, landingY, landingZ)));
         return triangles;
+    }
+
+    [Test]
+    public void PlayableBoundaryCountdownCancelsOnReturnAndEliminatesWithoutKillCredit()
+    {
+        var configuration = Configuration();
+        configuration.Arena.PlayableBoundary.AddRange([
+            new Vector3(-1, 0, -1), new Vector3(1, 0, -1),
+            new Vector3(1, 0, 1), new Vector3(-1, 0, 1),
+        ]);
+        var simulation = new FpsSimulation(configuration,
+            [new FpsSimulationSlot(0, "Runner", FpsSlotRole.Human)],
+            surface: new FpsArenaSurface(FlatFloor(-10, 10, -10, 10, 0).ToArray()));
+        Assert.That(simulation.ClaimHuman(0), Is.True);
+        var actor = simulation.Actors.Single();
+
+        actor.Position = new Vector3(2, 0, 0);
+        simulation.Step(0.05f);
+        Assert.That(actor.OutOfBoundsRemaining, Is.EqualTo(3).Within(0.001f));
+        actor.Position = Vector3.Zero;
+        simulation.Step(0.05f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.OutOfBoundsRemaining, Is.Zero);
+            Assert.That(actor.Dead, Is.False);
+            Assert.That(actor.Deaths, Is.Zero);
+        });
+
+        actor.Position = new Vector3(2, 0, 0);
+        for (int tick = 0; tick < 100 && !actor.Dead; tick++) simulation.Step(0.05f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.Dead, Is.True);
+            Assert.That(actor.Deaths, Is.EqualTo(1));
+            Assert.That(actor.Kills, Is.Zero);
+            Assert.That(simulation.KillEvents, Has.Count.EqualTo(1));
+            Assert.That(simulation.KillEvents[0].KillerId, Is.EqualTo(byte.MaxValue));
+            Assert.That(simulation.KillEvents[0].ItemId, Is.Zero);
+        });
     }
 
     private static FpsConfiguration Configuration(int killLimit = 20, float difficulty = 0,

@@ -8,6 +8,24 @@ namespace AssettoServer.Tests;
 public sealed class FpsNavigationTests
 {
     [Test]
+    public void BuildOmitsWalkableCellsOutsidePlayableBoundary()
+    {
+        var surface = new FpsArenaSurface(Floor(-5, 5, -5, 5, 0).ToArray());
+        Vector3[] boundary =
+        [
+            new(-3, 0, -1), new(3, 0, -1), new(3, 0, 1), new(-3, 0, 1),
+        ];
+
+        var result = FpsArenaNavigationBuilder.Build(surface,
+            new FpsArenaPoint(-5, -1, -5), new FpsArenaPoint(5, 3, 5),
+            [Spawn(-2, 0, 0), Spawn(2, 0, 0)], boundary);
+
+        Assert.That(result.Asset.Nodes,
+            Is.All.Matches<FpsNavigationNode>(node =>
+                FpsPlayableArea.Contains(boundary, node.Position.X, node.Position.Z)));
+    }
+
+    [Test]
     public void LayeredGridPreservesDistinctWalkableFloors()
     {
         var triangles = new List<Kn5Triangle>();

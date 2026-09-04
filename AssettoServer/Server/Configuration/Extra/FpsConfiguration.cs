@@ -81,6 +81,8 @@ public sealed class FpsArenaConfiguration
     public string NavigationPath { get; init; } = "fps-arena-navigation.bin";
     public Vector3 BoundsMin { get; init; }
     public Vector3 BoundsMax { get; init; }
+    public List<Vector3> PlayableBoundary { get; init; } = [];
+    public float OutOfBoundsSeconds { get; init; } = 3;
     public List<FpsSpawnConfiguration> SpawnPoints { get; init; } = [];
 }
 

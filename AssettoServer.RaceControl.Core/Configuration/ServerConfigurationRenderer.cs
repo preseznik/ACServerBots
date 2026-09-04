@@ -279,6 +279,17 @@ public sealed class ServerConfigurationRenderer
             Line("    NavigationPath: fps-arena-navigation.bin");
             Point("BoundsMin", arena.BoundsMin, 4);
             Point("BoundsMax", arena.BoundsMax, 4);
+            Line($"    OutOfBoundsSeconds: {arena.OutOfBoundsSeconds.ToString("0.###", invariant)}");
+            if (arena.PlayableBoundary.Count > 0)
+            {
+                Line("    PlayableBoundary:");
+                foreach (var point in arena.PlayableBoundary)
+                {
+                    Line($"      - X: {point.X.ToString("0.######", invariant)}");
+                    Line($"        Y: {point.Y.ToString("0.######", invariant)}");
+                    Line($"        Z: {point.Z.ToString("0.######", invariant)}");
+                }
+            }
             Line("    SpawnPoints:");
             foreach (var spawn in arena.SpawnPoints)
             {

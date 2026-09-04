@@ -36,6 +36,7 @@ public class OnlineEventGeneratorTests
             typeof(FpsLoadoutSelectPacket), typeof(FpsLoadoutCatalogPacket),
             typeof(FpsLoadoutResultPacket), typeof(FpsLoadoutStatePacket),
             typeof(FpsSnapshotPacket),
+            typeof(FpsBoundaryPacket),
             typeof(FpsRosterPacket), typeof(FpsMatchPacket), typeof(FpsKillPacket), typeof(FpsHitPacket),
             typeof(FpsAwardPacket), typeof(FpsPickupPacket), typeof(FpsShotPacket),
             typeof(FpsGrenadeSnapshotPacket), typeof(FpsGrenadeExplodedPacket),
@@ -56,6 +57,10 @@ public class OnlineEventGeneratorTests
             Assert.That(definitions.Select(definition => definition.PacketType), Is.Unique);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsInput").Udp, Is.True);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot").Udp, Is.True);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsBoundary").Udp,
+                Is.False);
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsBoundary").Structure,
+                Does.Contain("float remainingSeconds"));
             Assert.That(grenadeDefinition.Udp, Is.True);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsKill").Udp, Is.False);
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsAward").Udp,
@@ -120,6 +125,7 @@ public class OnlineEventGeneratorTests
             Assert.That(FpsWorld.UsesUdpTransport<FpsShotPacket>(), Is.True);
             Assert.That(FpsWorld.UsesUdpTransport<FpsSnapshotPacket>(), Is.True);
             Assert.That(FpsWorld.UsesUdpTransport<FpsGrenadeSnapshotPacket>(), Is.True);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsBoundaryPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsHitPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsKillPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsAwardPacket>(), Is.False);

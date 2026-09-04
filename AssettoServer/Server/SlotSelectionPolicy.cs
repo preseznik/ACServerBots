@@ -10,7 +10,8 @@ internal static class SlotSelectionPolicy
     internal static IReadOnlyList<T> OrderForConnection<T>(IEnumerable<T> candidates,
         RaceJoinSlotSelection selection, Func<T, bool> isSpectator, bool supportsSpectating,
         bool explicitSlotRequest, Func<T, int> reservationPriority,
-        Func<T, int> slotIndex, Random? random = null)
+        Func<T, int> slotIndex, Func<T, int>? connectionPriority = null,
+        Random? random = null)
     {
         var materialized = candidates.ToArray();
         if (explicitSlotRequest)
@@ -18,6 +19,8 @@ internal static class SlotSelectionPolicy
 
         var ordered = Order(materialized.Where(candidate => !isSpectator(candidate)), selection,
             reservationPriority, slotIndex, random).ToList();
+        if (connectionPriority is not null)
+            ordered = ordered.OrderBy(connectionPriority).ToList();
         if (supportsSpectating)
         {
             ordered.AddRange(Order(materialized.Where(isSpectator), RaceJoinSlotSelection.First,

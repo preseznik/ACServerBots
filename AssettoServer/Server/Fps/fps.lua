@@ -149,6 +149,7 @@ local remainingSeconds = 0
 local killLimit = 20
 local matchState = 0
 local winnerID = 255
+local outOfBoundsRemaining = 0
 local killFeed = {}
 local effectClock = 0
 local hitMarkerUntil = 0
@@ -158,7 +159,48 @@ local clearActorImpacts = nil
 local sparks = {}
 local maxTracers = 16
 local maxImpactMarks = 96
-local rifleSounds = {}
+local fpsAudio = {
+  directory = 'extension/audio/asrc_fps/',
+  active = {},
+  maxActive = 64,
+  variants = {},
+  fallbackLogged = {},
+  playbackFailureLogged = {},
+  playbackReadyLogged = false,
+  relayReadyLogged = false,
+  relayUnavailableLogged = false,
+  catalogUnavailableLogged = false,
+  fire = {
+    [1] = {'fire_assault_rifle_01.wav', 'fire_assault_rifle_02.wav',
+      'fire_assault_rifle_03.wav'},
+    [2] = {'fire_compact_smg_01.wav', 'fire_compact_smg_02.wav',
+      'fire_compact_smg_03.wav'},
+    [3] = {'fire_desert_eagle_01.wav', 'fire_desert_eagle_02.wav',
+      'fire_desert_eagle_03.wav'},
+    [4] = {'fire_colt_1911_01.wav', 'fire_colt_1911_02.wav',
+      'fire_colt_1911_03.wav'},
+  },
+  reload = {
+    [1] = 'reload_assault_rifle.wav', [2] = 'reload_compact_smg.wav',
+    [3] = 'reload_desert_eagle.wav', [4] = 'reload_colt_1911.wav',
+  },
+  footsteps = {'footstep_boot_01.wav', 'footstep_boot_02.wav',
+    'footstep_boot_03.wav', 'footstep_boot_04.wav', 'footstep_boot_05.wav',
+    'footstep_boot_06.wav'},
+  crawl = {'crawl_gear_01.wav', 'crawl_gear_02.wav'},
+  jump = {'jump_grunt_01.wav', 'jump_grunt_02.wav'},
+  landLight = {'land_light_01.wav', 'land_light_02.wav'},
+  landHeavy = {'land_heavy_01.wav', 'land_heavy_02.wav'},
+  traversal = {'traversal_grunt_01.wav', 'traversal_grunt_02.wav'},
+  hurt = {'hurt_grunt_01.wav', 'hurt_grunt_02.wav', 'hurt_grunt_03.wav'},
+  death = {'death_cry_01.wav', 'death_cry_02.wav', 'death_cry_03.wav',
+    'death_cry_04.wav'},
+  impactHard = {'impact_hard_01.wav', 'impact_hard_02.wav', 'impact_hard_03.wav'},
+  impactBody = {'impact_body_01.wav', 'impact_body_02.wav'},
+  fragExplosion = {'grenade_frag_explosion_01.wav', 'grenade_frag_explosion_02.wav'},
+  stickyExplosion = {'grenade_sticky_explosion_01.wav',
+    'grenade_sticky_explosion_02.wav'},
+}
 local viewmodelHolder = nil
 local viewmodelRoot = nil
 local viewmodelKick = 0
@@ -190,7 +232,6 @@ local viewmodelDirectRenderFailureLogged = false
 local viewmodelServerDiagnosticAccumulator = 5
 local viewmodelLastSentStage = nil
 local viewmodelDiagnosticSendOk = true
-local rifleAudioFallbackLogged = false
 local clientPackError = nil
 local remoteRifleFallbackLogged = false
 local remoteRender = {
@@ -221,9 +262,6 @@ local function clientAssetPath(relativePath)
   if assettoRoot == nil or assettoRoot == '' then return relativePath end
   return assettoRoot .. '/' .. relativePath
 end
-local rifleAudioRelativePath = 'extension/audio/asrc_fps/rifle.wav'
-local rifleAudioPath = clientAssetPath(rifleAudioRelativePath)
-local explosionAudioPath = clientAssetPath('extension/audio/asrc_fps/explosion.wav')
 local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v21.zip'
 local rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
 local rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
@@ -273,6 +311,275 @@ local predictedAirborne = false
 local predictionCollisionConstrained = false
 local predictionClearSnapshots = 0
 local localStance = 0 -- 0 standing, 1 crouching, 2 prone
+
+function fpsAudio.next(files, key)
+  local index = (fpsAudio.variants[key] or 0) + 1
+  if index > #files then index = 1 end
+  fpsAudio.variants[key] = index
+  return files[index]
+end
+
+function fpsAudio.dispose(index)
+  local sound = fpsAudio.active[index]
+  if sound == nil then return end
+  pcall(function() sound.event:dispose() end)
+  table.remove(fpsAudio.active, index)
+end
+
+function fpsAudio.logPlaybackFailure(fileName, stage, detail)
+  local key = tostring(fileName) .. ':' .. tostring(stage)
+  if fpsAudio.playbackFailureLogged[key] then return end
+  fpsAudio.playbackFailureLogged[key] = true
+  ac.warn('[ASRC FPS] audio playback failed: file=' .. tostring(fileName)
+    .. ' stage=' .. tostring(stage) .. ' detail=' .. tostring(detail))
+end
+
+function fpsAudio.startEvent(event, fileName, position, localSound, volume, ttl)
+  while #fpsAudio.active >= fpsAudio.maxActive do fpsAudio.dispose(1) end
+  fpsAudio.active[#fpsAudio.active + 1] = {
+    event = event,
+    ttl = ttl,
+    fileName = fileName,
+    validityChecked = false,
+  }
+  local index = #fpsAudio.active
+  local ok, err = pcall(function()
+    event.volume = volume
+    -- The FPS camera can still be classified as an AC interior camera. File-backed
+    -- cues should not inherit the default 0.25 interior multiplier.
+    event.cameraInteriorMultiplier = 1
+    event.cameraExteriorMultiplier = 1
+    event.cameraTrackMultiplier = 1
+    if not localSound and position ~= nil then event:setPosition(position) end
+    event:start()
+  end)
+  if not ok then
+    fpsAudio.dispose(index)
+    fpsAudio.logPlaybackFailure(fileName, 'start', err)
+    return false
+  end
+  return true
+end
+
+function fpsAudio.play(fileName, position, localSound, volume, maxDistance, ttl, fallback)
+  local relayOk, listeners = pcall(function()
+    return ac.broadcastSharedEvent('asrc.fps.audio.v1', {
+      version = 1,
+      fileName = fileName,
+      localSound = localSound,
+      volume = volume,
+      maxDistance = maxDistance,
+      ttl = ttl,
+      hasPosition = position ~= nil,
+      position = position or vec3(),
+    })
+  end)
+  if relayOk and (tonumber(listeners) or 0) > 0 then
+    if not fpsAudio.relayReadyLogged then
+      fpsAudio.relayReadyLogged = true
+      ac.log('[ASRC FPS] local audio relay connected')
+    end
+    return
+  end
+  if not fpsAudio.relayUnavailableLogged then
+    fpsAudio.relayUnavailableLogged = true
+    ac.warn('[ASRC FPS] local audio relay unavailable: '
+      .. tostring(relayOk and listeners or listeners))
+  end
+  if fallback ~= nil then
+    local fallbackOk, fallbackEvent = pcall(function()
+      return ac.AudioEvent(fallback, false, false)
+    end)
+    if fallbackOk and fallbackEvent ~= nil then
+      fpsAudio.startEvent(fallbackEvent, fallback, position, localSound, volume, ttl)
+    else
+      fpsAudio.logPlaybackFailure(fallback, 'fallback-create', fallbackEvent)
+    end
+    if not fpsAudio.fallbackLogged[fallback] then
+      fpsAudio.fallbackLogged[fallback] = true
+      ac.warn('[ASRC FPS] local audio relay unavailable; using one-shot fallback: '
+        .. tostring(fileName))
+    end
+  elseif not fpsAudio.catalogUnavailableLogged then
+    fpsAudio.catalogUnavailableLogged = true
+    ac.warn('[ASRC FPS] local audio relay unavailable; optional cues are muted')
+  end
+end
+
+function fpsAudio.actorPosition(actor)
+  if actor == nil then return nil end
+  return actor.render:lengthSquared() > 0.001 and actor.render or actor.target
+end
+
+function fpsAudio.activeWeapon(actor)
+  if actor == nil then return 1 end
+  return actor.activeSlot == 1 and (actor.secondaryWeapon or 4)
+    or (actor.mainWeapon or 1)
+end
+
+function fpsAudio.playWeaponFire(weaponType, position, localShot)
+  local variants = fpsAudio.fire[weaponType] or fpsAudio.fire[1]
+  local maxDistance = weaponType == 2 and 140 or weaponType == 4 and 130 or 180
+  fpsAudio.play(fpsAudio.next(variants, 'fire-' .. tostring(weaponType)), position,
+    localShot, localShot and 0.85 or 0.72, maxDistance, 0.9,
+    'cars/:own/backfire_ext')
+end
+
+function fpsAudio.playImpact(impactType, position)
+  local variants = impactType == 2 and fpsAudio.impactBody or fpsAudio.impactHard
+  fpsAudio.play(fpsAudio.next(variants, 'impact-' .. tostring(impactType)), position,
+    false, 0.50, 45, 0.7)
+end
+
+function fpsAudio.playGrenadeExplosion(grenadeType, position)
+  local variants = grenadeType == 17 and fpsAudio.stickyExplosion or fpsAudio.fragExplosion
+  fpsAudio.play(fpsAudio.next(variants, 'explosion-' .. tostring(grenadeType)), position,
+    false, 1.0, 260, 1.4, 'event:/collisions/car/metal')
+end
+
+function fpsAudio.playHurt(actor)
+  if actor == nil or effectClock - (actor.audioHurtAt or -10) < 0.3 then return end
+  actor.audioHurtAt = effectClock
+  fpsAudio.play(fpsAudio.next(fpsAudio.hurt, 'hurt'), fpsAudio.actorPosition(actor),
+    actor.id == localSessionID, 0.60, 55, 1.0)
+end
+
+function fpsAudio.resetActor(actor, newLife)
+  if actor == nil then return end
+  actor.audioInitialized = false
+  actor.audioLastPosition = nil
+  actor.audioStepClock = 0
+  actor.audioAirborneStarted = nil
+  actor.audioAirbornePeak = nil
+  actor.audioHurtAt = nil
+  if newLife then actor.audioDeathSpawnCount = nil end
+end
+
+function fpsAudio.playDeath(actor)
+  if actor == nil then return end
+  local spawnCount = actor.spawnCount or -1
+  if actor.audioDeathSpawnCount == spawnCount then return end
+  actor.audioDeathSpawnCount = spawnCount
+  actor.audioStepClock = 0
+  actor.audioAirborneStarted = nil
+  actor.audioAirbornePeak = nil
+  fpsAudio.play(fpsAudio.next(fpsAudio.death, 'death'), fpsAudio.actorPosition(actor),
+    actor.id == localSessionID, 0.60, 55, 1.5)
+end
+
+function fpsAudio.playEquip(actor)
+  local weapon = fpsAudio.activeWeapon(actor)
+  fpsAudio.play(weapon <= 2 and 'equip_long_gun.wav' or 'equip_pistol.wav',
+    fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.55, 35, 0.7)
+end
+
+function fpsAudio.playReload(actor)
+  local weapon = fpsAudio.activeWeapon(actor)
+  fpsAudio.play(fpsAudio.reload[weapon] or fpsAudio.reload[1],
+    fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.55, 35, 1.2)
+end
+
+function fpsAudio.snapshotTransition(actor, previousFlags, previousSpawnCount,
+    previousReload, previousActionState, previousY)
+  local spawnChanged = previousSpawnCount ~= nil and previousSpawnCount ~= actor.spawnCount
+  local active = bit.band(actor.flags, 1) ~= 0
+  local dead = bit.band(actor.flags, 2) ~= 0
+  if not actor.audioInitialized or spawnChanged then
+    fpsAudio.resetActor(actor, true)
+    actor.audioInitialized = true
+    actor.audioLastPosition = actor.target:clone()
+    return
+  end
+  if not active or dead then
+    actor.audioStepClock = 0
+    actor.audioAirborneStarted = nil
+    actor.audioAirbornePeak = nil
+    actor.audioHurtAt = nil
+    actor.audioLastPosition = actor.target:clone()
+    return
+  end
+  local wasGrounded = bit.band(previousFlags, 16) ~= 0
+  local grounded = bit.band(actor.flags, 16) ~= 0
+  if wasGrounded and not grounded then
+    actor.audioAirborneStarted = effectClock
+    actor.audioAirbornePeak = actor.target.y
+    if bit.band(actor.actionState or 0, 1) == 0 and actor.target.y >= previousY then
+      fpsAudio.play(fpsAudio.next(fpsAudio.jump, 'jump'), fpsAudio.actorPosition(actor),
+        actor.id == localSessionID, 0.60, 55, 0.8)
+    end
+  elseif not grounded then
+    actor.audioAirbornePeak = math.max(actor.audioAirbornePeak or actor.target.y, actor.target.y)
+  elseif not wasGrounded then
+    local airborneSeconds = effectClock - (actor.audioAirborneStarted or effectClock)
+    local fallDistance = (actor.audioAirbornePeak or actor.target.y) - actor.target.y
+    local variants = fallDistance > 1.5 or airborneSeconds > 0.65
+      and fpsAudio.landHeavy or fpsAudio.landLight
+    fpsAudio.play(fpsAudio.next(variants, variants == fpsAudio.landHeavy and 'land-heavy'
+      or 'land-light'), fpsAudio.actorPosition(actor), actor.id == localSessionID,
+      0.60, 45, 0.9)
+    actor.audioAirborneStarted = nil
+    actor.audioAirbornePeak = nil
+  end
+  if bit.band(previousActionState or 0, 1) == 0
+      and bit.band(actor.actionState or 0, 1) ~= 0 then
+    fpsAudio.play(fpsAudio.next(fpsAudio.traversal, 'traversal'),
+      fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.60, 55, 0.9)
+  end
+  if (previousReload or 0) <= 0 and (actor.reloadRemaining or 0) > 0 then
+    fpsAudio.playReload(actor)
+  end
+end
+
+function fpsAudio.update(dt)
+  for index = #fpsAudio.active, 1, -1 do
+    local sound = fpsAudio.active[index]
+    if not sound.validityChecked then
+      sound.validityChecked = true
+      local ok, valid = pcall(function() return sound.event:isValid() end)
+      if not ok or not valid then
+        fpsAudio.logPlaybackFailure(sound.fileName, 'post-start-validity',
+          ok and 'invalid event' or valid)
+      elseif not fpsAudio.playbackReadyLogged then
+        fpsAudio.playbackReadyLogged = true
+        ac.log('[ASRC FPS] online fallback audio valid: ' .. tostring(sound.fileName))
+      end
+    end
+    sound.ttl = sound.ttl - dt
+    if sound.ttl <= 0 then fpsAudio.dispose(index) end
+  end
+  if not gameplayActive then return end
+  for _, actor in pairs(actors) do
+    local position = fpsAudio.actorPosition(actor)
+    if position ~= nil then
+      if actor.audioLastPosition == nil then actor.audioLastPosition = position:clone() end
+      local delta = position - actor.audioLastPosition
+      local speed = math.sqrt(delta.x * delta.x + delta.z * delta.z) / math.max(dt, 0.001)
+      local moving = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
+        and bit.band(actor.flags, 16) ~= 0 and speed > 0.35
+      if moving then
+        local prone = bit.band(actor.flags, 128) ~= 0
+        local crouching = bit.band(actor.flags, 32) ~= 0
+        local interval = prone and 0.58 or crouching and 0.48 or speed > 5.7 and 0.28 or 0.40
+        actor.audioStepClock = (actor.audioStepClock or 0) + dt
+        if actor.audioStepClock >= interval then
+          actor.audioStepClock = actor.audioStepClock - interval
+          local variants = prone and fpsAudio.crawl or fpsAudio.footsteps
+          fpsAudio.play(fpsAudio.next(variants, prone and 'crawl' or 'footstep'), position,
+            actor.id == localSessionID, 0.45, 38, 0.75)
+        end
+      else
+        actor.audioStepClock = 0
+      end
+      actor.audioLastPosition:set(position)
+    end
+  end
+end
+
+function fpsAudio.resetAll()
+  for index = #fpsAudio.active, 1, -1 do fpsAudio.dispose(index) end
+  for _, actor in pairs(actors) do fpsAudio.resetActor(actor, true) end
+  fpsAudio.variants = {}
+end
 
 function fpsVisual.stanceRecoilMultiplier(stance)
   return stance == 2 and 0.55 or stance == 1 and 0.7 or 1.08
@@ -325,12 +632,10 @@ local carsRoot = ac.findNodes('carsRoot:yes')
 local hiddenCarrierRoots = {}
 local createRifleModel
 local requestRifleAssets
-local playRifleSound
-local playExplosionSound
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 5,
+  protocol = 6,
   capacity = 32,
   killFeedCapacity = 6,
   awardPopupCapacity = 4,
@@ -406,6 +711,7 @@ hud.loadoutStorage = ac.storage({
   secondaryWeapon = 4,
 }, 'asrc.fps.loadout.')
 hud.itemNames = {
+  [0] = 'OUT OF BOUNDS',
   [1] = 'ASSAULT RIFLE', [2] = 'MP5 SMG',
   [3] = 'DESERT EAGLE', [4] = 'COLT 1911',
   [16] = 'FRAG GRENADE', [17] = 'STICKY GRENADE',
@@ -497,7 +803,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v5'),
+      ac.StructItem.key('asrc.fps.hud.v6'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -524,6 +830,7 @@ function hud.connect()
       remainingSeconds = ac.StructItem.float(),
       killLimit = ac.StructItem.uint16(),
       winnerID = ac.StructItem.byte(),
+      outOfBoundsRemaining = ac.StructItem.float(),
       scoreboardHeld = ac.StructItem.byte(),
       cursorUnlocked = ac.StructItem.byte(),
       persistentCursor = ac.StructItem.byte(),
@@ -552,7 +859,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v5')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v6')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -646,6 +953,7 @@ function hud.publish(dt)
   hud.bridge.remainingSeconds = remainingSeconds
   hud.bridge.killLimit = killLimit
   hud.bridge.winnerID = winnerID
+  hud.bridge.outOfBoundsRemaining = outOfBoundsRemaining
   hud.bridge.scoreboardHeld = scoreboardHeld and 1 or 0
   hud.bridge.cursorUnlocked = cursorUnlocked and 1 or 0
   hud.bridge.persistentCursor = persistentCursor and 1 or 0
@@ -834,8 +1142,8 @@ end
 ac.log(string.format('[ASRC FPS] script loaded: session=%s carIndex=%s cameraActive=%s cameraError=%s',
   tostring(localSessionID), tostring(car.index),
   'false', 'awaiting arena preview or Drive'))
-ac.log(string.format('[ASRC FPS] client asset paths: root=%s remoteArchive=%s audio=%s',
-  tostring(assettoRoot), rifleAssetArchivePath, rifleAudioPath))
+ac.log(string.format('[ASRC FPS] client asset paths: root=%s remoteArchive=%s audioCatalog=%s',
+  tostring(assettoRoot), rifleAssetArchivePath, clientAssetPath(fpsAudio.directory)))
 ac.log('[ASRC FPS] viewmodel pipeline: ' .. viewmodelPipelineVersion)
 ac.log('[ASRC FPS] visual theme requested=' .. fpsVisual.requested
   .. '; active=' .. fpsVisual.active)
@@ -987,11 +1295,16 @@ hud.loadoutStateEvent = ac.OnlineEvent({
     }
     actors[message.actorID] = actor
   end
+  local previousActiveSlot = actor.activeSlot
   actor.mainWeapon = message.mainWeapon
   actor.lethal = message.lethal
   actor.secondaryWeapon = message.secondaryWeapon
   actor.activeSlot = message.activeSlot
   actor.lethalsRemaining = message.lethalsRemaining
+  if previousActiveSlot ~= nil and previousActiveSlot ~= actor.activeSlot
+      and actor.audioInitialized then
+    fpsAudio.playEquip(actor)
+  end
   if message.actorID == localSessionID then
     hud.loadout.mainWeapon = message.mainWeapon
     hud.loadout.lethal = message.lethal
@@ -1075,6 +1388,9 @@ hud.snapshotEvent = ac.OnlineEvent({
     end
     local previousFlags = actor.flags
     local previousSpawnCount = actor.spawnCount
+    local previousReload = actor.reloadRemaining
+    local previousActionState = actor.actionState
+    local previousY = actor.target.y
     actor.target:set(message.positions[i])
     actor.groundY = message.groundYs[i]
     local collisionDirection = message.collisionDirections[i]
@@ -1101,6 +1417,8 @@ hud.snapshotEvent = ac.OnlineEvent({
     local spawnChanged = previousSpawnCount ~= nil and previousSpawnCount ~= actor.spawnCount
     local wasDead = bit.band(previousFlags, 2) ~= 0
     local isDead = bit.band(actor.flags, 2) ~= 0
+    fpsAudio.snapshotTransition(actor, previousFlags, previousSpawnCount,
+      previousReload, previousActionState, previousY)
     if clearActorImpacts ~= nil and (spawnChanged or (not wasDead and isDead)) then
       clearActorImpacts(id)
       hud.radarReveal[id] = nil
@@ -1222,6 +1540,15 @@ hud.snapshotEvent = ac.OnlineEvent({
   end
 end, nil, true)
 
+hud.boundaryEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsBoundary'),
+  outside = ac.StructItem.byte(),
+  remainingSeconds = ac.StructItem.float(),
+}, function(sender, message)
+  if sender ~= nil then return end
+  outOfBoundsRemaining = message.outside ~= 0 and math.max(0, message.remainingSeconds) or 0
+end)
+
 hud.rosterEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsRoster'),
   actorID = ac.StructItem.byte(),
@@ -1229,11 +1556,17 @@ hud.rosterEvent = ac.OnlineEvent({
   name = ac.StructItem.string(32),
 }, function(sender, message)
   if sender ~= nil then return end
+  local previousName = names[message.actorID]
   names[message.actorID] = message.name
   hud.radarReveal[message.actorID] = nil
   hud.radarVisible[message.actorID] = nil
   local actor = actors[message.actorID]
-  if actor ~= nil then actor.role = message.role end
+  if actor ~= nil then
+    if previousName ~= nil and (previousName ~= message.name or actor.role ~= message.role) then
+      fpsAudio.resetActor(actor, true)
+    end
+    actor.role = message.role
+  end
 end)
 
 hud.matchEvent = ac.OnlineEvent({
@@ -1271,7 +1604,7 @@ hud.killEvent = ac.OnlineEvent({
   itemID = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
-  local killerName = message.killerID == 255 and 'SELF'
+  local killerName = message.killerID == 255 and (message.itemID == 0 and 'ARENA' or 'SELF')
     or (names[message.killerID] or ('Player ' .. message.killerID))
   killFeed[#killFeed + 1] = {
     text = killerName .. '  [' .. (hud.itemNames[message.itemID] or 'DAMAGE') .. ']  '
@@ -1280,6 +1613,7 @@ hud.killEvent = ac.OnlineEvent({
   }
   if message.killerID == localSessionID then hitMarkerUntil = effectClock + 0.22 end
   clearActorImpacts(message.victimID)
+  fpsAudio.playDeath(actors[message.victimID])
 end)
 
 hud.hitEvent = ac.OnlineEvent({
@@ -1289,9 +1623,9 @@ hud.hitEvent = ac.OnlineEvent({
   remainingHealth = ac.StructItem.uint16(),
   itemID = ac.StructItem.byte(),
 }, function(sender, message)
-  if sender == nil and message.attackerID == localSessionID then
-    hitMarkerUntil = effectClock + 0.16
-  end
+  if sender ~= nil then return end
+  fpsAudio.playHurt(actors[message.victimID])
+  if message.attackerID == localSessionID then hitMarkerUntil = effectClock + 0.16 end
 end)
 
 hud.awardEvent = ac.OnlineEvent({
@@ -1318,6 +1652,7 @@ hud.awardEvent = ac.OnlineEvent({
   local labels = { string.format('+%d', message.points) }
   if bit.band(message.flags, 1) ~= 0 then
     labels[#labels + 1] = 'KILL'
+    fpsAudio.play('kill_confirm.wav', nil, true, 0.35, 1, 0.6)
   elseif bit.band(message.flags, 2) ~= 0 then
     labels[#labels + 1] = 'ASSIST'
   end
@@ -1353,6 +1688,7 @@ fpsVisual.pickupEvent = ac.OnlineEvent({
       model = nil,
     }
   elseif message.collectorID == localSessionID then
+    fpsAudio.play('pickup_magazine.wav', nil, true, 0.35, 1, 0.6)
     hud.awardPopups[#hud.awardPopups + 1] = {
       text = '+1 MAGAZINE', age = 0, ttl = 2.2,
     }
@@ -1569,11 +1905,11 @@ hud.shotEvent = ac.OnlineEvent({
         }
       end
     end
+    fpsAudio.playImpact(message.impact, point)
   end
   if actor ~= nil then actor.weaponKick = 1 end
-  if playRifleSound ~= nil then
-    playRifleSound(message.origin, message.shooterID == localSessionID)
-  end
+  fpsAudio.playWeaponFire(message.weaponType, message.origin,
+    message.shooterID == localSessionID)
 end, nil, true)
 
 fpsVisual.grenades = {}
@@ -1600,6 +1936,7 @@ fpsVisual.grenadeSnapshotEvent = ac.OnlineEvent({
   if sender ~= nil then return end
   for i = 0, message.count - 1 do
     local id = message.grenadeIDs[i]
+    local firstObservation = fpsVisual.grenades[id] == nil
     local grenade = fpsVisual.grenades[id] or { id = id }
     grenade.ownerID = message.ownerIDs[i]
     grenade.type = message.types[i]
@@ -1609,6 +1946,9 @@ fpsVisual.grenadeSnapshotEvent = ac.OnlineEvent({
     grenade.remaining = message.remaining[i]
     grenade.seenAt = effectClock
     fpsVisual.grenades[id] = grenade
+    if firstObservation and grenade.ownerID ~= localSessionID then
+      fpsAudio.play('grenade_throw.wav', grenade.position, false, 0.55, 45, 0.7)
+    end
   end
   for id, grenade in pairs(fpsVisual.grenades) do
     if grenade.seenAt ~= effectClock and effectClock - (grenade.seenAt or 0) > 0.15 then
@@ -1651,7 +1991,7 @@ fpsVisual.grenadeExplodedEvent = ac.OnlineEvent({
     }
   end
   fpsVisual.illuminateExplosion(message.grenadeID, origin, ui.time())
-  if playExplosionSound ~= nil then playExplosionSound(origin) end
+  fpsAudio.playGrenadeExplosion(message.type, origin)
 end)
 
 local function uvRegion(column, row, x0, y0, x1, y1)
@@ -2327,54 +2667,6 @@ local function drawFallbackRifle(size)
     origin + vec2(105, 98) * scale, glove, 12 * scale)
   ui.drawRectFilled(origin + vec2(245, 35) * scale,
     origin + vec2(292, 82) * scale, glove, 12 * scale)
-end
-
-playRifleSound = function(position, localShot)
-  local ok, event = pcall(function()
-    return ac.AudioEvent.fromFile({
-      filename = rifleAudioPath,
-      use3D = not localShot,
-      useOcclusion = not localShot,
-      loop = false,
-      minDistance = 1,
-      maxDistance = 180,
-    }, true)
-  end)
-  if not ok or event == nil or not event:isValid() then
-    if event ~= nil then event:dispose() end
-    event = ac.AudioEvent('cars/:own/backfire_ext', false, false)
-    if not rifleAudioFallbackLogged then
-      rifleAudioFallbackLogged = true
-      ac.log('[ASRC FPS] custom rifle audio unavailable; using carrier backfire fallback')
-    end
-  end
-  if event == nil or not event:isValid() then return end
-  event.volume = localShot and 0.9 or 0.72
-  if not localShot then event:setPosition(position) end
-  event:start()
-  rifleSounds[#rifleSounds + 1] = {event = event, ttl = 0.6}
-end
-
-playExplosionSound = function(position)
-  local ok, event = pcall(function()
-    return ac.AudioEvent.fromFile({
-      filename = explosionAudioPath,
-      use3D = true,
-      useOcclusion = true,
-      loop = false,
-      minDistance = 2,
-      maxDistance = 260,
-    }, true)
-  end)
-  if not ok or event == nil or not event:isValid() then
-    if event ~= nil then event:dispose() end
-    event = ac.AudioEvent('event:/collisions/car/metal', false, false)
-  end
-  if event == nil or not event:isValid() then return end
-  event.volume = 1.0
-  event:setPosition(position)
-  event:start()
-  rifleSounds[#rifleSounds + 1] = {event = event, ttl = 1.3}
 end
 
 local function ensureAvatar(actor)
@@ -3594,6 +3886,7 @@ function script.update(dt)
       tostring(state.isPaused), tostring(state.isInMainMenu),
       tostring(state.isLookingAtSessionResults), tostring(state.isReplayActive),
       tostring(localActor ~= nil), tostring(camera ~= nil and camera:active())))
+    if previousGameplayActive == true and not gameplayActive then fpsAudio.resetAll() end
     previousGameplayActive = gameplayActive
   end
   if gameplayActive then
@@ -3736,6 +4029,7 @@ function script.update(dt)
       fpsVisual.grenadePrimeStarted = effectClock
       fpsVisual.grenadeReleasedAt = nil
       fpsVisual.adsInput = 0
+      fpsAudio.play('grenade_prime.wav', nil, true, 0.55, 1, 0.6)
       ac.log('[ASRC FPS] local grenade cooking started: type='
         .. tostring(fpsVisual.activeGrenadeType))
     end
@@ -3743,6 +4037,7 @@ function script.update(dt)
         and fpsVisual.activeGrenadeType ~= nil
         and fpsVisual.grenadeReleasedAt == nil then
       fpsVisual.grenadeReleasedAt = effectClock
+      fpsAudio.play('grenade_throw.wav', nil, true, 0.55, 1, 0.7)
       ac.log('[ASRC FPS] local cooked grenade released: type='
         .. tostring(fpsVisual.activeGrenadeType))
     end
@@ -4034,14 +4329,7 @@ function script.update(dt)
     spark.velocity.y = spark.velocity.y - 9.81 * dt
     if spark.ttl <= 0 then table.remove(sparks, i) end
   end
-  for i = #rifleSounds, 1, -1 do
-    local sound = rifleSounds[i]
-    sound.ttl = sound.ttl - dt
-    if sound.ttl <= 0 or not sound.event:isValid() then
-      sound.event:dispose()
-      table.remove(rifleSounds, i)
-    end
-  end
+  fpsAudio.update(dt)
   for i = #killFeed, 1, -1 do
     killFeed[i].ttl = killFeed[i].ttl - dt
     if killFeed[i].ttl <= 0 then table.remove(killFeed, i) end
@@ -4380,6 +4668,25 @@ function script.drawUI()
     ui.drawLine(center + vec2(-8, 8), center + vec2(-3, 3), c, 3)
   end
   hud.drawAwardPopups(center)
+  if outOfBoundsRemaining > 0 then
+    local titleMin = vec2(0, center.y - 205 * hudScale)
+    local titleMax = vec2(size.x, center.y - 125 * hudScale)
+    local numberMin = vec2(0, center.y - 120 * hudScale)
+    local numberMax = vec2(size.x, center.y + 145 * hudScale)
+    local countdown = tostring(math.max(1, math.ceil(outOfBoundsRemaining)))
+    ui.drawRectFilled(vec2(), size, rgbm(0.12, 0, 0, 0.34))
+    ui.dwriteDrawTextClipped('RETURN TO PLAYABLE AREA', 46 * hudScale,
+      titleMin + vec2(2, 2) * hudScale, titleMax + vec2(2, 2) * hudScale,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0, 0, 0, 0.9))
+    ui.dwriteDrawTextClipped('RETURN TO PLAYABLE AREA', 46 * hudScale,
+      titleMin, titleMax, ui.Alignment.Center, ui.Alignment.Center, false,
+      rgbm(1, 0.86, 0.82, 1))
+    ui.dwriteDrawTextClipped(countdown, 190 * hudScale,
+      numberMin + vec2(4, 4) * hudScale, numberMax + vec2(4, 4) * hudScale,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0, 0, 0, 0.92))
+    ui.dwriteDrawTextClipped(countdown, 190 * hudScale, numberMin, numberMax,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(1, 0.24, 0.14, 1))
+  end
 
   local actor = actors[localSessionID]
   if clientPackError ~= nil then

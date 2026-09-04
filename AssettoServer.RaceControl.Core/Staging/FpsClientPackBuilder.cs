@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 30;
-    public const int BridgeProtocol = 5;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v30.zip";
+    public const int ClientPackVersion = 34;
+    public const int BridgeProtocol = 6;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v34.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -43,8 +43,23 @@ public static class FpsClientPackBuilder
         byte[] hudManifest = FpsClientPackAssets.GetHudManifest();
         byte[] hudScript = FpsClientPackAssets.GetHudScript();
         byte[] hudWeaponImage = FpsClientPackAssets.GetHudWeaponImage();
-        byte[] rifleAudio = FpsClientPackAssets.CreateRifleWave();
-        byte[] explosionAudio = FpsClientPackAssets.CreateExplosionWave();
+        IReadOnlyList<(string Path, byte[] Data)> audioAssets =
+            FpsClientPackAssets.GetAudioAssets();
+        (string Path, byte[] Data) audioManifest = audioAssets.Single(asset =>
+            asset.Path == FpsClientPackAssets.AudioManifestPath);
+        (string Path, byte[] Data) audioNotice = audioAssets.Single(asset =>
+            asset.Path == FpsClientPackAssets.AudioNoticePath);
+        using JsonDocument audioDocument = JsonDocument.Parse(audioManifest.Data);
+        JsonElement audioRoot = audioDocument.RootElement;
+        object[] audioClips = audioRoot.GetProperty("clips").EnumerateArray()
+            .Select(clip => (object)new
+            {
+                id = clip.GetProperty("id").GetString(),
+                category = clip.GetProperty("category").GetString(),
+                path = clip.GetProperty("path").GetString(),
+                durationSeconds = clip.GetProperty("durationSeconds").GetDouble(),
+                sha256 = clip.GetProperty("sha256").GetString(),
+            }).ToArray();
         IReadOnlyList<(string Path, byte[] Data)> modernAssets =
             FpsClientPackAssets.GetModernAssets();
 
@@ -145,10 +160,22 @@ public static class FpsClientPackBuilder
                 },
                 operatorSkinPath = FpsClientPackAssets.OperatorSkinPath,
                 operatorSkinSha256 = FpsClientPackAssets.Sha256(operatorSkin),
+                audio = new
+                {
+                    catalogVersion = audioRoot.GetProperty("catalogVersion").GetInt32(),
+                    playbackOwner = "ASRC FPS HUD",
+                    relay = "asrc.fps.audio.v1",
+                    clipCount = audioClips.Length,
+                    manifestPath = audioManifest.Path,
+                    manifestSha256 = FpsClientPackAssets.Sha256(audioManifest.Data),
+                    noticePath = audioNotice.Path,
+                    noticeSha256 = FpsClientPackAssets.Sha256(audioNotice.Data),
+                    clips = audioClips,
+                },
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v5",
+                    bridge = "asrc.fps.hud.v6",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),
@@ -178,9 +205,9 @@ public static class FpsClientPackBuilder
                 skinned carbine arms, weapon-specific hand poses and magazine motion,
                 real M67 and Semtex-style grenade models, first-person throw animations and
                 operator UV skin under
-                content/objects3D/asrc_fps, plus rifle sound
-                under extension/audio/asrc_fps. It also installs the presentation-only ASRC FPS
-                HUD under apps/lua/asrc_fps_hud. Client pack v30 also contains the animated Modern
+                content/objects3D/asrc_fps, plus the 54-clip generated FPS sound catalog
+                under extension/audio/asrc_fps. It also installs the local ASRC FPS HUD and audio
+                player under apps/lua/asrc_fps_hud. Client pack v34 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.
@@ -251,10 +278,8 @@ public static class FpsClientPackBuilder
             cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.HudWeaponImagePath, hudWeaponImage,
             cancellationToken);
-        await WriteEntryAsync(archive, "extension/audio/asrc_fps/rifle.wav", rifleAudio,
-            cancellationToken);
-        await WriteEntryAsync(archive, "extension/audio/asrc_fps/explosion.wav", explosionAudio,
-            cancellationToken);
+        foreach ((string path, byte[] data) in audioAssets)
+            await WriteEntryAsync(archive, path, data, cancellationToken);
         foreach ((string path, byte[] data) in modernAssets)
             await WriteEntryAsync(archive, path, data, cancellationToken);
     }

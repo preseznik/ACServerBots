@@ -5,12 +5,12 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 5
+local bridgeProtocol = 6
 local actorCapacity = 32
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v5'),
+  ac.StructItem.key('asrc.fps.hud.v6'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -37,6 +37,7 @@ local bridge = ac.connect({
   remainingSeconds = ac.StructItem.float(),
   killLimit = ac.StructItem.uint16(),
   winnerID = ac.StructItem.byte(),
+  outOfBoundsRemaining = ac.StructItem.float(),
   scoreboardHeld = ac.StructItem.byte(),
   cursorUnlocked = ac.StructItem.byte(),
   persistentCursor = ac.StructItem.byte(),
@@ -75,6 +76,117 @@ local itemNames = {
   [3] = 'DESERT EAGLE', [4] = 'COLT 1911',
   [16] = 'FRAG GRENADE', [17] = 'STICKY GRENADE',
 }
+local audioPlayer = {
+  directory = assettoRoot .. '/extension/audio/asrc_fps/',
+  active = {},
+  maxActive = 64,
+  failureLogged = {},
+  readyLogged = false,
+  wasLive = false,
+}
+
+function audioPlayer.dispose(index)
+  local sound = audioPlayer.active[index]
+  if sound == nil then return end
+  pcall(function() sound.event:dispose() end)
+  table.remove(audioPlayer.active, index)
+end
+
+function audioPlayer.reset()
+  for index = #audioPlayer.active, 1, -1 do audioPlayer.dispose(index) end
+end
+
+function audioPlayer.logFailure(fileName, stage, detail)
+  local key = tostring(fileName) .. ':' .. tostring(stage)
+  if audioPlayer.failureLogged[key] then return end
+  audioPlayer.failureLogged[key] = true
+  ac.warn('[ASRC FPS HUD] audio playback failed: file=' .. tostring(fileName)
+    .. ' stage=' .. tostring(stage) .. ' detail=' .. tostring(detail))
+end
+
+function audioPlayer.play(data)
+  if type(data) ~= 'table' or tonumber(data.version) ~= 1 then return end
+  local fileName = tostring(data.fileName or '')
+  if not fileName:match('^[a-z0-9_]+%.wav$') then
+    audioPlayer.logFailure(fileName, 'payload', 'unsafe filename')
+    return
+  end
+  local filePath = audioPlayer.directory .. fileName
+  local existsOk, exists = pcall(function() return io.fileExists(filePath) end)
+  if not existsOk or not exists then
+    audioPlayer.logFailure(fileName, 'file', existsOk and 'missing' or exists)
+    return
+  end
+  local localSound = data.localSound == true or data.localSound == 1
+  local volume = math.clamp(tonumber(data.volume) or 0, 0, 2)
+  local maxDistance = math.clamp(tonumber(data.maxDistance) or 1, 1, 500)
+  local ttl = math.clamp(tonumber(data.ttl) or 0.5, 0.1, 3)
+  local ok, event = pcall(function()
+    return ac.AudioEvent.fromFile({
+      filename = filePath,
+      use3D = not localSound,
+      useOcclusion = not localSound,
+      loop = false,
+      minDistance = 1,
+      maxDistance = maxDistance,
+    }, not localSound)
+  end)
+  if not ok or event == nil then
+    audioPlayer.logFailure(fileName, 'create', ok and 'nil event' or event)
+    return
+  end
+  while #audioPlayer.active >= audioPlayer.maxActive do audioPlayer.dispose(1) end
+  audioPlayer.active[#audioPlayer.active + 1] = {
+    event = event,
+    fileName = fileName,
+    ttl = ttl,
+    validityChecked = false,
+  }
+  local index = #audioPlayer.active
+  local startOk, startError = pcall(function()
+    event.volume = volume
+    event.cameraInteriorMultiplier = 1
+    event.cameraExteriorMultiplier = 1
+    event.cameraTrackMultiplier = 1
+    if not localSound and (data.hasPosition == true or data.hasPosition == 1)
+        and data.position ~= nil then
+      event:setPosition(data.position)
+    end
+    event:start()
+  end)
+  if not startOk then
+    audioPlayer.dispose(index)
+    audioPlayer.logFailure(fileName, 'start', startError)
+  end
+end
+
+function audioPlayer.update(dt)
+  for index = #audioPlayer.active, 1, -1 do
+    local sound = audioPlayer.active[index]
+    if not sound.validityChecked then
+      sound.validityChecked = true
+      local ok, valid = pcall(function() return sound.event:isValid() end)
+      if not ok or not valid then
+        audioPlayer.logFailure(sound.fileName, 'post-start-validity',
+          ok and 'invalid event' or valid)
+      elseif not audioPlayer.readyLogged then
+        audioPlayer.readyLogged = true
+        ac.log('[ASRC FPS HUD] file-backed audio playback valid: '
+          .. audioPlayer.directory .. sound.fileName)
+      end
+    end
+    sound.ttl = sound.ttl - dt
+    if sound.ttl <= 0 then audioPlayer.dispose(index) end
+  end
+end
+
+local audioRelaySubscription = ac.onSharedEvent('asrc.fps.audio.v1', function(data)
+  audioPlayer.play(data)
+end)
+
+ac.onRelease(function()
+  audioPlayer.reset()
+end)
 
 local function bridgeString(value)
   if type(value) == 'string' then return value end
@@ -363,6 +475,27 @@ local function drawCompletion(size, scale)
   end
 end
 
+local function drawBoundaryWarning(size, scale)
+  if bridge.outOfBoundsRemaining <= 0 then return end
+  local center = size * 0.5
+  local titleMin = vec2(0, center.y - 205 * scale)
+  local titleMax = vec2(size.x, center.y - 125 * scale)
+  local numberMin = vec2(0, center.y - 120 * scale)
+  local numberMax = vec2(size.x, center.y + 145 * scale)
+  local countdown = tostring(math.max(1, math.ceil(bridge.outOfBoundsRemaining)))
+  ui.drawRectFilled(vec2(), size, rgbm(0.12, 0, 0, 0.34))
+  ui.dwriteDrawTextClipped('RETURN TO PLAYABLE AREA', 46 * scale,
+    titleMin + vec2(2, 2) * scale, titleMax + vec2(2, 2) * scale,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0, 0, 0, 0.9))
+  ui.dwriteDrawTextClipped('RETURN TO PLAYABLE AREA', 46 * scale, titleMin, titleMax,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(1, 0.86, 0.82, 1))
+  ui.dwriteDrawTextClipped(countdown, 190 * scale,
+    numberMin + vec2(4, 4) * scale, numberMax + vec2(4, 4) * scale,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0, 0, 0, 0.92))
+  ui.dwriteDrawTextClipped(countdown, 190 * scale, numberMin, numberMax,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(1, 0.24, 0.14, 1))
+end
+
 local function drawHud()
   local size = ui.windowSize()
   local scale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.65)
@@ -378,6 +511,7 @@ local function drawHud()
   drawMatchAndFeed(size, scale, margin)
   drawAim(size, scale)
   drawAwards(size, scale)
+  drawBoundaryWarning(size, scale)
   drawScoreboard(size, scale)
   drawCompletion(size, scale)
   local clientError = bridgeString(bridge.clientError)
@@ -396,6 +530,10 @@ end
 local exclusiveSubscription = ui.onExclusiveHUD(exclusiveHud, true)
 
 function script.update(dt)
+  local audioLive = bridgeIsLive()
+  audioPlayer.update(dt)
+  if audioPlayer.wasLive and not audioLive then audioPlayer.reset() end
+  audioPlayer.wasLive = audioLive
   bridge.appProtocol = bridgeProtocol
   bridge.appHeartbeat = ui.time()
   if bridge.protocol ~= 0 and bridge.protocol ~= bridgeProtocol and not mismatchLogged then

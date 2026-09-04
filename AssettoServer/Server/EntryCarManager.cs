@@ -216,9 +216,19 @@ public class EntryCarManager
             var selection = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
                 ? _configuration.Extra.AiParams.Race.JoinSlotSelection
                 : RaceJoinSlotSelection.First;
+            Func<EntryCar, int>? connectionPriority = _configuration.Extra.Fps.Enabled
+                ? car => car.FpsRole switch
+                {
+                    FpsSlotRole.Human => 0,
+                    FpsSlotRole.Auto => 1,
+                    FpsSlotRole.Bot => 2,
+                    _ => 3,
+                }
+                : null;
             var orderedCandidates = SlotSelectionPolicy.OrderForConnection(candidates, selection,
                 car => car.IsSpectator, client.SupportsCSPSpectating, explicitSlotRequest,
-                car => car.AllowedGuids.Count, car => car.SessionId);
+                car => car.AllowedGuids.Count, car => car.SessionId,
+                connectionPriority: connectionPriority);
             foreach (var entryCar in orderedCandidates)
             {
                 if (entryCar.IsSpectator && !client.SupportsCSPSpectating)

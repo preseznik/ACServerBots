@@ -20,6 +20,9 @@
     <EmbeddedResource Include="Assets\Fps\Hud\*.ini" />
     <EmbeddedResource Include="Assets\Fps\Hud\*.lua" />
     <EmbeddedResource Include="Assets\Fps\Hud\*.png" />
+    <EmbeddedResource Include="Assets\Fps\Audio\*.wav" />
+    <EmbeddedResource Include="Assets\Fps\Audio\audio-manifest.json" />
+    <EmbeddedResource Include="Assets\Fps\Audio\NOTICE.txt" />
     <EmbeddedResource Include="Assets\Web\*" />
   </ItemGroup>
 </Project>

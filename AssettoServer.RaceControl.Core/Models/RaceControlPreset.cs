@@ -231,6 +231,8 @@ public sealed class FpsArenaDefinition
     public string LayoutId { get; set; } = string.Empty;
     public FpsPoint BoundsMin { get; set; } = new();
     public FpsPoint BoundsMax { get; set; } = new();
+    public List<FpsPoint> PlayableBoundary { get; set; } = [];
+    public double OutOfBoundsSeconds { get; set; } = 3;
     public List<FpsSpawnPoint> SpawnPoints { get; set; } = [];
     public FpsNavigationSummary Navigation { get; set; } = new();
     public FpsCollisionSummary? Collision { get; set; }

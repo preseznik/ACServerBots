@@ -1,0 +1,15 @@
+ASRC FPS audio asset notice
+
+The WAV files in this directory were generated for this project with the ElevenLabs
+Sound Effects API under the paid plan authorized by the project owner. The
+generation used the eleven_text_to_sound_v2 model and did not use a cloned or
+third-party voice. The generated outputs are redistributed as part of the ASRC FPS
+client pack under the commercial-use rights applicable to that paid plan.
+
+Generation prompts, normalized-file hashes, durations, and technical format details
+are recorded in audio-manifest.json. The API credential is not stored in this
+repository or in the generated client pack.
+
+ElevenLabs terms and policies remain applicable to the generated output:
+https://elevenlabs.io/sound-effects-terms
+https://elevenlabs.io/terms-of-use-eu

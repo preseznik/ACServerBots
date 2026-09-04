@@ -63,6 +63,11 @@ public sealed class FpsStorageTests
             LayoutId = string.Empty,
             BoundsMin = new() { X = -20, Y = -2, Z = -30 },
             BoundsMax = new() { X = 20, Y = 8, Z = 30 },
+            PlayableBoundary =
+            [
+                new() { X = -10, Z = -10 }, new() { X = 10, Z = -10 },
+                new() { X = 10, Z = 10 }, new() { X = -10, Z = 10 },
+            ],
             SpawnPoints =
             [
                 new() { Position = new() { X = -5, Y = 0, Z = 0 }, YawRadians = 1.2 },
@@ -89,6 +94,8 @@ public sealed class FpsStorageTests
             Assert.That(store.IsPrepared("magione", string.Empty), Is.True);
             Assert.That(actual?.SpawnPoints, Has.Count.EqualTo(2));
             Assert.That(actual?.BoundsMax.Z, Is.EqualTo(30));
+            Assert.That(actual?.PlayableBoundary, Has.Count.EqualTo(4));
+            Assert.That(actual?.OutOfBoundsSeconds, Is.EqualTo(3));
             Assert.That(actual?.PreparationVersion,
                 Is.EqualTo(FpsArenaDefinition.CurrentPreparationVersion));
             Assert.That(actual?.CollisionIncludeMeshes, Is.EqualTo(new[] { "FPS_SOLID_*" }));

@@ -222,6 +222,19 @@ public sealed class RaceControlValidator
             "Fps.Arena", "The FPS arena bounds are invalid.");
         ErrorIf(messages, arena.SpawnPoints.Any(spawn => !Finite(spawn.Position) || !double.IsFinite(spawn.YawRadians)),
             "Fps.Arena", "The FPS arena contains an invalid spawn point.");
+        ErrorIf(messages, arena.OutOfBoundsSeconds is < 0.1 or > 30
+                          || !double.IsFinite(arena.OutOfBoundsSeconds),
+            "Fps.Arena", "The out-of-bounds return timer must be 0.1..30 seconds.");
+        bool boundaryValid = arena.PlayableBoundary.Count == 0
+                             || arena.PlayableBoundary.Count >= 3
+                             && arena.PlayableBoundary.All(Finite)
+                             && Math.Abs(BoundaryTwiceArea(arena.PlayableBoundary)) >= 0.02;
+        ErrorIf(messages, !boundaryValid, "Fps.Arena",
+            "The FPS playable boundary must be empty or a finite, non-degenerate polygon with at least three points.");
+        if (boundaryValid && arena.PlayableBoundary.Count >= 3)
+            ErrorIf(messages, arena.SpawnPoints.Any(spawn =>
+                    !BoundaryContains(arena.PlayableBoundary, spawn.Position)),
+                "Fps.Arena", "The FPS playable boundary excludes one or more spawn points.");
     }
 
     private static void ValidateLoadouts(List<ValidationMessage> messages, FpsLoadoutOptions loadouts)
@@ -245,6 +258,35 @@ public sealed class RaceControlValidator
 
     private static bool Finite(FpsPoint point) =>
         double.IsFinite(point.X) && double.IsFinite(point.Y) && double.IsFinite(point.Z);
+
+    private static double BoundaryTwiceArea(IReadOnlyList<FpsPoint> boundary)
+    {
+        double result = 0;
+        for (int index = 0; index < boundary.Count; index++)
+        {
+            var current = boundary[index];
+            var next = boundary[(index + 1) % boundary.Count];
+            result += current.X * next.Z - next.X * current.Z;
+        }
+        return result;
+    }
+
+    private static bool BoundaryContains(IReadOnlyList<FpsPoint> boundary, FpsPoint point)
+    {
+        bool inside = false;
+        int previous = boundary.Count - 1;
+        for (int current = 0; current < boundary.Count; current++)
+        {
+            var a = boundary[previous];
+            var b = boundary[current];
+            bool crosses = (a.Z > point.Z) != (b.Z > point.Z)
+                           && point.X < (b.X - a.X) * (point.Z - a.Z)
+                           / (b.Z - a.Z) + a.X;
+            if (crosses) inside = !inside;
+            previous = current;
+        }
+        return inside;
+    }
 
     public static bool TryPrivateAddress(string text, out bool isLoopback)
     {

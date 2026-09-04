@@ -19,6 +19,8 @@ internal sealed class FpsArenaAsset
     public required string LayoutId { get; init; }
     public required FpsArenaPoint BoundsMin { get; init; }
     public required FpsArenaPoint BoundsMax { get; init; }
+    public IReadOnlyList<FpsArenaPoint> PlayableBoundary { get; init; } = [];
+    public float OutOfBoundsSeconds { get; init; } = 3;
     public required IReadOnlyList<FpsArenaSpawn> SpawnPoints { get; init; }
     public required FpsArenaNavigationSummary Navigation { get; init; }
     public FpsArenaCollisionSummary? Collision { get; init; }
@@ -46,6 +48,8 @@ internal sealed record FpsArenaBuildResult(int SpawnPoints, int TrackTriangles,
 internal static class FpsArenaAssetBuilder
 {
     private static readonly Regex GridNodeRegex = new("^AC_START_(\\d+)$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex BoundaryNodeRegex = new("^FPS_BOUNDARY_(\\d+)$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly string[] AutomaticSolidTokens =
     [
@@ -77,6 +81,7 @@ internal static class FpsArenaAssetBuilder
         var physicalTriangles = new List<Kn5Triangle>();
         var supplementalTriangles = new List<Kn5Triangle>();
         var grid = new SortedDictionary<int, RaceGridPose>();
+        var boundary = new SortedDictionary<int, RaceGridPose>();
         string[] includePatterns = NormalizePatterns(collisionIncludeMeshes);
         string[] excludePatterns = NormalizePatterns(collisionExcludeMeshes);
         int collisionMeshes = 0;
@@ -102,6 +107,10 @@ internal static class FpsArenaAssetBuilder
                 if (match.Success)
                     grid.TryAdd(int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
                         RaceGridPose.FromMatrix(node.Transform));
+                match = BoundaryNodeRegex.Match(node.Name);
+                if (match.Success)
+                    boundary.TryAdd(int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+                        RaceGridPose.FromMatrix(node.Transform));
             }
         }
 
@@ -121,6 +130,18 @@ internal static class FpsArenaAssetBuilder
                 : 0;
             return new FpsArenaSpawn(FpsArenaPoint.From(pose.Position + Vector3.UnitY * 0.05f), yaw);
         }).ToArray();
+        if (boundary.Count > 0 && (boundary.Count < 3
+                                  || !boundary.Keys.SequenceEqual(Enumerable.Range(0,
+                                      boundary.Count))))
+            throw new InvalidDataException(
+                "FPS_BOUNDARY transforms must contain at least three contiguous nodes starting at zero");
+        var playableBoundary = boundary.Values.Select(pose =>
+            new Vector3(pose.Position.X, 0, pose.Position.Z)).ToArray();
+        if (!FpsPlayableArea.IsValid(playableBoundary))
+            throw new InvalidDataException("FPS playable boundary is degenerate or contains invalid coordinates");
+        if (spawns.Any(spawn => !FpsPlayableArea.Contains(playableBoundary,
+                spawn.Position.X, spawn.Position.Z)))
+            throw new InvalidDataException("FPS playable boundary excludes one or more spawn points");
 
         float minX = grounded.Min(pose => pose.Position.X) - boundsPaddingMeters;
         float maxX = grounded.Max(pose => pose.Position.X) + boundsPaddingMeters;
@@ -142,13 +163,16 @@ internal static class FpsArenaAssetBuilder
         var boundsMin = new FpsArenaPoint(minX, minY, minZ);
         var boundsMax = new FpsArenaPoint(maxX, maxY, maxZ);
         var surface = new FpsArenaSurface(arenaTriangles);
-        var navigation = FpsArenaNavigationBuilder.Build(surface, boundsMin, boundsMax, spawns);
+        var navigation = FpsArenaNavigationBuilder.Build(surface, boundsMin, boundsMax, spawns,
+            playableBoundary);
         var asset = new FpsArenaAsset
         {
             TrackId = track,
             LayoutId = layout ?? string.Empty,
             BoundsMin = boundsMin,
             BoundsMax = boundsMax,
+            PlayableBoundary = playableBoundary.Select(FpsArenaPoint.From).ToArray(),
+            OutOfBoundsSeconds = 3,
             SpawnPoints = spawns,
             Navigation = new FpsArenaNavigationSummary(FpsArenaNavigationAsset.CurrentVersion,
                 navigation.Asset.CellSize, navigation.Asset.Nodes.Count,

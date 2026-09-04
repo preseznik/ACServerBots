@@ -100,7 +100,8 @@ internal readonly record struct FpsStepDiagnostics(double HumanMilliseconds,
 internal sealed class FpsActorState
 {
     public required byte Id { get; init; }
-    public required string Name { get; init; }
+    public required string Name { get; set; }
+    public required string ConfiguredName { get; init; }
     public required FpsSlotRole Role { get; init; }
     public Vector3 Position { get; set; }
     public float Yaw { get; set; }
@@ -115,6 +116,7 @@ internal sealed class FpsActorState
     public bool Dead { get; set; }
     public float SpawnProtectionRemaining { get; set; }
     public float RespawnRemaining { get; set; }
+    public float OutOfBoundsRemaining { get; set; }
     public float FireCooldown { get; set; }
     public float WeaponHeat { get; set; }
     public int AmmoInMagazine { get; set; }
@@ -305,28 +307,37 @@ internal sealed class FpsSimulation
         _seed = seed;
         RemainingSeconds = Math.Max(1, configuration.TimeLimitMinutes) * 60;
         _actors = slots.Where(slot => slot.Role != FpsSlotRole.Spectator).ToDictionary(slot => slot.Id,
-            slot => new FpsActorState
+            slot =>
             {
-                Id = slot.Id,
-                Name = string.IsNullOrWhiteSpace(slot.Name) ? $"Player {slot.Id + 1}" : slot.Name,
-                Role = slot.Role,
-                Health = configuration.Bots.Health,
-                Loadout = FpsItems.FromConfiguration(configuration.Loadouts.BotDefault),
-                LoadoutConfirmed = true,
-                Active = slot.Role is FpsSlotRole.Auto or FpsSlotRole.Bot,
-                HumanControlled = false,
-                Difficulty = Math.Clamp(slot.Difficulty ?? Vary(configuration.Bots.Difficulty,
-                    configuration.Bots.DifficultyVariancePercent, slot.Id, 17), 0, 1),
-                Aggression = Math.Clamp(slot.Aggression ?? Vary(configuration.Bots.Aggression,
-                    configuration.Bots.AggressionVariancePercent, slot.Id, 43), 0, 1),
+                string configuredName = string.IsNullOrWhiteSpace(slot.Name)
+                    ? $"Player {slot.Id + 1}"
+                    : slot.Name;
+                return new FpsActorState
+                {
+                    Id = slot.Id,
+                    Name = configuredName,
+                    ConfiguredName = configuredName,
+                    Role = slot.Role,
+                    Health = configuration.Bots.Health,
+                    Loadout = FpsItems.FromConfiguration(configuration.Loadouts.BotDefault),
+                    LoadoutConfirmed = true,
+                    Active = slot.Role is FpsSlotRole.Auto or FpsSlotRole.Bot,
+                    HumanControlled = false,
+                    Difficulty = Math.Clamp(slot.Difficulty ?? Vary(configuration.Bots.Difficulty,
+                        configuration.Bots.DifficultyVariancePercent, slot.Id, 17), 0, 1),
+                    Aggression = Math.Clamp(slot.Aggression ?? Vary(configuration.Bots.Aggression,
+                        configuration.Bots.AggressionVariancePercent, slot.Id, 43), 0, 1),
+                };
             });
 
         foreach (var actor in _actors.Values.Where(actor => actor.Active)) Spawn(actor);
     }
 
-    public bool ClaimHuman(byte actorId, bool requireLoadoutConfirmation = false)
+    public bool ClaimHuman(byte actorId, bool requireLoadoutConfirmation = false,
+        string? playerName = null)
     {
         if (!_actors.TryGetValue(actorId, out var actor) || actor.Role == FpsSlotRole.Bot) return false;
+        if (!string.IsNullOrWhiteSpace(playerName)) actor.Name = playerName.Trim();
         actor.HumanControlled = true;
         actor.Loadout = FpsItems.FromConfiguration(_configuration.Loadouts.HumanDefault);
         actor.PendingLoadout = null;
@@ -363,6 +374,7 @@ internal sealed class FpsSimulation
     public void ReleaseHuman(byte actorId)
     {
         if (!_actors.TryGetValue(actorId, out var actor)) return;
+        actor.Name = actor.ConfiguredName;
         actor.HumanControlled = false;
         actor.HasInput = false;
         actor.PendingLoadout = null;
@@ -440,6 +452,7 @@ internal sealed class FpsSimulation
             {
                 StepMantle(actor, dt);
                 if (!actor.IsMantling) ValidateSafePose(actor);
+                StepPlayableBoundary(actor, dt);
                 AddActorDuration(actor, actorStarted, ref humanMilliseconds,
                     ref botMilliseconds);
                 continue;
@@ -454,6 +467,7 @@ internal sealed class FpsSimulation
                 StepVertical(actor, dt);
                 ValidateSafePose(actor);
             }
+            if (!actor.Dead) StepPlayableBoundary(actor, dt);
             AddActorDuration(actor, actorStarted, ref humanMilliseconds,
                 ref botMilliseconds);
         }
@@ -1345,6 +1359,44 @@ internal sealed class FpsSimulation
         if (actor.Health >= maximumHealth) actor.HealthRegenerationCarry = 0;
     }
 
+    private void StepPlayableBoundary(FpsActorState actor, float dt)
+    {
+        var boundary = _configuration.Arena.PlayableBoundary;
+        if (boundary.Count < 3 || FpsPlayableArea.Contains(boundary,
+                actor.Position.X, actor.Position.Z))
+        {
+            actor.OutOfBoundsRemaining = 0;
+            return;
+        }
+
+        if (actor.OutOfBoundsRemaining <= 0)
+        {
+            actor.OutOfBoundsRemaining = Math.Max(0.1f,
+                _configuration.Arena.OutOfBoundsSeconds);
+            return;
+        }
+
+        actor.OutOfBoundsRemaining = Math.Max(0, actor.OutOfBoundsRemaining - dt);
+        if (actor.OutOfBoundsRemaining > 0) return;
+        EliminateOutOfBounds(actor);
+    }
+
+    private void EliminateOutOfBounds(FpsActorState actor)
+    {
+        actor.Dead = true;
+        actor.PendingLethal = null;
+        actor.LethalCookRemaining = 0;
+        actor.LethalReleased = false;
+        actor.LethalThrowRemaining = 0;
+        actor.Health = 0;
+        actor.RespawnRemaining = _configuration.RespawnSeconds;
+        actor.OutOfBoundsRemaining = 0;
+        actor.Deaths++;
+        DropWeapon(actor);
+        _killEvents.Add(new FpsKillEvent(byte.MaxValue, actor.Id, 0,
+            actor.Deaths, 0));
+    }
+
     private void TryMoveActor(FpsActorState actor, Vector3 desired)
     {
         if (_surface is null)
@@ -2063,6 +2115,7 @@ internal sealed class FpsSimulation
         actor.Health = _configuration.Bots.Health;
         actor.Dead = false;
         actor.RespawnRemaining = 0;
+        actor.OutOfBoundsRemaining = 0;
         actor.SpawnProtectionRemaining = _configuration.SpawnProtectionSeconds;
         actor.FireCooldown = 0;
         actor.WeaponHeat = 0;
