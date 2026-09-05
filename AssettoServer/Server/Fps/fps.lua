@@ -419,7 +419,8 @@ end
 
 function fpsAudio.playWeaponFire(weaponType, position, localShot)
   local variants = fpsAudio.fire[weaponType] or fpsAudio.fire[1]
-  local maxDistance = weaponType == 2 and 140 or weaponType == 4 and 130 or 180
+  local maxDistance = weaponType == 2 and 70 or weaponType == 4 and 60
+    or weaponType == 3 and 100 or 90
   fpsAudio.play(fpsAudio.next(variants, 'fire-' .. tostring(weaponType)), position,
     localShot, localShot and 0.85 or 0.72, maxDistance, 0.9,
     'cars/:own/backfire_ext')
@@ -428,20 +429,20 @@ end
 function fpsAudio.playImpact(impactType, position)
   local variants = impactType == 2 and fpsAudio.impactBody or fpsAudio.impactHard
   fpsAudio.play(fpsAudio.next(variants, 'impact-' .. tostring(impactType)), position,
-    false, 0.50, 45, 0.7)
+    false, 0.50, 25, 0.7)
 end
 
 function fpsAudio.playGrenadeExplosion(grenadeType, position)
   local variants = grenadeType == 17 and fpsAudio.stickyExplosion or fpsAudio.fragExplosion
   fpsAudio.play(fpsAudio.next(variants, 'explosion-' .. tostring(grenadeType)), position,
-    false, 1.0, 260, 1.4, 'event:/collisions/car/metal')
+    false, 1.0, 120, 1.4, 'event:/collisions/car/metal')
 end
 
 function fpsAudio.playHurt(actor)
   if actor == nil or effectClock - (actor.audioHurtAt or -10) < 0.3 then return end
   actor.audioHurtAt = effectClock
   fpsAudio.play(fpsAudio.next(fpsAudio.hurt, 'hurt'), fpsAudio.actorPosition(actor),
-    actor.id == localSessionID, 0.60, 55, 1.0)
+    actor.id == localSessionID, 0.60, 24, 1.0)
 end
 
 function fpsAudio.resetActor(actor, newLife)
@@ -464,19 +465,19 @@ function fpsAudio.playDeath(actor)
   actor.audioAirborneStarted = nil
   actor.audioAirbornePeak = nil
   fpsAudio.play(fpsAudio.next(fpsAudio.death, 'death'), fpsAudio.actorPosition(actor),
-    actor.id == localSessionID, 0.60, 55, 1.5)
+    actor.id == localSessionID, 0.60, 24, 1.5)
 end
 
 function fpsAudio.playEquip(actor)
   local weapon = fpsAudio.activeWeapon(actor)
   fpsAudio.play(weapon <= 2 and 'equip_long_gun.wav' or 'equip_pistol.wav',
-    fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.55, 35, 0.7)
+    fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.55, 18, 0.7)
 end
 
 function fpsAudio.playReload(actor)
   local weapon = fpsAudio.activeWeapon(actor)
   fpsAudio.play(fpsAudio.reload[weapon] or fpsAudio.reload[1],
-    fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.55, 35, 1.2)
+    fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.55, 18, 1.2)
 end
 
 function fpsAudio.snapshotTransition(actor, previousFlags, previousSpawnCount,
@@ -505,7 +506,7 @@ function fpsAudio.snapshotTransition(actor, previousFlags, previousSpawnCount,
     actor.audioAirbornePeak = actor.target.y
     if bit.band(actor.actionState or 0, 1) == 0 and actor.target.y >= previousY then
       fpsAudio.play(fpsAudio.next(fpsAudio.jump, 'jump'), fpsAudio.actorPosition(actor),
-        actor.id == localSessionID, 0.60, 55, 0.8)
+        actor.id == localSessionID, 0.60, 20, 0.8)
     end
   elseif not grounded then
     actor.audioAirbornePeak = math.max(actor.audioAirbornePeak or actor.target.y, actor.target.y)
@@ -516,14 +517,14 @@ function fpsAudio.snapshotTransition(actor, previousFlags, previousSpawnCount,
       and fpsAudio.landHeavy or fpsAudio.landLight
     fpsAudio.play(fpsAudio.next(variants, variants == fpsAudio.landHeavy and 'land-heavy'
       or 'land-light'), fpsAudio.actorPosition(actor), actor.id == localSessionID,
-      0.60, 45, 0.9)
+      0.60, 18, 0.9)
     actor.audioAirborneStarted = nil
     actor.audioAirbornePeak = nil
   end
   if bit.band(previousActionState or 0, 1) == 0
       and bit.band(actor.actionState or 0, 1) ~= 0 then
     fpsAudio.play(fpsAudio.next(fpsAudio.traversal, 'traversal'),
-      fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.60, 55, 0.9)
+      fpsAudio.actorPosition(actor), actor.id == localSessionID, 0.60, 20, 0.9)
   end
   if (previousReload or 0) <= 0 and (actor.reloadRemaining or 0) > 0 then
     fpsAudio.playReload(actor)
@@ -556,16 +557,20 @@ function fpsAudio.update(dt)
       local speed = math.sqrt(delta.x * delta.x + delta.z * delta.z) / math.max(dt, 0.001)
       local moving = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
         and bit.band(actor.flags, 16) ~= 0 and speed > 0.35
-      if moving then
-        local prone = bit.band(actor.flags, 128) ~= 0
+      local prone = bit.band(actor.flags, 128) ~= 0
+      if moving and not prone then
         local crouching = bit.band(actor.flags, 32) ~= 0
-        local interval = prone and 0.58 or crouching and 0.48 or speed > 5.7 and 0.28 or 0.40
+        local sprinting = not crouching
+          and ((actor.id == localSessionID and viewmodelSprint) or speed > 7.2)
+        local interval = crouching and 0.48 or sprinting and 0.28 or 0.40
         actor.audioStepClock = (actor.audioStepClock or 0) + dt
         if actor.audioStepClock >= interval then
           actor.audioStepClock = actor.audioStepClock - interval
-          local variants = prone and fpsAudio.crawl or fpsAudio.footsteps
-          fpsAudio.play(fpsAudio.next(variants, prone and 'crawl' or 'footstep'), position,
-            actor.id == localSessionID, 0.45, 38, 0.75)
+          local baseVolume = actor.id == localSessionID and 0.16 or 0.45
+          local volume = crouching and baseVolume * 0.5
+            or sprinting and baseVolume * 1.2 or baseVolume
+          fpsAudio.play(fpsAudio.next(fpsAudio.footsteps, 'footstep'), position,
+            actor.id == localSessionID, volume, 14, 0.75)
         end
       else
         actor.audioStepClock = 0
@@ -1947,7 +1952,7 @@ fpsVisual.grenadeSnapshotEvent = ac.OnlineEvent({
     grenade.seenAt = effectClock
     fpsVisual.grenades[id] = grenade
     if firstObservation and grenade.ownerID ~= localSessionID then
-      fpsAudio.play('grenade_throw.wav', grenade.position, false, 0.55, 45, 0.7)
+      fpsAudio.play('grenade_throw.wav', grenade.position, false, 0.55, 20, 0.7)
     end
   end
   for id, grenade in pairs(fpsVisual.grenades) do

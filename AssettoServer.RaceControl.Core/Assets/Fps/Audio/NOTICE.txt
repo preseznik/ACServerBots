@@ -1,10 +1,40 @@
 ASRC FPS audio asset notice
 
-The WAV files in this directory were generated for this project with the ElevenLabs
+Recorded footsteps (six files)
+
+footstep_boot_01.wav through footstep_boot_06.wav are adapted from "Footsteps"
+by GboxMikeFozzy, published on OpenGameArt on 14 April 2022 under CC0 1.0.
+Source: https://opengameart.org/content/footsteps-0
+License: https://creativecommons.org/publicdomain/zero/1.0/
+Originals: 01-footstep_0.ogg and 02-footstep.ogg through 06-footstep.ogg.
+Changes: mono 44.1 kHz PCM16 conversion, gentle high/low-pass filtering and EQ,
+4 ms onset/18 ms release fades, level matching with a -6 dBFS peak ceiling.
+No synthetic layers, pitch shifts, or additional reverb were added.
+The original source URLs, hashes, processing and import date are in audio-manifest.json.
+
+Recorded assault rifle (one file)
+
+fire_assault_rifle_02.wav is adapted from the close AR-15/M4 recording D_32P.wav
+in The Free Firearm Sound Library, created and recorded by Ben Jaszczak,
+Brian Nelson, Kevin Heras and Matthew Nanney; published under CC0 1.0.
+Source: https://opengameart.org/content/the-free-firearm-sound-library
+License: https://creativecommons.org/publicdomain/zero/1.0/
+Changes: isolated the first shot at 0.701 seconds into a 0.5-second mono 44.1 kHz
+PCM16 clip; 55 Hz high-pass, 9 kHz low-pass, 0.5 ms onset/100 ms release fades,
+and -1 dBFS peak normalization. No synthetic layers, pitch shifts or added reverb.
+Original source hash, trim offsets, processing and import date are in audio-manifest.json.
+
+Generated effects (the other 47 WAV files)
+
+The other WAV files were generated for this project with the ElevenLabs
 Sound Effects API under the paid plan authorized by the project owner. The
 generation used the eleven_text_to_sound_v2 model and did not use a cloned or
 third-party voice. The generated outputs are redistributed as part of the ASRC FPS
 client pack under the commercial-use rights applicable to that paid plan.
+
+fire_desert_eagle_03.wav intentionally reuses fire_desert_eagle_01.wav. Its manifest
+retains the original generation prompt/date and records copyOf; the rejected third
+variant is not distributed. The 54 named catalog entries therefore contain 53 unique sounds.
 
 Generation prompts, normalized-file hashes, durations, and technical format details
 are recorded in audio-manifest.json. The API credential is not stored in this

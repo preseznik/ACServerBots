@@ -141,17 +141,35 @@ the corresponding attribution notice.
 
 ## FPS audio catalog
 
-Client pack 34 installs 54 generated, non-looping WAV clips under
+Client pack 38 installs 54 non-looping WAV clips (47 generated effects and seven CC0 recordings) under
 `extension/audio/asrc_fps`: 12 weapon-shot variants, six weapon-operation cues, eight locomotion
 cues, eight movement reactions, seven combat vocals, five bullet impacts, six grenade cues, a
 magazine pickup, and a local kill confirmation. Every accepted file is mono 44.1 kHz 16-bit PCM,
-peak-limited to -1 dBFS, and listed with its prompt, model, generation date, duration, and SHA-256 in
-`audio-manifest.json`. `NOTICE.txt` records the confirmed paid-plan generation and redistribution
-basis. The API key is read only from `ELEVENLABS_API_KEY` by `tools/Generate-FpsAudio.ps1`; raw and
+listed with duration and SHA-256 in `audio-manifest.json`. Generated effects retain their prompt,
+model, generation date and -1 dBFS peak. The six `footstep_boot_01..06.wav` variants are the approved
+A audition: GboxMikeFozzy's recorded [Footsteps](https://opengameart.org/content/footsteps-0), licensed
+under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). They retain the audition's EQ,
+4 ms onset/18 ms release fades and -6 dBFS peaks. Their manifest entries record source URLs, author,
+license, original hashes, processing and import date; they are not attributed to ElevenLabs.
+`fire_assault_rifle_02.wav` uses the approved A rifle audition: the close AR-15/M4 report from
+The Free Firearm Sound Library by Ben Jaszczak, Brian Nelson, Kevin Heras and Matthew Nanney (CC0).
+It retains the audition's 0.5-second edit, edge fades, filtering and -1 dBFS peak; rifle variants
+01 and 03 and runtime gains are unchanged. Its source offsets and hash are recorded in the manifest.
+The rejected `fire_desert_eagle_03.wav` now reuses the exact `_01` shot. Its `copyOf` recipe
+preserves the source's provenance and prevents the rejected raw candidate from returning during
+normalization or generation. The 54 named entries contain 53 unique sounds; runtime cue selection
+is unchanged. Copy recipes must follow their source; include both IDs when regenerating the source.
+`NOTICE.txt` distinguishes those recordings from the confirmed paid-plan generated effects.
+The API key is read only from `ELEVENLABS_API_KEY` by `tools/Generate-FpsAudio.ps1`; raw and
 normalized candidates remain under ignored `.artifacts/fps-audio`, and accepted assets are replaced
 only with the script's explicit overwrite switch. `-ClipId` limits regeneration to named catalog IDs,
 preserves every unchanged clip's generation date, and still rebuilds and validates the complete
 manifest; effectively silent provider results are retried up to the configured attempt limit.
+Recipes marked `recorded` are preserved even with `-Force`; selecting one explicitly for generation
+fails. Restore those WAVs and their source manifest from version control if missing. Validation checks
+their accepted hashes and category peaks (-6 dBFS recorded locomotion, -1 dBFS rifle), so later
+generation cannot silently replace or amplify them. Audition approval does not replace in-game
+level acceptance: the recorded rifle has lower average loudness than its generated predecessor.
 
 The server-delivered online client owns cue selection but not file playback or gameplay outcomes.
 CSP runs online scripts without filesystem I/O, so `fps.lua` relays versioned, validated cue data over
@@ -160,7 +178,8 @@ and can read the packaged WAVs. This relay does not change packet protocol 2 or 
 Reliable shot, hit, kill, award, pickup, and grenade-explosion packets select weapon-specific fire,
 hard/body impact, throttled hurt, one death cue per spawn generation, local feedback, and Frag/Sticky
 explosion variants. Snapshot position, grounded, stance, traversal, reload, and active-slot transitions
-derive footsteps, crawling, jump, landing, traversal, reload, and equip presentation. Local grenade
+derive footsteps, jump, landing, traversal, reload, and equip presentation. The two crawl-gear clips
+remain in the 54-file catalog but prone locomotion is intentionally silent. Local grenade
 input plays prime and release immediately; the first server snapshot of another player's grenade plays
 its spatial throw cue.
 
@@ -169,6 +188,14 @@ sound made while pulling over a ledge or clearing an obstacle. They are not navi
 dialogue, or generic movement loops.
 
 Local cues are 2D and remote/world cues are 3D, position-tracked, occluded, and distance-limited.
+The HUD applies an explicit squared distance-gain curve because CSP's `maxDistance` clamps native
+attenuation instead of making a source inaudible. Remote cues are discarded at their radius:
+footsteps at 14 m, weapon operations and landings at 18 m, movement exertions
+and grenade throws at 20 m, impacts at 25 m, combat vocals at 24 m, firearm reports at 60-100 m by
+weapon, and explosions at 120 m. Local first-person cues do not use this attenuation.
+Local first-person footsteps use a 0.16 base gain instead of the 0.45 remote gain so enemy movement
+remains easier to hear. Crouching halves either base gain, sprinting raises it by 20%, and prone
+movement emits no locomotion audio.
 Source gains are 0.85 local/0.72 remote for fire, 1.0 explosions, 0.45 locomotion, 0.55 weapon
 operations, 0.60 vocals and movement reactions, 0.50 impacts, and 0.35 feedback. The HUD app validates
 that relayed filenames remain inside `extension/audio/asrc_fps`, checks file existence, and retains each
@@ -192,7 +219,7 @@ Live acceptance remains a listening gate:
 
 ## Playable-area countdown
 
-Client pack 34 registers the small, reliable `ASRC_FpsBoundary` event and carries
+Client pack 38 registers the small, reliable `ASRC_FpsBoundary` event and carries
 its remaining seconds through HUD bridge v6. This standalone state must use the
 ordered online-event channel; it is not part of the UDP snapshot schema. The app
 and online fallback render the same large centred warning and whole-second
@@ -201,7 +228,7 @@ state and elimination; the client only presents it.
 
 ## Hybrid HUD ownership
 
-Client pack version 34 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+Client pack version 38 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
 script publishes presentation state through the local shared structure `asrc.fps.hud.v6`. Bridge v6
 adds the active main/secondary slot, item IDs, and lethal count; it remains presentation-only.
 

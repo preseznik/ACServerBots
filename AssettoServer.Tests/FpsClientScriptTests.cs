@@ -513,6 +513,14 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("actor.audioDeathSpawnCount == spawnCount"));
             Assert.That(script, Does.Contain("ac.broadcastSharedEvent('asrc.fps.audio.v1'"));
             Assert.That(script, Does.Contain("[ASRC FPS] local audio relay connected"));
+            Assert.That(script, Does.Contain("if moving and not prone then"));
+            Assert.That(script, Does.Contain("actor.id == localSessionID and 0.16 or 0.45"));
+            Assert.That(script, Does.Contain("crouching and baseVolume * 0.5"));
+            Assert.That(script, Does.Contain("sprinting and baseVolume * 1.2 or baseVolume"));
+            Assert.That(script, Does.Contain("speed > 7.2"));
+            Assert.That(script, Does.Contain("fpsAudio.next(fpsAudio.footsteps, 'footstep')"));
+            Assert.That(script, Does.Not.Contain("prone and fpsAudio.crawl"));
+            Assert.That(script, Does.Contain("false, 1.0, 120, 1.4"));
             Assert.That(script, Does.Not.Contain("ac.AudioEvent.fromFile"));
             Assert.That(script, Does.Contain("event.cameraInteriorMultiplier = 1"));
             Assert.That(script, Does.Contain("event.cameraExteriorMultiplier = 1"));

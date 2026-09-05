@@ -130,7 +130,7 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
 downloads `/fps/assets/asrc-fps-modern-v8.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5 or KSANIM changes. Client pack version 34 also installs both themes under the project-owned
+embedded KN5 or KSANIM changes. Client pack version 38 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
 MP5 SMG, Desert Eagle, and Colt 1911 rendering use separate rigid KN5 paths shared with Blocks.

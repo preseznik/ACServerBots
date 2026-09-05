@@ -104,6 +104,16 @@ function audioPlayer.logFailure(fileName, stage, detail)
     .. ' stage=' .. tostring(stage) .. ' detail=' .. tostring(detail))
 end
 
+function audioPlayer.distanceGain(position, maxDistance)
+  local distance = (position - ac.getCameraPosition()):length()
+  if distance >= maxDistance then return 0 end
+  local fullVolumeDistance = math.min(2, maxDistance * 0.25)
+  if distance <= fullVolumeDistance then return 1 end
+  local remaining = 1 - (distance - fullVolumeDistance)
+    / (maxDistance - fullVolumeDistance)
+  return math.clamp(remaining, 0, 1) ^ 2
+end
+
 function audioPlayer.play(data)
   if type(data) ~= 'table' or tonumber(data.version) ~= 1 then return end
   local fileName = tostring(data.fileName or '')
@@ -121,13 +131,24 @@ function audioPlayer.play(data)
   local volume = math.clamp(tonumber(data.volume) or 0, 0, 2)
   local maxDistance = math.clamp(tonumber(data.maxDistance) or 1, 1, 500)
   local ttl = math.clamp(tonumber(data.ttl) or 0.5, 0.1, 3)
+  local position = nil
+  if not localSound then
+    if not (data.hasPosition == true or data.hasPosition == 1) or data.position == nil then
+      audioPlayer.logFailure(fileName, 'payload', 'remote cue has no position')
+      return
+    end
+    position = data.position
+    volume = volume * audioPlayer.distanceGain(position, maxDistance)
+    if volume <= 0.001 then return end
+  end
+  local minDistance = math.min(2, maxDistance * 0.25)
   local ok, event = pcall(function()
     return ac.AudioEvent.fromFile({
       filename = filePath,
       use3D = not localSound,
       useOcclusion = not localSound,
       loop = false,
-      minDistance = 1,
+      minDistance = minDistance,
       maxDistance = maxDistance,
     }, not localSound)
   end)
@@ -148,10 +169,7 @@ function audioPlayer.play(data)
     event.cameraInteriorMultiplier = 1
     event.cameraExteriorMultiplier = 1
     event.cameraTrackMultiplier = 1
-    if not localSound and (data.hasPosition == true or data.hasPosition == 1)
-        and data.position ~= nil then
-      event:setPosition(data.position)
-    end
+    if position ~= nil then event:setPosition(position) end
     event:start()
   end)
   if not startOk then

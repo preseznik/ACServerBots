@@ -80,9 +80,6 @@ New-Item -ItemType Directory -Path $rawRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $normalizedRoot -Force | Out-Null
 
 $apiKey = [Environment]::GetEnvironmentVariable('ELEVENLABS_API_KEY')
-if (-not $ValidateOnly -and -not $NormalizeOnly -and [string]::IsNullOrWhiteSpace($apiKey)) {
-    throw 'Set ELEVENLABS_API_KEY in the process environment before generating FPS audio'
-}
 
 function Get-PeakDb([string] $Path) {
     $volumeReport = & $ffmpeg -hide_banner -nostats -i $Path -af volumedetect `
@@ -159,7 +156,41 @@ foreach ($clip in $clips) {
     $index++
     $finalPath = Join-Path $outputRoot $clip.file
     $selected = -not $hasClipFilter -or $requestedClipIds.Contains([string]$clip.id)
-    $shouldProcess = -not $ValidateOnly -and $selected `
+    if ($null -ne $clip.PSObject.Properties['copyOf']) {
+        # Reuse an already validated clip, including its true generation provenance.
+        # Copies must follow their source in the recipe; no API call or raw candidate is used.
+        $sourceEntry = $publishedClips | Where-Object { $_.id -eq $clip.copyOf } | Select-Object -First 1
+        if ($null -eq $sourceEntry -or $sourceEntry.category -ne $clip.category `
+                -or $sourceEntry.durationSeconds -gt [double]$clip.durationSeconds + 0.15) {
+            throw "FPS audio copy requires an earlier compatible source: $($clip.id) -> $($clip.copyOf)"
+        }
+        $sourcePath = Join-Path $outputRoot ([IO.Path]::GetFileName($sourceEntry.path))
+        $copyExists = Test-Path -LiteralPath $finalPath -PathType Leaf
+        $copyMatches = $copyExists -and (Get-FileHash -LiteralPath $finalPath -Algorithm SHA256).Hash `
+            -ieq $sourceEntry.sha256
+        if (-not $copyMatches) {
+            if ($ValidateOnly -or -not $selected -or ($copyExists -and -not $Force)) {
+                throw "FPS audio copy differs from its source: $($clip.id); select it with -Force to restore it"
+            }
+            Copy-Item -LiteralPath $sourcePath -Destination $finalPath -Force
+        }
+        $copyEntry = $sourceEntry | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+        $copyEntry.id = [string]$clip.id
+        $copyEntry.path = "extension/audio/asrc_fps/$($clip.file)"
+        $copyEntry | Add-Member -NotePropertyName copyOf -NotePropertyValue ([string]$clip.copyOf) -Force
+        $publishedClips.Add($copyEntry)
+        Write-Host ("[{0:d2}/54] Validating {1} (copy of {2})" -f $index, $clip.id, $clip.copyOf)
+        continue
+    }
+    $existingClip = $existingClipById[[string]$clip.id]
+    $recorded = $null -ne $clip.PSObject.Properties['recorded'] -and $clip.recorded
+    if ($recorded -and ($null -eq $existingClip -or $null -eq $existingClip.PSObject.Properties['source'])) {
+        throw "Restore the accepted recording and audio-manifest.json for $($clip.id); it cannot be regenerated with ElevenLabs"
+    }
+    if ($recorded -and $hasClipFilter -and $selected) {
+        throw "Clip $($clip.id) is an accepted source recording, not an ElevenLabs prompt; import a replacement explicitly"
+    }
+    $shouldProcess = -not $ValidateOnly -and -not $recorded -and $selected `
         -and ((-not (Test-Path -LiteralPath $finalPath)) -or $Force)
     if ($shouldProcess) {
         $rawPath = Join-Path $rawRoot ($clip.id + '.pcm')
@@ -171,6 +202,9 @@ foreach ($clip in $clips) {
             }
             Write-Host ("[{0:d2}/54] Normalizing {1}" -f $index, $clip.id)
         } else {
+            if ([string]::IsNullOrWhiteSpace($apiKey)) {
+                throw 'Set ELEVENLABS_API_KEY in the process environment before generating FPS audio'
+            }
             $body = @{
                 text = [string]$clip.prompt
                 loop = $false
@@ -218,6 +252,27 @@ foreach ($clip in $clips) {
             -or $details.DurationSeconds -gt [double]$clip.durationSeconds + 0.15) {
         throw "FPS audio duration is invalid after normalization: $($clip.id) ($($details.DurationSeconds)s)"
     }
+    if ($recorded) {
+        # Preserve the accepted audio and its real provenance, including during -Force runs.
+        $targetPeakDb = if ($clip.category -eq 'locomotion') { -6 } else { -1 }
+        if ($existingClip.sha256 -ne (Get-FileHash -LiteralPath $finalPath -Algorithm SHA256).Hash.ToLowerInvariant() `
+                -or [Math]::Abs([double]$existingClip.durationSeconds - $details.DurationSeconds) -gt 0.002 `
+                -or $existingClip.sampleRate -ne $details.SampleRate `
+                -or $existingClip.channels -ne $details.Channels -or $existingClip.codec -ne $details.Codec `
+                -or [Math]::Abs([double]$existingClip.peakDb - $details.PeakDb) -gt 0.05 `
+                -or [Math]::Abs($details.PeakDb - $targetPeakDb) -gt 0.1 `
+                -or $existingClip.source.license -ne 'CC0-1.0' `
+                -or [string]::IsNullOrWhiteSpace($existingClip.source.author) `
+                -or [string]::IsNullOrWhiteSpace($existingClip.source.url) `
+                -or [string]::IsNullOrWhiteSpace($existingClip.source.downloadUrl) `
+                -or $existingClip.source.sha256 -notmatch '^[a-f0-9]{64}$' `
+                -or [string]::IsNullOrWhiteSpace($existingClip.source.processing)) {
+            throw "Accepted FPS recording or provenance does not match its manifest: $($clip.id)"
+        }
+        $existingClip.importedAtUtc = ConvertTo-UtcTimestamp $existingClip.importedAtUtc
+        $publishedClips.Add($existingClip)
+        continue
+    }
     $clipGeneratedAt = $catalogGeneratedAt
     if (-not $shouldProcess -and $existingClipById.ContainsKey([string]$clip.id)) {
         $existingGeneratedAt = $existingClipById[[string]$clip.id].generatedAtUtc
@@ -263,7 +318,7 @@ if ($ValidateOnly) {
     if (($existing | ConvertFrom-Json).clips.Count -ne 54) {
         throw 'Published FPS audio manifest does not contain 54 clips'
     }
-    if ($existing.Trim() -ne $json.Trim()) {
+    if ($existing.Replace("`r`n", "`n").Trim() -ne $json.Replace("`r`n", "`n").Trim()) {
         throw 'Published FPS audio manifest does not match the validated WAV files'
     }
 } else {

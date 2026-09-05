@@ -361,14 +361,28 @@ public static class FpsClientPackAssets
         {
             if (!clipsByPath.TryGetValue(path, out System.Text.Json.JsonElement clip))
                 throw new InvalidDataException($"Embedded FPS WAV is missing from its manifest: {path}");
-            if (string.IsNullOrWhiteSpace(clip.GetProperty("prompt").GetString())
+            bool recorded = clip.TryGetProperty("source", out var source);
+            if (recorded)
+            {
+                if (source.GetProperty("license").GetString() != "CC0-1.0"
+                    || string.IsNullOrWhiteSpace(source.GetProperty("author").GetString())
+                    || !Uri.TryCreate(source.GetProperty("url").GetString(), UriKind.Absolute, out _)
+                    || !Uri.TryCreate(source.GetProperty("downloadUrl").GetString(), UriKind.Absolute, out _)
+                    || source.GetProperty("sha256").GetString()?.Length != 64
+                    || string.IsNullOrWhiteSpace(source.GetProperty("processing").GetString())
+                    || !DateTimeOffset.TryParse(clip.GetProperty("importedAtUtc").GetString(), out _))
+                    throw new InvalidDataException($"Embedded FPS recording provenance is incomplete: {path}");
+            }
+            else if (string.IsNullOrWhiteSpace(clip.GetProperty("prompt").GetString())
                 || clip.GetProperty("model").GetString()
                 != root.GetProperty("generator").GetProperty("model").GetString()
                 || !DateTimeOffset.TryParse(clip.GetProperty("generatedAtUtc").GetString(),
                     out _))
                 throw new InvalidDataException(
                     $"Embedded FPS WAV provenance is incomplete: {path}");
-            FpsWaveMetadata metadata = ValidateWave(path, data);
+            double targetPeakDb = recorded && clip.GetProperty("category").GetString() == "locomotion"
+                ? -6 : -1;
+            FpsWaveMetadata metadata = ValidateWave(path, data, targetPeakDb);
             if (clip.GetProperty("sha256").GetString() != Sha256(data)
                 || clip.GetProperty("sampleRate").GetInt32() != metadata.SampleRate
                 || clip.GetProperty("channels").GetInt32() != metadata.Channels
@@ -380,7 +394,7 @@ public static class FpsClientPackAssets
         }
     }
 
-    private static FpsWaveMetadata ValidateWave(string path, byte[] data)
+    private static FpsWaveMetadata ValidateWave(string path, byte[] data, double targetPeakDb)
     {
         if (data.Length < 44 || !data.AsSpan(0, 4).SequenceEqual("RIFF"u8)
                              || !data.AsSpan(8, 4).SequenceEqual("WAVE"u8))
@@ -423,9 +437,9 @@ public static class FpsClientPackAssets
         for (int offset = dataOffset; offset + 1 < dataOffset + dataBytes; offset += 2)
             peak = Math.Max(peak, Math.Abs((int)BitConverter.ToInt16(data, offset)));
         double peakDb = peak > 0 ? 20 * Math.Log10(peak / 32768d) : double.NegativeInfinity;
-        if (peakDb is < -1.1 or > -0.8)
+        if (peakDb < targetPeakDb - 0.1 || peakDb > targetPeakDb + 0.2)
             throw new InvalidDataException(
-                $"Embedded FPS WAV peak must be normalized to -1 dBFS: {path} ({peakDb:F2} dBFS)");
+                $"Embedded FPS WAV peak must be normalized to {targetPeakDb} dBFS: {path} ({peakDb:F2} dBFS)");
         return new FpsWaveMetadata(sampleRate, channels,
             (double)dataBytes / (sampleRate * channels * (bitsPerSample / 8)), peakDb);
     }

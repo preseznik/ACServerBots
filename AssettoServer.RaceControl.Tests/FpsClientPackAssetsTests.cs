@@ -134,7 +134,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public void GeneratedAudioCatalogIsCompleteManifestedAndPlayable()
+    public void MixedAudioCatalogIsCompleteManifestedAndPlayable()
     {
         IReadOnlyList<(string Path, byte[] Data)> assets = FpsClientPackAssets.GetAudioAssets();
         var waves = assets.Where(asset => asset.Path.EndsWith(".wav",
@@ -157,6 +157,10 @@ public sealed class FpsClientPackAssetsTests
                 .GetProperty("commercialLicenseConfirmedByUser").GetBoolean(), Is.True);
             Assert.That(notice, Does.Contain("ElevenLabs"));
             Assert.That(notice, Does.Contain("paid plan"));
+            Assert.That(notice, Does.Contain("GboxMikeFozzy"));
+            Assert.That(notice, Does.Contain("Ben Jaszczak"));
+            Assert.That(notice, Does.Contain("CC0"));
+            Assert.That(clips.Count(clip => clip.TryGetProperty("source", out _)), Is.EqualTo(7));
             Assert.That(clips.Select(clip => clip.GetProperty("id").GetString()), Is.Unique);
             Assert.That(clips.Select(clip => clip.GetProperty("path").GetString()), Is.Unique);
             foreach ((string path, byte[] data) in waves)
@@ -169,16 +173,66 @@ public sealed class FpsClientPackAssetsTests
                 Assert.That(BitConverter.ToInt16(data, 34), Is.EqualTo(16), path);
                 JsonElement clip = clips.Single(value =>
                     value.GetProperty("path").GetString() == path);
-                Assert.That(clip.GetProperty("prompt").GetString(), Is.Not.Empty, path);
-                Assert.That(clip.GetProperty("model").GetString(),
-                    Is.EqualTo("eleven_text_to_sound_v2"), path);
-                Assert.That(DateTimeOffset.TryParse(
-                    clip.GetProperty("generatedAtUtc").GetString(), out _), Is.True, path);
+                bool footstep = path.Contains("/footstep_boot_", StringComparison.Ordinal);
+                bool recorded = footstep || path.EndsWith("/fire_assault_rifle_02.wav", StringComparison.Ordinal);
+                if (recorded)
+                {
+                    JsonElement source = clip.GetProperty("source");
+                    Assert.That(source.GetProperty("author").GetString(), Is.EqualTo(footstep
+                        ? "GboxMikeFozzy" : "Ben Jaszczak, Brian Nelson, Kevin Heras and Matthew Nanney"));
+                    Assert.That(source.GetProperty("license").GetString(), Is.EqualTo("CC0-1.0"));
+                    Assert.That(source.GetProperty("url").GetString(),
+                        Is.EqualTo(footstep ? "https://opengameart.org/content/footsteps-0"
+                            : "https://opengameart.org/content/the-free-firearm-sound-library"));
+                    Assert.That(source.GetProperty("sha256").GetString(), Has.Length.EqualTo(64));
+                    Assert.That(source.GetProperty("processing").GetString(), Is.Not.Empty);
+                    Assert.That(clip.TryGetProperty("model", out _), Is.False);
+                    Assert.That(DateTimeOffset.TryParse(
+                        clip.GetProperty("importedAtUtc").GetString(), out _), Is.True, path);
+                    if (!footstep)
+                    {
+                        Assert.That(clip.GetProperty("sha256").GetString(), Is.EqualTo(
+                            "93b6d1400a4e0c6d35c31f859717e8af2b27e07c10285e20a8e7eeb67369933f"));
+                        Assert.That(source.GetProperty("file").GetString(),
+                            Is.EqualTo("Prepared SFX Library/AR-15/D_32P.wav"));
+                        Assert.That(source.GetProperty("startSeconds").GetDouble(), Is.EqualTo(0.701));
+                        Assert.That(clip.GetProperty("durationSeconds").GetDouble(), Is.EqualTo(0.5));
+                    }
+                }
+                else
+                {
+                    Assert.That(clip.GetProperty("prompt").GetString(), Is.Not.Empty, path);
+                    Assert.That(clip.GetProperty("model").GetString(),
+                        Is.EqualTo("eleven_text_to_sound_v2"), path);
+                    Assert.That(DateTimeOffset.TryParse(
+                        clip.GetProperty("generatedAtUtc").GetString(), out _), Is.True, path);
+                }
                 Assert.That(clip.GetProperty("sha256").GetString(),
                     Is.EqualTo(FpsClientPackAssets.Sha256(data)), path);
-                Assert.That(clip.GetProperty("peakDb").GetDouble(), Is.EqualTo(-1).Within(0.05),
+                Assert.That(clip.GetProperty("peakDb").GetDouble(), Is.EqualTo(footstep ? -6 : -1).Within(0.05),
                     path);
             }
+        });
+    }
+
+    [Test]
+    public void RejectedDesertEagleVariantReusesExistingShotAndProvenance()
+    {
+        var assets = FpsClientPackAssets.GetAudioAssets();
+        using JsonDocument manifest = JsonDocument.Parse(assets.Single(asset =>
+            asset.Path == FpsClientPackAssets.AudioManifestPath).Data);
+        var clips = manifest.RootElement.GetProperty("clips").EnumerateArray().ToArray();
+        JsonElement source = clips.Single(clip => clip.GetProperty("id").GetString() == "fire_desert_eagle_01");
+        JsonElement copy = clips.Single(clip => clip.GetProperty("id").GetString() == "fire_desert_eagle_03");
+        Assert.Multiple(() =>
+        {
+            Assert.That(copy.GetProperty("copyOf").GetString(), Is.EqualTo("fire_desert_eagle_01"));
+            foreach (string field in new[] { "prompt", "model", "generatedAtUtc", "durationSeconds", "sha256" })
+                Assert.That(copy.GetProperty(field).ToString(), Is.EqualTo(source.GetProperty(field).ToString()), field);
+            Assert.That(assets.Single(asset => asset.Path == copy.GetProperty("path").GetString()).Data,
+                Is.EqualTo(assets.Single(asset => asset.Path == source.GetProperty("path").GetString()).Data));
+            Assert.That(copy.GetProperty("sha256").GetString(), Is.Not.EqualTo(
+                "d9334a4aee43186f1e9c022e477ba67048c990998ab7569833d925c4c0cfb4f4"));
         });
     }
 
@@ -197,7 +251,7 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(FpsClientPackAssets.HudScriptPath,
                 Is.EqualTo("apps/lua/asrc_fps_hud/asrc_fps_hud.lua"));
             Assert.That(manifest, Does.Contain("NAME = ASRC FPS HUD"));
-            Assert.That(manifest, Does.Contain("VERSION = 1.2.0"));
+            Assert.That(manifest, Does.Contain("VERSION = 1.3.0"));
             Assert.That(manifest, Does.Contain("LAZY = NONE"));
             Assert.That(manifest, Does.Contain("IN_GAME = appOverlay"));
             Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v6')"));
@@ -225,6 +279,11 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(script, Does.Contain("ac.AudioEvent.fromFile"));
             Assert.That(script, Does.Contain("use3D = not localSound"));
             Assert.That(script, Does.Contain("useOcclusion = not localSound"));
+            Assert.That(script, Does.Contain("function audioPlayer.distanceGain(position, maxDistance)"));
+            Assert.That(script, Does.Contain("if distance >= maxDistance then return 0 end"));
+            Assert.That(script, Does.Contain("math.clamp(remaining, 0, 1) ^ 2"));
+            Assert.That(script, Does.Contain("volume = volume * audioPlayer.distanceGain(position, maxDistance)"));
+            Assert.That(script, Does.Contain("if volume <= 0.001 then return end"));
             Assert.That(script, Does.Contain("event.cameraInteriorMultiplier = 1"));
             Assert.That(script, Does.Contain("maxActive = 64"));
             Assert.That(script, Does.Contain("audioPlayer.update(dt)"));
@@ -240,7 +299,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV34ContainsAudioAnimatedWeaponsGrenadesAndBothThemes()
+    public async Task ClientPackV38ContainsAudioAnimatedWeaponsGrenadesAndBothThemes()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -250,10 +309,10 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(34));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(38));
             Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(6));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v34.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v38.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
@@ -319,7 +378,7 @@ public sealed class FpsClientPackAssetsTests
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(2));
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(34));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(38));
             Assert.That(root.GetProperty("loadoutItems").GetArrayLength(), Is.EqualTo(5));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),
