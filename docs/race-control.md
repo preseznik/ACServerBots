@@ -39,9 +39,14 @@ one another. The kill target applies to an individual in FFA and to the shared t
 Hardcore direct weapon hits kill with one torso/head hit or two limb hits. The optional **Headshot
 only**, **Infinite sprint**, and **No HP regen** mutators are authoritative server rules and compose
 with every match type. Presets created before these fields existed load as Blocks + FFA, with Auto
-  teams and all mutators disabled. Current delivery uses client pack 44, ready protocol 3, and HUD
-  bridge `asrc.fps.hud.v11`; older incompatible clients fall back to the server HUD instead of masking newer presentation fields
+  teams and all mutators disabled. Current delivery uses client pack 45, ready protocol 3, and HUD
+  bridge `asrc.fps.hud.v12`; older incompatible clients fall back to the server HUD instead of masking newer presentation fields
 the expanded roster and match packets incorrectly.
+
+Hostile live grenades within 18 metres are exposed to HUD bridge v12 and rendered by both the companion
+HUD and its online fallback. Their marker follows the snapshot trajectory, points toward off-screen
+grenades, and escalates from white to amber/red with fuse urgency. The local player's grenades and TDM
+teammate grenades do not produce warnings.
 
 Current runtime corrections are deliberately presentation- and movement-layer specific. Modern
 crouch and prone apply an exact -0.50 m world-up offset to the animated KN5 child because CSP's

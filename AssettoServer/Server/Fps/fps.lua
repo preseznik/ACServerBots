@@ -671,8 +671,9 @@ local requestRifleAssets
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 11,
+  protocol = 12,
   capacity = 32,
+  grenadeCapacity = 8,
   killFeedCapacity = 6,
   awardPopupCapacity = 4,
   awardPopups = {},
@@ -843,7 +844,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v11'),
+      ac.StructItem.key('asrc.fps.hud.v12'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -898,6 +899,11 @@ function hud.connect()
       actorDeaths = ac.StructItem.array(ac.StructItem.uint16(), hud.capacity),
       actorScores = ac.StructItem.array(ac.StructItem.uint32(), hud.capacity),
       actorNames = ac.StructItem.array(ac.StructItem.string(32), hud.capacity),
+      grenadeThreatCount = ac.StructItem.byte(),
+      grenadeThreatPositions = ac.StructItem.array(ac.StructItem.vec3(), hud.grenadeCapacity),
+      grenadeThreatVelocities = ac.StructItem.array(ac.StructItem.vec3(), hud.grenadeCapacity),
+      grenadeThreatRemaining = ac.StructItem.array(ac.StructItem.float(), hud.grenadeCapacity),
+      grenadeThreatUpdateTime = ac.StructItem.float(),
       killFeedCount = ac.StructItem.byte(),
       killFeed = ac.StructItem.array(ac.StructItem.string(72), hud.killFeedCapacity),
       awardPopupCount = ac.StructItem.byte(),
@@ -907,7 +913,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v11')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v12')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -1043,6 +1049,26 @@ function hud.publish(dt)
     hud.bridge.actorScores[index] = actor.score
     hud.bridge.actorNames[index] = string.sub(names[actor.id] or ('Operative ' .. actor.id), 1, 32)
   end
+
+  local grenadeThreatCount = 0
+  if localActor ~= nil and bit.band(localActor.flags, 1) ~= 0
+      and bit.band(localActor.flags, 2) == 0 then
+    for _, grenade in pairs(fpsVisual.grenades) do
+      if grenadeThreatCount >= hud.grenadeCapacity then break end
+      local age = math.clamp(effectClock - (grenade.seenAt or effectClock), 0, 0.1)
+      local position = grenade.position + grenade.velocity * age
+      if fpsVisual.isHostileGrenade(grenade, localActor)
+          and grenade.remaining - age > 0
+          and (position - localActor.target):lengthSquared() <= 18 * 18 then
+        hud.bridge.grenadeThreatPositions[grenadeThreatCount] = position
+        hud.bridge.grenadeThreatVelocities[grenadeThreatCount] = grenade.velocity
+        hud.bridge.grenadeThreatRemaining[grenadeThreatCount] = grenade.remaining - age
+        grenadeThreatCount = grenadeThreatCount + 1
+      end
+    end
+  end
+  hud.bridge.grenadeThreatCount = grenadeThreatCount
+  hud.bridge.grenadeThreatUpdateTime = now
 
   local feedStart = math.max(1, #killFeed - hud.killFeedCapacity + 1)
   local feedCount = math.min(hud.killFeedCapacity, #killFeed)
@@ -1992,6 +2018,20 @@ hud.shotEvent = ac.OnlineEvent({
 end, nil, true)
 
 fpsVisual.grenades = {}
+function fpsVisual.isHostileGrenade(grenade, localActor)
+  if grenade.ownerID == localSessionID then return false end
+  if isTeamMatch() and localActor ~= nil and localActor.team ~= 0 then
+    local owner = actors[grenade.ownerID]
+    if owner ~= nil and owner.team == localActor.team then return false end
+  end
+  return true
+end
+
+function fpsVisual.predictedGrenadePosition(grenade)
+  local age = math.clamp(effectClock - (grenade.seenAt or effectClock), 0, 0.1)
+  return grenade.position + grenade.velocity * age
+end
+
 function fpsVisual.removeGrenade(id)
   local grenade = fpsVisual.grenades[id]
   if grenade ~= nil and grenade.root ~= nil and grenade.root ~= false then
@@ -4570,6 +4610,77 @@ function hud.drawPickupPrompt(size, scale)
     rgbm(0.2, 0.72, 0.96, 1), 3 * scale)
 end
 
+function hud.drawGrenadeMarker(position, remaining, size, scale)
+  local worldPosition = position + vec3(0, 0.32, 0)
+  local ok, projected = pcall(render.projectPoint, worldPosition, render.ProjectFace.Center)
+  if not ok or projected == nil or projected.x ~= projected.x or projected.y ~= projected.y then
+    return
+  end
+
+  local center = size * 0.5
+  local direction = projected - vec2(0.5, 0.5)
+  local cameraOk, cameraForward = pcall(ac.getCameraForward)
+  local toGrenade = worldPosition - ac.getCameraPosition()
+  local inFront = not cameraOk or toGrenade.x * cameraForward.x
+    + toGrenade.y * cameraForward.y + toGrenade.z * cameraForward.z > 0
+  if not inFront then direction:scale(-1) end
+  local onScreen = inFront and projected.x >= 0.035 and projected.x <= 0.965
+    and projected.y >= 0.06 and projected.y <= 0.94
+  local screenPosition
+  if onScreen then
+    screenPosition = vec2(projected.x * size.x, projected.y * size.y)
+  else
+    if direction:lengthSquared() < 0.0001 then direction = vec2(0, 1) end
+    direction:normalize()
+    local half = vec2(size.x * 0.5 - 42 * scale, size.y * 0.5 - 62 * scale)
+    local xScale = math.abs(direction.x) > 0.001 and half.x / math.abs(direction.x) or 1e6
+    local yScale = math.abs(direction.y) > 0.001 and half.y / math.abs(direction.y) or 1e6
+    screenPosition = center + direction * math.min(xScale, yScale)
+  end
+
+  local urgent = remaining <= 0.7
+  local warning = remaining <= 1.35
+  local pulse = 1 + (0.5 + 0.5 * math.sin(ui.time() * 15)) * (urgent and 0.22 or 0.08)
+  local color = urgent and rgbm(1, 0.18, 0.08, 1)
+    or (warning and rgbm(1, 0.62, 0.12, 1) or rgbm(0.96, 0.98, 1, 1))
+  local shadow = rgbm(0, 0, 0, 0.78)
+  local radius = 6.5 * scale * pulse
+  ui.drawCircleFilled(screenPosition + vec2(1.5, 1.5) * scale, radius + 2 * scale,
+    shadow, 20)
+  ui.drawCircleFilled(screenPosition, radius, color, 20)
+  ui.drawRectFilled(screenPosition + vec2(-2.2, -10.5) * scale,
+    screenPosition + vec2(2.2, -5) * scale, color, 1.5 * scale)
+  ui.drawLine(screenPosition + vec2(1.5, -10) * scale,
+    screenPosition + vec2(6.5, -8) * scale, color, math.max(1, 1.4 * scale))
+  if onScreen then
+    ui.drawTriangleFilled(screenPosition + vec2(0, -14) * scale,
+      screenPosition + vec2(-5.5, -23) * scale,
+      screenPosition + vec2(5.5, -23) * scale, color)
+  else
+    local perpendicular = vec2(-direction.y, direction.x)
+    local tip = screenPosition + direction * 15 * scale
+    local base = screenPosition - direction * 9 * scale
+    ui.drawTriangleFilled(tip, base + perpendicular * 7 * scale,
+      base - perpendicular * 7 * scale, color)
+  end
+end
+
+function hud.drawGrenadeIndicators(size, scale)
+  if cursorUnlocked or scoreboardHeld then return end
+  local localActor = actors[localSessionID]
+  if localActor == nil or bit.band(localActor.flags, 1) == 0
+      or bit.band(localActor.flags, 2) ~= 0 then return end
+  for _, grenade in pairs(fpsVisual.grenades) do
+    local age = math.clamp(effectClock - (grenade.seenAt or effectClock), 0, 0.1)
+    local remaining = grenade.remaining - age
+    local position = fpsVisual.predictedGrenadePosition(grenade)
+    if remaining > 0 and fpsVisual.isHostileGrenade(grenade, localActor)
+        and (position - localActor.target):lengthSquared() <= 18 * 18 then
+      hud.drawGrenadeMarker(position, remaining, size, scale)
+    end
+  end
+end
+
 function script.frameBegin(dt, gameDT)
   viewmodelFrameBeginCalls = viewmodelFrameBeginCalls + 1
   viewmodelFrameDt = math.max(0.001, math.min(dt, 0.05))
@@ -5071,6 +5182,7 @@ function script.drawUI()
     ui.drawLine(center + vec2(-8, 8), center + vec2(-3, 3), c, 3)
   end
   hud.drawAwardPopups(center)
+  hud.drawGrenadeIndicators(size, hudScale)
   hud.drawPickupPrompt(size, hudScale)
   drawMatchStartOverlay(size, hudScale)
   if outOfBoundsRemaining > 0 then

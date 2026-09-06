@@ -1,7 +1,7 @@
 # FPS client rendering handoff
 
-Current match-mode delivery uses compatibility client pack 44, ready protocol 3, and presentation
-bridge `asrc.fps.hud.v11`. Protocol 3 adds authoritative team identity, match type, winning team, and
+Current match-mode delivery uses compatibility client pack 45, ready protocol 3, and presentation
+bridge `asrc.fps.hud.v12`. Protocol 3 adds authoritative team identity, match type, winning team, and
 team scores; older protocol/bridge references below describe the milestone that originally introduced
 the relevant rendering or audio surface.
 
@@ -225,7 +225,7 @@ Live acceptance remains a listening gate:
 ## Playable-area countdown
 
 Client pack 38 introduced the small, reliable `ASRC_FpsBoundary` event; the current client carries
-its remaining seconds through HUD bridge v11. This standalone state must use the
+its remaining seconds through HUD bridge v12. This standalone state must use the
 ordered online-event channel; it is not part of the UDP snapshot schema. The app
 and online fallback render the same large centred warning and whole-second
 countdown over a dark red screen tint. The server alone determines inside/outside
@@ -233,12 +233,13 @@ state and elimination; the client only presents it.
 
 ## Hybrid HUD ownership
 
-Client pack version 44 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
-script publishes presentation state through the local shared structure `asrc.fps.hud.v11`. Bridge v11
-adds the authoritative opening-countdown value while retaining the unboxed hold-to-swap prompt,
-progress, active-slot, item, and lethal-count presentation; it remains presentation-only.
+Client pack version 45 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+script publishes presentation state through the local shared structure `asrc.fps.hud.v12`. Bridge v12
+adds hostile grenade position, velocity, and fuse state while retaining the authoritative opening
+countdown, unboxed hold-to-swap prompt, progress, active-slot, item, and lethal-count presentation;
+it remains presentation-only.
 
-While both sides exchange a current version-11 heartbeat, the app draws the modular FPS HUD through
+While both sides exchange a current version-12 heartbeat, the app draws the modular FPS HUD through
 `ui.onExclusiveHUD()` and suppresses regular AC UI and third-party apps only in active gameplay. The
 app returns normal control in pre-match menus, results, replay, and non-FPS sessions. In `pause` mode,
 the server-delivered online script owns a match-specific menu and standings panel; its options action
@@ -246,8 +247,12 @@ can explicitly yield to the native AC/CSP menu. If the app is absent, disabled, 
 for more than 0.5 seconds, the online script resumes its complete exclusive gameplay HUD. A bridge
 mismatch is logged once and must never produce a blank frame.
 
-Bridge v11 carries ADS and pickup presentation, configured maximum health, predicted/authoritative stamina,
-the current loadout presentation, and the server's five-second match-opening countdown. Both HUD paths
+Bridge v12 carries ADS and pickup presentation, configured maximum health, predicted/authoritative stamina,
+the current loadout presentation, the server's five-second match-opening countdown, and up to eight
+hostile grenade threats. The online script filters out the local player's grenade and TDM teammate
+grenades and limits warnings to 18 metres. Both HUD paths predict between snapshots, project the marker
+into the world view, clamp off-screen threats to a directional safe-frame marker, and escalate its color
+from white to amber/red with fuse urgency. Both HUD paths
 show `GAME MODE` and the full mode name while the online client masks every gameplay input except look;
 the match clock and simulation remain frozen until the server enters Running.
 The companion HUD and the online fallback both suppress the ordinary four-line crosshair while ADS

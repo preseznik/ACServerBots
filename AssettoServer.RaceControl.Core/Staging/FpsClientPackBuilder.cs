@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 44;
-    public const int BridgeProtocol = 11;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v44.zip";
+    public const int ClientPackVersion = 45;
+    public const int BridgeProtocol = 12;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v45.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -175,7 +175,7 @@ public static class FpsClientPackBuilder
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v11",
+                    bridge = "asrc.fps.hud.v12",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),
@@ -207,10 +207,14 @@ public static class FpsClientPackBuilder
                 operator UV skin under
                 content/objects3D/asrc_fps, plus the 54-clip FPS sound catalog
                 under extension/audio/asrc_fps. It also installs the local ASRC FPS HUD and audio
-                player under apps/lua/asrc_fps_hud. Client pack v44 also contains the animated Modern
+                player under apps/lua/asrc_fps_hud. Client pack v45 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.
+
+                Live enemy grenades within 18 metres have a world-anchored danger indicator which
+                follows their flight, points toward off-screen threats, and changes colour as the
+                fuse expires. Own grenades and TDM teammate grenades are intentionally excluded.
 
                 The HUD app is background-loaded and takes over the exclusive HUD layer only
                 while its versioned local bridge is receiving a live FPS session heartbeat.

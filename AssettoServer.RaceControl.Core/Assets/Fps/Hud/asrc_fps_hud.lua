@@ -5,12 +5,13 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 11
+local bridgeProtocol = 12
 local actorCapacity = 32
+local grenadeCapacity = 8
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v11'),
+  ac.StructItem.key('asrc.fps.hud.v12'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -65,6 +66,11 @@ local bridge = ac.connect({
   actorDeaths = ac.StructItem.array(ac.StructItem.uint16(), actorCapacity),
   actorScores = ac.StructItem.array(ac.StructItem.uint32(), actorCapacity),
   actorNames = ac.StructItem.array(ac.StructItem.string(32), actorCapacity),
+  grenadeThreatCount = ac.StructItem.byte(),
+  grenadeThreatPositions = ac.StructItem.array(ac.StructItem.vec3(), grenadeCapacity),
+  grenadeThreatVelocities = ac.StructItem.array(ac.StructItem.vec3(), grenadeCapacity),
+  grenadeThreatRemaining = ac.StructItem.array(ac.StructItem.float(), grenadeCapacity),
+  grenadeThreatUpdateTime = ac.StructItem.float(),
   killFeedCount = ac.StructItem.byte(),
   killFeed = ac.StructItem.array(ac.StructItem.string(72), killFeedCapacity),
   awardPopupCount = ac.StructItem.byte(),
@@ -687,6 +693,73 @@ local function drawPickupPrompt(size, scale)
     rgbm(0.2, 0.72, 0.96, 1), 3 * scale)
 end
 
+local function drawGrenadeMarker(position, remaining, size, scale)
+  local worldPosition = position + vec3(0, 0.32, 0)
+  local ok, projected = pcall(render.projectPoint, worldPosition, render.ProjectFace.Center)
+  if not ok or projected == nil or projected.x ~= projected.x or projected.y ~= projected.y then
+    return
+  end
+
+  local center = size * 0.5
+  local direction = projected - vec2(0.5, 0.5)
+  local cameraOk, cameraForward = pcall(ac.getCameraForward)
+  local toGrenade = worldPosition - ac.getCameraPosition()
+  local inFront = not cameraOk or toGrenade.x * cameraForward.x
+    + toGrenade.y * cameraForward.y + toGrenade.z * cameraForward.z > 0
+  if not inFront then direction:scale(-1) end
+  local onScreen = inFront and projected.x >= 0.035 and projected.x <= 0.965
+    and projected.y >= 0.06 and projected.y <= 0.94
+  local screenPosition
+  if onScreen then
+    screenPosition = vec2(projected.x * size.x, projected.y * size.y)
+  else
+    if direction:lengthSquared() < 0.0001 then direction = vec2(0, 1) end
+    direction:normalize()
+    local half = vec2(size.x * 0.5 - 42 * scale, size.y * 0.5 - 62 * scale)
+    local xScale = math.abs(direction.x) > 0.001 and half.x / math.abs(direction.x) or 1e6
+    local yScale = math.abs(direction.y) > 0.001 and half.y / math.abs(direction.y) or 1e6
+    screenPosition = center + direction * math.min(xScale, yScale)
+  end
+
+  local urgent = remaining <= 0.7
+  local warning = remaining <= 1.35
+  local pulse = 1 + (0.5 + 0.5 * math.sin(ui.time() * 15)) * (urgent and 0.22 or 0.08)
+  local color = urgent and rgbm(1, 0.18, 0.08, 1)
+    or (warning and rgbm(1, 0.62, 0.12, 1) or rgbm(0.96, 0.98, 1, 1))
+  local radius = 6.5 * scale * pulse
+  ui.drawCircleFilled(screenPosition + vec2(1.5, 1.5) * scale, radius + 2 * scale,
+    rgbm(0, 0, 0, 0.78), 20)
+  ui.drawCircleFilled(screenPosition, radius, color, 20)
+  ui.drawRectFilled(screenPosition + vec2(-2.2, -10.5) * scale,
+    screenPosition + vec2(2.2, -5) * scale, color, 1.5 * scale)
+  ui.drawLine(screenPosition + vec2(1.5, -10) * scale,
+    screenPosition + vec2(6.5, -8) * scale, color, math.max(1, 1.4 * scale))
+  if onScreen then
+    ui.drawTriangleFilled(screenPosition + vec2(0, -14) * scale,
+      screenPosition + vec2(-5.5, -23) * scale,
+      screenPosition + vec2(5.5, -23) * scale, color)
+  else
+    local perpendicular = vec2(-direction.y, direction.x)
+    local tip = screenPosition + direction * 15 * scale
+    local base = screenPosition - direction * 9 * scale
+    ui.drawTriangleFilled(tip, base + perpendicular * 7 * scale,
+      base - perpendicular * 7 * scale, color)
+  end
+end
+
+local function drawGrenadeIndicators(size, scale)
+  if bridge.cursorUnlocked ~= 0 or bridge.scoreboardHeld ~= 0 then return end
+  local age = math.clamp(ui.time() - bridge.grenadeThreatUpdateTime, 0, 0.1)
+  for index = 0, math.min(grenadeCapacity, bridge.grenadeThreatCount) - 1 do
+    local remaining = bridge.grenadeThreatRemaining[index] - age
+    if remaining > 0 then
+      local position = bridge.grenadeThreatPositions[index]
+        + bridge.grenadeThreatVelocities[index] * age
+      drawGrenadeMarker(position, remaining, size, scale)
+    end
+  end
+end
+
 local function drawBoundaryWarning(size, scale)
   if bridge.outOfBoundsRemaining <= 0 then return end
   local center = size * 0.5
@@ -753,6 +826,7 @@ local function drawHud()
   drawMatchAndFeed(size, scale, margin)
   drawAim(size, scale)
   drawAwards(size, scale)
+  drawGrenadeIndicators(size, scale)
   drawPickupPrompt(size, scale)
   drawBoundaryWarning(size, scale)
   drawMatchStart(size, scale)

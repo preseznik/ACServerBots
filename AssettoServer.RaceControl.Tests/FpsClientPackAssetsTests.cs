@@ -251,10 +251,15 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(FpsClientPackAssets.HudScriptPath,
                 Is.EqualTo("apps/lua/asrc_fps_hud/asrc_fps_hud.lua"));
             Assert.That(manifest, Does.Contain("NAME = ASRC FPS HUD"));
-            Assert.That(manifest, Does.Contain("VERSION = 1.9.0"));
+            Assert.That(manifest, Does.Contain("VERSION = 1.10.0"));
             Assert.That(manifest, Does.Contain("LAZY = NONE"));
             Assert.That(manifest, Does.Contain("IN_GAME = appOverlay"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v11')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v12')"));
+            Assert.That(script, Does.Contain("grenadeThreatCount = ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain("grenadeThreatPositions = ac.StructItem.array"));
+            Assert.That(script, Does.Contain("grenadeThreatVelocities = ac.StructItem.array"));
+            Assert.That(script, Does.Contain("drawGrenadeIndicators(size, scale)"));
+            Assert.That(script, Does.Contain("render.projectPoint"));
             Assert.That(script, Does.Contain("startCountdownSeconds = ac.StructItem.float()"));
             Assert.That(script, Does.Contain("WAITING FOR FIRST HUMAN PLAYER"));
             Assert.That(script, Does.Contain("TEAM DEATH MATCH"));
@@ -311,7 +316,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV44ContainsMatchStartHudAndBothThemes()
+    public async Task ClientPackV45ContainsGrenadeIndicatorAndBothThemes()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -321,10 +326,10 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(44));
-            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(11));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(45));
+            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(12));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v44.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v45.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
@@ -394,7 +399,7 @@ public sealed class FpsClientPackAssetsTests
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(3));
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(44));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(45));
             Assert.That(root.GetProperty("loadoutItems").GetArrayLength(), Is.EqualTo(5));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),
@@ -419,8 +424,8 @@ public sealed class FpsClientPackAssetsTests
                 Assert.That(clip.GetProperty("sha256").GetString(),
                     Is.EqualTo(FpsClientPackAssets.Sha256(ReadEntry(entries[path]))));
             }
-            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v11"));
-            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(11));
+            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v12"));
+            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(12));
             Assert.That(hud.GetProperty("onlineFallback").GetBoolean(), Is.True);
             Assert.That(hud.GetProperty("manifestSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(
