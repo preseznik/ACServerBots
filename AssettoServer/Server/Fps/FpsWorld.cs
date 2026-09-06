@@ -101,6 +101,8 @@ public sealed class FpsWorld : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        if (!AssettoServer.Release.FpsAssetResources.IsAvailable(typeof(FpsWorld).Assembly))
+            throw new ConfigurationException("FPS assets are not installed. Install the matching FPS client pack under Packs/Fps.");
         ValidateLoadouts(_configuration.Extra.Fps.Loadouts);
         string geometryPath = Path.GetFullPath(Path.Combine(_configuration.BaseFolder,
             _configuration.Extra.Fps.Arena.GeometryPath));

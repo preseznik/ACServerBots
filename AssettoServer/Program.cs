@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -148,12 +148,25 @@ public static class Program
     
     internal static async Task Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--capabilities-json")
+        {
+            Console.WriteLine(AssettoServer.Release.ReleaseIdentity.CapabilitiesJson);
+            return;
+        }
+        PortableServer.Initialize();
         SetupFluentValidation();
         SetupMetrics();
         DetectContentManager();
         
         var options = Parser.Default.ParseArguments<Options>(args).Value;
         if (options == null) return;
+        foreach (string? output in new[] { options.ShutdownFile, options.RaceControlDirectory,
+                     options.PhysicsOutput, options.FpsArenaOutput, options.FpsGeometryOutput,
+                     options.FpsNavigationOutput, options.SimulationOutput,
+                     options.ServerCfgPath, options.EntryListPath })
+            PortableServer.CheckWritePath(output);
+        if (!string.IsNullOrEmpty(options.Preset))
+            PortableServer.CheckWritePath(Path.Combine("presets", options.Preset));
 
         if (!string.IsNullOrWhiteSpace(options.ShutdownFile) && File.Exists(options.ShutdownFile))
         {

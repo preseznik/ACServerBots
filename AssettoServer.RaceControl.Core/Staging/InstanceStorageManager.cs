@@ -185,6 +185,12 @@ public sealed class InstancePackageExporter
                              FileAccess.Write, FileShare.None, 131072, true))
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, true))
             {
+                if (!File.Exists(Path.Combine(source, "portable.json")))
+                {
+                    var marker = archive.CreateEntry("portable.json", CompressionLevel.Fastest);
+                    await using var markerOutput = new StreamWriter(marker.Open());
+                    await markerOutput.WriteAsync("{\"schemaVersion\":1,\"dataDirectory\":\"Data\"}");
+                }
                 foreach (string file in Directory.EnumerateFiles(source, "*",
                              SearchOption.AllDirectories))
                 {

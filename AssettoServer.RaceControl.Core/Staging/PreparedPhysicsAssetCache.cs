@@ -3,6 +3,7 @@ using System.Text;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Models;
+using AssettoServer.RaceControl.Core.Storage;
 
 namespace AssettoServer.RaceControl.Core.Staging;
 
@@ -45,6 +46,7 @@ internal static class PreparedPhysicsAssetCache
     {
         var inputs = GetTrackModelInputs(rendered.Track);
         inputs.Add(Path.Combine(preset.ServerPayloadPath, "AssettoServer.exe"));
+        inputs.Add(Path.Combine(preset.ServerPayloadPath, "AssettoServer.dll"));
         inputs.Add(rendered.Track.FastLanePath);
         foreach (var car in rendered.RacingCars)
         {
@@ -70,9 +72,11 @@ internal static class PreparedPhysicsAssetCache
             $"include={string.Join(';', preset.Fps.Arena?.CollisionIncludeMeshes ?? [])}",
             $"exclude={string.Join(';', preset.Fps.Arena?.CollisionExcludeMeshes ?? [])}",
         ];
-        return new FpsAssetCachePaths(
+        var result = new FpsAssetCachePaths(
             CachePath(paths, "fps-arena-geometry", inputs, values),
             CachePath(paths, "fps-arena-navigation", inputs, values));
+        if (!result.IsComplete) FpsMapPack.TryPopulateCache(paths, preset, track, result);
+        return result;
     }
 
     private static List<string> GetTrackModelInputs(AcTrackLayout track)

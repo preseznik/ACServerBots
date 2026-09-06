@@ -1,3 +1,4 @@
+using AssettoServer.Release;
 using System.Text;
 
 namespace AssettoServer.RaceControl.Core.Staging;
@@ -171,13 +172,13 @@ public static class FpsClientPackAssets
     {
         var assets = new List<(string Path, byte[] Data)>();
         var assembly = typeof(FpsClientPackAssets).Assembly;
-        foreach (string resourceName in assembly.GetManifestResourceNames()
+        foreach (string resourceName in FpsAssetResources.Names(assembly)
                      .Where(name => name.StartsWith(AudioResourcePrefix,
                          StringComparison.Ordinal))
                      .OrderBy(name => name, StringComparer.Ordinal))
         {
             string fileName = resourceName[AudioResourcePrefix.Length..];
-            using Stream stream = assembly.GetManifestResourceStream(resourceName)
+            using Stream stream = FpsAssetResources.Open(assembly, resourceName)
                 ?? throw new InvalidOperationException(
                     $"Embedded FPS audio asset was not found: {resourceName}");
             using var output = new MemoryStream();
@@ -193,13 +194,13 @@ public static class FpsClientPackAssets
     {
         var assets = new List<(string Path, byte[] Data)>();
         var assembly = typeof(FpsClientPackAssets).Assembly;
-        foreach (string resourceName in assembly.GetManifestResourceNames()
+        foreach (string resourceName in FpsAssetResources.Names(assembly)
                      .Where(name => name.StartsWith(ModernResourcePrefix,
                          StringComparison.Ordinal))
                      .OrderBy(name => name, StringComparer.Ordinal))
         {
             string fileName = resourceName[ModernResourcePrefix.Length..];
-            using Stream stream = assembly.GetManifestResourceStream(resourceName)
+            using Stream stream = FpsAssetResources.Open(assembly, resourceName)
                 ?? throw new InvalidOperationException(
                     $"Embedded Modern FPS client asset was not found: {resourceName}");
             using var output = new MemoryStream();
@@ -220,7 +221,7 @@ public static class FpsClientPackAssets
 
     private static byte[] ReadEmbeddedKn5(string resourceName)
     {
-        using Stream stream = typeof(FpsClientPackAssets).Assembly.GetManifestResourceStream(resourceName)
+        using Stream stream = FpsAssetResources.Open(typeof(FpsClientPackAssets).Assembly, resourceName)
                               ?? throw new InvalidOperationException(
                                   $"Embedded FPS client asset was not found: {resourceName}");
         using var output = new MemoryStream();
@@ -233,7 +234,7 @@ public static class FpsClientPackAssets
 
     private static byte[] ReadEmbeddedPng(string resourceName)
     {
-        using Stream stream = typeof(FpsClientPackAssets).Assembly.GetManifestResourceStream(resourceName)
+        using Stream stream = FpsAssetResources.Open(typeof(FpsClientPackAssets).Assembly, resourceName)
                               ?? throw new InvalidOperationException(
                                   $"Embedded FPS client asset was not found: {resourceName}");
         using var output = new MemoryStream();
@@ -247,7 +248,7 @@ public static class FpsClientPackAssets
 
     private static byte[] ReadEmbeddedKsanim(string resourceName)
     {
-        using Stream stream = typeof(FpsClientPackAssets).Assembly.GetManifestResourceStream(resourceName)
+        using Stream stream = FpsAssetResources.Open(typeof(FpsClientPackAssets).Assembly, resourceName)
                               ?? throw new InvalidOperationException(
                                   $"Embedded FPS client animation was not found: {resourceName}");
         using var output = new MemoryStream();
@@ -261,7 +262,7 @@ public static class FpsClientPackAssets
 
     private static byte[] ReadEmbeddedText(string resourceName)
     {
-        using Stream stream = typeof(FpsClientPackAssets).Assembly.GetManifestResourceStream(resourceName)
+        using Stream stream = FpsAssetResources.Open(typeof(FpsClientPackAssets).Assembly, resourceName)
                               ?? throw new InvalidOperationException(
                                   $"Embedded FPS client asset was not found: {resourceName}");
         using var output = new MemoryStream();

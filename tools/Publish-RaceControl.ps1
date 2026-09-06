@@ -89,7 +89,7 @@ try {
     }
     Move-Item -LiteralPath $packageRoot -Destination $appOutput
 
-    Write-Host "Portable Race Control build ready: $appOutput"
+    Write-Host "Development Race Control build ready: $appOutput"
     Write-Host "Run: $(Join-Path $appOutput 'AssettoServer Race Control.exe')"
 }
 finally {

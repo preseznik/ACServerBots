@@ -32,6 +32,18 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         DispatcherUnhandledException += OnDispatcherUnhandledException;
+        try { _paths.ConfigureProcessStorage(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show($"Race Control cannot write to its data folder:\n{_paths.DataRoot}\n\n{exception.Message}\n\nMove the portable folder to a writable location or correct its permissions.",
+                "Race Control storage unavailable", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+            return;
+        }
+        if (File.Exists(Path.Combine(_paths.FpsAssetsDirectory, "asrc-fps-client.json")))
+            AppContext.SetData("ASRC.FpsAssetRoot", _paths.FpsAssetsDirectory);
+        if (File.Exists(Path.Combine(_paths.FpsMapsDirectory, "asrc-fps-maps.json")))
+            AppContext.SetData("ASRC.FpsMapsRoot", _paths.FpsMapsDirectory);
         _settingsStore = new ApplicationSettingsStore(_paths);
         Settings = _settingsStore.Load();
         ThemeManager.Apply(Settings);
@@ -131,7 +143,7 @@ public partial class App : Application
             File.AppendAllText(Path.Combine(_paths.LogsDirectory, "web-gui.log"),
                 $"[{DateTimeOffset.Now:O}] {message}{Environment.NewLine}");
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // Web diagnostics must never take down the desktop launcher.
         }
@@ -181,16 +193,13 @@ public partial class App : Application
     {
         try
         {
-            var logDirectory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "AssettoServer Race Control",
-                "Logs");
+            var logDirectory = _paths.LogsDirectory;
             Directory.CreateDirectory(logDirectory);
             File.AppendAllText(
                 Path.Combine(logDirectory, "race-control-crash.log"),
                 $"[{DateTimeOffset.Now:O}] {e.Exception}{Environment.NewLine}{Environment.NewLine}");
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // The original exception is more useful than a secondary logging failure.
         }

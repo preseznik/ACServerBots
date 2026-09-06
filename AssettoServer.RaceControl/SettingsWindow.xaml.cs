@@ -4,6 +4,8 @@ using System.IO;
 using System.Windows;
 using Microsoft.Win32;
 using AssettoServer.RaceControl.Core.Storage;
+using AssettoServer.RaceControl.Core.Infrastructure;
+using AssettoServer.RaceControl.Core.Staging;
 using AssettoServer.RaceControl.Core.Network;
 using AssettoServer.RaceControl.Core.Web;
 using AssettoServer.RaceControl.Theming;
@@ -15,6 +17,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private string _assettoCorsaRoot;
     private string _serverPayloadPath;
     private string _webUiPortText;
+    private bool _installing;
+    private readonly CancellationTokenSource _installationCancellation = new();
 
     public SettingsWindow(ApplicationSettings settings, string dataRoot,
         string assettoCorsaRoot, string serverPayloadPath, string webDashboardStatus)
@@ -33,11 +37,13 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             .ToArray();
         InitializeComponent();
         DataContext = this;
+        Closing += (_, e) => { if (_installing) { _installationCancellation.Cancel(); e.Cancel = true; } };
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ApplicationSettings Settings { get; }
     public string DataRoot { get; }
+    public bool MapsChanged { get; private set; }
     public IReadOnlyList<AppThemeMode> ThemeModes { get; } = Enum.GetValues<AppThemeMode>();
     public IReadOnlyList<string> WebBindAddresses { get; }
     public string WebDashboardStatus { get; }
@@ -80,6 +86,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
+        if (_installing) return;
         if (!int.TryParse(WebUiPortText, out int webPort))
         {
             MessageBox.Show(this, "Web GUI port must be a whole number between 1 and 65535.",
@@ -124,6 +131,40 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         };
         if (dialog.ShowDialog(this) == true)
             ServerPayloadPath = dialog.FolderName;
+    }
+
+    private async void InstallComponent_Click(object sender, RoutedEventArgs e)
+    {
+        if (_installing) return;
+        string action = (string)((System.Windows.Controls.Button)sender).Tag;
+        string component = action.Split('-')[1];
+        string? archive = null;
+        if (action.StartsWith("import", StringComparison.Ordinal))
+        {
+            var dialog = new OpenFileDialog { Title = "Import " + component + " release ZIP",
+                Filter = "Release archive (*.zip)|*.zip", AddToRecent = false };
+            if (dialog.ShowDialog(this) != true) return;
+            archive = dialog.FileName;
+        }
+        _installing = true;
+        ComponentButtons.IsEnabled = false;
+        _installationCancellation.TryReset();
+        try
+        {
+            var installer = new ComponentInstaller(new RaceControlPaths(DataRoot));
+            var progress = new Progress<string>(message => ComponentStatus.Text = message);
+            string installed = archive is null
+                ? await installer.DownloadAsync(component, progress, _installationCancellation.Token)
+                : await installer.ImportAsync(archive, component, progress, _installationCancellation.Token);
+            if (component == "server") ServerPayloadPath = installed;
+            if (component == "maps") MapsChanged = true;
+            ComponentStatus.Text = component == "server" ? "Server installed. Save settings to use it."
+                : component == "maps" ? "FPS maps installed. Save settings to refresh the map list."
+                : "FPS hosting assets installed. Players install the client ZIP into Assetto Corsa.";
+        }
+        catch (OperationCanceledException) { ComponentStatus.Text = "Installation cancelled."; }
+        catch (Exception exception) { ComponentStatus.Text = exception.Message; }
+        finally { _installing = false; ComponentButtons.IsEnabled = true; }
     }
 
     private void OpenDataFolder_Click(object sender, RoutedEventArgs e)

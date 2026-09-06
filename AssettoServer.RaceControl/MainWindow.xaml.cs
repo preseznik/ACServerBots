@@ -130,6 +130,8 @@ public partial class MainWindow : Window
             if (!string.Equals(previousAcRoot, dialog.AssettoCorsaRoot,
                     StringComparison.OrdinalIgnoreCase))
                 await _viewModel.SetAssettoCorsaRootAsync(dialog.AssettoCorsaRoot);
+            else if (dialog.MapsChanged)
+                await _viewModel.SetAssettoCorsaRootAsync(dialog.AssettoCorsaRoot);
         }
     }
 

@@ -1,0 +1,11 @@
+{
+  "SchemaVersion": 1,
+  "Theme": "Dark",
+  "LoadMostRecentPresetOnStartup": true,
+  "RememberLastPage": true,
+  "ConfirmBeforeStoppingServerOnExit": true,
+  "CompactGridRows": true,
+  "WebUiEnabled": true,
+  "WebUiBindAddress": "127.0.0.1",
+  "WebUiPort": 8772
+}

@@ -3,11 +3,26 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Models;
+using AssettoServer.RaceControl.Core.Storage;
 
 namespace AssettoServer.RaceControl.Core.Content;
 
-public sealed partial class AcContentScanner
+public sealed partial class AcContentScanner(string? packageRoot = null)
 {
+    public AcContentCatalog MergeBundledTracks(string acRoot, AcContentCatalog catalog,
+        CancellationToken cancellationToken = default)
+    {
+        string installed = Path.GetFullPath(Path.Combine(acRoot, "content", "tracks")) + Path.DirectorySeparatorChar;
+        var tracks = catalog.Tracks.Where(track => Path.GetFullPath(track.RootPath)
+                .StartsWith(installed, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(track => track.Key, StringComparer.OrdinalIgnoreCase);
+        string? pack = FpsMapPack.FindRoot(packageRoot);
+        if (pack is not null)
+            foreach (var track in ScanTracks(Path.Combine(pack, "content", "tracks"), cancellationToken))
+                tracks[track.Key] = track;
+        return catalog with { Tracks = tracks.Values.OrderBy(track => track.DisplayName).ToArray() };
+    }
+
     public Task<AcContentCatalog> ScanAsync(string assettoCorsaRoot, CancellationToken cancellationToken = default)
     {
         return Task.Run(() => Scan(assettoCorsaRoot, cancellationToken), cancellationToken);
@@ -25,7 +40,7 @@ public sealed partial class AcContentScanner
         var cars = ScanCars(Path.Combine(contentRoot, "cars"), cancellationToken);
         var tracks = ScanTracks(Path.Combine(contentRoot, "tracks"), cancellationToken);
         var weather = ScanWeather(Path.Combine(contentRoot, "weather"), cancellationToken);
-        return new(cars, tracks, weather, DateTimeOffset.Now);
+        return MergeBundledTracks(assettoCorsaRoot, new(cars, tracks, weather, DateTimeOffset.Now), cancellationToken);
     }
 
     private static List<AcCar> ScanCars(string carsRoot, CancellationToken cancellationToken)

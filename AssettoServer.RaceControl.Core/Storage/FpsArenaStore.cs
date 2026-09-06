@@ -19,7 +19,8 @@ public sealed class FpsArenaStore
     public FpsArenaDefinition? Load(string trackId, string layoutId)
     {
         var path = GetPath(trackId, layoutId);
-        if (!File.Exists(path)) return null;
+        if (!File.Exists(path)) path = FpsMapPack.ArenaPath(_paths, trackId, layoutId);
+        if (path is null) return null;
 
         return JsonSerializer.Deserialize<FpsArenaDefinition>(File.ReadAllText(path), JsonOptions);
     }

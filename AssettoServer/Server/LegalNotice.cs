@@ -1,4 +1,4 @@
-﻿namespace AssettoServer.Server;
+namespace AssettoServer.Server;
 
 /*
  * Preservation of this legal notice is required - under Section 7 b) of the AGPL you are not allowed to remove it.
@@ -8,7 +8,7 @@ public static class LegalNotice
 {
     public const string WelcomeMessage = "\n_____\nPowered by AssettoServer https://assettoserver.org\nType /legal for more details.";
 
-    public const string LegalNoticeText =
+    public static readonly string LegalNoticeText =
 @"| Copyright (C) 2025  Niewiarowski, compujuckel
 | 
 | This program is free software: you can redistribute it and/or modify
@@ -36,5 +36,8 @@ public static class LegalNotice
 | 
 | If you modify this Program, or any covered work, by linking or combining it 
 | with plugins published on https://www.patreon.com/assettoserver, the licensors
-| of this Program grant you additional permission to convey the resulting work.";
+| of this Program grant you additional permission to convey the resulting work."
+        + "\n|\n| Modified by the ACServerBots contributors. Matching source accompanies this release:"
+        + "\n| https://github.com/preseznik/ACServerBots/releases/tag/race-control-v"
+        + AssettoServer.Release.ReleaseIdentity.Version;
 }

@@ -15,7 +15,14 @@ public sealed class RaceControlValidator
         ErrorIf(messages, !Directory.Exists(preset.ServerPayloadPath), "ServerPayloadPath", "Published AssettoServer payload was not found.");
         ErrorIf(messages, !File.Exists(Path.Combine(preset.ServerPayloadPath, "AssettoServer.exe")), "ServerPayloadPath", "The payload does not contain AssettoServer.exe.");
 
+        if (AssettoServer.Release.ReleaseIdentity.IsReleaseBuild)
+        {
+            string? compatibilityError = AssettoServer.Release.ReleaseIdentity.ValidateServer(preset.ServerPayloadPath);
+            ErrorIf(messages, compatibilityError is not null, "ServerPayloadPath", compatibilityError ?? string.Empty);
+        }
         var isFps = preset.Mode == EventMode.Fps;
+        ErrorIf(messages, isFps && !AssettoServer.Release.FpsAssetResources.IsAvailable(typeof(RaceControlValidator).Assembly),
+            "Fps", "FPS assets are not installed. Use Local Installations to install the optional FPS client pack.");
         int racingSlotCount = preset.Grid.Count(slot => slot.Mode != SlotMode.Spectator);
         int spectatorSlotCount = preset.Grid.Count - racingSlotCount;
         if (racingSlotCount < 2)

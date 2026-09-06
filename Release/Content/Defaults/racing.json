@@ -1,0 +1,220 @@
+{
+  "SchemaVersion": 2,
+  "Mode": "Racing",
+  "Name": "Racing defaults",
+  "ServerName": "AssettoServer LAN Race",
+  "TrackId": "ks_nordschleife",
+  "TrackLayoutId": "nordschleife",
+  "Grid": [
+    {
+      "CarId": "ks_abarth500_assetto_corse",
+      "SkinId": "0_official",
+      "DriverName": "Bot 01",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "bmw_1m",
+      "SkinId": "0_orange",
+      "DriverName": "Bot 02",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "lm_mit_colt",
+      "SkinId": "00_dodge_black",
+      "DriverName": "Bot 03",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "ks_ford_gt40",
+      "SkinId": "0_blue_stripes",
+      "DriverName": "Bot 04",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "lotus_elise_sc_s1",
+      "SkinId": "0_Motorsport_Green",
+      "DriverName": "Bot 05",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "ks_mclaren_570s",
+      "SkinId": "00_mclaren_orange",
+      "DriverName": "Bot 06",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "pagani_huayra",
+      "SkinId": "2013_car_of_the_year",
+      "DriverName": "Bot 07",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "ks_porsche_macan",
+      "SkinId": "00_agate_grey_metallic",
+      "DriverName": "Bot 08",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    }
+  ],
+  "Sessions": {
+    "PracticeEnabled": true,
+    "PracticeMinutes": 10,
+    "QualifyingEnabled": false,
+    "QualifyingMinutes": 10,
+    "RaceLaps": 3,
+    "RaceOverTimeSeconds": 60,
+    "ResultScreenSeconds": 30,
+    "ReverseGrid": false
+  },
+  "Rules": {
+    "FuelRatePercent": 0,
+    "DamageRatePercent": 0,
+    "TyreWearRatePercent": 0,
+    "AllowedTyresOut": 2,
+    "AbsAllowed": 1,
+    "TractionControlAllowed": 1,
+    "StabilityControlAllowed": false,
+    "AutoClutchAllowed": true,
+    "TyreBlanketsAllowed": true,
+    "VirtualMirrorAllowed": true
+  },
+  "Conditions": {
+    "WeatherId": "3_clear",
+    "SunAngleDegrees": 16,
+    "AmbientTemperatureCelsius": 22,
+    "RoadTemperatureCelsius": 28,
+    "WindMinKmh": 0,
+    "WindMaxKmh": 0,
+    "WindDirectionDegrees": 0,
+    "StartingGripPercent": 98,
+    "GripRandomnessPercent": 2,
+    "GripTransferPercent": 80,
+    "LapsPerGripIncrease": 10
+  },
+  "Bots": {
+    "Enabled": true,
+    "Difficulty": 0.75,
+    "DifficultyVariancePercent": 10,
+    "Aggression": 0.5,
+    "AggressionVariancePercent": 15,
+    "UseParodyNames": false,
+    "NamePrefix": "Bot",
+    "UpdateHz": 60,
+    "PhysicsFidelity": "Balanced",
+    "SurfaceFriction": 1,
+    "AllowMidRaceTakeover": true,
+    "JoinSlotSelection": "First",
+    "RestartWhenFirstHumanConnects": true,
+    "StartSplinePointId": 0,
+    "GridSpacingMeters": 9
+  },
+  "Fps": {
+    "Theme": "Blocks",
+    "MatchType": "Deathmatch",
+    "TimeLimitMinutes": 10,
+    "KillLimit": 20,
+    "RespawnSeconds": 3,
+    "SpawnProtectionSeconds": 1,
+    "HeadshotsOnly": false,
+    "InfiniteSprint": false,
+    "DisableHealthRegeneration": false,
+    "StartWithBotsOnly": false,
+    "CarrierCarId": "bmw_m3_e30",
+    "ArenaBoundsPaddingMeters": 45,
+    "Bots": {
+      "Difficulty": 0.75,
+      "DifficultyVariancePercent": 10,
+      "Aggression": 0.5,
+      "AggressionVariancePercent": 15,
+      "Health": 100
+    },
+    "Loadouts": {
+      "AllowedMainWeapons": [
+        "AssaultRifle",
+        "CompactSmg"
+      ],
+      "AllowedLethals": [
+        "FragGrenade",
+        "StickyGrenade"
+      ],
+      "AllowedSecondaryWeapons": [
+        "DesertEagle",
+        "Colt1911"
+      ],
+      "HumanDefault": {
+        "MainWeapon": "AssaultRifle",
+        "Lethal": "FragGrenade",
+        "SecondaryWeapon": "Colt1911"
+      },
+      "BotDefault": {
+        "MainWeapon": "AssaultRifle",
+        "Lethal": "FragGrenade",
+        "SecondaryWeapon": "Colt1911"
+      }
+    }
+  },
+  "Network": {
+    "BindAddress": "127.0.0.1",
+    "TcpPort": 9600,
+    "UdpPort": 9600,
+    "HttpPort": 8081,
+    "JoinPassword": "",
+    "AdminPassword": "",
+    "LanOnly": true
+  }
+}

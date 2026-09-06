@@ -1,3 +1,4 @@
+using AssettoServer.Release;
 using System;
 using System.IO;
 using System.IO.Compression;
@@ -128,7 +129,7 @@ internal static class FpsClientAssetArchive
 
     private static void AddKn5(ZipArchive archive, string fileName, string resourceName)
     {
-        using Stream resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+        using Stream resource = FpsAssetResources.Open(Assembly.GetExecutingAssembly(), resourceName)
                                 ?? throw new InvalidOperationException(
                                     $"Embedded FPS client asset was not found: {resourceName}");
         if (resource.Length < 1024)
@@ -147,7 +148,7 @@ internal static class FpsClientAssetArchive
 
     private static void AddPng(ZipArchive archive, string fileName, string resourceName)
     {
-        using Stream resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+        using Stream resource = FpsAssetResources.Open(Assembly.GetExecutingAssembly(), resourceName)
                                 ?? throw new InvalidOperationException(
                                     $"Embedded FPS client asset was not found: {resourceName}");
         Span<byte> magic = stackalloc byte[8];
@@ -164,7 +165,7 @@ internal static class FpsClientAssetArchive
 
     private static void AddKsanim(ZipArchive archive, string fileName, string resourceName)
     {
-        using Stream resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+        using Stream resource = FpsAssetResources.Open(Assembly.GetExecutingAssembly(), resourceName)
                                 ?? throw new InvalidOperationException(
                                     $"Embedded FPS client animation was not found: {resourceName}");
         Span<byte> version = stackalloc byte[4];
@@ -182,7 +183,7 @@ internal static class FpsClientAssetArchive
     private static void AddText(ZipArchive archive, string fileName, string resourceName,
         string expectedAuthor)
     {
-        using Stream resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+        using Stream resource = FpsAssetResources.Open(Assembly.GetExecutingAssembly(), resourceName)
                                 ?? throw new InvalidOperationException(
                                     $"Embedded FPS client asset was not found: {resourceName}");
         using var reader = new StreamReader(resource, leaveOpen: true);

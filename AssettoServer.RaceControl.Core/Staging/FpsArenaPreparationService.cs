@@ -28,7 +28,10 @@ public sealed class FpsArenaPreparationService
         if (!File.Exists(executable))
             throw new FileNotFoundException("Published AssettoServer.exe was not found.", executable);
 
-        string temporaryRoot = Path.Combine(Path.GetTempPath(), $"asrc-fps-arena-{Guid.NewGuid():N}");
+        if (AssettoServer.Release.ReleaseIdentity.IsReleaseBuild)
+            await ComponentInstaller.ValidateServerBinaryAsync(preset.ServerPayloadPath, cancellationToken);
+        _paths.EnsureCreated();
+        string temporaryRoot = Path.Combine(_paths.TempDirectory, $"fps-arena-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temporaryRoot);
         string metadataOutput = Path.Combine(temporaryRoot, "fps-arena.json");
         string geometryOutput = Path.Combine(temporaryRoot, "fps-arena-geometry.bin");
@@ -46,7 +49,7 @@ public sealed class FpsArenaPreparationService
             };
             startInfo.ArgumentList.Add("--prepare-fps-arena");
             startInfo.ArgumentList.Add("--ac-root");
-            startInfo.ArgumentList.Add(preset.AssettoCorsaRoot);
+            startInfo.ArgumentList.Add(GetTrackContentRoot(track));
             startInfo.ArgumentList.Add("--track");
             startInfo.ArgumentList.Add(preset.TrackId);
             if (!string.IsNullOrWhiteSpace(preset.TrackLayoutId))
@@ -104,6 +107,10 @@ public sealed class FpsArenaPreparationService
         cachePaths.StoreFrom(geometryPath, navigationPath);
         _store.Save(arena);
     }
+
+    // Both installed and bundled maps use content/tracks/<id> beneath a content root.
+    internal static string GetTrackContentRoot(AcTrackLayout track) =>
+        Path.GetFullPath(Path.Combine(track.RootPath, "..", "..", ".."));
 
     internal static void AddCollisionOverrides(ProcessStartInfo startInfo,
         FpsArenaDefinition? arena)

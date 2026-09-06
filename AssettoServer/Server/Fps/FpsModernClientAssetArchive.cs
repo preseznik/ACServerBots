@@ -1,3 +1,4 @@
+using AssettoServer.Release;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -31,7 +32,7 @@ internal static class FpsModernClientAssetArchive
     private static byte[] CreateArchive()
     {
         Assembly assembly = Assembly.GetExecutingAssembly();
-        string[] resources = assembly.GetManifestResourceNames()
+        string[] resources = FpsAssetResources.Names(assembly)
             .Where(name => name.StartsWith(ResourcePrefix, StringComparison.Ordinal))
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
@@ -42,7 +43,7 @@ internal static class FpsModernClientAssetArchive
         foreach (string resourceName in resources)
         {
             string fileName = resourceName[ResourcePrefix.Length..];
-            using Stream resource = assembly.GetManifestResourceStream(resourceName)
+            using Stream resource = FpsAssetResources.Open(assembly, resourceName)
                 ?? throw new InvalidOperationException(
                     $"Embedded Modern FPS asset was not found: {resourceName}");
             using var copy = new MemoryStream();

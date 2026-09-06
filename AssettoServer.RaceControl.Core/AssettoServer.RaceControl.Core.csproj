@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\Release\Release.props" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -24,5 +25,8 @@
     <EmbeddedResource Include="Assets\Fps\Audio\audio-manifest.json" />
     <EmbeddedResource Include="Assets\Fps\Audio\NOTICE.txt" />
     <EmbeddedResource Include="Assets\Web\*" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ExternalFpsAssets)' == 'true'">
+    <EmbeddedResource Remove="Assets\Fps\**\*" />
   </ItemGroup>
 </Project>

@@ -61,6 +61,7 @@ public sealed class PresetStore
         preset.Fps.Loadouts.HumanDefault ??= new FpsLoadoutPreset();
         preset.Fps.Loadouts.BotDefault ??= new FpsLoadoutPreset();
         preset.SchemaVersion = RaceControlPreset.CurrentSchemaVersion;
+        preset.ServerPayloadPath = _paths.ResolveComponentPath(preset.ServerPayloadPath);
         return preset;
     }
 
@@ -70,7 +71,9 @@ public sealed class PresetStore
         _paths.EnsureCreated();
         var path = Path.Combine(_paths.PresetsDirectory, $"{FileNameSanitizer.Slug(preset.Name)}-{preset.Id:N}.json");
         var temporary = path + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(preset, JsonOptions));
+        var stored = JsonSerializer.SerializeToNode(preset, JsonOptions)!;
+        stored[nameof(preset.ServerPayloadPath)] = _paths.StoreComponentPath(preset.ServerPayloadPath);
+        File.WriteAllText(temporary, stored.ToJsonString(JsonOptions));
         File.Move(temporary, path, true);
         return path;
     }

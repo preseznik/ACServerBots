@@ -47,6 +47,8 @@ public sealed class ServerInstanceStager
                 validation.Messages.Where(message => message.Severity == ValidationSeverity.Error).Select(message => message.Message)));
         }
 
+        if (AssettoServer.Release.ReleaseIdentity.IsReleaseBuild)
+            await ComponentInstaller.ValidateServerBinaryAsync(preset.ServerPayloadPath, cancellationToken);
         _paths.EnsureCreated();
         await new InstanceStorageManager(_paths).PrepareWorkingDirectoryAsync(progress,
             cancellationToken);
@@ -54,6 +56,23 @@ public sealed class ServerInstanceStager
         Directory.CreateDirectory(root);
         progress?.Report(new("Copy", "Copying the standalone server payload…", 0));
         await CopyDirectoryAsync(preset.ServerPayloadPath, root, progress, cancellationToken);
+        // A server-only archive has its own marker. The staged instance inherits
+        // the outer host package's portable root instead.
+        string copiedMarker = Path.Combine(root, "portable.json");
+        if (File.Exists(copiedMarker)) File.Delete(copiedMarker);
+        if (preset.Mode == EventMode.Fps)
+        {
+            string? pack = AssettoServer.Release.FpsAssetResources.FindRoot(_paths.PackageRoot);
+            if (File.Exists(Path.Combine(_paths.FpsAssetsDirectory, "asrc-fps-client.json")))
+                pack = _paths.FpsAssetsDirectory;
+            if (pack is not null)
+            {
+                AssettoServer.Release.FpsAssetResources.ValidateRoot(pack);
+                string stagedPack = Path.Combine(root, "Packs", "Fps");
+                if (!Directory.Exists(stagedPack))
+                    await CopyDirectoryAsync(pack, stagedPack, null, cancellationToken);
+            }
+        }
         Directory.CreateDirectory(Path.Combine(root, "plugins"));
 
         var rendered = _renderer.Render(preset, catalog);
@@ -310,7 +329,7 @@ public sealed class ServerInstanceStager
         };
         startInfo.ArgumentList.Add("--prepare-fps-arena");
         startInfo.ArgumentList.Add("--ac-root");
-        startInfo.ArgumentList.Add(preset.AssettoCorsaRoot);
+        startInfo.ArgumentList.Add(FpsArenaPreparationService.GetTrackContentRoot(rendered.Track));
         startInfo.ArgumentList.Add("--track");
         startInfo.ArgumentList.Add(rendered.Track.TrackId);
         if (!string.IsNullOrEmpty(rendered.Track.LayoutId))
@@ -324,6 +343,9 @@ public sealed class ServerInstanceStager
         startInfo.ArgumentList.Add(output);
         startInfo.ArgumentList.Add("--fps-navigation-output");
         startInfo.ArgumentList.Add(navigationOutput);
+        startInfo.ArgumentList.Add("--fps-bounds-padding");
+        startInfo.ArgumentList.Add(preset.Fps.ArenaBoundsPaddingMeters.ToString(
+            System.Globalization.CultureInfo.InvariantCulture));
         FpsArenaPreparationService.AddCollisionOverrides(startInfo, preset.Fps.Arena);
 
         using var process = new Process { StartInfo = startInfo };

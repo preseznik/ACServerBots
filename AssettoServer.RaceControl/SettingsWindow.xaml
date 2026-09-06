@@ -131,7 +131,7 @@
                                             ToolTip="Choose the local Assetto Corsa installation folder." />
                                 </Grid>
 
-                                <TextBlock Text="Standalone server payload" Style="{DynamicResource FieldLabel}" />
+                                <TextBlock Text="Race Control server (matching fork release)" Style="{DynamicResource FieldLabel}" />
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBox Text="{Binding ServerPayloadPath, Mode=OneWay}" IsReadOnly="True"
@@ -140,6 +140,16 @@
                                             ToolTip="Choose a different standalone server payload folder." />
                                 </Grid>
 
+                                <WrapPanel x:Name="ComponentButtons" Margin="0,12,0,0">
+                                    <Button Content="Download server" Tag="download-server" Click="InstallComponent_Click" Margin="0,0,6,6" />
+                                    <Button Content="Import server ZIP" Tag="import-server" Click="InstallComponent_Click" Margin="0,0,6,6" />
+                                    <Button Content="Download FPS" Tag="download-fps" Click="InstallComponent_Click" Margin="0,0,6,6" />
+                                    <Button Content="Import FPS ZIP" Tag="import-fps" Click="InstallComponent_Click" Margin="0,0,6,6" />
+                                    <Button Content="Download maps" Tag="download-maps" Click="InstallComponent_Click" Margin="0,0,6,6" />
+                                    <Button Content="Import maps ZIP" Tag="import-maps" Click="InstallComponent_Click" Margin="0,0,6,6" />
+                                </WrapPanel>
+                                <TextBlock x:Name="ComponentStatus" Text="Downloads use the matching release of our fork. FPS assets are optional."
+                                           TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" />
                                 <TextBlock Margin="0,14,0,0" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
                                            Text="These are local-machine settings. They take precedence over installation paths stored in older race presets. Changing the Assetto Corsa root refreshes the installed content catalog after settings are saved." />
                             </StackPanel>

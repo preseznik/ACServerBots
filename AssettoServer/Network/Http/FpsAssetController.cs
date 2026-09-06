@@ -10,6 +10,8 @@ public sealed class FpsAssetController : ControllerBase
     [ResponseCache(Duration = 86_400, Location = ResponseCacheLocation.Any)]
     public IActionResult GetClientAssets()
     {
+        if (!AssettoServer.Release.FpsAssetResources.IsAvailable(typeof(FpsAssetController).Assembly))
+            return NotFound("FPS assets are not installed.");
         return File(FpsClientAssetArchive.GetArchive(), "application/zip",
             FpsClientAssetArchive.FileName);
     }
@@ -18,6 +20,8 @@ public sealed class FpsAssetController : ControllerBase
     [ResponseCache(Duration = 86_400, Location = ResponseCacheLocation.Any)]
     public IActionResult GetModernClientAssets()
     {
+        if (!AssettoServer.Release.FpsAssetResources.IsAvailable(typeof(FpsAssetController).Assembly))
+            return NotFound("FPS assets are not installed.");
         return File(FpsModernClientAssetArchive.GetArchive(), "application/zip",
             FpsModernClientAssetArchive.FileName);
     }

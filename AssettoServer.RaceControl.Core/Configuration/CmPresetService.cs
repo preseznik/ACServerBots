@@ -86,9 +86,10 @@ public sealed class CmPresetService
         return preset;
     }
 
-    public string ExportNew(RaceControlPreset preset, AcContentCatalog catalog, ServerConfigurationRenderer renderer)
+    public string ExportNew(RaceControlPreset preset, AcContentCatalog catalog, ServerConfigurationRenderer renderer,
+        string? exportRoot = null)
     {
-        var root = Path.Combine(preset.AssettoCorsaRoot, "server", "presets");
+        var root = exportRoot ?? Path.Combine(preset.AssettoCorsaRoot, "server", "presets");
         Directory.CreateDirectory(root);
         var baseName = "RACE_CONTROL_" + FileNameSanitizer(preset.Name).ToUpperInvariant();
         var destination = Path.Combine(root, baseName);

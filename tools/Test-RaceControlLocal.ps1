@@ -21,6 +21,7 @@ param(
     [switch] $VerifyLiveControl,
     [switch] $VerifyStoppedObstaclePassing,
     [switch] $FpsGate,
+    [switch] $UseBundledArena,
     [ValidateSet('Deathmatch', 'TeamDeathmatch', 'HardcoreDeathmatch', 'HardcoreTeamDeathmatch')]
     [string] $FpsMatchType = 'Deathmatch',
     [switch] $SimulateRace,
@@ -50,13 +51,17 @@ $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($RaceControlBuild)) {
     $RaceControlBuild = Join-Path $repositoryRoot 'out-race-control'
 }
-$coreAssembly = Join-Path $RaceControlBuild 'lib\AssettoServer.RaceControl.Core.dll'
+$RaceControlBuild = [IO.Path]::GetFullPath($RaceControlBuild)
+$coreAssembly = Join-Path $RaceControlBuild 'AssettoServer.RaceControl.Core.dll'
+if (-not (Test-Path -LiteralPath $coreAssembly)) {
+    $coreAssembly = Join-Path $RaceControlBuild 'lib\AssettoServer.RaceControl.Core.dll'
+}
 $serverPayload = Join-Path $RaceControlBuild 'lib\Server'
 if (-not (Test-Path -LiteralPath $coreAssembly -PathType Leaf)) { throw "Race Control core not found: $coreAssembly" }
 if (-not (Test-Path -LiteralPath (Join-Path $serverPayload 'AssettoServer.exe') -PathType Leaf)) { throw "Bundled server not found: $serverPayload" }
 
 Add-Type -Path $coreAssembly
-$scanner = [AssettoServer.RaceControl.Core.Content.AcContentScanner]::new()
+$scanner = [AssettoServer.RaceControl.Core.Content.AcContentScanner]::new($RaceControlBuild)
 $catalog = $scanner.Scan($AssettoCorsaRoot)
 Write-Host "Scanned $($catalog.Cars.Count) cars, $($catalog.Tracks.Count) track layouts, and $($catalog.Weather.Count) weather sets"
 
@@ -118,7 +123,15 @@ for ($index = 0; $index -lt $Slots; $index++) {
 $preset.Grid = $grid
 
 $acceptanceRoot = Join-Path $repositoryRoot '.artifacts\race-control-local-acceptance'
-$paths = [AssettoServer.RaceControl.Core.Infrastructure.RaceControlPaths]::new($acceptanceRoot)
+if (Test-Path -LiteralPath (Join-Path $RaceControlBuild 'portable.json')) {
+    $acceptanceRoot = Join-Path $RaceControlBuild 'Data'
+}
+$paths = [AssettoServer.RaceControl.Core.Infrastructure.RaceControlPaths]::new($acceptanceRoot, $RaceControlBuild)
+$paths.ConfigureProcessStorage()
+$pack = Join-Path $RaceControlBuild 'Packs\Fps'
+if (Test-Path -LiteralPath (Join-Path $pack 'asrc-fps-client.json')) {
+    [AppContext]::SetData('ASRC.FpsAssetRoot', $pack)
+}
 if ($FpsGate) {
     $arenaStore = [AssettoServer.RaceControl.Core.Storage.FpsArenaStore]::new($paths)
     $preparer = [AssettoServer.RaceControl.Core.Staging.FpsArenaPreparationService]::new($arenaStore, $paths)
@@ -128,9 +141,16 @@ if ($FpsGate) {
     if ($null -eq $selectedTrack) {
         throw 'Selected FPS track was not found in the scanned catalog.'
     }
-    Write-Host 'Preparing bounded FPS arena sidecar and safe prototype spawns...'
-    $preset.Fps.Arena = $preparer.PrepareAsync(
-        $preset, $selectedTrack, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+    if ($UseBundledArena) {
+        $preset.Fps.Arena = $arenaStore.Load($Track, $TrackLayout)
+        if ($null -eq $preset.Fps.Arena) { throw 'Bundled arena definition missing.' }
+        $preset.Fps.ArenaBoundsPaddingMeters = $preset.Fps.Arena.BoundsPaddingMeters
+        Write-Host "Using packaged arena and prepared files from $($selectedTrack.RootPath)"
+    } else {
+        Write-Host 'Preparing bounded FPS arena sidecar and safe prototype spawns...'
+        $preset.Fps.Arena = $preparer.PrepareAsync(
+            $preset, $selectedTrack, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+    }
 }
 $validator = [AssettoServer.RaceControl.Core.Validation.RaceControlValidator]::new()
 $renderer = [AssettoServer.RaceControl.Core.Configuration.ServerConfigurationRenderer]::new()
@@ -228,7 +248,10 @@ try {
         $httpClient = [Net.Http.HttpClient]::new()
         $httpClient.Timeout = [TimeSpan]::FromSeconds(2)
         try {
-            $serverExecutable = Join-Path $serverPayload 'AssettoServer.exe'
+            $serverExecutable = Join-Path $serverPayload 'AssettoServer.dll'
+            if (-not (Test-Path -LiteralPath $serverExecutable)) {
+                $serverExecutable = Join-Path $serverPayload 'AssettoServer.exe'
+            }
             $assetRoutes = @(& rg -a -o '/fps/assets/asrc-fps-(assets|modern)-v[0-9]+\.zip' $serverExecutable |
                 Sort-Object -Unique)
             if ($LASTEXITCODE -ne 0) {

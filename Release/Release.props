@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <RaceControlReleaseVersion>0.0.55-pre35</RaceControlReleaseVersion>
+    <Version>$(RaceControlReleaseVersion)</Version>
+    <MinVerVersionOverride>$(RaceControlReleaseVersion)</MinVerVersionOverride>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(ExternalFpsAssets)' == 'true'">
+    <DefineConstants>$(DefineConstants);ASRC_RELEASE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'AssettoServer' Or '$(MSBuildProjectName)' == 'AssettoServer.RaceControl.Core'">
+    <Compile Include="$(MSBuildThisFileDirectory)ReleaseIdentity.cs" Link="Release/ReleaseIdentity.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FpsAssetResources.cs" Link="Release/FpsAssetResources.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,194 @@
+{
+  "SchemaVersion": 3,
+  "Mode": "Fps",
+  "Name": "FPS defaults",
+  "ServerName": "AssettoServer LAN FPS Match",
+  "TrackId": "bo2_nuketown_2020",
+  "TrackLayoutId": "",
+  "Grid": [
+    {
+      "CarId": "bmw_m3_e30",
+      "SkinId": "0_jet_black",
+      "DriverName": "Operative 01",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "bmw_m3_e30",
+      "SkinId": "0_jet_black",
+      "DriverName": "Operative 02",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "bmw_m3_e30",
+      "SkinId": "0_jet_black",
+      "DriverName": "Operative 03",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "bmw_m3_e30",
+      "SkinId": "0_jet_black",
+      "DriverName": "Operative 04",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "None",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "bmw_m3_e30",
+      "SkinId": "0_jet_black",
+      "DriverName": "Operative 05",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    },
+    {
+      "CarId": "bmw_m3_e30",
+      "SkinId": "0_jet_black",
+      "DriverName": "Operative 06",
+      "TeamName": "Race Control",
+      "NationCode": "",
+      "BallastKg": 0,
+      "RestrictorPercent": 0,
+      "Difficulty": null,
+      "Aggression": null,
+      "Mode": "Auto",
+      "FpsTeam": "Auto"
+    }
+  ],
+  "Sessions": {
+    "PracticeEnabled": true,
+    "PracticeMinutes": 10,
+    "QualifyingEnabled": false,
+    "QualifyingMinutes": 10,
+    "RaceLaps": 3,
+    "RaceOverTimeSeconds": 60,
+    "ResultScreenSeconds": 30,
+    "ReverseGrid": false
+  },
+  "Rules": {
+    "FuelRatePercent": 0,
+    "DamageRatePercent": 0,
+    "TyreWearRatePercent": 0,
+    "AllowedTyresOut": 2,
+    "AbsAllowed": 1,
+    "TractionControlAllowed": 1,
+    "StabilityControlAllowed": false,
+    "AutoClutchAllowed": true,
+    "TyreBlanketsAllowed": true,
+    "VirtualMirrorAllowed": true
+  },
+  "Conditions": {
+    "WeatherId": "6_mid_clouds",
+    "SunAngleDegrees": 32,
+    "AmbientTemperatureCelsius": 22,
+    "RoadTemperatureCelsius": 28,
+    "WindMinKmh": 0,
+    "WindMaxKmh": 0,
+    "WindDirectionDegrees": 0,
+    "StartingGripPercent": 98,
+    "GripRandomnessPercent": 2,
+    "GripTransferPercent": 80,
+    "LapsPerGripIncrease": 10
+  },
+  "Bots": {
+    "Enabled": true,
+    "Difficulty": 0.75,
+    "DifficultyVariancePercent": 10,
+    "Aggression": 0.5,
+    "AggressionVariancePercent": 15,
+    "UseParodyNames": false,
+    "NamePrefix": "Bot",
+    "UpdateHz": 60,
+    "PhysicsFidelity": "Balanced",
+    "SurfaceFriction": 1,
+    "AllowMidRaceTakeover": true,
+    "JoinSlotSelection": "First",
+    "RestartWhenFirstHumanConnects": true,
+    "StartSplinePointId": 0,
+    "GridSpacingMeters": 9
+  },
+  "Fps": {
+    "Theme": "Modern",
+    "MatchType": "TeamDeathmatch",
+    "TimeLimitMinutes": 10,
+    "KillLimit": 100,
+    "RespawnSeconds": 3,
+    "SpawnProtectionSeconds": 1,
+    "HeadshotsOnly": false,
+    "InfiniteSprint": false,
+    "DisableHealthRegeneration": false,
+    "StartWithBotsOnly": false,
+    "CarrierCarId": "bmw_m3_e30",
+    "ArenaBoundsPaddingMeters": 45,
+    "Bots": {
+      "Difficulty": 0.13,
+      "DifficultyVariancePercent": 10,
+      "Aggression": 0.2,
+      "AggressionVariancePercent": 15,
+      "Health": 100
+    },
+    "Loadouts": {
+      "AllowedMainWeapons": [
+        "AssaultRifle",
+        "CompactSmg"
+      ],
+      "AllowedLethals": [
+        "FragGrenade",
+        "StickyGrenade"
+      ],
+      "AllowedSecondaryWeapons": [
+        "DesertEagle",
+        "Colt1911"
+      ],
+      "HumanDefault": {
+        "MainWeapon": "AssaultRifle",
+        "Lethal": "StickyGrenade",
+        "SecondaryWeapon": "DesertEagle"
+      },
+      "BotDefault": {
+        "MainWeapon": "AssaultRifle",
+        "Lethal": "StickyGrenade",
+        "SecondaryWeapon": "Colt1911"
+      }
+    }
+  },
+  "Network": {
+    "BindAddress": "127.0.0.1",
+    "TcpPort": 9600,
+    "UdpPort": 9600,
+    "HttpPort": 8081,
+    "JoinPassword": "",
+    "AdminPassword": "",
+    "LanOnly": true
+  }
+}

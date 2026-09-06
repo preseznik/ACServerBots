@@ -367,6 +367,12 @@ out-win-*
 out-race-control-*
 out-race-control/
 .artifacts/
+/dist/
 
 # Jetbrains IDEs
 .idea/
+
+# Release source and installer definitions
+!/Release/
+# Large map snapshots are included explicitly in the matching source archive.
+/Release/Content/FpsMaps/

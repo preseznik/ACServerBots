@@ -63,17 +63,19 @@ public sealed class ApplicationSettingsStore
         _paths.EnsureCreated();
         if (!File.Exists(SettingsPath))
         {
-            return new ApplicationSettings();
+            return new ReleaseDefaults(_paths).LoadSettings();
         }
 
         try
         {
-            return JsonSerializer.Deserialize<ApplicationSettings>(File.ReadAllText(SettingsPath), JsonOptions)
+            var settings = JsonSerializer.Deserialize<ApplicationSettings>(File.ReadAllText(SettingsPath), JsonOptions)
                 ?? new ApplicationSettings();
+            settings.ServerPayloadPath = _paths.ResolveComponentPath(settings.ServerPayloadPath);
+            return settings;
         }
         catch (Exception exception) when (exception is IOException or JsonException)
         {
-            return new ApplicationSettings();
+            return new ReleaseDefaults(_paths).LoadSettings();
         }
     }
 
@@ -82,7 +84,9 @@ public sealed class ApplicationSettingsStore
         ArgumentNullException.ThrowIfNull(settings);
         _paths.EnsureCreated();
         var temporary = SettingsPath + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(settings, JsonOptions));
+        var stored = settings.Copy();
+        stored.ServerPayloadPath = _paths.StoreComponentPath(stored.ServerPayloadPath);
+        File.WriteAllText(temporary, JsonSerializer.Serialize(stored, JsonOptions));
         File.Move(temporary, SettingsPath, true);
     }
 }

@@ -869,8 +869,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
             else
             {
-                Preset = RaceControlPreset.CreateDefault(configuredAcRoot ?? detectedAcRoot,
-                    configuredPayload ?? detectedPayload);
+                Preset = new ReleaseDefaults(_paths).CreateStartupPreset(
+                    configuredAcRoot ?? detectedAcRoot, configuredPayload ?? detectedPayload)
+                    ?? RaceControlPreset.CreateDefault(configuredAcRoot ?? detectedAcRoot,
+                        configuredPayload ?? detectedPayload);
                 Preset.Network.BindAddress = NetworkAddressService.GetPreferredPrivateIpv4();
             }
             RememberModeDraft(Preset);
@@ -1108,7 +1110,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        ApplyCatalog(Preset.AssettoCorsaRoot, catalog, preserveUi);
+        ApplyCatalog(Preset.AssettoCorsaRoot, _scanner.MergeBundledTracks(Preset.AssettoCorsaRoot, catalog), preserveUi);
         return true;
     }
 
@@ -1347,8 +1349,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             _racingDraft = preset;
     }
 
-    private static RaceControlPreset CreateModePreset(EventMode mode, RaceControlPreset source)
+    private RaceControlPreset CreateModePreset(EventMode mode, RaceControlPreset source)
     {
+        var defaults = new ReleaseDefaults(_paths).CreatePreset(mode, source.AssettoCorsaRoot, source.ServerPayloadPath);
+        if (defaults is not null)
+        {
+            defaults.Network = new NetworkOptions
+            {
+                BindAddress = source.Network.BindAddress, TcpPort = source.Network.TcpPort,
+                UdpPort = source.Network.UdpPort, HttpPort = source.Network.HttpPort,
+                JoinPassword = source.Network.JoinPassword, AdminPassword = source.Network.AdminPassword,
+                LanOnly = source.Network.LanOnly,
+            };
+            return defaults;
+        }
         var preset = RaceControlPreset.CreateDefault(source.AssettoCorsaRoot, source.ServerPayloadPath);
         preset.Mode = mode;
         preset.Name = mode == EventMode.Fps ? "New LAN deathmatch" : "New LAN race";
@@ -1518,7 +1532,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             SyncGridToPreset();
-            var destination = _cmPresetService.ExportNew(Preset, _catalog!, _renderer);
+            var destination = _cmPresetService.ExportNew(Preset, _catalog!, _renderer,
+                _paths.IsPortable ? Path.Combine(_paths.ExportsDirectory, "ContentManager") : null);
             StatusText = $"Exported a new Content Manager preset: {Path.GetFileName(destination)}";
         }
         catch (Exception exception)
@@ -1568,12 +1583,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             AddExtension = true,
             OverwritePrompt = true,
             FileName = FpsClientPackBuilder.DefaultFileName,
+            InitialDirectory = _paths.ExportsDirectory,
+            AddToRecent = false,
         };
         if (dialog.ShowDialog() != true) return;
 
         try
         {
             IsBusy = true;
+            _paths.RequireInsidePackage(dialog.FileName);
             await using var stream = new FileStream(dialog.FileName, FileMode.Create, FileAccess.Write, FileShare.None,
                 64 * 1024, useAsync: true);
             await FpsClientPackBuilder.WriteAsync(stream, Preset.Fps.CarrierCarId);
@@ -1594,6 +1612,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var dialog = new SaveFileDialog
         {
             Title = "Export standalone server package",
+            InitialDirectory = _paths.ExportsDirectory,
+            AddToRecent = false,
             Filter = "ZIP archive (*.zip)|*.zip",
             DefaultExt = ".zip",
             AddExtension = true,
@@ -1608,6 +1628,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             IsBusy = true;
             StatusText = "Packaging the current standalone server…";
             AppendLog($"[Export] Creating complete server package at {dialog.FileName}…");
+            _paths.RequireInsidePackage(dialog.FileName);
             await new InstancePackageExporter().ExportAsync(_paths.WorkingInstanceDirectory,
                 dialog.FileName);
             StatusText = $"Exported standalone server package: {Path.GetFileName(dialog.FileName)}";
@@ -2607,6 +2628,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return bundled;
         }
 
+        var releasePaths = new RaceControlPaths();
+        var downloaded = Path.Combine(releasePaths.ServersDirectory, AssettoServer.Release.ReleaseIdentity.Version);
+        if (File.Exists(Path.Combine(downloaded, "AssettoServer.exe"))) return downloaded;
+        if (releasePaths.IsPortable || File.Exists(Path.Combine(AppContext.BaseDirectory, "release-build.json")))
+            return null;
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
