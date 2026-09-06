@@ -629,6 +629,9 @@
                                 <TextBlock Text="Kill target" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
                                 <TextBox Text="{Binding Preset.Fps.KillLimit}"
                                          ToolTip="The authoritative match ends when a player in FFA or a team in TDM reaches this many kills." />
+                                <CheckBox Content="Start with bots only" Style="{StaticResource SlideToggle}"
+                                          IsChecked="{Binding Preset.Fps.StartWithBotsOnly}" Margin="0,16,0,0"
+                                          ToolTip="Start immediately without waiting for a human player. Leave off to begin a five-second countdown when the first human connects." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Width="420">

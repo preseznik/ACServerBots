@@ -942,7 +942,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         CanStopSession: StopRaceCommand.CanExecute(null),
         CanRestartSession: RestartRaceCommand.CanExecute(null),
         FpsMatchType: FpsMatchTypes.First(option => option.Value == Preset.Fps.MatchType).Label,
-        FpsMutators: FormatFpsMutators(Preset.Fps));
+        FpsMutators: FormatFpsMutators(Preset.Fps),
+        FpsStartPolicy: Preset.Fps.StartWithBotsOnly
+            ? "Bots can start immediately"
+            : "Wait for first human");
 
     private static string FormatFpsMutators(FpsOptions options)
     {

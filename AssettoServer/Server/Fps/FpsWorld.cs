@@ -369,6 +369,7 @@ public sealed class FpsWorld : IHostedService
                     PickupId = pickup.Id,
                     State = FpsPickupState.Spawned,
                     WeaponType = pickup.WeaponType,
+                    DroppedByActorId = pickup.DroppedByActorId,
                     Position = pickup.Position,
                 });
             }
@@ -400,6 +401,7 @@ public sealed class FpsWorld : IHostedService
                 _lastMovementStates[actor.Id] =
                     (actor.GroundY, actor.IsGrounded, actor.IsMantling);
                 BroadcastLoadoutState(actor);
+                BroadcastMatch();
             }
             client.Logger.Information(
                 "FPS loadout selection {Result}: main={MainWeapon}, lethal={Lethal}, secondary={SecondaryWeapon}",
@@ -556,6 +558,8 @@ public sealed class FpsWorld : IHostedService
                     State = pickup.State,
                     WeaponType = pickup.WeaponType,
                     CollectorId = pickup.CollectorId,
+                    DroppedByActorId = pickup.DroppedByActorId,
+                    Result = pickup.Result,
                     Position = pickup.Position,
                 });
             }
@@ -731,15 +735,14 @@ public sealed class FpsWorld : IHostedService
             if (only is not null) only.SendPacketUdp(in packet);
             else
             {
-                foreach (var client in _entryCarManager.ConnectedCars.Values.Select(car => car.Client).OfType<ACTcpClient>())
+                foreach (var client in HandshakenClients())
                     client.SendPacketUdp(in packet);
             }
         }
         if (only is not null) SendBoundaryState(only);
         else
         {
-            foreach (var client in _entryCarManager.ConnectedCars.Values.Select(car => car.Client)
-                         .OfType<ACTcpClient>())
+            foreach (var client in HandshakenClients())
                 SendBoundaryState(client);
         }
     }
@@ -771,9 +774,7 @@ public sealed class FpsWorld : IHostedService
     private void BroadcastRoster(FpsActorState actor, ACTcpClient excludedClient)
     {
         var packet = CreateRosterPacket(actor);
-        foreach (var client in _entryCarManager.ConnectedCars.Values.Select(car => car.Client)
-                     .OfType<ACTcpClient>().Where(client => client != excludedClient
-                                                           && client.HasStartedHandshake))
+        foreach (var client in HandshakenClients().Where(client => client != excludedClient))
             client.SendPacket(packet);
     }
 
@@ -815,8 +816,7 @@ public sealed class FpsWorld : IHostedService
             if (only is not null) only.SendPacketUdp(in packet);
             else
             {
-                foreach (var client in _entryCarManager.ConnectedCars.Values
-                             .Select(car => car.Client).OfType<ACTcpClient>())
+                foreach (var client in HandshakenClients())
                     client.SendPacketUdp(in packet);
             }
         }
@@ -928,6 +928,7 @@ public sealed class FpsWorld : IHostedService
         {
             State = (byte)_simulation.MatchState,
             RemainingSeconds = _simulation.RemainingSeconds,
+            StartCountdownSeconds = _simulation.StartCountdownRemaining,
             KillLimit = (ushort)_configuration.Extra.Fps.KillLimit,
             MaximumHealth = (ushort)Math.Clamp(_configuration.Extra.Fps.Bots.Health, 1,
                 ushort.MaxValue),
@@ -945,18 +946,22 @@ public sealed class FpsWorld : IHostedService
 
     private void BroadcastMatch()
     {
-        foreach (var client in _entryCarManager.ConnectedCars.Values.Select(car => car.Client).OfType<ACTcpClient>())
+        foreach (var client in HandshakenClients())
             SendMatch(client);
     }
 
     private void Broadcast<TPacket>(TPacket packet) where TPacket : Shared.Network.Packets.Outgoing.IOutgoingNetworkPacket
     {
-        foreach (var client in _entryCarManager.ConnectedCars.Values.Select(car => car.Client).OfType<ACTcpClient>())
+        foreach (var client in HandshakenClients())
         {
             if (UsesUdpTransport<TPacket>()) client.SendPacketUdp(in packet);
             else client.SendPacket(packet);
         }
     }
+
+    private IEnumerable<ACTcpClient> HandshakenClients() =>
+        _entryCarManager.ConnectedCars.Values.Select(car => car.Client)
+            .OfType<ACTcpClient>().Where(client => client.HasStartedHandshake);
 
     internal static bool UsesUdpTransport<TPacket>()
         where TPacket : Shared.Network.Packets.Outgoing.IOutgoingNetworkPacket

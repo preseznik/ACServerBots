@@ -396,8 +396,18 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain(
                 "uniform:setMaterialTexture('txDiffuse', uniformPath)"));
             Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsPickup')"));
-            Assert.That(script, Does.Contain("text = '+1 MAGAZINE'"));
+            Assert.That(script, Does.Contain("or '+1 MAGAZINE'"));
             Assert.That(script, Does.Contain("function fpsVisual.updatePickups()"));
+            Assert.That(script, Does.Contain("function fpsVisual.updatePickupInteraction(dt, held)"));
+            Assert.That(script, Does.Contain("fpsVisual.updatePickupInteraction(dt, interact)"));
+            Assert.That(script, Does.Contain("pickup.weaponType ~= activeWeapon"));
+            Assert.That(script, Does.Contain("pickup.weaponType ~= slotWeapon"));
+            Assert.That(script, Does.Contain("TO SWAP %s FOR %s"));
+            Assert.That(script, Does.Not.Contain("ADD 1 MAGAZINE"));
+            Assert.That(script, Does.Contain("ac.GamepadButton.X"));
+            Assert.That(script, Does.Contain("+ (interact and 256 or 0)"));
+            Assert.That(script, Does.Contain("local angle = math.rad(68) * (1 - fall)"));
+            Assert.That(script, Does.Not.Contain("local angle = math.rad(82) * fall"));
             Assert.That(script, Does.Contain("modernViewmodel and 0.32"));
             Assert.That(script, Does.Contain("modernViewmodel and -0.18"));
             Assert.That(script, Does.Contain("pistolViewmodel and 0.39"));
@@ -545,10 +555,14 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("extension/audio/asrc_fps/explosion.wav"));
             Assert.That(script, Does.Not.Contain("event == nil or not event:isValid()"));
             Assert.That(script, Does.Not.Contain("sound.ttl <= 0 or not sound.event:isValid()"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v8')"));
-            Assert.That(script, Does.Contain("protocol = 8"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v11')"));
+            Assert.That(script, Does.Contain("protocol = 11"));
             Assert.That(script, Does.Contain("actorTeams = ac.StructItem.array"));
             Assert.That(script, Does.Contain("matchType = ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain("startCountdownSeconds = ac.StructItem.float()"));
+            Assert.That(script, Does.Contain("local matchInputLocked = matchState ~= 1"));
+            Assert.That(script, Does.Contain("WAITING FOR FIRST HUMAN PLAYER"));
+            Assert.That(script, Does.Contain("TEAM DEATH MATCH"));
             Assert.That(script, Does.Contain("localStamina = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain(
                 "fpsVisual.stamina.value - fpsVisual.stamina.drainPerSecond * dt"));

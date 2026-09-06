@@ -12,6 +12,7 @@ local fpsVisual = {
   error = nil,
   adsInput = 0,
   ads = 0,
+  startCountdownSeconds = 0,
   thirdPersonDistance = 3.2,
   thirdPersonDistanceTarget = 3.2,
   thirdPersonDistanceMin = 1.25,
@@ -166,6 +167,12 @@ local function isTeamMatch()
 end
 local function matchLabel()
   return matchTypeLabels[matchType] or 'FFA'
+end
+function fpsVisual.matchModeTitle()
+  if matchType == 1 then return 'TEAM DEATH MATCH' end
+  if matchType == 2 then return 'HARDCORE FREE FOR ALL' end
+  if matchType == 3 then return 'HARDCORE TEAM DEATH MATCH' end
+  return 'FREE FOR ALL'
 end
 local function matchTargetText()
   if isTeamMatch() then
@@ -664,7 +671,7 @@ local requestRifleAssets
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 8,
+  protocol = 11,
   capacity = 32,
   killFeedCapacity = 6,
   awardPopupCapacity = 4,
@@ -694,6 +701,8 @@ local hud = {
   environmentDraftTimeSeconds = 13 * 60 * 60,
   environmentDraftReady = false,
   maximumHealth = 100,
+  pickupPromptText = '',
+  pickupProgress = 0,
   loadout = {
     catalogReceived = false,
     confirmed = false,
@@ -716,6 +725,7 @@ hud.bindingDefaults = {
   reload = ac.KeyIndex.R,
   jump = ac.KeyIndex.Space,
   grenade = ac.KeyIndex.G,
+  interact = ac.KeyIndex.F,
   melee = ac.KeyIndex.V,
 }
 hud.bindings = ac.storage({
@@ -725,6 +735,7 @@ hud.bindings = ac.storage({
   reload = hud.bindingDefaults.reload,
   jump = hud.bindingDefaults.jump,
   grenade = hud.bindingDefaults.grenade,
+  interact = hud.bindingDefaults.interact,
   melee = hud.bindingDefaults.melee,
 }, 'asrc.fps.bindings.')
 hud.aimSettings = ac.storage({
@@ -832,7 +843,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v8'),
+      ac.StructItem.key('asrc.fps.hud.v11'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -857,6 +868,7 @@ function hud.connect()
       viewYaw = ac.StructItem.float(),
       matchState = ac.StructItem.byte(),
       remainingSeconds = ac.StructItem.float(),
+      startCountdownSeconds = ac.StructItem.float(),
       killLimit = ac.StructItem.uint16(),
       winnerID = ac.StructItem.byte(),
       matchType = ac.StructItem.byte(),
@@ -872,6 +884,8 @@ function hud.connect()
       adsActive = ac.StructItem.byte(),
       linkState = ac.StructItem.byte(),
       clientError = ac.StructItem.string(128),
+      pickupPrompt = ac.StructItem.string(72),
+      pickupProgress = ac.StructItem.float(),
       actorCount = ac.StructItem.byte(),
       actorIDs = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
       actorFlags = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
@@ -893,7 +907,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v8')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v11')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -990,6 +1004,7 @@ function hud.publish(dt)
   hud.bridge.viewYaw = yaw
   hud.bridge.matchState = matchState
   hud.bridge.remainingSeconds = remainingSeconds
+  hud.bridge.startCountdownSeconds = fpsVisual.startCountdownSeconds
   hud.bridge.killLimit = killLimit
   hud.bridge.winnerID = winnerID
   hud.bridge.matchType = matchType
@@ -1004,6 +1019,8 @@ function hud.publish(dt)
   hud.bridge.adsActive = fpsVisual.ads > 0.05 and 1 or 0
   hud.bridge.linkState = localActor == nil and 0 or inputSendOk and 1 or 2
   hud.bridge.clientError = clientPackError or ''
+  hud.bridge.pickupPrompt = string.sub(hud.pickupPromptText or '', 1, 72)
+  hud.bridge.pickupProgress = math.clamp(hud.pickupProgress or 0, 0, 1)
 
   table.clear(hud.actorScratch)
   for _, actor in pairs(actors) do
@@ -1621,6 +1638,7 @@ hud.matchEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsMatch'),
   state = ac.StructItem.byte(),
   remainingSeconds = ac.StructItem.float(),
+  startCountdownSeconds = ac.StructItem.float(),
   killLimit = ac.StructItem.uint16(),
   maximumHealth = ac.StructItem.uint16(),
   winnerID = ac.StructItem.byte(),
@@ -1634,6 +1652,7 @@ hud.matchEvent = ac.OnlineEvent({
   if sender ~= nil then return end
   matchState = message.state
   remainingSeconds = message.remainingSeconds
+  fpsVisual.startCountdownSeconds = message.startCountdownSeconds
   killLimit = message.killLimit
   hud.maximumHealth = math.max(1, message.maximumHealth)
   winnerID = message.winnerID
@@ -1726,6 +1745,8 @@ fpsVisual.pickupEvent = ac.OnlineEvent({
   state = ac.StructItem.byte(),
   weaponType = ac.StructItem.byte(),
   collectorID = ac.StructItem.byte(),
+  droppedByActorID = ac.StructItem.byte(),
+  result = ac.StructItem.byte(),
   position = ac.StructItem.vec3(),
 }, function(sender, message)
   if sender ~= nil then return end
@@ -1738,6 +1759,7 @@ fpsVisual.pickupEvent = ac.OnlineEvent({
     fpsVisual.pickups[message.pickupID] = {
       id = message.pickupID,
       weaponType = message.weaponType,
+      droppedByActorID = message.droppedByActorID,
       position = message.position:clone(),
       bornAt = effectClock,
       root = nil,
@@ -1746,7 +1768,8 @@ fpsVisual.pickupEvent = ac.OnlineEvent({
   elseif message.collectorID == localSessionID then
     fpsAudio.play('pickup_magazine.wav', nil, true, 0.35, 1, 0.6)
     hud.awardPopups[#hud.awardPopups + 1] = {
-      text = '+1 MAGAZINE', age = 0, ttl = 2.2,
+      text = message.result == 2 and ('EQUIPPED ' .. (hud.itemNames[message.weaponType]
+        or 'WEAPON')) or '+1 MAGAZINE', age = 0, ttl = 2.2,
     }
     while #hud.awardPopups > hud.awardPopupCapacity do table.remove(hud.awardPopups, 1) end
   end
@@ -2904,15 +2927,74 @@ function fpsVisual.updatePickups()
       local fall = fpsVisual.smoothstep01(math.clamp(age / 0.55, 0, 1))
       local yawAngle = (pickup.id * 2.399963) % (math.pi * 2)
       local baseForward = vec3(math.sin(yawAngle), 0, math.cos(yawAngle))
-      local angle = math.rad(82) * fall
+      -- Weapon meshes point along local Z with local Y as their thickness axis.
+      -- Settle local Y onto world-up; the previous 82 degree final pitch stood
+      -- the rifle on its stock and buried its lower half in the floor.
+      local angle = math.rad(68) * (1 - fall)
       local forward = baseForward * math.cos(angle) + vec3(0, 1, 0) * math.sin(angle)
       local up = vec3(0, 1, 0) * math.cos(angle) - baseForward * math.sin(angle)
-      local height = 0.72 * (1 - fall) * (1 - fall) + 0.08
+      local groundOffset = assetKey == 2 and 0.13
+        or assetKey == 3 and 0.065
+        or assetKey == 4 and 0.06
+        or (fpsVisual.modern and 0.17 or 0.275)
+      local height = 0.65 * (1 - fall) * (1 - fall) + groundOffset
       pickup.root:setPosition(pickup.position + vec3(0, height, 0) + ac.getSim().originShift)
       pickup.root:setOrientation(forward, up)
       pickup.root:setVisible(gameplayActive, false)
     end
   end
+end
+
+function fpsVisual.updatePickupInteraction(dt, held)
+  hud.pickupPromptText = ''
+  hud.pickupProgress = 0
+  local actor = actors[localSessionID]
+  if cursorUnlocked or actor == nil or bit.band(actor.flags, 2) ~= 0 then
+    fpsVisual.pickupInteractionTarget = nil
+    fpsVisual.pickupInteractionProgress = 0
+    return
+  end
+
+  local nearest, nearestDistance = nil, math.huge
+  local activeWeapon = fpsVisual.activeWeapon(actor)
+  for _, pickup in pairs(fpsVisual.pickups) do
+    local slotWeapon = pickup.weaponType <= 2 and (actor.mainWeapon or hud.loadout.mainWeapon)
+      or (actor.secondaryWeapon or hud.loadout.secondaryWeapon)
+    if pickup.droppedByActorID ~= localSessionID
+        and effectClock - pickup.bornAt >= 0.4
+        and pickup.weaponType ~= activeWeapon
+        and pickup.weaponType ~= slotWeapon then
+      local distance = (actor.target - pickup.position):lengthSquared()
+      if distance <= 1.35 * 1.35
+          and (distance < nearestDistance
+            or (distance == nearestDistance and (nearest == nil or pickup.id < nearest.id))) then
+        nearest, nearestDistance = pickup, distance
+      end
+    end
+  end
+  if nearest == nil then
+    fpsVisual.pickupInteractionTarget = nil
+    fpsVisual.pickupInteractionProgress = 0
+    return
+  end
+
+  if fpsVisual.pickupInteractionTarget ~= nearest.id then
+    fpsVisual.pickupInteractionTarget = nearest.id
+    fpsVisual.pickupInteractionProgress = 0
+  end
+  if held then
+    fpsVisual.pickupInteractionProgress = math.min(1,
+      (fpsVisual.pickupInteractionProgress or 0) + dt / 0.45)
+  else
+    fpsVisual.pickupInteractionProgress = 0
+  end
+
+  local current = nearest.weaponType <= 2 and (actor.mainWeapon or hud.loadout.mainWeapon)
+    or (actor.secondaryWeapon or hud.loadout.secondaryWeapon)
+  hud.pickupPromptText = string.format('HOLD %s / X TO SWAP %s FOR %s',
+    hud.bindingName(hud.bindings.interact), hud.itemNames[current] or 'WEAPON',
+    hud.itemNames[nearest.weaponType] or 'WEAPON')
+  hud.pickupProgress = fpsVisual.pickupInteractionProgress or 0
 end
 
 function fpsVisual.updateGrenadeModels()
@@ -4049,7 +4131,8 @@ function script.update(dt)
     local uiMouseAds = ac.getUI().isMouseRightKeyDown or ui.mouseDown(ui.MouseButton.Right)
     local gamepadAds = math.clamp(
       ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftTrigger), 0, 1)
-    fpsVisual.adsInput = not cursorUnlocked and not thirdPersonEnabled
+    local matchInputLocked = matchState ~= 1
+    fpsVisual.adsInput = not matchInputLocked and not cursorUnlocked and not thirdPersonEnabled
       and math.max((rawMouseAds or uiMouseAds) and 1 or 0, gamepadAds) or 0
     local aimSensitivity = hud.aimSensitivity(fpsVisual.adsInput)
     local rightX = -clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.RightThumbX))
@@ -4071,6 +4154,7 @@ function script.update(dt)
       selectInput(keyboardX, rawX, -clampStick(mapped.steer)),
       selectInput(keyboardY, rawY, 0))
     if move:lengthSquared() > 1 then move:normalize() end
+    if matchInputLocked then move:set(0, 0) end
     local gamepadFire = ac.getGamepadAxisValue(0, ac.GamepadAxis.RightTrigger) > 0.35
     -- Raw VK input remains available while mouse-delta capture owns the pointer. CSP UI
     -- state alone reports false in that state on some builds, which previously meant the
@@ -4078,7 +4162,7 @@ function script.update(dt)
     local rawMouseFire = ac.isKeyDown(ac.KeyIndex.LeftButton)
     local uiMouseFire = ac.getUI().isMouseLeftKeyDown or ui.mouseDown(ui.MouseButton.Left)
     local boundFire = hud.bindingDown('fire', rawMouseFire or uiMouseFire)
-    local fire = not cursorUnlocked and (boundFire or gamepadFire)
+    local fire = not matchInputLocked and not cursorUnlocked and (boundFire or gamepadFire)
     if fire and not fireCaptureLogged then
       fireCaptureLogged = true
       ac.log(string.format(
@@ -4086,8 +4170,9 @@ function script.update(dt)
         tostring(boundFire), tostring(rawMouseFire), tostring(uiMouseFire),
         tostring(gamepadFire)))
     end
-    sprint = hud.bindingDown('sprint', ac.isKeyDown(ac.KeyIndex.LeftShift))
+    sprint = not matchInputLocked and (hud.bindingDown('sprint', ac.isKeyDown(ac.KeyIndex.LeftShift))
       or ac.isGamepadButtonPressed(0, ac.GamepadButton.LeftThumb)
+    )
     if fpsVisual.adsInput > 0.05 then sprint = false end
     local sprintRequested = sprint and move:lengthSquared() > 0.0001
       and localStance == 0 and not predictedAirborne
@@ -4116,14 +4201,21 @@ function script.update(dt)
     end
     viewmodelMove:set(move)
     viewmodelSprint = sprint
-    local jump = hud.bindingDown('jump', ac.isKeyDown(ac.KeyIndex.Space))
-    local crouch = hud.bindingDown('crouch', ac.isKeyDown(ac.KeyIndex.C))
+    local jump = not matchInputLocked
+      and hud.bindingDown('jump', ac.isKeyDown(ac.KeyIndex.Space))
+    local crouch = not matchInputLocked
+      and hud.bindingDown('crouch', ac.isKeyDown(ac.KeyIndex.C))
     local crouchToggleMode = hud.controlSettings.crouchToggle == true
-    local reload = hud.bindingDown('reload', ac.isKeyDown(ac.KeyIndex.R))
+    local reload = not matchInputLocked
+      and hud.bindingDown('reload', ac.isKeyDown(ac.KeyIndex.R))
     local gamepadWeaponSwitch = ac.isGamepadButtonPressed(0, ac.GamepadButton.Y)
     local gamepadGrenade = ac.isGamepadButtonPressed(0, ac.GamepadButton.RightShoulder)
-    local grenade = hud.bindingDown('grenade', ac.isKeyDown(ac.KeyIndex.G))
-      or gamepadGrenade
+    local gamepadInteract = ac.isGamepadButtonPressed(0, ac.GamepadButton.X)
+    local interact = not matchInputLocked and not cursorUnlocked and (hud.bindingDown('interact',
+      ac.isKeyDown(ac.KeyIndex.F)) or gamepadInteract)
+    fpsVisual.updatePickupInteraction(dt, interact)
+    local grenade = not matchInputLocked and (hud.bindingDown('grenade',
+      ac.isKeyDown(ac.KeyIndex.G)) or gamepadGrenade)
     if grenade and not fpsVisual.grenadeInputHeld and not cursorUnlocked
         and localActor ~= nil and (localActor.lethalsRemaining or 0) > 0
         and fpsVisual.activeGrenadeType == nil then
@@ -4144,11 +4236,12 @@ function script.update(dt)
         .. tostring(fpsVisual.activeGrenadeType))
     end
     fpsVisual.grenadeInputHeld = grenade
-    if not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D1) then
+    if not matchInputLocked and not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D1) then
       hud.loadout.activeSlot = 0
-    elseif not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D2) then
+    elseif not matchInputLocked and not cursorUnlocked and ac.isKeyPressed(ac.KeyIndex.D2) then
       hud.loadout.activeSlot = 1
-    elseif not cursorUnlocked and gamepadWeaponSwitch and not weaponSwitchWasHeld then
+    elseif not matchInputLocked and not cursorUnlocked
+        and gamepadWeaponSwitch and not weaponSwitchWasHeld then
       hud.loadout.activeSlot = hud.loadout.activeSlot == 0 and 1 or 0
       ac.log('[ASRC FPS] Xbox Y switched weapon slot to '
         .. tostring(hud.loadout.activeSlot + 1))
@@ -4232,6 +4325,7 @@ function script.update(dt)
       + (fpsVisual.adsInput > 0.5 and 32 or 0)
       + (crouchToggleMode and 64 or 0)
       + (grenade and not cursorUnlocked and 128 or 0)
+      + (interact and 256 or 0)
 
     sendAccumulator = sendAccumulator + dt
     if sendAccumulator >= 0.05 then
@@ -4455,6 +4549,25 @@ function hud.drawAwardPopups(center)
     ui.textColored(popup.text, rgbm(1, 0.78, 0.22, alpha))
     ui.popFont()
   end
+end
+
+function hud.drawPickupPrompt(size, scale)
+  if cursorUnlocked or scoreboardHeld or hud.pickupPromptText == '' then return end
+  local width = math.min(720 * scale, size.x * 0.82)
+  local center = size * 0.5
+  local textMin = vec2(center.x - width * 0.5, center.y + 188 * scale)
+  local textMax = textMin + vec2(width, 34 * scale)
+  ui.dwriteDrawTextClipped(hud.pickupPromptText, 23 * scale,
+    textMin + vec2(1.5, 1.5) * scale, textMax + vec2(1.5, 1.5) * scale,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0, 0, 0, 0.92))
+  ui.dwriteDrawTextClipped(hud.pickupPromptText, 23 * scale, textMin, textMax,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.92, 0.97, 1, 1))
+  local barMin = vec2(center.x - 145 * scale, center.y + 228 * scale)
+  local barMax = vec2(center.x + 145 * scale, center.y + 233 * scale)
+  ui.drawRectFilled(barMin, barMax, rgbm(0.09, 0.13, 0.17, 1), 3 * scale)
+  ui.drawRectFilled(barMin, vec2(math.lerp(barMin.x, barMax.x,
+    math.clamp(hud.pickupProgress, 0, 1)), barMax.y),
+    rgbm(0.2, 0.72, 0.96, 1), 3 * scale)
 end
 
 function script.frameBegin(dt, gameDT)
@@ -4892,6 +5005,36 @@ function hud.drawLoadoutMenu(initialSelection)
   end
 end
 
+local function drawMatchStartOverlay(size, scale)
+  if matchState ~= 0 then return end
+  local center = size * 0.5
+  ui.drawRectFilled(vec2(), size, rgbm(0.005, 0.008, 0.012, 0.28))
+  local panelMin = center + vec2(-330, -170) * scale
+  local panelMax = center + vec2(330, 170) * scale
+  ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.035, 0.05, 0.88), 5 * scale)
+  ui.drawRectFilled(panelMin, vec2(panelMax.x, panelMin.y + 5 * scale),
+    rgbm(0.18, 0.62, 0.96, 1), 5 * scale)
+  ui.dwriteDrawTextClipped('GAME MODE', 22 * scale,
+    center + vec2(-330, -125) * scale, center + vec2(330, -95) * scale,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.45, 0.72, 0.95, 1))
+  ui.dwriteDrawTextClipped(fpsVisual.matchModeTitle(), 44 * scale,
+    center + vec2(-330, -88) * scale, center + vec2(330, -28) * scale,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm.colors.white)
+  if fpsVisual.startCountdownSeconds > 0 then
+    ui.dwriteDrawTextClipped('MATCH STARTS IN', 18 * scale,
+      center + vec2(-330, 0) * scale, center + vec2(330, 28) * scale,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.7, 0.76, 0.82, 1))
+    ui.dwriteDrawTextClipped(tostring(math.max(1,
+      math.ceil(fpsVisual.startCountdownSeconds))),
+      82 * scale, center + vec2(-330, 30) * scale, center + vec2(330, 140) * scale,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(1, 0.72, 0.18, 1))
+  else
+    ui.dwriteDrawTextClipped('WAITING FOR FIRST HUMAN PLAYER', 23 * scale,
+      center + vec2(-330, 12) * scale, center + vec2(330, 52) * scale,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.78, 0.82, 0.86, 1))
+  end
+end
+
 function script.drawUI()
   if hud.exclusiveSubscription ~= nil and not hud.drawingFallback then return end
   viewmodelDrawUICalls = viewmodelDrawUICalls + 1
@@ -4928,6 +5071,8 @@ function script.drawUI()
     ui.drawLine(center + vec2(-8, 8), center + vec2(-3, 3), c, 3)
   end
   hud.drawAwardPopups(center)
+  hud.drawPickupPrompt(size, hudScale)
+  drawMatchStartOverlay(size, hudScale)
   if outOfBoundsRemaining > 0 then
     local titleMin = vec2(0, center.y - 205 * hudScale)
     local titleMax = vec2(size.x, center.y - 125 * hudScale)
@@ -5011,6 +5156,7 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
     { label = 'RELOAD', action = 'reload' },
     { label = 'JUMP', action = 'jump' },
     { label = 'GRENADE', action = 'grenade' },
+    { label = 'INTERACT / PICK UP', action = 'interact' },
     { label = 'MELEE', action = 'melee', reserved = true },
   }
   local left = panelMin + vec2(42, 34) * scale
@@ -5040,12 +5186,12 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
   ui.textColored('Select an action, then press a keyboard or mouse button.',
     rgbm(0.55, 0.76, 0.9, 1))
   ui.setCursor(left + vec2(0, 68) * scale)
-  ui.textColored('XBOX:  Y  SWITCH WEAPON    •    RB  GRENADE',
+  ui.textColored('XBOX:  Y  SWITCH WEAPON    •    RB  GRENADE    •    X  PICK UP',
     rgbm(0.72, 0.8, 0.86, 1))
 
   for index = 1, #controls do
     local item = controls[index]
-    local rowY = 86 + (index - 1) * 47
+    local rowY = 82 + (index - 1) * 42
     ui.setCursor(left + vec2(0, rowY + 12) * scale)
     ui.text(item.label)
     if item.reserved then

@@ -85,12 +85,14 @@ public sealed class RaceControlWebServerTests
             Assert.That(index, Does.Contain("id=\"environment-panel\""));
             Assert.That(index, Does.Contain("id=\"selected-player-panel\""));
             Assert.That(index, Does.Contain("id=\"preset-match-type\""));
+            Assert.That(index, Does.Contain("id=\"preset-start-policy\""));
             Assert.That(index, Does.Contain("id=\"preset-mutators\""));
             Assert.That(index, Does.Contain("class=\"map-card panel collapsible\""));
             Assert.That(status.RootElement.GetProperty("localOwnerOnly").GetBoolean(), Is.True);
             Assert.That(status.RootElement.GetProperty("live").GetProperty("sequence").GetInt64(), Is.EqualTo(42));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("eventName").GetString(), Is.EqualTo("Test Deathmatch"));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsMatchType").GetString(), Is.EqualTo("TDM"));
+            Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsStartPolicy").GetString(), Is.EqualTo("Wait for first human"));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsMutators").GetString(), Is.EqualTo("Infinite sprint"));
             Assert.That(track.RootElement.GetProperty("track").GetString(), Is.EqualTo("fire_pit"));
             Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
@@ -155,7 +157,7 @@ public sealed class RaceControlWebServerTests
         public RaceControlWebControlState GetState() => new(
             "Test Deathmatch", "Test Server", "FPS", "MATCH", "fire_pit", "", "Blocks",
             "RUNNING", "Ready", false, false, true, true, true, true, true,
-            "TDM", "Infinite sprint");
+            "TDM", "Infinite sprint", "Wait for first human");
 
         public Task<RaceControlWebActionResult> ExecuteAsync(RaceControlWebAction action,
             CancellationToken cancellationToken = default)

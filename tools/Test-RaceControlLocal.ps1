@@ -95,6 +95,7 @@ if ($FpsGate) {
     $preset.Fps.CarrierCarId = $selectedCars[0].Id
     $preset.Fps.MatchType = [Enum]::Parse(
         [AssettoServer.RaceControl.Core.Models.FpsMatchType], $FpsMatchType)
+    $preset.Fps.StartWithBotsOnly = $true
 }
 
 $grid = [Collections.Generic.List[AssettoServer.RaceControl.Core.Models.GridSlotPreset]]::new()

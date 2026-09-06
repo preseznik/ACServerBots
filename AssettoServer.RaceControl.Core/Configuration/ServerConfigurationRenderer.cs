@@ -268,6 +268,7 @@ public sealed class ServerConfigurationRenderer
             Line($"  HeadshotsOnly: {Lower(fps.HeadshotsOnly)}");
             Line($"  InfiniteSprint: {Lower(fps.InfiniteSprint)}");
             Line($"  DisableHealthRegeneration: {Lower(fps.DisableHealthRegeneration)}");
+            Line($"  StartWithBotsOnly: {Lower(fps.StartWithBotsOnly)}");
             Line("  Bots:");
             Line($"    Difficulty: {fps.Bots.Difficulty.ToString("0.###", invariant)}");
             Line($"    DifficultyVariancePercent: {fps.Bots.DifficultyVariancePercent.ToString("0.###", invariant)}");

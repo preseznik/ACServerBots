@@ -107,6 +107,7 @@ public sealed class FpsBotScaleTests
             Enabled = true,
             TimeLimitMinutes = 10,
             KillLimit = 999,
+            StartWithBotsOnly = true,
             RespawnSeconds = 0.2f,
             SpawnProtectionSeconds = 0.1f,
             Bots = new FpsBotConfiguration

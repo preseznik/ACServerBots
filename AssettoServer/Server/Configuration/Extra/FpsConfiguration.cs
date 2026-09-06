@@ -16,6 +16,7 @@ public sealed class FpsConfiguration
     public bool HeadshotsOnly { get; init; }
     public bool InfiniteSprint { get; init; }
     public bool DisableHealthRegeneration { get; init; }
+    public bool StartWithBotsOnly { get; init; }
     public FpsBotConfiguration Bots { get; init; } = new();
     public FpsLoadoutConfiguration Loadouts { get; init; } = new();
     public FpsArenaConfiguration Arena { get; init; } = new();

@@ -105,13 +105,16 @@ preview520 does not provide a safe per-bone physics ragdoll path for dynamically
 Damage, collision, death, and respawn remain server-authoritative, and both Blocks and Modern use
 the same corpse lifetime.
 
-Every lethal hit creates a separate server-authoritative rifle pickup at the victim's support
-position. Its rigid 6,000-triangle model falls and settles independently of the corpse. After a 0.4
-second collection delay, the first living actor within 1.1 metres who carries the same rifle and has
-fewer than four reserve magazines receives exactly one reserve magazine. The defeated owner cannot
-collect their own drop. Uncollected pickups expire after 15 seconds, and the server caps the active
-set at 32. Spawn and removal use the reliable `ASRC_FpsPickup` event; late joiners receive the current
-set before play.
+Every lethal hit creates a separate server-authoritative weapon pickup at the victim's support
+position. Its rigid model falls and settles flat, using a model-specific ground offset so the weapon
+does not intersect the floor. After a 0.4-second collection delay, another living actor within 1.35
+metres automatically collects a drop matching the weapon actively in hand, adding one reserve
+magazine up to that weapon's configured cap without displaying an interaction prompt. A different
+weapon requires holding `F` or Xbox `X` for 0.45 seconds; it replaces the weapon in the same primary
+or secondary slot and retains the ammunition left in its dropped magazine. The other slot and lethal
+selection are unchanged. The defeated owner cannot collect their own drop.
+Uncollected pickups expire after 15 seconds, and the server caps the active set at 32. Spawn and
+removal use the reliable `ASRC_FpsPickup` event; late joiners receive the current set before play.
 
 The first-person source ranges are preserved:
 
@@ -130,7 +133,7 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
 downloads `/fps/assets/asrc-fps-modern-v9.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5, KSANIM, or team texture changes. Client pack version 41 also installs both themes under the project-owned
+embedded KN5, KSANIM, or team texture changes. Client pack version 44 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
 Team 1 uses the officer source's original uniform and gear textures. Team 2 replaces only those two

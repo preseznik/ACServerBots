@@ -17,6 +17,7 @@ public enum FpsInputButtons : ushort
     // authoritative stance state machine whether a short press should latch crouch.
     CrouchToggleMode = 64,
     ThrowLethal = 128,
+    Interact = 256,
 }
 
 [OnlineEvent(Key = "ASRC_FpsInput", Udp = true)]
@@ -182,6 +183,7 @@ public sealed class FpsMatchPacket : OnlineEvent<FpsMatchPacket>
 {
     [OnlineEventField(Name = "state")] public byte State;
     [OnlineEventField(Name = "remainingSeconds")] public float RemainingSeconds;
+    [OnlineEventField(Name = "startCountdownSeconds")] public float StartCountdownSeconds;
     [OnlineEventField(Name = "killLimit")] public ushort KillLimit;
     [OnlineEventField(Name = "maximumHealth")] public ushort MaximumHealth;
     [OnlineEventField(Name = "winnerID")] public byte WinnerId = byte.MaxValue;
@@ -242,6 +244,13 @@ public enum FpsPickupState : byte
     Removed = 2,
 }
 
+public enum FpsPickupResult : byte
+{
+    None,
+    MagazineAdded,
+    WeaponReplaced,
+}
+
 [OnlineEvent(Key = "ASRC_FpsPickup")]
 public sealed class FpsPickupPacket : OnlineEvent<FpsPickupPacket>
 {
@@ -249,6 +258,8 @@ public sealed class FpsPickupPacket : OnlineEvent<FpsPickupPacket>
     [OnlineEventField(Name = "state")] public FpsPickupState State;
     [OnlineEventField(Name = "weaponType")] public FpsWeaponType WeaponType;
     [OnlineEventField(Name = "collectorID")] public byte CollectorId = byte.MaxValue;
+    [OnlineEventField(Name = "droppedByActorID")] public byte DroppedByActorId = byte.MaxValue;
+    [OnlineEventField(Name = "result")] public FpsPickupResult Result;
     [OnlineEventField(Name = "position")] public Vector3 Position;
 }
 

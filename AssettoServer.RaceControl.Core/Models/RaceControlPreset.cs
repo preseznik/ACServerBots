@@ -162,6 +162,7 @@ public sealed class FpsOptions
     public bool HeadshotsOnly { get; set; }
     public bool InfiniteSprint { get; set; }
     public bool DisableHealthRegeneration { get; set; }
+    public bool StartWithBotsOnly { get; set; }
     public string CarrierCarId { get; set; } = "bmw_m3_e30";
     public double ArenaBoundsPaddingMeters { get; set; } = 45;
     public FpsBotOptions Bots { get; set; } = new();

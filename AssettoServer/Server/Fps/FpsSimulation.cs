@@ -62,11 +62,13 @@ internal sealed class FpsWeaponPickup
     public required byte DroppedByActorId { get; init; }
     public required FpsWeaponType WeaponType { get; init; }
     public required Vector3 Position { get; init; }
+    public required int AmmoInMagazine { get; init; }
     public float AgeSeconds { get; set; }
     public float RemainingSeconds { get; set; }
 }
 internal readonly record struct FpsPickupEvent(uint PickupId, FpsPickupState State,
-    FpsWeaponType WeaponType, Vector3 Position, byte CollectorId = byte.MaxValue);
+    FpsWeaponType WeaponType, Vector3 Position, byte DroppedByActorId,
+    byte CollectorId = byte.MaxValue, FpsPickupResult Result = FpsPickupResult.None);
 internal enum FpsShotImpact : byte
 {
     None,
@@ -148,6 +150,8 @@ internal sealed class FpsActorState
         ? Loadout.MainWeapon : Loadout.SecondaryWeapon;
     public float ReloadRemaining { get; set; }
     public bool ReloadHeld { get; set; }
+    public uint? PickupTargetId { get; set; }
+    public float PickupHoldSeconds { get; set; }
     public uint ShotSequence { get; set; }
     public uint LastInputSequence { get; set; }
     public bool HasInput { get; set; }
@@ -214,6 +218,7 @@ internal sealed class FpsActorState
 
 internal sealed class FpsSimulation
 {
+    internal const float MatchStartCountdownSeconds = 5;
     private const float WalkSpeed = 6;
     private const float SprintSpeed = 9;
     internal const float MaximumStamina = 100;
@@ -255,7 +260,8 @@ internal sealed class FpsSimulation
     internal const float RifleReloadSeconds = 1.8f;
     internal const float WeaponPickupLifetimeSeconds = 15;
     private const float WeaponPickupCollectionDelaySeconds = 0.4f;
-    private const float WeaponPickupRadius = 1.1f;
+    internal const float WeaponPickupHoldSeconds = 0.45f;
+    private const float WeaponPickupRadius = 1.35f;
     private const int MaximumWeaponPickups = 32;
     private const int MaximumBotPathPlansPerTick = 1;
     private const float BotPathTargetReplanDistance = 2.4f;
@@ -280,8 +286,9 @@ internal sealed class FpsSimulation
     private uint _nextPickupId = 1;
     private uint _nextGrenadeId = 1;
 
-    public FpsMatchState MatchState { get; private set; } = FpsMatchState.Running;
+    public FpsMatchState MatchState { get; private set; } = FpsMatchState.Waiting;
     public float RemainingSeconds { get; private set; }
+    public float StartCountdownRemaining { get; private set; }
     public float ElapsedSeconds { get; private set; }
     public byte WinnerId { get; private set; } = byte.MaxValue;
     public byte WinnerTeam { get; private set; }
@@ -340,6 +347,7 @@ internal sealed class FpsSimulation
             });
 
         foreach (var actor in _actors.Values.Where(actor => actor.Active)) Spawn(actor);
+        if (configuration.StartWithBotsOnly) MatchState = FpsMatchState.Running;
     }
 
     public bool ClaimHuman(byte actorId, bool requireLoadoutConfirmation = false,
@@ -355,7 +363,11 @@ internal sealed class FpsSimulation
         actor.Dead = false;
         actor.HasInput = false;
         _grenades.RemoveAll(grenade => grenade.OwnerId == actorId);
-        if (actor.Active) Spawn(actor);
+        if (actor.Active)
+        {
+            Spawn(actor);
+            BeginStartCountdown();
+        }
         return true;
     }
 
@@ -373,11 +385,18 @@ internal sealed class FpsSimulation
             actor.LoadoutConfirmed = true;
             actor.Active = true;
             Spawn(actor);
+            BeginStartCountdown();
             return FpsLoadoutResultCode.Applied;
         }
 
         actor.PendingLoadout = loadout;
         return FpsLoadoutResultCode.QueuedForRespawn;
+    }
+
+    private void BeginStartCountdown()
+    {
+        if (MatchState == FpsMatchState.Waiting && StartCountdownRemaining <= 0)
+            StartCountdownRemaining = MatchStartCountdownSeconds;
     }
 
     public void ReleaseHuman(byte actorId)
@@ -422,8 +441,28 @@ internal sealed class FpsSimulation
         _pathMillisecondsLastStep = 0;
         LastStepDiagnostics = default;
         _surface?.BeginTickDiagnostics();
-        if (MatchState != FpsMatchState.Running || !float.IsFinite(dt) || dt <= 0) return;
+        if (!float.IsFinite(dt) || dt <= 0) return;
         dt = Math.Min(dt, 0.05f);
+        if (MatchState == FpsMatchState.Waiting)
+        {
+            // The opening lock is authoritative. Humans can still turn their view, but
+            // movement, weapons, stance changes, bots and the match clock remain frozen.
+            foreach (var actor in _actors.Values.Where(actor => actor.Active && !actor.Dead
+                                                                 && actor.HumanControlled
+                                                                 && actor.HasInput))
+            {
+                actor.Yaw = NormalizeAngle(actor.Input.Yaw);
+                actor.Pitch = actor.Input.Pitch;
+            }
+
+            if (StartCountdownRemaining > 0)
+            {
+                StartCountdownRemaining = Math.Max(0, StartCountdownRemaining - dt);
+                if (StartCountdownRemaining <= 0) MatchState = FpsMatchState.Running;
+            }
+            return;
+        }
+        if (MatchState != FpsMatchState.Running) return;
         RemainingSeconds = Math.Max(0, RemainingSeconds - dt);
         ElapsedSeconds += dt;
         double humanMilliseconds = 0;
@@ -1720,7 +1759,7 @@ internal sealed class FpsSimulation
             var oldest = _pickups[0];
             _pickups.RemoveAt(0);
             _pickupEvents.Add(new FpsPickupEvent(oldest.Id, FpsPickupState.Removed,
-                oldest.WeaponType, oldest.Position));
+                oldest.WeaponType, oldest.Position, oldest.DroppedByActorId));
         }
 
         var pickup = new FpsWeaponPickup
@@ -1729,12 +1768,13 @@ internal sealed class FpsSimulation
             DroppedByActorId = actor.Id,
             WeaponType = actor.WeaponType,
             Position = actor.Position with { Y = actor.GroundY },
+            AmmoInMagazine = actor.AmmoInMagazine,
             RemainingSeconds = WeaponPickupLifetimeSeconds,
         };
         if (_nextPickupId == 0) _nextPickupId = 1;
         _pickups.Add(pickup);
         _pickupEvents.Add(new FpsPickupEvent(pickup.Id, FpsPickupState.Spawned,
-            pickup.WeaponType, pickup.Position));
+            pickup.WeaponType, pickup.Position, pickup.DroppedByActorId));
     }
 
     private void StepWeaponPickups(float dt)
@@ -1747,29 +1787,137 @@ internal sealed class FpsSimulation
             if (pickup.RemainingSeconds <= 0)
             {
                 RemovePickup(index, pickup);
+            }
+        }
+
+        foreach (var actor in _actors.Values.OrderBy(actor => actor.Id))
+        {
+            if (!actor.Active || actor.Dead)
+            {
+                ResetPickupInteraction(actor);
                 continue;
             }
-            if (pickup.AgeSeconds < WeaponPickupCollectionDelaySeconds) continue;
 
-            var collector = _actors.Values
-                .Where(actor => actor.Active && !actor.Dead
-                                && actor.Id != pickup.DroppedByActorId
-                                && HasWeapon(actor, pickup.WeaponType)
-                                && ReserveMagazines(actor, pickup.WeaponType)
-                                < FpsItems.Firearm(pickup.WeaponType).MaximumReserveMagazines
-                                && Vector3.DistanceSquared(actor.Position, pickup.Position)
-                                <= WeaponPickupRadius * WeaponPickupRadius)
-                .OrderBy(actor => actor.Id)
+            var automaticPickup = _pickups
+                .Where(candidate => candidate.AgeSeconds >= WeaponPickupCollectionDelaySeconds
+                                    && candidate.DroppedByActorId != actor.Id
+                                    && candidate.WeaponType == actor.WeaponType
+                                    && ReserveMagazines(actor, candidate.WeaponType)
+                                    < FpsItems.Firearm(candidate.WeaponType).MaximumReserveMagazines
+                                    && Vector3.DistanceSquared(actor.Position, candidate.Position)
+                                    <= WeaponPickupRadius * WeaponPickupRadius)
+                .OrderBy(candidate => Vector3.DistanceSquared(actor.Position, candidate.Position))
+                .ThenBy(candidate => candidate.Id)
                 .FirstOrDefault();
-            if (collector is null) continue;
+            if (automaticPickup is not null)
+            {
+                AddReserveMagazine(actor, automaticPickup.WeaponType);
+                int automaticIndex = _pickups.IndexOf(automaticPickup);
+                if (automaticIndex >= 0) RemovePickup(automaticIndex, automaticPickup,
+                    actor.Id, FpsPickupResult.MagazineAdded);
+                ResetPickupInteraction(actor);
+                continue;
+            }
 
-            AddReserveMagazine(collector, pickup.WeaponType);
-            RemovePickup(index, pickup, collector.Id);
+            bool interacting = actor.HumanControlled
+                               && actor.Input.Buttons.HasFlag(FpsInputButtons.Interact);
+            if (!interacting)
+            {
+                ResetPickupInteraction(actor);
+                continue;
+            }
+
+            var pickup = _pickups
+                .Where(candidate => candidate.AgeSeconds >= WeaponPickupCollectionDelaySeconds
+                                    && candidate.DroppedByActorId != actor.Id
+                                    && CanSwapWeapon(actor, candidate.WeaponType)
+                                    && Vector3.DistanceSquared(actor.Position, candidate.Position)
+                                    <= WeaponPickupRadius * WeaponPickupRadius)
+                .OrderBy(candidate => Vector3.DistanceSquared(actor.Position, candidate.Position))
+                .ThenBy(candidate => candidate.Id)
+                .FirstOrDefault();
+            if (pickup is null)
+            {
+                ResetPickupInteraction(actor);
+                continue;
+            }
+
+            if (actor.PickupTargetId != pickup.Id)
+            {
+                actor.PickupTargetId = pickup.Id;
+                actor.PickupHoldSeconds = 0;
+            }
+            actor.PickupHoldSeconds += dt;
+            if (actor.PickupHoldSeconds + 0.0001f < WeaponPickupHoldSeconds) continue;
+
+            var result = CollectWeapon(actor, pickup);
+            int pickupIndex = _pickups.IndexOf(pickup);
+            if (pickupIndex >= 0) RemovePickup(pickupIndex, pickup, actor.Id, result);
+            ResetPickupInteraction(actor);
         }
     }
 
-    private static bool HasWeapon(FpsActorState actor, FpsWeaponType weapon) =>
-        actor.Loadout.MainWeapon == weapon || actor.Loadout.SecondaryWeapon == weapon;
+    private static void ResetPickupInteraction(FpsActorState actor)
+    {
+        actor.PickupTargetId = null;
+        actor.PickupHoldSeconds = 0;
+    }
+
+    private static byte WeaponSlot(FpsWeaponType weapon) => weapon switch
+    {
+        FpsWeaponType.AssaultRifle or FpsWeaponType.CompactSmg => 0,
+        FpsWeaponType.DesertEagle or FpsWeaponType.Colt1911 => 1,
+        _ => throw new ArgumentOutOfRangeException(nameof(weapon), weapon,
+            "Unknown FPS weapon pickup"),
+    };
+
+    private static bool CanSwapWeapon(FpsActorState actor, FpsWeaponType weapon)
+    {
+        byte slot = WeaponSlot(weapon);
+        var equipped = slot == 0 ? actor.Loadout.MainWeapon : actor.Loadout.SecondaryWeapon;
+        return equipped != weapon;
+    }
+
+    private static FpsPickupResult CollectWeapon(FpsActorState actor,
+        FpsWeaponPickup pickup)
+    {
+        byte slot = WeaponSlot(pickup.WeaponType);
+        var equipped = slot == 0 ? actor.Loadout.MainWeapon : actor.Loadout.SecondaryWeapon;
+        if (equipped == pickup.WeaponType)
+        {
+            AddReserveMagazine(actor, pickup.WeaponType);
+            return FpsPickupResult.MagazineAdded;
+        }
+
+        SaveActiveWeaponState(actor);
+        var firearm = FpsItems.Firearm(pickup.WeaponType);
+        int ammo = Math.Clamp(pickup.AmmoInMagazine, 0, firearm.MagazineCapacity);
+        actor.Loadout = slot == 0
+            ? new FpsLoadout(pickup.WeaponType, actor.Loadout.Lethal,
+                actor.Loadout.SecondaryWeapon)
+            : new FpsLoadout(actor.Loadout.MainWeapon, actor.Loadout.Lethal,
+                pickup.WeaponType);
+        if (slot == 0)
+        {
+            actor.PrimaryAmmoInMagazine = ammo;
+            actor.PrimaryReserveMagazines = 0;
+        }
+        else
+        {
+            actor.SecondaryAmmoInMagazine = ammo;
+            actor.SecondaryReserveMagazines = 0;
+        }
+        if (actor.ActiveWeaponSlot == slot)
+        {
+            actor.AmmoInMagazine = ammo;
+            actor.ReserveMagazines = 0;
+            actor.ReloadRemaining = 0;
+            actor.FireCooldown = Math.Max(actor.FireCooldown, 0.35f);
+            actor.ActionLockRemaining = Math.Max(actor.ActionLockRemaining, 0.35f);
+            actor.FireHeld = true;
+        }
+        return FpsPickupResult.WeaponReplaced;
+    }
 
     private static int ReserveMagazines(FpsActorState actor, FpsWeaponType weapon)
     {
@@ -1780,27 +1928,30 @@ internal sealed class FpsSimulation
 
     private static void AddReserveMagazine(FpsActorState actor, FpsWeaponType weapon)
     {
+        int maximum = FpsItems.Firearm(weapon).MaximumReserveMagazines;
         if (actor.WeaponType == weapon)
         {
-            actor.ReserveMagazines++;
+            actor.ReserveMagazines = Math.Min(maximum, actor.ReserveMagazines + 1);
             SaveActiveWeaponState(actor);
         }
         else if (actor.Loadout.MainWeapon == weapon)
         {
-            actor.PrimaryReserveMagazines++;
+            actor.PrimaryReserveMagazines = Math.Min(maximum,
+                actor.PrimaryReserveMagazines + 1);
         }
         else
         {
-            actor.SecondaryReserveMagazines++;
+            actor.SecondaryReserveMagazines = Math.Min(maximum,
+                actor.SecondaryReserveMagazines + 1);
         }
     }
 
     private void RemovePickup(int index, FpsWeaponPickup pickup,
-        byte collectorId = byte.MaxValue)
+        byte collectorId = byte.MaxValue, FpsPickupResult result = FpsPickupResult.None)
     {
         _pickups.RemoveAt(index);
         _pickupEvents.Add(new FpsPickupEvent(pickup.Id, FpsPickupState.Removed,
-            pickup.WeaponType, pickup.Position, collectorId));
+            pickup.WeaponType, pickup.Position, pickup.DroppedByActorId, collectorId, result));
     }
 
     private bool TryPrimeLethal(FpsActorState actor)
@@ -2183,6 +2334,8 @@ internal sealed class FpsSimulation
         actor.StaminaRecoveryDelay = 0;
         actor.ReloadRemaining = 0;
         actor.ReloadHeld = false;
+        actor.PickupTargetId = null;
+        actor.PickupHoldSeconds = 0;
         actor.DamageContributors.Clear();
         actor.SpawnCount++;
         actor.BotMode = FpsBotMode.Acquire;

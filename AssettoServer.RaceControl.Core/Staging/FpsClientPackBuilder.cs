@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 41;
-    public const int BridgeProtocol = 8;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v41.zip";
+    public const int ClientPackVersion = 44;
+    public const int BridgeProtocol = 11;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v44.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -175,7 +175,7 @@ public static class FpsClientPackBuilder
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v8",
+                    bridge = "asrc.fps.hud.v11",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),
@@ -207,7 +207,7 @@ public static class FpsClientPackBuilder
                 operator UV skin under
                 content/objects3D/asrc_fps, plus the 54-clip FPS sound catalog
                 under extension/audio/asrc_fps. It also installs the local ASRC FPS HUD and audio
-                player under apps/lua/asrc_fps_hud. Client pack v41 also contains the animated Modern
+                player under apps/lua/asrc_fps_hud. Client pack v44 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.

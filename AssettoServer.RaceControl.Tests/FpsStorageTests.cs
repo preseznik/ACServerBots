@@ -55,6 +55,7 @@ public sealed class FpsStorageTests
             Assert.That(loaded.Fps.HeadshotsOnly, Is.False);
             Assert.That(loaded.Fps.InfiniteSprint, Is.False);
             Assert.That(loaded.Fps.DisableHealthRegeneration, Is.False);
+            Assert.That(loaded.Fps.StartWithBotsOnly, Is.False);
             Assert.That(loaded.Grid, Is.All.Matches<GridSlotPreset>(slot =>
                 slot.FpsTeam == FpsTeamAssignment.Auto));
         });

@@ -72,6 +72,10 @@ public class OnlineEventGeneratorTests
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsPickup").Structure,
                 Does.Contain("uint32_t pickupID"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsPickup").Structure,
+                Does.Contain("uint8_t droppedByActorID"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsPickup").Structure,
+                Does.Contain("uint8_t result"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsPickup").Structure,
                 Does.Contain("vec3 position"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsClientDiagnostic").Udp,
                 Is.False);
@@ -101,6 +105,8 @@ public class OnlineEventGeneratorTests
                 Does.Contain($"float reloadRemaining[{FpsSnapshotPacket.Capacity}]"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsMatch").Structure,
                 Does.Contain("uint16_t maximumHealth"));
+            Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsMatch").Structure,
+                Does.Contain("float startCountdownSeconds"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsShot").Structure,
                 Does.Contain("uint8_t impact"));
             Assert.That(definitions.Single(definition => definition.Key == "ASRC_FpsShot").Structure,

@@ -5,12 +5,12 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 8
+local bridgeProtocol = 11
 local actorCapacity = 32
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v8'),
+  ac.StructItem.key('asrc.fps.hud.v11'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -35,6 +35,7 @@ local bridge = ac.connect({
   viewYaw = ac.StructItem.float(),
   matchState = ac.StructItem.byte(),
   remainingSeconds = ac.StructItem.float(),
+  startCountdownSeconds = ac.StructItem.float(),
   killLimit = ac.StructItem.uint16(),
   winnerID = ac.StructItem.byte(),
   matchType = ac.StructItem.byte(),
@@ -50,6 +51,8 @@ local bridge = ac.connect({
   adsActive = ac.StructItem.byte(),
   linkState = ac.StructItem.byte(),
   clientError = ac.StructItem.string(128),
+  pickupPrompt = ac.StructItem.string(72),
+  pickupProgress = ac.StructItem.float(),
   actorCount = ac.StructItem.byte(),
   actorIDs = ac.StructItem.array(ac.StructItem.byte(), actorCapacity),
   actorFlags = ac.StructItem.array(ac.StructItem.byte(), actorCapacity),
@@ -89,6 +92,12 @@ local function isTeamMatch()
 end
 local function matchLabel()
   return matchTypeLabels[bridge.matchType] or 'FFA'
+end
+local function matchModeTitle()
+  if bridge.matchType == 1 then return 'TEAM DEATH MATCH' end
+  if bridge.matchType == 2 then return 'HARDCORE FREE FOR ALL' end
+  if bridge.matchType == 3 then return 'HARDCORE TEAM DEATH MATCH' end
+  return 'FREE FOR ALL'
 end
 local function matchTargetText()
   if isTeamMatch() then
@@ -657,6 +666,27 @@ local function drawCompletion(size, scale)
   end
 end
 
+local function drawPickupPrompt(size, scale)
+  if bridge.cursorUnlocked ~= 0 or bridge.scoreboardHeld ~= 0 then return end
+  local text = bridgeString(bridge.pickupPrompt)
+  if text == '' then return end
+  local width = math.min(720 * scale, size.x * 0.82)
+  local center = size * 0.5
+  local textMin = vec2(center.x - width * 0.5, center.y + 188 * scale)
+  local textMax = textMin + vec2(width, 34 * scale)
+  ui.dwriteDrawTextClipped(text, 23 * scale,
+    textMin + vec2(1.5, 1.5) * scale, textMax + vec2(1.5, 1.5) * scale,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0, 0, 0, 0.92))
+  ui.dwriteDrawTextClipped(text, 23 * scale, textMin, textMax,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.92, 0.97, 1, 1))
+  local barMin = vec2(center.x - 145 * scale, center.y + 228 * scale)
+  local barMax = vec2(center.x + 145 * scale, center.y + 233 * scale)
+  ui.drawRectFilled(barMin, barMax, rgbm(0.09, 0.13, 0.17, 1), 3 * scale)
+  ui.drawRectFilled(barMin, vec2(math.lerp(barMin.x, barMax.x,
+    math.clamp(bridge.pickupProgress, 0, 1)), barMax.y),
+    rgbm(0.2, 0.72, 0.96, 1), 3 * scale)
+end
+
 local function drawBoundaryWarning(size, scale)
   if bridge.outOfBoundsRemaining <= 0 then return end
   local center = size * 0.5
@@ -678,6 +708,36 @@ local function drawBoundaryWarning(size, scale)
     ui.Alignment.Center, ui.Alignment.Center, false, rgbm(1, 0.24, 0.14, 1))
 end
 
+local function drawMatchStart(size, scale)
+  if bridge.matchState ~= 0 then return end
+  local center = size * 0.5
+  ui.drawRectFilled(vec2(), size, rgbm(0.005, 0.008, 0.012, 0.28))
+  local p1 = center + vec2(-330, -170) * scale
+  local p2 = center + vec2(330, 170) * scale
+  panel(p1, p2, scale, 0.94)
+  ui.drawRectFilled(p1, vec2(p2.x, p1.y + 5 * scale),
+    rgbm(0.18, 0.62, 0.96, 1), 5 * scale)
+  ui.dwriteDrawTextClipped('GAME MODE', 22 * scale,
+    center + vec2(-330, -125) * scale, center + vec2(330, -95) * scale,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.45, 0.72, 0.95, 1))
+  ui.dwriteDrawTextClipped(matchModeTitle(), 44 * scale,
+    center + vec2(-330, -88) * scale, center + vec2(330, -28) * scale,
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm.colors.white)
+  if bridge.startCountdownSeconds > 0 then
+    ui.dwriteDrawTextClipped('MATCH STARTS IN', 18 * scale,
+      center + vec2(-330, 0) * scale, center + vec2(330, 28) * scale,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.7, 0.76, 0.82, 1))
+    ui.dwriteDrawTextClipped(tostring(math.max(1,
+      math.ceil(bridge.startCountdownSeconds))), 82 * scale,
+      center + vec2(-330, 30) * scale, center + vec2(330, 140) * scale,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(1, 0.72, 0.18, 1))
+  else
+    ui.dwriteDrawTextClipped('WAITING FOR FIRST HUMAN PLAYER', 23 * scale,
+      center + vec2(-330, 12) * scale, center + vec2(330, 52) * scale,
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.78, 0.82, 0.86, 1))
+  end
+end
+
 local function drawHud()
   local size = ui.windowSize()
   local scale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.65)
@@ -693,7 +753,9 @@ local function drawHud()
   drawMatchAndFeed(size, scale, margin)
   drawAim(size, scale)
   drawAwards(size, scale)
+  drawPickupPrompt(size, scale)
   drawBoundaryWarning(size, scale)
+  drawMatchStart(size, scale)
   drawScoreboard(size, scale)
   drawCompletion(size, scale)
   local clientError = bridgeString(bridge.clientError)

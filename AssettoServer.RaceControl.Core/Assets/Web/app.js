@@ -317,6 +317,7 @@ function renderSecondaryViews(launcher) {
   setText("preset-track", displayTrack(launcher.track, launcher.layout));
   setText("preset-theme", launcher.mode === "FPS" ? launcher.fpsTheme : "—");
   setText("preset-match-type", launcher.mode === "FPS" ? launcher.fpsMatchType : "—");
+  setText("preset-start-policy", launcher.mode === "FPS" ? launcher.fpsStartPolicy : "—");
   setText("preset-mutators", launcher.mode === "FPS" ? launcher.fpsMutators : "—");
   setText("settings-address", status.webAddress);
 }

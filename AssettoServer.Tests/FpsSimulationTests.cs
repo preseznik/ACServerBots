@@ -11,6 +11,86 @@ namespace AssettoServer.Tests;
 public sealed class FpsSimulationTests
 {
     [Test]
+    public void MatchWaitsForFirstHumanThenLocksActionsDuringOpeningCountdown()
+    {
+        var simulation = new FpsSimulation(Configuration(startWithBotsOnly: false),
+        [
+            new(0, "Player", FpsSlotRole.Human),
+            new(1, "Bot", FpsSlotRole.Bot),
+        ]);
+        var bot = simulation.Actors.Single(actor => actor.Id == 1);
+        var botStart = bot.Position;
+
+        for (int tick = 0; tick < 20; tick++) simulation.Step(0.05f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Waiting));
+            Assert.That(simulation.StartCountdownRemaining, Is.Zero);
+            Assert.That(simulation.RemainingSeconds, Is.EqualTo(600));
+            Assert.That(simulation.ElapsedSeconds, Is.Zero);
+            Assert.That(bot.Position, Is.EqualTo(botStart));
+        });
+
+        Assert.That(simulation.ClaimHuman(0), Is.True);
+        var player = simulation.Actors.Single(actor => actor.Id == 0);
+        var playerStart = player.Position;
+        int startingAmmo = player.AmmoInMagazine;
+        Assert.That(simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.UnitY,
+            0.75f, -0.25f, FpsInputButtons.Fire | FpsInputButtons.Sprint
+            | FpsInputButtons.Crouch)), Is.True);
+        simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Waiting));
+            Assert.That(simulation.StartCountdownRemaining,
+                Is.EqualTo(FpsSimulation.MatchStartCountdownSeconds - 0.05f).Within(0.001f));
+            Assert.That(player.Position, Is.EqualTo(playerStart));
+            Assert.That(player.AmmoInMagazine, Is.EqualTo(startingAmmo));
+            Assert.That(player.Stance, Is.EqualTo(FpsStance.Standing));
+            Assert.That(player.Yaw, Is.EqualTo(0.75f).Within(0.001f));
+            Assert.That(player.Pitch, Is.EqualTo(-0.25f).Within(0.001f));
+            Assert.That(bot.Position, Is.EqualTo(botStart));
+            Assert.That(simulation.RemainingSeconds, Is.EqualTo(600));
+            Assert.That(simulation.ElapsedSeconds, Is.Zero);
+        });
+
+        for (int tick = 0; tick < 110 && simulation.MatchState == FpsMatchState.Waiting;
+             tick++)
+            simulation.Step(0.05f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Running));
+            Assert.That(simulation.StartCountdownRemaining, Is.Zero);
+            Assert.That(simulation.RemainingSeconds, Is.EqualTo(600));
+        });
+
+        Assert.That(simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.UnitY,
+            0.75f, -0.25f, FpsInputButtons.Fire)), Is.True);
+        simulation.Step(0.05f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(player.Position, Is.Not.EqualTo(playerStart));
+            Assert.That(player.AmmoInMagazine, Is.EqualTo(startingAmmo - 1));
+            Assert.That(simulation.RemainingSeconds, Is.LessThan(600));
+            Assert.That(simulation.ElapsedSeconds, Is.GreaterThan(0));
+        });
+    }
+
+    [Test]
+    public void BotsOnlyOptInStartsImmediately()
+    {
+        var simulation = new FpsSimulation(Configuration(startWithBotsOnly: true),
+            [new(0, "Bot", FpsSlotRole.Bot)]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Running));
+            Assert.That(simulation.StartCountdownRemaining, Is.Zero);
+        });
+    }
+
+    [Test]
     public void TeamDeathmatchRespectsExplicitTeamsAndAutoBalancesRemainingSlots()
     {
         var simulation = new FpsSimulation(Configuration(matchType: FpsMatchType.TeamDeathmatch),
@@ -330,13 +410,14 @@ public sealed class FpsSimulationTests
             Assert.That(actors[1].Dead, Is.True);
             Assert.That(pickup.WeaponType, Is.EqualTo(FpsWeaponType.AssaultRifle));
             Assert.That(pickup.DroppedByActorId, Is.EqualTo(1));
+            Assert.That(pickup.AmmoInMagazine, Is.EqualTo(40));
             Assert.That(pickup.Position, Is.EqualTo(new Vector3(0, 0, 5)));
             Assert.That(simulation.PickupEvents.Single().State,
                 Is.EqualTo(FpsPickupState.Spawned));
         });
 
         actors[2].Position = pickup.Position;
-        for (int tick = 0; tick < 8 && simulation.Pickups.Count > 0; tick++)
+        for (int tick = 0; tick < 10 && simulation.Pickups.Count > 0; tick++)
             simulation.Step(0.05f);
 
         Assert.Multiple(() =>
@@ -346,6 +427,8 @@ public sealed class FpsSimulationTests
             Assert.That(simulation.PickupEvents.Single().State,
                 Is.EqualTo(FpsPickupState.Removed));
             Assert.That(simulation.PickupEvents.Single().CollectorId, Is.EqualTo(2));
+            Assert.That(simulation.PickupEvents.Single().Result,
+                Is.EqualTo(FpsPickupResult.MagazineAdded));
         });
     }
 
@@ -357,7 +440,7 @@ public sealed class FpsSimulationTests
     }
 
     [Test]
-    public void PickupRefillsMatchingInactiveLoadoutSlotWithoutReplacingWeapons()
+    public void PickupWaitsUntilMatchingWeaponIsActiveThenRefillsWithoutReplacingWeapons()
     {
         var simulation = new FpsSimulation(Configuration(health: 30),
         [
@@ -383,21 +466,78 @@ public sealed class FpsSimulationTests
         simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
             FpsInputButtons.Fire));
         simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
 
         var pickup = simulation.Pickups.Single();
         Assert.That(pickup.WeaponType, Is.EqualTo(FpsWeaponType.DesertEagle));
-        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
-            FpsInputButtons.None));
         actors[2].Position = pickup.Position;
-        for (int tick = 0; tick < 8 && simulation.Pickups.Count > 0; tick++)
+        simulation.ApplyInput(2, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Interact));
+        for (int tick = 0; tick < 12; tick++) simulation.Step(0.05f);
+        Assert.That(simulation.Pickups, Has.Count.EqualTo(1),
+            "A matching weapon in the inactive slot must not auto-collect or accept interaction");
+        simulation.ApplyInput(2, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None, 1));
+        for (int tick = 0; tick < 10 && simulation.Pickups.Count > 0; tick++)
             simulation.Step(0.05f);
 
         Assert.Multiple(() =>
         {
-            Assert.That(actors[2].ActiveWeaponSlot, Is.Zero);
-            Assert.That(actors[2].ReserveMagazines, Is.EqualTo(4));
+            Assert.That(actors[2].ActiveWeaponSlot, Is.EqualTo(1));
+            Assert.That(actors[2].ReserveMagazines, Is.EqualTo(3));
+            Assert.That(actors[2].PrimaryReserveMagazines, Is.EqualTo(4));
             Assert.That(actors[2].SecondaryReserveMagazines, Is.EqualTo(3));
             Assert.That(actors[2].Loadout, Is.EqualTo(pistolLoadout));
+        });
+    }
+
+    [Test]
+    public void HeldPickupReplacesWeaponInMatchingSlotAndPreservesOtherSlot()
+    {
+        var simulation = new FpsSimulation(Configuration(health: 30),
+        [
+            new(0, "Shooter", FpsSlotRole.Human),
+            new(1, "Smg Victim", FpsSlotRole.Human),
+            new(2, "Collector", FpsSlotRole.Human),
+        ]);
+        foreach (byte id in new byte[] { 0, 1, 2 }) simulation.ClaimHuman(id, true);
+        var rifleLoadout = new FpsLoadout(FpsWeaponType.AssaultRifle,
+            FpsLethalType.FragGrenade, FpsWeaponType.Colt1911);
+        var smgLoadout = new FpsLoadout(FpsWeaponType.CompactSmg,
+            FpsLethalType.StickyGrenade, FpsWeaponType.DesertEagle);
+        simulation.SelectLoadout(0, rifleLoadout);
+        simulation.SelectLoadout(1, smgLoadout);
+        simulation.SelectLoadout(2, rifleLoadout);
+        var actors = simulation.Actors.OrderBy(actor => actor.Id).ToArray();
+        actors[0].Position = Vector3.Zero;
+        actors[1].Position = new Vector3(0, 0, 5);
+        actors[1].GroundY = 0;
+        actors[2].Position = new Vector3(5, 0, 0);
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+
+        var pickup = simulation.Pickups.Single();
+        Assert.That(pickup.WeaponType, Is.EqualTo(FpsWeaponType.CompactSmg));
+        actors[2].Position = pickup.Position;
+        for (int tick = 0; tick < 12; tick++) simulation.Step(0.05f);
+        simulation.ApplyInput(2, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Interact));
+        for (int tick = 0; tick < 10 && simulation.Pickups.Count > 0; tick++)
+            simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.Pickups, Is.Empty);
+            Assert.That(actors[2].Loadout.MainWeapon, Is.EqualTo(FpsWeaponType.CompactSmg));
+            Assert.That(actors[2].Loadout.SecondaryWeapon, Is.EqualTo(FpsWeaponType.Colt1911));
+            Assert.That(actors[2].AmmoInMagazine, Is.EqualTo(30));
+            Assert.That(actors[2].ReserveMagazines, Is.Zero);
+            Assert.That(simulation.PickupEvents.Single().Result,
+                Is.EqualTo(FpsPickupResult.WeaponReplaced));
         });
     }
 
@@ -822,6 +962,7 @@ public sealed class FpsSimulationTests
             Enabled = true,
             TimeLimitMinutes = 10,
             KillLimit = 1,
+            StartWithBotsOnly = true,
             RespawnSeconds = 0.2f,
             SpawnProtectionSeconds = 0,
             Bots = new FpsBotConfiguration { Difficulty = 1, Aggression = 0.7f, Health = 100 },
@@ -3263,7 +3404,7 @@ public sealed class FpsSimulationTests
         float difficultyVariance = 0, float aggression = 0, float aggressionVariance = 0,
         int health = 100, FpsMatchType matchType = FpsMatchType.Deathmatch,
         bool headshotsOnly = false, bool infiniteSprint = false,
-        bool disableHealthRegeneration = false) => new()
+        bool disableHealthRegeneration = false, bool startWithBotsOnly = true) => new()
     {
         Enabled = true,
         TimeLimitMinutes = 10,
@@ -3272,6 +3413,7 @@ public sealed class FpsSimulationTests
         HeadshotsOnly = headshotsOnly,
         InfiniteSprint = infiniteSprint,
         DisableHealthRegeneration = disableHealthRegeneration,
+        StartWithBotsOnly = startWithBotsOnly,
         RespawnSeconds = 0.2f,
         SpawnProtectionSeconds = 0,
         Bots = new FpsBotConfiguration
@@ -3308,6 +3450,7 @@ internal static class FpsConfigurationTestExtensions
         HeadshotsOnly = source.HeadshotsOnly,
         InfiniteSprint = source.InfiniteSprint,
         DisableHealthRegeneration = source.DisableHealthRegeneration,
+        StartWithBotsOnly = source.StartWithBotsOnly,
         Bots = source.Bots,
         Arena = source.Arena,
     };

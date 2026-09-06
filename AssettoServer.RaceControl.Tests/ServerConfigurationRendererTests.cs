@@ -200,6 +200,7 @@ public sealed class ServerConfigurationRendererTests
         preset.Fps.HeadshotsOnly = true;
         preset.Fps.InfiniteSprint = true;
         preset.Fps.DisableHealthRegeneration = true;
+        preset.Fps.StartWithBotsOnly = true;
         preset.Fps.Arena = Arena();
         preset.Grid[0].Mode = SlotMode.Auto;
         preset.Grid[1].Mode = SlotMode.Fixed;
@@ -233,6 +234,8 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  InfiniteSprint: true"));
             Assert.That(rendered.ExtraConfiguration,
                 Does.Contain("  DisableHealthRegeneration: true"));
+            Assert.That(rendered.ExtraConfiguration,
+                Does.Contain("  StartWithBotsOnly: true"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  KillLimit: 20"));
             Assert.That(rendered.ExtraConfiguration,
                 Does.Contain("    AllowedMainWeapons: [AssaultRifle, CompactSmg]"));
