@@ -251,10 +251,12 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(FpsClientPackAssets.HudScriptPath,
                 Is.EqualTo("apps/lua/asrc_fps_hud/asrc_fps_hud.lua"));
             Assert.That(manifest, Does.Contain("NAME = ASRC FPS HUD"));
-            Assert.That(manifest, Does.Contain("VERSION = 1.3.0"));
+            Assert.That(manifest, Does.Contain("VERSION = 1.6.0"));
             Assert.That(manifest, Does.Contain("LAZY = NONE"));
             Assert.That(manifest, Does.Contain("IN_GAME = appOverlay"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v6')"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v8')"));
+            Assert.That(script, Does.Contain("actorTeams = ac.StructItem.array"));
+            Assert.That(script, Does.Contain("matchType = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("outOfBoundsRemaining = ac.StructItem.float()"));
             Assert.That(script, Does.Contain("RETURN TO PLAYABLE AREA"));
             Assert.That(script, Does.Contain("ui.drawRectFilled(vec2(), size, rgbm(0.12, 0, 0, 0.34))"));
@@ -273,6 +275,8 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(script, Does.Contain("age >= -0.1 and age <= 0.5"));
             Assert.That(script, Does.Contain("COMBAT RADAR  40 m"));
             Assert.That(script, Does.Contain("bridge.radarFlags[index]"));
+            Assert.That(script, Does.Contain("friendly and rgbm(0.18, 0.58, 1, 1)"));
+            Assert.That(script, Does.Contain("'TEAM DEATHMATCH' or 'FREE FOR ALL'"));
             Assert.That(script, Does.Contain("pcall(ffi.string, value)"));
             Assert.That(script, Does.Contain("ac.onSharedEvent('asrc.fps.audio.v1'"));
             Assert.That(script, Does.Contain("io.fileExists(filePath)"));
@@ -299,7 +303,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV38ContainsAudioAnimatedWeaponsGrenadesAndBothThemes()
+    public async Task ClientPackV41ContainsTeamModesMutatorsAndBothThemes()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -309,10 +313,10 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(38));
-            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(6));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(41));
+            Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(8));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v38.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v41.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
@@ -351,6 +355,10 @@ public sealed class FpsClientPackAssetsTests
                 $"{FpsClientPackAssets.ModernAssetDirectory}asrc_modern_carbine_viewmodel.kn5"));
             Assert.That(entries.Keys, Does.Contain(
                 $"{FpsClientPackAssets.ModernAssetDirectory}asrc_modern_carbine_pickup.kn5"));
+            Assert.That(entries.Keys, Does.Contain(
+                $"{FpsClientPackAssets.ModernAssetDirectory}asrc_modern_team2_uniform.png"));
+            Assert.That(entries.Keys, Does.Contain(
+                $"{FpsClientPackAssets.ModernAssetDirectory}asrc_modern_team2_gear.png"));
             Assert.That(entries.Keys.Count(path => path.StartsWith(
                 FpsClientPackAssets.ModernAssetDirectory, StringComparison.Ordinal)),
                 Is.GreaterThanOrEqualTo(30));
@@ -377,8 +385,8 @@ public sealed class FpsClientPackAssetsTests
             .Single(item => item.GetProperty("id").GetInt32() == 17);
         Assert.Multiple(() =>
         {
-            Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(2));
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(38));
+            Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(3));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(41));
             Assert.That(root.GetProperty("loadoutItems").GetArrayLength(), Is.EqualTo(5));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),
@@ -403,8 +411,8 @@ public sealed class FpsClientPackAssetsTests
                 Assert.That(clip.GetProperty("sha256").GetString(),
                     Is.EqualTo(FpsClientPackAssets.Sha256(ReadEntry(entries[path]))));
             }
-            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v6"));
-            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(6));
+            Assert.That(hud.GetProperty("bridge").GetString(), Is.EqualTo("asrc.fps.hud.v8"));
+            Assert.That(hud.GetProperty("bridgeProtocol").GetInt32(), Is.EqualTo(8));
             Assert.That(hud.GetProperty("onlineFallback").GetBoolean(), Is.True);
             Assert.That(hud.GetProperty("manifestSha256").GetString(),
                 Is.EqualTo(FpsClientPackAssets.Sha256(
@@ -518,6 +526,10 @@ public sealed class FpsClientPackAssetsTests
                 "asrc_modern_carbine_viewmodel.kn5"));
             Assert.That(assets.Select(asset => asset.Path), Has.Some.EndsWith(
                 "asrc_modern_carbine_pickup.kn5"));
+            Assert.That(assets.Select(asset => asset.Path), Has.Some.EndsWith(
+                "asrc_modern_team2_uniform.png"));
+            Assert.That(assets.Select(asset => asset.Path), Has.Some.EndsWith(
+                "asrc_modern_team2_gear.png"));
             Assert.That(assets.Count(asset => asset.Path.EndsWith(".ksanim",
                 StringComparison.OrdinalIgnoreCase)), Is.EqualTo(26));
             foreach ((string path, byte[] data) in assets)

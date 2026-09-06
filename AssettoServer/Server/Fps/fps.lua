@@ -17,7 +17,11 @@ local fpsVisual = {
   thirdPersonDistanceMin = 1.25,
   thirdPersonDistanceMax = 7.0,
   thirdPersonZoomStep = 0.4,
-  modernAssetRevision = 8,
+  modernAssetRevision = 9,
+  team2UniformFileName = 'asrc_modern_team2_uniform.png',
+  team2GearFileName = 'asrc_modern_team2_gear.png',
+  team2UniformPath = nil,
+  team2GearPath = nil,
   -- KSANIM conversion maps the officer's local vertical root translation to Z.
   -- CSP preview520 then raises the crouch/prone hips track by 50 cm relative to
   -- standing. Ground the complete animated child in scene space, whose Y axis is
@@ -149,6 +153,26 @@ local remainingSeconds = 0
 local killLimit = 20
 local matchState = 0
 local winnerID = 255
+local matchType = 0
+local winnerTeam = 0
+local team1Kills = 0
+local team2Kills = 0
+local teams = {}
+local matchTypeLabels = {
+  [0] = 'FFA', [1] = 'TDM', [2] = 'HARDCORE FFA', [3] = 'HARDCORE TDM',
+}
+local function isTeamMatch()
+  return matchType == 1 or matchType == 3
+end
+local function matchLabel()
+  return matchTypeLabels[matchType] or 'FFA'
+end
+local function matchTargetText()
+  if isTeamMatch() then
+    return string.format('T1 %d  -  %d T2   TARGET %d', team1Kills, team2Kills, killLimit)
+  end
+  return string.format('TARGET %d', killLimit)
+end
 local outOfBoundsRemaining = 0
 local killFeed = {}
 local effectClock = 0
@@ -282,7 +306,7 @@ if fpsVisual.requested == 'Modern' then
   fpsVisual.active = 'Modern'
   -- CSP caches remote asset archives by URL. Every regenerated KN5/KSANIM payload
   -- must advance this revision or clients can keep rendering the previous poses.
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v8.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v9.zip'
   rifleViewmodelFileName = 'asrc_modern_carbine_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_modern_operator_carbine.kn5'
   fpsVisual.pickupFileName = 'asrc_modern_carbine_pickup.kn5'
@@ -640,7 +664,7 @@ local requestRifleAssets
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 6,
+  protocol = 8,
   capacity = 32,
   killFeedCapacity = 6,
   awardPopupCapacity = 4,
@@ -808,7 +832,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v6'),
+      ac.StructItem.key('asrc.fps.hud.v8'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -835,6 +859,10 @@ function hud.connect()
       remainingSeconds = ac.StructItem.float(),
       killLimit = ac.StructItem.uint16(),
       winnerID = ac.StructItem.byte(),
+      matchType = ac.StructItem.byte(),
+      winnerTeam = ac.StructItem.byte(),
+      team1Kills = ac.StructItem.uint16(),
+      team2Kills = ac.StructItem.uint16(),
       outOfBoundsRemaining = ac.StructItem.float(),
       scoreboardHeld = ac.StructItem.byte(),
       cursorUnlocked = ac.StructItem.byte(),
@@ -847,6 +875,7 @@ function hud.connect()
       actorCount = ac.StructItem.byte(),
       actorIDs = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
       actorFlags = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
+      actorTeams = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
       radarFlags = ac.StructItem.array(ac.StructItem.byte(), hud.capacity),
       actorPositions = ac.StructItem.array(ac.StructItem.vec3(), hud.capacity),
       actorYaws = ac.StructItem.array(ac.StructItem.float(), hud.capacity),
@@ -864,7 +893,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v6')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v8')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -903,9 +932,14 @@ function hud.updateRadar(localActor)
   if localActor == nil then return end
   for id, actor in pairs(actors) do
     if id ~= localSessionID and bit.band(actor.flags, 1) ~= 0
-        and bit.band(actor.flags, 2) == 0 and bit.band(actor.flags, 8) == 0 then
-      local inRange = (actor.target - localActor.target):lengthSquared() <= 40 * 40
-      if inRange then
+        and bit.band(actor.flags, 2) == 0 then
+      local teammate = isTeamMatch() and localActor.team ~= 0 and actor.team == localActor.team
+      if teammate then
+        -- Friendlies are persistent navigation information and clamp to the radar rim
+        -- when they are beyond its 40 m scale. Enemies retain the existing reveal rules.
+        hud.radarVisible[id] = 3
+      elseif bit.band(actor.flags, 8) == 0
+          and (actor.target - localActor.target):lengthSquared() <= 40 * 40 then
         local shotReveal = (hud.radarReveal[id] or 0) > effectClock
         if shotReveal or hud.hasRadarLineOfSight(localActor, actor) then
           hud.radarVisible[id] = shotReveal and 2 or 1
@@ -958,6 +992,10 @@ function hud.publish(dt)
   hud.bridge.remainingSeconds = remainingSeconds
   hud.bridge.killLimit = killLimit
   hud.bridge.winnerID = winnerID
+  hud.bridge.matchType = matchType
+  hud.bridge.winnerTeam = winnerTeam
+  hud.bridge.team1Kills = team1Kills
+  hud.bridge.team2Kills = team2Kills
   hud.bridge.outOfBoundsRemaining = outOfBoundsRemaining
   hud.bridge.scoreboardHeld = scoreboardHeld and 1 or 0
   hud.bridge.cursorUnlocked = cursorUnlocked and 1 or 0
@@ -978,6 +1016,7 @@ function hud.publish(dt)
     local actor = hud.actorScratch[index + 1]
     hud.bridge.actorIDs[index] = actor.id
     hud.bridge.actorFlags[index] = actor.flags
+    hud.bridge.actorTeams[index] = actor.team or 0
     hud.bridge.radarFlags[index] = hud.radarVisible[actor.id] or 0
     hud.bridge.actorPositions[index] = actor.target
     hud.bridge.actorYaws[index] = actor.targetYaw
@@ -1297,6 +1336,7 @@ hud.loadoutStateEvent = ac.OnlineEvent({
       collisionNormal = vec2(), pitch = 0, health = 0, stamina = 100, kills = 0,
       deaths = 0, score = 0, flags = 0, actionState = 0, ammo = 0,
       reserveMagazines = 0, reloadRemaining = 0, spawnCount = nil,
+      team = teams[message.actorID] or 0,
     }
     actors[message.actorID] = actor
   end
@@ -1387,7 +1427,7 @@ hud.snapshotEvent = ac.OnlineEvent({
         collisionNormal = vec2(),
         pitch = 0, health = 0, stamina = 100, kills = 0, deaths = 0, score = 0, flags = 0,
         actionState = 0, ammo = 0, reserveMagazines = 0, reloadRemaining = 0,
-        spawnCount = nil,
+        spawnCount = nil, team = teams[id] or 0,
       }
       actors[id] = actor
     end
@@ -1558,11 +1598,13 @@ hud.rosterEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsRoster'),
   actorID = ac.StructItem.byte(),
   role = ac.StructItem.byte(),
+  team = ac.StructItem.byte(),
   name = ac.StructItem.string(32),
 }, function(sender, message)
   if sender ~= nil then return end
   local previousName = names[message.actorID]
   names[message.actorID] = message.name
+  teams[message.actorID] = message.team
   hud.radarReveal[message.actorID] = nil
   hud.radarVisible[message.actorID] = nil
   local actor = actors[message.actorID]
@@ -1571,6 +1613,7 @@ hud.rosterEvent = ac.OnlineEvent({
       fpsAudio.resetActor(actor, true)
     end
     actor.role = message.role
+    actor.team = message.team
   end
 end)
 
@@ -1581,6 +1624,10 @@ hud.matchEvent = ac.OnlineEvent({
   killLimit = ac.StructItem.uint16(),
   maximumHealth = ac.StructItem.uint16(),
   winnerID = ac.StructItem.byte(),
+  matchType = ac.StructItem.byte(),
+  winnerTeam = ac.StructItem.byte(),
+  team1Kills = ac.StructItem.uint16(),
+  team2Kills = ac.StructItem.uint16(),
   weatherType = ac.StructItem.byte(),
   timeOfDaySeconds = ac.StructItem.uint32(),
 }, function(sender, message)
@@ -1590,6 +1637,10 @@ hud.matchEvent = ac.OnlineEvent({
   killLimit = message.killLimit
   hud.maximumHealth = math.max(1, message.maximumHealth)
   winnerID = message.winnerID
+  matchType = message.matchType
+  winnerTeam = message.winnerTeam
+  team1Kills = message.team1Kills
+  team2Kills = message.team2Kills
   hud.environmentWeather = message.weatherType
   hud.environmentTimeSeconds = message.timeOfDaySeconds
 end)
@@ -1648,7 +1699,7 @@ hud.awardEvent = ac.OnlineEvent({
       id = message.actorID, target = vec3(), render = vec3(), yaw = 0, targetYaw = 0,
       collisionNormal = vec2(), pitch = 0, health = 0, kills = 0, deaths = 0,
       score = 0, flags = 0, ammo = 0, reserveMagazines = 0, reloadRemaining = 0,
-      actionState = 0, spawnCount = nil,
+      actionState = 0, spawnCount = nil, team = teams[message.actorID] or 0,
     }
     actors[message.actorID] = actor
   end
@@ -2268,6 +2319,8 @@ function fpsVisual.fallback(reason)
   rifleDiffusePath = nil
   operatorSkinPath = nil
   fpsVisual.pickupPath = nil
+  fpsVisual.team2UniformPath = nil
+  fpsVisual.team2GearPath = nil
   for _, actor in pairs(actors) do
     if actor.root ~= nil and actor.root ~= false then
       pcall(function() actor.root:dispose() end)
@@ -2508,6 +2561,10 @@ requestRifleAssets = function()
     rifleDiffusePath = rifleDiffuseFileName ~= nil and (folder .. '/' .. rifleDiffuseFileName) or nil
     operatorSkinPath = operatorSkinFileName ~= nil and (folder .. '/' .. operatorSkinFileName) or nil
     fpsVisual.pickupPath = folder .. '/' .. fpsVisual.pickupFileName
+    fpsVisual.team2UniformPath = fpsVisual.modern
+      and (folder .. '/' .. fpsVisual.team2UniformFileName) or nil
+    fpsVisual.team2GearPath = fpsVisual.modern
+      and (folder .. '/' .. fpsVisual.team2GearFileName) or nil
     clientPackError = fpsVisual.error
     viewmodelRoot = nil
     if fpsVisual.modern then
@@ -2521,6 +2578,44 @@ requestRifleAssets = function()
       .. '; operatorSkin=' .. tostring(operatorSkinPath)
       .. '; theme=' .. fpsVisual.active)
   end)
+end
+
+function fpsVisual.applyOperatorTeamSkin(actor)
+  if not fpsVisual.modern or actor.modernModel == nil
+      or actor.teamSkinApplied == actor.team then return true end
+  if actor.team ~= 2 then
+    -- Freshly loaded instances already have the authored Team 1 textures. Do
+    -- not reset or recolor them: the pooled KN5 can share materials initially.
+    actor.teamSkinApplied = actor.team
+    return true
+  end
+  local ok, err = pcall(function()
+    local uniformPath, gearPath = fpsVisual.team2UniformPath, fpsVisual.team2GearPath
+    if uniformPath == nil or gearPath == nil
+        or not io.fileExists(uniformPath) or not io.fileExists(gearPath) then
+      error('Team 2 operator textures are missing')
+    end
+    -- loadKN5() pools material resources. Select the two descendants by their
+    -- authored material names, then fork those materials for this actor before
+    -- replacing textures so Team 2 cannot recolor Team 1 instances.
+    local uniform = actor.modernModel:findAny('material:ASRC_OFFICER_UNIFORM')
+    local gear = actor.modernModel:findAny('material:ASRC_OFFICER_GEAR')
+    if uniform == nil or uniform:size() ~= 1 or gear == nil or gear:size() ~= 1 then
+      error(string.format('operator uniform or gear material was not found (uniform=%d, gear=%d)',
+        uniform ~= nil and uniform:size() or -1, gear ~= nil and gear:size() or -1))
+    end
+    uniform:ensureUniqueMaterials()
+    gear:ensureUniqueMaterials()
+    uniform:setMaterialTexture('txDiffuse', uniformPath)
+    gear:setMaterialTexture('txDiffuse', gearPath)
+  end)
+  if not ok then
+    fpsVisual.fallback('Team 2 operator skin actor ' .. tostring(actor.id) .. ': '
+      .. tostring(err))
+    return false
+  end
+  actor.teamSkinApplied = 2
+  return true
 end
 
 local function ensureLocalViewmodel()
@@ -3522,6 +3617,7 @@ local function updateRemoteActors(dt)
         end
         actor.root:setPosition(scenePosition + ac.getSim().originShift)
         actor.root:setOrientation(sceneLook, sceneUp)
+        if not fpsVisual.applyOperatorTeamSkin(actor) then return false end
         local dead = bit.band(actor.flags, 2) ~= 0
         fpsVisual.setActorWeaponVisible(actor, not dead)
         if not fpsVisual.updateActorAnimation(actor, dt) then return false end
@@ -3668,6 +3764,7 @@ local function updateLocalThirdPersonAvatar(actor, prepareOnly)
     else
       actor.root:setOrientation(vec3(math.sin(yaw), 0, math.cos(yaw)), vec3(0, 1, 0))
     end
+    if not fpsVisual.applyOperatorTeamSkin(actor) then return end
     fpsVisual.setActorWeaponVisible(actor, not dead)
     if not fpsVisual.updateActorAnimation(actor, viewmodelFrameDt) then return end
     if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
@@ -4415,8 +4512,9 @@ function hud.drawFallbackRadar(size, scale, margin)
         local point = vec2(right, -forward) / 40 * usableRadius
         local length = point:length()
         if length > usableRadius then point:scale(usableRadius / length) end
+        local friendly = (hud.radarVisible[id] or 0) == 3
         ui.drawCircleFilled(center + point, 4.5 * scale,
-          rgbm(1, 0.22, 0.15, 0.95), 16)
+          friendly and rgbm(0.18, 0.58, 1, 1) or rgbm(1, 0.22, 0.15, 0.95), 16)
       end
     end
   end
@@ -4430,21 +4528,178 @@ end
 
 function hud.drawFallbackRanking(ranking, scale, margin, radarDiameter)
   local top = margin + radarDiameter + 12 * scale
-  local width = 310 * scale
-  local rows = math.min(8, #ranking)
-  local panelMin = vec2(margin, top)
-  local panelMax = vec2(margin + width, top + (34 + rows * 23) * scale)
-  ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.035, 0.05, 0.84), 8 * scale)
-  ui.drawRect(panelMin, panelMax, rgbm(0.38, 0.62, 0.78, 0.58), 8 * scale,
-    nil, math.max(1, 1.2 * scale))
-  ui.setCursor(vec2(margin + 12 * scale, top + 8 * scale))
-  ui.text('DEATHMATCH')
-  for place = 1, rows do
-    local actor = ranking[place]
-    ui.setCursor(vec2(margin + 12 * scale, top + (10 + place * 23) * scale))
-    ui.text(string.format('%2d  %-16s  %4d  %2d/%2d', place,
-      names[actor.id] or ('Player ' .. actor.id), actor.score, actor.kills, actor.deaths))
+  if isTeamMatch() then
+    local width = 410 * scale
+    local team1, team2 = {}, {}
+    for place = 1, #ranking do
+      local actor = ranking[place]
+      if actor.team == 1 then team1[#team1 + 1] = actor
+      elseif actor.team == 2 then team2[#team2 + 1] = actor end
+    end
+    local rows = math.min(4, math.max(#team1, #team2))
+    local panelMin, panelMax = vec2(margin, top),
+      vec2(margin + width, top + (78 + rows * 22) * scale)
+    ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.035, 0.05, 0.9), 8 * scale)
+    ui.drawRect(panelMin, panelMax, rgbm(0.38, 0.62, 0.78, 0.58), 8 * scale,
+      nil, math.max(1, 1.2 * scale))
+    ui.drawRectFilled(panelMin, vec2(margin + width * 0.5, top + 5 * scale),
+      rgbm(0.12, 0.52, 1, 1))
+    ui.drawRectFilled(vec2(margin + width * 0.5, top),
+      vec2(margin + width, top + 5 * scale), rgbm(0.94, 0.2, 0.14, 1))
+    ui.setCursor(vec2(margin + 12 * scale, top + 12 * scale))
+    ui.textColored('TEAM 1', rgbm(0.46, 0.76, 1, 1))
+    ui.setCursor(vec2(margin + 118 * scale, top + 8 * scale))
+    ui.pushFont(ui.Font.Title); ui.text(tostring(team1Kills)); ui.popFont()
+    ui.setCursor(vec2(margin + 217 * scale, top + 12 * scale))
+    ui.textColored('TEAM 2', rgbm(1, 0.48, 0.4, 1))
+    ui.setCursor(vec2(margin + 325 * scale, top + 8 * scale))
+    ui.pushFont(ui.Font.Title); ui.text(tostring(team2Kills)); ui.popFont()
+    for row = 1, rows do
+      for team = 1, 2 do
+        local actor = (team == 1 and team1 or team2)[row]
+        if actor ~= nil then
+          local x = margin + (team == 2 and 217 or 12) * scale
+          local y = top + (49 + row * 22) * scale
+          if actor.id == localSessionID then
+            ui.drawRectFilled(vec2(x - 5 * scale, y - 2 * scale),
+              vec2(x + 184 * scale, y + 19 * scale), rgbm(0.16, 0.45, 0.68, 0.42), 2 * scale)
+          end
+          ui.setCursor(vec2(x, y))
+          ui.text(string.format('%-12s %2d/%2d',
+            string.sub(names[actor.id] or ('Player ' .. actor.id), 1, 12),
+            actor.kills, actor.deaths))
+        end
+      end
+    end
+  else
+    local width = 340 * scale
+    local rows = math.min(8, #ranking)
+    local panelMin, panelMax = vec2(margin, top),
+      vec2(margin + width, top + (55 + rows * 24) * scale)
+    ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.035, 0.05, 0.88), 8 * scale)
+    ui.drawRect(panelMin, panelMax, rgbm(0.38, 0.62, 0.78, 0.58), 8 * scale,
+      nil, math.max(1, 1.2 * scale))
+    ui.drawRectFilled(panelMin, vec2(margin + 5 * scale, panelMax.y),
+      rgbm(0.93, 0.67, 0.15, 1), 2 * scale)
+    ui.setCursor(vec2(margin + 15 * scale, top + 9 * scale))
+    ui.textColored('FREE FOR ALL', rgbm(1, 0.83, 0.42, 1))
+    ui.setCursor(vec2(margin + 15 * scale, top + 31 * scale))
+    ui.textColored('POS  OPERATOR           SCORE   K/D', rgbm(0.55, 0.64, 0.72, 1))
+    for place = 1, rows do
+      local actor = ranking[place]
+      local y = top + (36 + place * 24) * scale
+      if actor.id == localSessionID then
+        ui.drawRectFilled(vec2(margin + 8 * scale, y - 2 * scale),
+          vec2(margin + width - 8 * scale, y + 20 * scale), rgbm(0.16, 0.45, 0.68, 0.42), 2 * scale)
+      end
+      ui.setCursor(vec2(margin + 15 * scale, y))
+      ui.text(string.format('%2d   %-17s %5d  %2d/%2d', place,
+        string.sub(names[actor.id] or ('Player ' .. actor.id), 1, 17),
+        actor.score, actor.kills, actor.deaths))
+    end
   end
+end
+
+function hud.drawFallbackScoreboard(size, scale, ranking)
+  local center = size * 0.5
+  ui.drawRectFilled(vec2(), size, rgbm(0.005, 0.008, 0.012, 0.52))
+  local width = math.min((isTeamMatch() and 1180 or 900) * scale, size.x * 0.94)
+  local height = math.min(640 * scale, size.y * 0.92)
+  local p1, p2 = center - vec2(width, height) * 0.5, center + vec2(width, height) * 0.5
+  ui.drawRectFilled(p1, p2, rgbm(0.025, 0.03, 0.04, 0.97), 8 * scale)
+  ui.drawRect(p1, p2, rgbm(0.42, 0.53, 0.64, 0.72), 8 * scale, nil,
+    math.max(1, 1.5 * scale))
+  ui.drawRectFilled(p1, vec2(p2.x, p1.y + 6 * scale),
+    isTeamMatch() and rgbm(0.12, 0.52, 1, 1) or rgbm(0.93, 0.67, 0.15, 1))
+  ui.setCursor(p1 + vec2(28, 20) * scale)
+  ui.textColored(isTeamMatch() and 'TEAM DEATHMATCH' or 'FREE FOR ALL',
+    rgbm(0.72, 0.8, 0.86, 1))
+  ui.setCursor(p1 + vec2(28, 43) * scale)
+  ui.pushFont(ui.Font.Huge); ui.text('SCOREBOARD'); ui.popFont()
+  ui.setCursor(vec2(p2.x - 270 * scale, p1.y + 31 * scale))
+  ui.textAligned(string.format('%02d:%02d  •  TARGET %d',
+    math.floor(math.max(0, remainingSeconds) / 60),
+    math.floor(math.max(0, remainingSeconds) % 60), killLimit), 1, vec2(240, 24) * scale)
+
+  if isTeamMatch() then
+    local team1, team2 = {}, {}
+    for place = 1, #ranking do
+      local actor = ranking[place]
+      if actor.team == 1 then team1[#team1 + 1] = actor
+      elseif actor.team == 2 then team2[#team2 + 1] = actor end
+    end
+    local gap = 18 * scale
+    local columnWidth = (width - 74 * scale - gap) * 0.5
+    local columnTop = p1.y + 94 * scale
+    local rowTop, rowHeight = columnTop + 86 * scale, 24 * scale
+    local function drawTeamColumn(team, members, score, x, color)
+      ui.drawRectFilled(vec2(x, columnTop), vec2(x + columnWidth, columnTop + 70 * scale),
+        rgbm(color.r * 0.18, color.g * 0.18, color.b * 0.18, 0.96), 3 * scale)
+      ui.drawRectFilled(vec2(x, columnTop), vec2(x + 6 * scale, columnTop + 70 * scale), color)
+      ui.setCursor(vec2(x + 18 * scale, columnTop + 14 * scale))
+      ui.textColored('TEAM ' .. team, color)
+      ui.setCursor(vec2(x + columnWidth - 105 * scale, columnTop + 7 * scale))
+      ui.pushFont(ui.Font.Huge)
+      ui.textAligned(tostring(score), 1, vec2(86, 48) * scale)
+      ui.popFont()
+      ui.setCursor(vec2(x + 10 * scale, rowTop - 20 * scale))
+      ui.textColored('OPERATOR', rgbm(0.54, 0.62, 0.7, 1))
+      ui.setCursor(vec2(x + columnWidth - 210 * scale, rowTop - 20 * scale))
+      ui.textColored('SCORE     K     D    HP', rgbm(0.54, 0.62, 0.7, 1))
+      for row = 1, math.min(16, #members) do
+        local actor = members[row]
+        local y = rowTop + (row - 1) * rowHeight
+        ui.drawRectFilled(vec2(x, y), vec2(x + columnWidth, y + rowHeight - 2 * scale),
+          actor.id == localSessionID and rgbm(0.12, 0.4, 0.64, 0.72)
+            or rgbm(0.06, 0.075, 0.095, row % 2 == 0 and 0.86 or 0.62), 2 * scale)
+        ui.drawRectFilled(vec2(x, y), vec2(x + 3 * scale, y + rowHeight - 2 * scale), color)
+        ui.setCursor(vec2(x + 10 * scale, y + 3 * scale))
+        ui.text(string.format('%2d  %-18s', row,
+          string.sub(names[actor.id] or ('Player ' .. actor.id), 1, 18)))
+        ui.setCursor(vec2(x + columnWidth - 210 * scale, y + 3 * scale))
+        ui.text(string.format('%5d   %3d   %3d   %3d', actor.score, actor.kills,
+          actor.deaths, actor.health))
+      end
+    end
+    drawTeamColumn(1, team1, team1Kills, p1.x + 28 * scale, rgbm(0.18, 0.58, 1, 1))
+    drawTeamColumn(2, team2, team2Kills, p1.x + 28 * scale + columnWidth + gap,
+      rgbm(1, 0.24, 0.18, 1))
+  else
+    local listX, listWidth = p1.x + 28 * scale, width - 56 * scale
+    local rowTop, rowHeight = p1.y + 126 * scale, 27 * scale
+    ui.drawRectFilled(vec2(listX, p1.y + 94 * scale),
+      vec2(listX + listWidth, p1.y + 121 * scale), rgbm(0.08, 0.1, 0.13, 0.96), 2 * scale)
+    ui.setCursor(vec2(listX + 14 * scale, p1.y + 99 * scale))
+    ui.textColored('POS   OPERATOR', rgbm(0.62, 0.69, 0.75, 1))
+    ui.setCursor(vec2(listX + listWidth - 330 * scale, p1.y + 99 * scale))
+    ui.textColored('SCORE        KILLS     DEATHS      HP', rgbm(0.62, 0.69, 0.75, 1))
+    for place = 1, math.min(16, #ranking) do
+      local actor = ranking[place]
+      local y = rowTop + (place - 1) * rowHeight
+      ui.drawRectFilled(vec2(listX, y), vec2(listX + listWidth, y + rowHeight - 2 * scale),
+        actor.id == localSessionID and rgbm(0.12, 0.4, 0.64, 0.72)
+          or rgbm(0.06, 0.075, 0.095, place % 2 == 0 and 0.86 or 0.62), 2 * scale)
+      ui.drawRectFilled(vec2(listX, y), vec2(listX + (place == 1 and 6 or 3) * scale,
+        y + rowHeight - 2 * scale), place == 1 and rgbm(0.93, 0.67, 0.15, 1)
+          or rgbm(0.3, 0.36, 0.42, 0.8))
+      ui.setCursor(vec2(listX + 14 * scale, y + 4 * scale))
+      ui.text(string.format('%2d    %-24s', place,
+        string.sub(names[actor.id] or ('Player ' .. actor.id), 1, 24)))
+      ui.setCursor(vec2(listX + listWidth - 330 * scale, y + 4 * scale))
+      ui.text(string.format('%6d        %3d        %3d      %3d', actor.score,
+        actor.kills, actor.deaths, actor.health))
+    end
+  end
+  ui.transparentWindow('asrc-fps-scoreboard-controls',
+    vec2(p1.x + 20 * scale, p2.y - 50 * scale), vec2(width - 40 * scale, 42 * scale),
+    true, true, function()
+      ui.setCursor(vec2(8, 8) * scale)
+      if ui.checkbox('Keep mouse cursor visible after releasing TAB', persistentCursor) then
+        persistentCursor = not persistentCursor
+      end
+      ui.sameLine(12 * scale)
+      ui.textColored('Release TAB to close scoreboard', rgbm(0.75, 0.78, 0.84, 1))
+    end)
 end
 
 function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
@@ -4701,9 +4956,9 @@ function script.drawUI()
     ui.popStyleColor()
   end
   hud.drawFallbackStatusWidgets(size, hudScale, hudMargin, actor)
-  ui.setCursor(vec2(center.x - 80, 20))
-  ui.textAligned(string.format('%02d:%02d   TARGET %d', math.floor(remainingSeconds / 60),
-    math.floor(remainingSeconds % 60), killLimit), 0.5, vec2(160, 24))
+  ui.setCursor(vec2(center.x - 140, 20))
+  ui.textAligned(string.format('%02d:%02d   %s', math.floor(remainingSeconds / 60),
+    math.floor(remainingSeconds % 60), matchTargetText()), 0.5, vec2(280, 24))
 
   for i, item in ipairs(killFeed) do
     ui.setCursor(vec2(size.x - 390, 28 + (i - 1) * 24))
@@ -4719,32 +4974,7 @@ function script.drawUI()
     return a.id < b.id
   end)
   if scoreboardHeld then
-    local panelMin = center - vec2(390, 280)
-    local panelMax = center + vec2(390, 280)
-    ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.03, 0.04, 0.92), 8)
-    ui.drawRect(panelMin, panelMax, rgbm(0.75, 0.78, 0.84, 0.7), 8, nil, 2)
-    ui.setCursor(panelMin + vec2(28, 22))
-    ui.pushFont(ui.Font.Title)
-    ui.text('DEATHMATCH SCOREBOARD')
-    ui.popFont()
-    ui.setCursor(panelMin + vec2(28, 66))
-    ui.text('POS   PLAYER                    SCORE   KILLS   DEATHS   HEALTH')
-    for i = 1, math.min(16, #ranking) do
-      local rankedActor = ranking[i]
-      ui.setCursor(panelMin + vec2(28, 70 + i * 27))
-      ui.text(string.format('%2d    %-24s   %5d    %3d      %3d      %3d', i,
-        names[rankedActor.id] or ('Player ' .. rankedActor.id), rankedActor.score,
-        rankedActor.kills, rankedActor.deaths, rankedActor.health))
-    end
-    ui.transparentWindow('asrc-fps-scoreboard-controls', panelMin + vec2(20, 505),
-      vec2(740, 48), true, true, function()
-        ui.setCursor(vec2(8, 8))
-        if ui.checkbox('Keep mouse cursor visible after releasing TAB', persistentCursor) then
-          persistentCursor = not persistentCursor
-        end
-        ui.sameLine(12)
-        ui.textColored('Release TAB to close scoreboard', rgbm(0.75, 0.78, 0.84, 1))
-      end)
+    hud.drawFallbackScoreboard(size, hudScale, ranking)
   else
     local radarDiameter = hud.drawFallbackRadar(size, hudScale, hudMargin)
     hud.drawFallbackRanking(ranking, hudScale, hudMargin, radarDiameter)
@@ -4763,7 +4993,8 @@ function script.drawUI()
     ui.pushFont(ui.Font.Huge)
     ui.text('MATCH COMPLETE')
     ui.popFont()
-    ui.text('Winner: ' .. (names[winnerID] or 'No winner'))
+    ui.text(isTeamMatch() and (winnerTeam == 0 and 'Draw' or ('Winner: Team ' .. winnerTeam))
+      or ('Winner: ' .. (names[winnerID] or 'No winner')))
     for i = 1, #ranking do
       local rankedActor = ranking[i]
       ui.text(string.format('%2d. %-22s  %3d kills  %3d deaths', i,
@@ -5019,7 +5250,7 @@ function hud.drawPauseMenu()
   ui.text('MATCH MENU')
   ui.popFont()
   ui.setCursor(left + vec2(0, 58) * scale)
-  ui.textColored('DEATHMATCH  •  LIVE SERVER', rgbm(0.46, 0.78, 0.95, 1))
+  ui.textColored(matchLabel() .. '  •  LIVE SERVER', rgbm(0.46, 0.78, 0.95, 1))
   ui.setCursor(left + vec2(0, 92) * scale)
   ui.textWrapped('The match continues on the server while this menu is open.')
 
@@ -5091,8 +5322,9 @@ function hud.drawPauseMenu()
   ui.text('CURRENT MATCH')
   ui.popFont()
   ui.setCursor(right + vec2(0, 40) * scale)
-  ui.text(string.format('%02d:%02d remaining  •  target %d kills',
-    math.floor(remainingSeconds / 60), math.floor(remainingSeconds % 60), killLimit))
+  ui.text(string.format('%02d:%02d remaining  •  %s',
+    math.floor(remainingSeconds / 60), math.floor(remainingSeconds % 60),
+    string.lower(matchTargetText())))
   ui.setCursor(right + vec2(0, 78) * scale)
   ui.textColored('POS   OPERATIVE                 K     D    HP', rgbm(0.55, 0.7, 0.8, 1))
   for place = 1, math.min(10, #ranking) do
@@ -5137,5 +5369,5 @@ else
   ac.log('[ASRC FPS] exclusive online HUD fallback registered')
 end
 
-hud.readySent = hud.readyEvent({ protocol = 2 })
-ac.log(string.format('[ASRC FPS] ready sent: protocol=2 result=%s', tostring(hud.readySent)))
+hud.readySent = hud.readyEvent({ protocol = 3 })
+ac.log(string.format('[ASRC FPS] ready sent: protocol=3 result=%s', tostring(hud.readySent)))

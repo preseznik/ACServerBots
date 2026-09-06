@@ -26,7 +26,9 @@ public sealed record RaceControlWebControlState(
     bool CanRestartServer,
     bool CanStartSession,
     bool CanStopSession,
-    bool CanRestartSession);
+    bool CanRestartSession,
+    string FpsMatchType = "",
+    string FpsMutators = "");
 
 public sealed record RaceControlWebActionResult(bool Accepted, string Message)
 {

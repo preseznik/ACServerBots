@@ -259,7 +259,8 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("ui.captureMouse(true)"));
             Assert.That(script, Does.Contain("ui.transparentWindow('asrc-fps-scoreboard-controls'"));
             Assert.That(script, Does.Contain("ui.checkbox('Keep mouse cursor visible after releasing TAB'"));
-            Assert.That(script, Does.Contain("DEATHMATCH SCOREBOARD"));
+            Assert.That(script, Does.Contain("function hud.drawFallbackScoreboard"));
+            Assert.That(script, Does.Contain("'TEAM DEATHMATCH' or 'FREE FOR ALL'"));
             Assert.That(script, Does.Contain("bit.band(localActor.flags, 16)"));
             Assert.That(script, Does.Contain("bit.band(actor.flags, 64)"));
             Assert.That(script, Does.Contain("predictionCollisionConstrained = true"));
@@ -271,7 +272,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("function fpsVisual.actorStance(actor)"));
             Assert.That(script, Does.Contain("if actor.id == localSessionID then return localStance end"));
             Assert.That(script, Does.Contain("bit.band(actionState, 2) ~= 0"));
-            Assert.That(script, Does.Contain("modernAssetRevision = 8"));
+            Assert.That(script, Does.Contain("modernAssetRevision = 9"));
             Assert.That(script, Does.Contain("fpsVisual.crouchSuppressedUntilRelease = true"));
             Assert.That(script, Does.Contain(
                 "operatorStanceGroundOffsets = { [1] = -0.50, [2] = -0.50 }"));
@@ -382,10 +383,18 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
             Assert.That(script, Does.Contain("asrc_operator_skin.png"));
             Assert.That(script, Does.Contain("__ASRC_FPS_THEME__"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v8.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v9.zip"));
             Assert.That(script, Does.Contain("asrc_modern_operator_carbine.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_pickup.kn5"));
+            Assert.That(script, Does.Contain("asrc_modern_team2_uniform.png"));
+            Assert.That(script, Does.Contain("asrc_modern_team2_gear.png"));
+            Assert.That(script, Does.Contain("function fpsVisual.applyOperatorTeamSkin"));
+            Assert.That(script, Does.Contain(
+                "findAny('material:ASRC_OFFICER_UNIFORM')"));
+            Assert.That(script, Does.Contain("uniform:ensureUniqueMaterials()"));
+            Assert.That(script, Does.Contain(
+                "uniform:setMaterialTexture('txDiffuse', uniformPath)"));
             Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsPickup')"));
             Assert.That(script, Does.Contain("text = '+1 MAGAZINE'"));
             Assert.That(script, Does.Contain("function fpsVisual.updatePickups()"));
@@ -536,8 +545,10 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("extension/audio/asrc_fps/explosion.wav"));
             Assert.That(script, Does.Not.Contain("event == nil or not event:isValid()"));
             Assert.That(script, Does.Not.Contain("sound.ttl <= 0 or not sound.event:isValid()"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v6')"));
-            Assert.That(script, Does.Contain("protocol = 6"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v8')"));
+            Assert.That(script, Does.Contain("protocol = 8"));
+            Assert.That(script, Does.Contain("actorTeams = ac.StructItem.array"));
+            Assert.That(script, Does.Contain("matchType = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("localStamina = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain(
                 "fpsVisual.stamina.value - fpsVisual.stamina.drainPerSecond * dt"));
@@ -557,8 +568,22 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("function hud.hasRadarLineOfSight"));
             Assert.That(script, Does.Contain("distance > 40"));
             Assert.That(script, Does.Contain("hud.radarReveal[message.shooterID] = effectClock + 2"));
-            Assert.That(script, Does.Contain("bit.band(actor.flags, 8) == 0"));
+            Assert.That(script, Does.Contain("elseif bit.band(actor.flags, 8) == 0"));
             Assert.That(script, Does.Contain("hud.radarReveal[id] = nil"));
+            Assert.That(script, Does.Contain("hud.radarVisible[id] = 3"));
+            Assert.That(script, Does.Contain("friendly and rgbm(0.18, 0.58, 1, 1)"));
+            Assert.That(script, Does.Contain(
+                "findAny('material:ASRC_OFFICER_UNIFORM')"));
+            Assert.That(script, Does.Contain(
+                "findAny('material:ASRC_OFFICER_GEAR')"));
+            Assert.That(script, Does.Contain("if actor.team ~= 2 then"));
+            Assert.That(script, Does.Contain("uniform:ensureUniqueMaterials()"));
+            Assert.That(script, Does.Contain("gear:ensureUniqueMaterials()"));
+            Assert.That(script, Does.Not.Contain("actor.modernModel:applySkin({"));
+            Assert.That(script, Does.Not.Contain(
+                "findSkinnedMeshes('ASRC_OFFICER_UNIFORM"));
+            Assert.That(script, Does.Not.Contain(
+                "findSkinnedMeshes('ASRC_OFFICER_GEAR"));
             Assert.That(script, Does.Contain("function hud.drawFallbackRadar"));
             Assert.That(script, Does.Contain("COMBAT RADAR  40 m"));
             Assert.That(script, Does.Contain("local right = -(offset.x * rightX + offset.z * rightZ)"));
@@ -609,7 +634,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("hud.pausePage = 'main'"));
             Assert.That(script, Does.Contain("[ASRC FPS] pause menu action: return to match"));
             Assert.That(script, Does.Contain("MATCH MENU"));
-            Assert.That(script, Does.Contain("DEATHMATCH  •  LIVE SERVER"));
+            Assert.That(script, Does.Contain("matchLabel() .. '  •  LIVE SERVER'"));
             Assert.That(script, Does.Contain("RETURN TO MATCH"));
             Assert.That(script, Does.Contain("ac.tryToPause(false)"));
             Assert.That(script, Does.Contain("ASSETTO CORSA OPTIONS"));

@@ -56,6 +56,7 @@ public sealed class GridSlotPreset
     public double? Difficulty { get; set; }
     public double? Aggression { get; set; }
     public SlotMode Mode { get; set; } = SlotMode.Auto;
+    public FpsTeamAssignment FpsTeam { get; set; } = FpsTeamAssignment.Auto;
 }
 
 public enum SlotMode
@@ -158,6 +159,9 @@ public sealed class FpsOptions
     public int KillLimit { get; set; } = 20;
     public double RespawnSeconds { get; set; } = 3;
     public double SpawnProtectionSeconds { get; set; } = 1;
+    public bool HeadshotsOnly { get; set; }
+    public bool InfiniteSprint { get; set; }
+    public bool DisableHealthRegeneration { get; set; }
     public string CarrierCarId { get; set; } = "bmw_m3_e30";
     public double ArenaBoundsPaddingMeters { get; set; } = 45;
     public FpsBotOptions Bots { get; set; } = new();
@@ -211,6 +215,16 @@ public enum FpsVisualTheme
 public enum FpsMatchType
 {
     Deathmatch,
+    TeamDeathmatch,
+    HardcoreDeathmatch,
+    HardcoreTeamDeathmatch,
+}
+
+public enum FpsTeamAssignment
+{
+    Auto,
+    Team1,
+    Team2,
 }
 
 public sealed class FpsBotOptions

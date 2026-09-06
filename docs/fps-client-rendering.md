@@ -1,5 +1,10 @@
 # FPS client rendering handoff
 
+Current match-mode delivery uses compatibility client pack 39, ready protocol 3, and presentation
+bridge `asrc.fps.hud.v8`. Protocol 3 adds authoritative team identity, match type, winning team, and
+team scores; older protocol/bridge references below describe the milestone that originally introduced
+the relevant rendering or audio surface.
+
 This document is the source of truth for the CSP client-side FPS scene and HUD. The server remains
 authoritative for movement, shots, damage, scoring, ammunition, death, and respawn. Client scene
 nodes and HUD widgets are presentation only.
@@ -174,7 +179,7 @@ level acceptance: the recorded rifle has lower average loudness than its generat
 The server-delivered online client owns cue selection but not file playback or gameplay outcomes.
 CSP runs online scripts without filesystem I/O, so `fps.lua` relays versioned, validated cue data over
 the local `asrc.fps.audio.v1` shared event. The installed background HUD app owns `AudioEvent.fromFile`
-and can read the packaged WAVs. This relay does not change packet protocol 2 or typed HUD bridge v6.
+and can read the packaged WAVs. This relay does not change packet protocol 2 or typed HUD bridge v8.
 Reliable shot, hit, kill, award, pickup, and grenade-explosion packets select weapon-specific fire,
 hard/body impact, throttled hurt, one death cue per spawn generation, local feedback, and Frag/Sticky
 explosion variants. Snapshot position, grounded, stance, traversal, reload, and active-slot transitions
@@ -220,7 +225,7 @@ Live acceptance remains a listening gate:
 ## Playable-area countdown
 
 Client pack 38 registers the small, reliable `ASRC_FpsBoundary` event and carries
-its remaining seconds through HUD bridge v6. This standalone state must use the
+its remaining seconds through HUD bridge v8. This standalone state must use the
 ordered online-event channel; it is not part of the UDP snapshot schema. The app
 and online fallback render the same large centred warning and whole-second
 countdown over a dark red screen tint. The server alone determines inside/outside
@@ -228,8 +233,8 @@ state and elimination; the client only presents it.
 
 ## Hybrid HUD ownership
 
-Client pack version 38 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
-script publishes presentation state through the local shared structure `asrc.fps.hud.v6`. Bridge v6
+Client pack version 41 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+script publishes presentation state through the local shared structure `asrc.fps.hud.v8`. Bridge v8
 adds the active main/secondary slot, item IDs, and lethal count; it remains presentation-only.
 
 While both sides exchange a current version-6 heartbeat, the app draws the modular FPS HUD through
@@ -240,7 +245,7 @@ can explicitly yield to the native AC/CSP menu. If the app is absent, disabled, 
 for more than 0.5 seconds, the online script resumes its complete exclusive gameplay HUD. A bridge
 mismatch is logged once and must never produce a blank frame.
 
-Bridge v6 carries ADS presentation, configured maximum health, predicted/authoritative stamina, and
+Bridge v8 carries ADS presentation, configured maximum health, predicted/authoritative stamina, and
 the current loadout presentation.
 The companion HUD and the online fallback both suppress the ordinary four-line crosshair while ADS
 is active, but retain authoritative hitmarkers and award popups. Both paths use matching lower-corner
@@ -248,9 +253,15 @@ panels with health and stamina bars plus actual rendered carbine artwork, ammuni
 magazines, and reload progress. Older HUD apps fail the bridge-version check and automatically yield
 to the complete fallback.
 
-The first combat radar is player-up and limited to 40 m. A living, non-protected opponent is revealed
-only by a clear client track-geometry raycast or for two seconds after its authoritative shot event.
-Death, respawn, or roster replacement clears the reveal state.
+The first combat radar is player-up and uses a 40 m scale. In team modes, every living,
+non-spectating teammate is always shown in blue and distant teammates clamp to the radar rim.
+Enemies remain red and are revealed only by a clear client track-geometry raycast within 40 m or for
+two seconds after their authoritative shot event. Death, respawn, or roster replacement clears the
+enemy reveal state.
+
+The compact standings and held scoreboard use separate mode layouts. FFA is a single ranked list
+with an emphasized leader and local-player row. TDM splits the roster into blue Team 1 and red Team
+2 columns, with the authoritative team totals displayed prominently above each roster.
 
 The simpler supported alternative is to omit the companion app and retain the entire HUD inside the
 online script's exclusive callback. It has fewer packaging concerns but no modular app layer.

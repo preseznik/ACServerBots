@@ -167,9 +167,20 @@ public sealed class RaceControlValidator
         var fps = preset.Fps;
         ErrorIf(messages, !Enum.IsDefined(typeof(FpsVisualTheme), fps.Theme), "Fps.Theme",
             "FPS visual theme must be Blocks or Modern.");
-        ErrorIf(messages, fps.MatchType != FpsMatchType.Deathmatch, "Fps", "FPS V1 only supports Deathmatch.");
-        ErrorIf(messages, fps.TimeLimitMinutes is < 1 or > 1440, "Fps", "Deathmatch duration must be 1..1440 minutes.");
-        ErrorIf(messages, fps.KillLimit is < 1 or > 999, "Fps", "Deathmatch kill limit must be 1..999.");
+        ErrorIf(messages, !Enum.IsDefined(fps.MatchType), "Fps.MatchType",
+            "FPS match type must be FFA, TDM, Hardcore FFA, or Hardcore TDM.");
+        ErrorIf(messages, fps.TimeLimitMinutes is < 1 or > 1440, "Fps", "Match duration must be 1..1440 minutes.");
+        ErrorIf(messages, fps.KillLimit is < 1 or > 999, "Fps", "Match kill limit must be 1..999.");
+        ErrorIf(messages, preset.Grid.Any(slot => !Enum.IsDefined(slot.FpsTeam)), "Grid.FpsTeam",
+            "FPS team must be Auto, Team 1, or Team 2.");
+        bool teamMatch = fps.MatchType is FpsMatchType.TeamDeathmatch
+            or FpsMatchType.HardcoreTeamDeathmatch;
+        var participants = preset.Grid.Where(slot => slot.Mode != SlotMode.Spectator).ToArray();
+        ErrorIf(messages, teamMatch
+                          && participants.All(slot => slot.FpsTeam != FpsTeamAssignment.Auto)
+                          && (!participants.Any(slot => slot.FpsTeam == FpsTeamAssignment.Team1)
+                              || !participants.Any(slot => slot.FpsTeam == FpsTeamAssignment.Team2)),
+            "Grid.FpsTeam", "TDM requires both teams, or at least one Auto-balance slot.");
         ErrorIf(messages, fps.RespawnSeconds is < 0 or > 30, "Fps", "Respawn delay must be 0..30 seconds.");
         ErrorIf(messages, fps.SpawnProtectionSeconds is < 0 or > 10, "Fps", "Spawn protection must be 0..10 seconds.");
         ErrorIf(messages, fps.ArenaBoundsPaddingMeters is < 5 or > 100

@@ -21,10 +21,11 @@ namespace AssettoServer.Server.Fps;
 
 internal readonly record struct FpsLiveActorSnapshot(byte Id, string Name, bool IsBot,
     bool Active, bool Dead, Vector3 Position, Vector3 Velocity, float Yaw, int Health,
-    ushort Kills, ushort Deaths, uint Score);
+    ushort Kills, ushort Deaths, uint Score, FpsTeamAssignment Team);
 
 internal sealed record FpsLiveMatchSnapshot(FpsMatchState State, float ElapsedSeconds,
-    float RemainingSeconds, int KillLimit, byte WinnerId,
+    float RemainingSeconds, int KillLimit, byte WinnerId, FpsMatchType MatchType,
+    byte WinnerTeam, ushort Team1Kills, ushort Team2Kills,
     IReadOnlyList<FpsLiveActorSnapshot> Actors);
 
 internal sealed record FpsLiveArenaSnapshot(Vector3 BoundsMin, Vector3 BoundsMax,
@@ -120,7 +121,8 @@ public sealed class FpsWorld : IHostedService
             .Select((entry, index) => new FpsSimulationSlot((byte)index,
                 entry.DriverName ?? $"Player {index + 1}", entry.FpsRole,
                 entry.AiDifficulty is >= 0 and <= 1 ? entry.AiDifficulty : null,
-                entry.AiAggression is >= 0 and <= 1 ? entry.AiAggression : null));
+                entry.AiAggression is >= 0 and <= 1 ? entry.AiAggression : null,
+                entry.FpsTeam));
         _simulation = new FpsSimulation(_configuration.Extra.Fps, slots, surface: surface,
             navigation: navigation);
         _liveArena = new FpsLiveArenaSnapshot(
@@ -132,7 +134,8 @@ public sealed class FpsWorld : IHostedService
         _server.Update += OnUpdate;
         _entryCarManager.ClientConnected += OnClientConnected;
         _entryCarManager.ClientDisconnected += OnClientDisconnected;
-        Log.Information("FPS deathmatch world started: {Actors} actors, {Minutes} minutes, {Kills} kills, theme {Theme}, {Triangles} collision triangles in BVH {BvhNodes} nodes/{BvhLeaves} leaves/max {BvhMaximum} triangles, {Nodes} navigation nodes in {Components} components",
+        Log.Information("FPS {MatchType} world started: {Actors} actors, {Minutes} minutes, {Kills} kills, theme {Theme}, {Triangles} collision triangles in BVH {BvhNodes} nodes/{BvhLeaves} leaves/max {BvhMaximum} triangles, {Nodes} navigation nodes in {Components} components",
+            _configuration.Extra.Fps.MatchType,
             _simulation.Actors.Count, _configuration.Extra.Fps.TimeLimitMinutes,
             _configuration.Extra.Fps.KillLimit, _configuration.Extra.Fps.Theme,
             surface.TriangleCount, surface.BvhNodeCount, surface.BvhLeafCount,
@@ -187,9 +190,12 @@ public sealed class FpsWorld : IHostedService
                 Math.Max(0, actor.Health),
                 actor.Kills,
                 actor.Deaths,
-                actor.Score)).ToArray();
+                actor.Score,
+                actor.Team)).ToArray();
         return new FpsLiveMatchSnapshot(simulation.MatchState, simulation.ElapsedSeconds,
-            simulation.RemainingSeconds, killLimit, simulation.WinnerId, actors);
+            simulation.RemainingSeconds, killLimit, simulation.WinnerId,
+            simulation.MatchType, simulation.WinnerTeam, simulation.Team1Kills,
+            simulation.Team2Kills, actors);
     }
 
     private void OnClientConnected(ACTcpClient client, EventArgs args)
@@ -329,7 +335,7 @@ public sealed class FpsWorld : IHostedService
 
     private void OnReady(ACTcpClient client, FpsReadyPacket packet)
     {
-        if (packet.Protocol != 2)
+        if (packet.Protocol != 3)
         {
             client.Logger.Warning("FPS client protocol {Protocol} is not supported", packet.Protocol);
             _ = client.DisconnectAsync();
@@ -604,7 +610,8 @@ public sealed class FpsWorld : IHostedService
             {
                 _finalSent = true;
                 BroadcastMatch();
-                Log.Information("FPS deathmatch finished; winner session {Winner}", _simulation.WinnerId);
+                Log.Information("FPS match finished; winner session {Winner}, team {WinnerTeam}",
+                    _simulation.WinnerId, _simulation.WinnerTeam);
             }
         }
     }
@@ -754,6 +761,7 @@ public sealed class FpsWorld : IHostedService
     {
         ActorId = actor.Id,
         Role = (byte)actor.Role,
+        Team = (byte)actor.Team,
         Name = actor.Name.Length <= 32 ? actor.Name : actor.Name[..32],
     };
 
@@ -924,6 +932,10 @@ public sealed class FpsWorld : IHostedService
             MaximumHealth = (ushort)Math.Clamp(_configuration.Extra.Fps.Bots.Health, 1,
                 ushort.MaxValue),
             WinnerId = _simulation.WinnerId,
+            MatchType = (byte)_simulation.MatchType,
+            WinnerTeam = _simulation.WinnerTeam,
+            Team1Kills = _simulation.Team1Kills,
+            Team2Kills = _simulation.Team2Kills,
             WeatherType = (byte)_weatherManager.CurrentWeather.UpcomingType.WeatherFxType,
             TimeOfDaySeconds = (uint)(_weatherManager.CurrentDateTime.Hour * 3600
                                       + _weatherManager.CurrentDateTime.Minute * 60

@@ -68,6 +68,8 @@ VIEWMODEL_CLIPS = {
 RED_DOT_TEXTURE_SIZE = 512
 RED_DOT_CORE_RADIUS = 7
 RED_DOT_GLOW_RADIUS = 18
+TEAM2_UNIFORM_FILE = "asrc_modern_team2_uniform.png"
+TEAM2_GEAR_FILE = "asrc_modern_team2_gear.png"
 
 
 def reset_scene() -> None:
@@ -151,6 +153,34 @@ def create_red_dot_reticle(path: Path) -> None:
     image.filepath_raw = str(path)
     image.file_format = "PNG"
     image.save()
+    bpy.data.images.remove(image)
+
+
+def create_team2_texture(source: Path, destination: Path,
+                         tint: tuple[float, float, float]) -> None:
+    """Keep the source detail while shifting cloth and gear to a dark blue-grey palette."""
+    image = bpy.data.images.load(str(source), check_existing=False)
+    width, height = image.size
+    scale = min(1.0, 2048.0 / max(width, height))
+    if scale < 1.0:
+        image.scale(max(1, round(width * scale)), max(1, round(height * scale)))
+        width, height = image.size
+    pixels = np.empty(width * height * 4, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    rgba = pixels.reshape((height, width, 4))
+    rgb = rgba[:, :, :3]
+    luminance = (rgb[:, :, 0] * 0.2126 + rgb[:, :, 1] * 0.7152
+                 + rgb[:, :, 2] * 0.0722)
+    chroma = rgb - luminance[:, :, np.newaxis]
+    target = np.asarray(tint, dtype=np.float32)
+    rgba[:, :, :3] = np.clip(
+        luminance[:, :, np.newaxis] * target + chroma * 0.10 + 0.012, 0.0, 1.0)
+    output = bpy.data.images.new(destination.stem, width=width, height=height, alpha=True)
+    output.pixels.foreach_set(rgba.ravel())
+    output.filepath_raw = str(destination)
+    output.file_format = "PNG"
+    output.save()
+    bpy.data.images.remove(output)
     bpy.data.images.remove(image)
 
 
@@ -273,6 +303,12 @@ def build_officer(officer_zip: Path, carbine_fbx: Path, output: Path,
         raise RuntimeError(f"Officer appearance selection produced {len(meshes)} meshes")
 
     texture_dir = officer_dir / "textures"
+    team2_uniform_path = output / TEAM2_UNIFORM_FILE
+    team2_gear_path = output / TEAM2_GEAR_FILE
+    create_team2_texture(texture_dir / "PackedMaterial1mat_diffuse.png",
+                         team2_uniform_path, (0.30, 0.38, 0.46))
+    create_team2_texture(texture_dir / "PackedMaterial2mat_diffuse.png",
+                         team2_gear_path, (0.22, 0.28, 0.34))
     officer_materials = {
         "skin": create_material("ASRC_OFFICER_SKIN", "ksSkinnedMesh", {
             "txDiffuse": (texture_dir / "PackedMaterial0mat_diffuse.png", False),
@@ -409,6 +445,11 @@ def build_officer(officer_zip: Path, carbine_fbx: Path, output: Path,
         "materials": 4,
         "bones": len([bone for bone in armature.data.bones if bone.use_deform]),
         "clips": list(OPERATOR_CLIPS),
+        "teamSkins": {
+            "team1": "embedded original uniform and gear",
+            "team2Uniform": team2_uniform_path.name,
+            "team2Gear": team2_gear_path.name,
+        },
     }
 
 
@@ -917,7 +958,7 @@ def main() -> None:
         if not source.is_file():
             raise FileNotFoundError(source)
     for stale in output.iterdir():
-        if stale.suffix.lower() in {".kn5", ".ksanim", ".json"}:
+        if stale.suffix.lower() in {".kn5", ".ksanim", ".png", ".json"}:
             stale.unlink()
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -941,7 +982,7 @@ def main() -> None:
         if pickup["triangles"] > 6_000 or pickup["materials"] > 1:
             raise RuntimeError(f"Modern pickup exceeds budget: {pickup}")
         files = sorted(path for path in output.iterdir()
-                       if path.suffix.lower() in {".kn5", ".ksanim"})
+                       if path.suffix.lower() in {".kn5", ".ksanim", ".png"})
         manifest = {
             "schemaVersion": 1,
             "theme": "Modern",

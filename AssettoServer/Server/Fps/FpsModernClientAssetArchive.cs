@@ -13,12 +13,14 @@ internal static class FpsModernClientAssetArchive
 {
     // CSP caches web.loadRemoteAssets() payloads by URL. Advance this revision whenever
     // any embedded KN5 or KSANIM changes, otherwise clients keep the previous poses.
-    public const int AssetRevision = 8;
-    public const string Route = "/fps/assets/asrc-fps-modern-v8.zip";
-    public const string FileName = "asrc-fps-modern-v8.zip";
+    public const int AssetRevision = 9;
+    public const string Route = "/fps/assets/asrc-fps-modern-v9.zip";
+    public const string FileName = "asrc-fps-modern-v9.zip";
     public const string OperatorFileName = "asrc_modern_operator_carbine.kn5";
     public const string ViewmodelFileName = "asrc_modern_carbine_viewmodel.kn5";
     public const string PickupFileName = "asrc_modern_carbine_pickup.kn5";
+    public const string Team2UniformFileName = "asrc_modern_team2_uniform.png";
+    public const string Team2GearFileName = "asrc_modern_team2_gear.png";
     public const string ManifestFileName = "asrc-modern-assets.json";
     private const string ResourcePrefix = "AssettoServer.Server.Fps.ModernAssets.";
 
@@ -33,7 +35,7 @@ internal static class FpsModernClientAssetArchive
             .Where(name => name.StartsWith(ResourcePrefix, StringComparison.Ordinal))
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
-        if (resources.Length < 30)
+        if (resources.Length < 32)
             throw new InvalidDataException("Embedded Modern FPS asset set is incomplete");
 
         var assets = new Dictionary<string, byte[]>(StringComparer.Ordinal);
@@ -82,6 +84,14 @@ internal static class FpsModernClientAssetArchive
             if (reader.ReadUInt32() != 2)
                 throw new InvalidDataException($"Modern FPS animation is not KSANIM v2: {fileName}");
         }
+        else if (fileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            Span<byte> magic = stackalloc byte[8];
+            stream.ReadExactly(magic);
+            ReadOnlySpan<byte> pngMagic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+            if (!magic.SequenceEqual(pngMagic))
+                throw new InvalidDataException($"Modern FPS team texture is not PNG: {fileName}");
+        }
         else if (fileName.Equals(ManifestFileName, StringComparison.Ordinal))
         {
             using JsonDocument manifest = JsonDocument.Parse(stream);
@@ -116,6 +126,10 @@ internal static class FpsModernClientAssetArchive
                     file.Value.GetString(), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException($"Modern FPS asset hash mismatch: {file.Name}");
         }
+        JsonElement teamSkins = root.GetProperty("operator").GetProperty("teamSkins");
+        if (teamSkins.GetProperty("team2Uniform").GetString() != Team2UniformFileName
+            || teamSkins.GetProperty("team2Gear").GetString() != Team2GearFileName)
+            throw new InvalidDataException("Modern FPS Team 2 skin metadata is invalid");
         if (root.GetProperty("operator").GetProperty("triangles").GetInt32() > 40_000
             || root.GetProperty("operator").GetProperty("materials").GetInt32() > 4
             || root.GetProperty("viewmodel").GetProperty("triangles").GetInt32() > 30_000

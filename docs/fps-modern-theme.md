@@ -128,10 +128,14 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 ## Runtime ownership and fallback
 
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
-downloads `/fps/assets/asrc-fps-modern-v8.zip` through the same `web.loadRemoteAssets()` path as the
+downloads `/fps/assets/asrc-fps-modern-v9.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5 or KSANIM changes. Client pack version 38 also installs both themes under the project-owned
+embedded KN5, KSANIM, or team texture changes. Client pack version 41 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
+
+Team 1 uses the officer source's original uniform and gear textures. Team 2 replaces only those two
+diffuse slots with deterministic dark blue-grey derivatives. Each operator instance first makes its
+materials unique, so Team 2 recoloring cannot leak into Team 1 actors that share the same KN5.
 
 MP5 SMG, Desert Eagle, and Colt 1911 rendering use separate rigid KN5 paths shared with Blocks.
 Modern also requests base asset archive v21, hides `ASRC_CARBINE_WORLD` while weapon ID 2, 3, or 4 is

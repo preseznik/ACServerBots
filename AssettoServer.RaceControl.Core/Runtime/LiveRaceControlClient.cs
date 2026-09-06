@@ -280,6 +280,9 @@ public sealed class LiveRaceSession
     public int Laps { get; set; }
     public int KillLimit { get; set; }
     public byte WinnerId { get; set; } = byte.MaxValue;
+    public byte WinnerTeam { get; set; }
+    public ushort Team1Kills { get; set; }
+    public ushort Team2Kills { get; set; }
 }
 
 public sealed class LiveRaceCommandResult
@@ -299,6 +302,7 @@ public sealed class LiveRaceCar
     public bool IsBot { get; set; }
     public bool IsConnected { get; set; }
     public bool IsActive { get; set; }
+    public int Team { get; set; }
     public float X { get; set; }
     public float Y { get; set; }
     public float Z { get; set; }

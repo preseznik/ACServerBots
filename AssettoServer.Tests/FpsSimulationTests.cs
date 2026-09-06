@@ -11,6 +11,133 @@ namespace AssettoServer.Tests;
 public sealed class FpsSimulationTests
 {
     [Test]
+    public void TeamDeathmatchRespectsExplicitTeamsAndAutoBalancesRemainingSlots()
+    {
+        var simulation = new FpsSimulation(Configuration(matchType: FpsMatchType.TeamDeathmatch),
+        [
+            new(0, "Team 1", FpsSlotRole.Bot, Team: FpsTeamAssignment.Team1),
+            new(1, "Team 2", FpsSlotRole.Bot, Team: FpsTeamAssignment.Team2),
+            new(2, "Auto 1", FpsSlotRole.Bot),
+            new(3, "Auto 2", FpsSlotRole.Bot),
+            new(4, "Auto 3", FpsSlotRole.Bot),
+        ]);
+
+        var actors = simulation.Actors.OrderBy(actor => actor.Id).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(actors[0].Team, Is.EqualTo(FpsTeamAssignment.Team1));
+            Assert.That(actors[1].Team, Is.EqualTo(FpsTeamAssignment.Team2));
+            Assert.That(actors.Count(actor => actor.Team == FpsTeamAssignment.Team1), Is.EqualTo(3));
+            Assert.That(actors.Count(actor => actor.Team == FpsTeamAssignment.Team2), Is.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public void TeamDeathmatchBlocksFriendlyFireAndUsesTeamKillLimit()
+    {
+        var simulation = new FpsSimulation(Configuration(killLimit: 1, health: 30,
+            matchType: FpsMatchType.TeamDeathmatch),
+        [
+            new(0, "Shooter", FpsSlotRole.Human, Team: FpsTeamAssignment.Team1),
+            new(1, "Teammate", FpsSlotRole.Human, Team: FpsTeamAssignment.Team1),
+            new(2, "Enemy", FpsSlotRole.Human, Team: FpsTeamAssignment.Team2),
+        ]);
+        for (byte id = 0; id < 3; id++) simulation.ClaimHuman(id);
+        var actors = simulation.Actors.ToDictionary(actor => actor.Id);
+        actors[0].Position = Vector3.Zero;
+        actors[1].Position = new Vector3(0, 0, 5);
+        actors[2].Position = new Vector3(5, 0, 5);
+
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+        Assert.That(actors[1].Health, Is.EqualTo(30));
+
+        actors[1].Position = new Vector3(5, 0, 5);
+        actors[2].Position = new Vector3(0, 0, 5);
+        actors[0].FireCooldown = 0;
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, 0,
+            FpsInputButtons.None));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(3, Vector2.Zero, 0, 0,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actors[2].Dead, Is.True);
+            Assert.That(simulation.Team1Kills, Is.EqualTo(1));
+            Assert.That(simulation.Team2Kills, Is.Zero);
+            Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Finished));
+            Assert.That(simulation.WinnerTeam, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void HardcoreFirearmsKillTorsoInOneHitAndLimbsInTwo()
+    {
+        var simulation = new FpsSimulation(Configuration(matchType: FpsMatchType.HardcoreDeathmatch),
+        [new(0, "Shooter", FpsSlotRole.Human), new(1, "Victim", FpsSlotRole.Human)]);
+        simulation.ClaimHuman(0);
+        simulation.ClaimHuman(1);
+        var actors = simulation.Actors.OrderBy(actor => actor.Id).ToArray();
+        actors[0].Position = Vector3.Zero;
+        actors[1].Position = new Vector3(0, 0, 5);
+
+        float limbPitch = MathF.Atan2(0.25f - 1.65f, 5);
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.Zero, 0, limbPitch,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+        Assert.That(actors[1].Health, Is.EqualTo(50));
+
+        actors[0].FireCooldown = 0;
+        simulation.ApplyInput(0, new FpsInputCommand(2, Vector2.Zero, 0, limbPitch,
+            FpsInputButtons.None));
+        simulation.Step(0.05f);
+        simulation.ApplyInput(0, new FpsInputCommand(3, Vector2.Zero, 0, limbPitch,
+            FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+        Assert.That(actors[1].Dead, Is.True);
+
+        actors[1].Dead = false;
+        actors[1].Health = 100;
+        actors[1].Position = new Vector3(0, 0, 5);
+        actors[0].FireCooldown = 0;
+        simulation.ApplyInput(0, new FpsInputCommand(4, Vector2.Zero, 0,
+            MathF.Atan2(1.0f - 1.65f, 5), FpsInputButtons.Fire));
+        simulation.Step(0.05f);
+        Assert.That(actors[1].Dead, Is.True);
+    }
+
+    [Test]
+    public void MutatorsEnforceHeadshotsInfiniteSprintAndNoRegeneration()
+    {
+        var configuration = Configuration(headshotsOnly: true, infiniteSprint: true,
+            disableHealthRegeneration: true);
+        var simulation = new FpsSimulation(configuration,
+            [new(0, "Shooter", FpsSlotRole.Human), new(1, "Victim", FpsSlotRole.Human)]);
+        simulation.ClaimHuman(0);
+        simulation.ClaimHuman(1);
+        var actors = simulation.Actors.OrderBy(actor => actor.Id).ToArray();
+        actors[0].Position = Vector3.Zero;
+        actors[1].Position = new Vector3(0, 0, 5);
+
+        simulation.ApplyInput(0, new FpsInputCommand(1, Vector2.UnitY, 0,
+            MathF.Atan2(1.0f - 1.65f, 5), FpsInputButtons.Fire | FpsInputButtons.Sprint));
+        for (int tick = 0; tick < 200; tick++) simulation.Step(0.05f);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actors[1].Health, Is.EqualTo(100));
+            Assert.That(actors[0].Stamina, Is.EqualTo(FpsSimulation.MaximumStamina));
+        });
+
+        actors[1].Health = 60;
+        for (int tick = 0; tick < 200; tick++) simulation.Step(0.05f);
+        Assert.That(actors[1].Health, Is.EqualTo(60));
+    }
+
+    [Test]
     public void LiveMatchSnapshotUsesAuthoritativeActorsAndNames()
     {
         var simulation = new FpsSimulation(Configuration(difficulty: 0.4f),
@@ -3134,11 +3261,17 @@ public sealed class FpsSimulationTests
 
     private static FpsConfiguration Configuration(int killLimit = 20, float difficulty = 0,
         float difficultyVariance = 0, float aggression = 0, float aggressionVariance = 0,
-        int health = 100) => new()
+        int health = 100, FpsMatchType matchType = FpsMatchType.Deathmatch,
+        bool headshotsOnly = false, bool infiniteSprint = false,
+        bool disableHealthRegeneration = false) => new()
     {
         Enabled = true,
         TimeLimitMinutes = 10,
         KillLimit = killLimit,
+        MatchType = matchType,
+        HeadshotsOnly = headshotsOnly,
+        InfiniteSprint = infiniteSprint,
+        DisableHealthRegeneration = disableHealthRegeneration,
         RespawnSeconds = 0.2f,
         SpawnProtectionSeconds = 0,
         Bots = new FpsBotConfiguration
@@ -3167,10 +3300,14 @@ internal static class FpsConfigurationTestExtensions
     public static FpsConfiguration WithProtection(this FpsConfiguration source, float seconds) => new()
     {
         Enabled = source.Enabled,
+        MatchType = source.MatchType,
         TimeLimitMinutes = source.TimeLimitMinutes,
         KillLimit = source.KillLimit,
         RespawnSeconds = source.RespawnSeconds,
         SpawnProtectionSeconds = seconds,
+        HeadshotsOnly = source.HeadshotsOnly,
+        InfiniteSprint = source.InfiniteSprint,
+        DisableHealthRegeneration = source.DisableHealthRegeneration,
         Bots = source.Bots,
         Arena = source.Arena,
     };

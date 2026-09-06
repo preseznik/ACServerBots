@@ -31,7 +31,7 @@ public sealed class FpsStorageTests
     }
 
     [Test]
-    public void PresetStore_OlderFpsPresetDefaultsToBlocksTheme()
+    public void PresetStore_OlderFpsPresetDefaultsToBlocksFfaAndNoMutators()
     {
         using var factory = new TestContentFactory();
         factory.CreateInstallation();
@@ -48,7 +48,16 @@ public sealed class FpsStorageTests
 
         RaceControlPreset loaded = store.Load(path);
 
-        Assert.That(loaded.Fps.Theme, Is.EqualTo(FpsVisualTheme.Blocks));
+        Assert.Multiple(() =>
+        {
+            Assert.That(loaded.Fps.Theme, Is.EqualTo(FpsVisualTheme.Blocks));
+            Assert.That(loaded.Fps.MatchType, Is.EqualTo(FpsMatchType.Deathmatch));
+            Assert.That(loaded.Fps.HeadshotsOnly, Is.False);
+            Assert.That(loaded.Fps.InfiniteSprint, Is.False);
+            Assert.That(loaded.Fps.DisableHealthRegeneration, Is.False);
+            Assert.That(loaded.Grid, Is.All.Matches<GridSlotPreset>(slot =>
+                slot.FpsTeam == FpsTeamAssignment.Auto));
+        });
     }
 
     [Test]

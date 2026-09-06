@@ -19,6 +19,7 @@ public sealed class GridSlotViewModel : ObservableObject
     private double? _difficulty;
     private double? _aggression;
     private SlotMode _mode;
+    private FpsTeamAssignment _fpsTeam;
 
     public GridSlotViewModel(GridSlotPreset slot, IReadOnlyList<AcCar> cars, int index)
     {
@@ -32,6 +33,7 @@ public sealed class GridSlotViewModel : ObservableObject
         _difficulty = slot.Difficulty;
         _aggression = slot.Aggression;
         _mode = slot.Mode;
+        _fpsTeam = slot.FpsTeam;
         _selectedCar = cars.FirstOrDefault(car => car.Id.Equals(slot.CarId, StringComparison.OrdinalIgnoreCase)) ?? cars.FirstOrDefault();
         RefreshSkins(slot.SkinId);
     }
@@ -135,6 +137,12 @@ public sealed class GridSlotViewModel : ObservableObject
         set => SetProperty(ref _mode, value);
     }
 
+    public FpsTeamAssignment FpsTeam
+    {
+        get => _fpsTeam;
+        set => SetProperty(ref _fpsTeam, value);
+    }
+
     public string CarDetails => SelectedCar is null
         ? string.Empty
         : $"{SelectedCar.MassKg:0} kg  •  {SelectedCar.PowerHp:0} hp  •  {SelectedCar.TopSpeedKmh:0} km/h";
@@ -151,6 +159,7 @@ public sealed class GridSlotViewModel : ObservableObject
         Difficulty = Difficulty,
         Aggression = Aggression,
         Mode = Mode,
+        FpsTeam = FpsTeam,
     };
 
     private void RefreshSkins(string? selectedSkinId)

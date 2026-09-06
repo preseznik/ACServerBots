@@ -35,7 +35,8 @@ internal enum FpsBotMode : byte
 }
 
 internal sealed record FpsSimulationSlot(byte Id, string Name, FpsSlotRole Role,
-    float? Difficulty = null, float? Aggression = null);
+    float? Difficulty = null, float? Aggression = null,
+    FpsTeamAssignment Team = FpsTeamAssignment.Auto);
 
 internal readonly record struct FpsInputCommand(uint Sequence, Vector2 Move, float Yaw,
     float Pitch, FpsInputButtons Buttons, byte SelectedSlot = 0);
@@ -103,6 +104,7 @@ internal sealed class FpsActorState
     public required string Name { get; set; }
     public required string ConfiguredName { get; init; }
     public required FpsSlotRole Role { get; init; }
+    public FpsTeamAssignment Team { get; init; } = FpsTeamAssignment.Auto;
     public Vector3 Position { get; set; }
     public float Yaw { get; set; }
     public float Pitch { get; set; }
@@ -282,6 +284,10 @@ internal sealed class FpsSimulation
     public float RemainingSeconds { get; private set; }
     public float ElapsedSeconds { get; private set; }
     public byte WinnerId { get; private set; } = byte.MaxValue;
+    public byte WinnerTeam { get; private set; }
+    public ushort Team1Kills { get; private set; }
+    public ushort Team2Kills { get; private set; }
+    public FpsMatchType MatchType => _configuration.MatchType;
     public IReadOnlyCollection<FpsActorState> Actors => _actors.Values;
     public IReadOnlyList<FpsKillEvent> KillEvents => _killEvents;
     public IReadOnlyList<FpsHitEvent> HitEvents => _hitEvents;
@@ -306,7 +312,9 @@ internal sealed class FpsSimulation
         _navigation = navigation;
         _seed = seed;
         RemainingSeconds = Math.Max(1, configuration.TimeLimitMinutes) * 60;
-        _actors = slots.Where(slot => slot.Role != FpsSlotRole.Spectator).ToDictionary(slot => slot.Id,
+        var participantSlots = slots.Where(slot => slot.Role != FpsSlotRole.Spectator).ToArray();
+        var teams = AssignTeams(configuration.MatchType, participantSlots);
+        _actors = participantSlots.ToDictionary(slot => slot.Id,
             slot =>
             {
                 string configuredName = string.IsNullOrWhiteSpace(slot.Name)
@@ -318,6 +326,7 @@ internal sealed class FpsSimulation
                     Name = configuredName,
                     ConfiguredName = configuredName,
                     Role = slot.Role,
+                    Team = teams[slot.Id],
                     Health = configuration.Bots.Health,
                     Loadout = FpsItems.FromConfiguration(configuration.Loadouts.BotDefault),
                     LoadoutConfirmed = true,
@@ -476,7 +485,10 @@ internal sealed class FpsSimulation
         SeparateActors();
         StepWeaponPickups(dt);
         StepGrenades(dt);
-        if (RemainingSeconds <= 0 || _actors.Values.Any(actor => actor.Kills >= _configuration.KillLimit))
+        bool reachedKillLimit = IsTeamMatch(_configuration.MatchType)
+            ? Team1Kills >= _configuration.KillLimit || Team2Kills >= _configuration.KillLimit
+            : _actors.Values.Any(actor => actor.Kills >= _configuration.KillLimit);
+        if (RemainingSeconds <= 0 || reachedKillLimit)
             FinishMatch();
         LastStepDiagnostics = new FpsStepDiagnostics(humanMilliseconds, botMilliseconds,
             Stopwatch.GetElapsedTime(postStarted).TotalMilliseconds,
@@ -947,6 +959,7 @@ internal sealed class FpsSimulation
 
     private FpsActorState? AcquireBotTarget(FpsActorState actor) => _actors.Values
         .Where(candidate => candidate.Active && !candidate.Dead && candidate.Id != actor.Id
+                            && !AreTeammates(actor, candidate)
                             && IsViableBotTarget(actor, candidate))
         .OrderBy(candidate => PlanarDistance(actor.Position, candidate.Position))
         .ThenBy(candidate => candidate.Id)
@@ -954,8 +967,8 @@ internal sealed class FpsSimulation
 
     private bool IsViableBotTarget(FpsActorState actor, FpsActorState candidate)
     {
-        return _navigation is null
-               || _navigation.AreConnected(actor.Position, candidate.Position);
+        return !AreTeammates(actor, candidate) && (_navigation is null
+               || _navigation.AreConnected(actor.Position, candidate.Position));
     }
 
     private void SetBotTarget(FpsActorState actor, FpsActorState target)
@@ -1307,9 +1320,18 @@ internal sealed class FpsSimulation
             Math.Clamp(position.Z, min.Z, max.Z)));
     }
 
-    private static bool UpdateStamina(FpsActorState actor, bool sprintRequested,
+    private bool UpdateStamina(FpsActorState actor, bool sprintRequested,
         bool moving, float dt)
     {
+        if (_configuration.InfiniteSprint)
+        {
+            actor.Stamina = MaximumStamina;
+            actor.SprintExhausted = false;
+            actor.StaminaRecoveryDelay = 0;
+            return sprintRequested && moving && actor.IsGrounded
+                   && !actor.IsCrouching && !actor.IsProne;
+        }
+
         bool canSprint = sprintRequested && moving && actor.IsGrounded
                          && !actor.IsCrouching && !actor.IsProne
                          && !actor.SprintExhausted && actor.Stamina > 0;
@@ -1341,6 +1363,12 @@ internal sealed class FpsSimulation
 
     private void StepHealthRegeneration(FpsActorState actor, float dt)
     {
+        if (_configuration.DisableHealthRegeneration)
+        {
+            actor.HealthRegenerationCarry = 0;
+            return;
+        }
+
         actor.HealthRegenerationDelay = Math.Max(0, actor.HealthRegenerationDelay - dt);
         int maximumHealth = _configuration.Bots.Health;
         if (actor.Health >= maximumHealth)
@@ -1618,14 +1646,22 @@ internal sealed class FpsSimulation
         if (hit is null) return;
         ApplyDamage(attacker, hit, firearm.DamageAtDistance(hitDistance),
             (byte)attacker.WeaponType,
-            hitHeightRatio);
+            hitHeightRatio, bodyHit: true);
     }
 
     private void ApplyDamage(FpsActorState attacker, FpsActorState victim, int damage,
-        byte itemId, float hitHeightRatio = 0, bool ignoreSpawnProtection = false)
+        byte itemId, float hitHeightRatio = 0, bool ignoreSpawnProtection = false,
+        bool bodyHit = false)
     {
-        if (victim.Dead || (!ignoreSpawnProtection && victim.SpawnProtectionRemaining > 0)
+        if (victim.Dead || AreTeammates(attacker, victim)
+            || (!ignoreSpawnProtection && victim.SpawnProtectionRemaining > 0)
             || damage <= 0) return;
+        bool headshot = hitHeightRatio >= 0.8f;
+        if (_configuration.HeadshotsOnly && !headshot) return;
+        if (IsHardcore(_configuration.MatchType) && bodyHit)
+            damage = hitHeightRatio >= 0.42f
+                ? Math.Max(1, victim.Health)
+                : Math.Max(1, (_configuration.Bots.Health + 1) / 2);
         int healthBefore = victim.Health;
         bool selfDamage = attacker.Id == victim.Id;
         if (!selfDamage) victim.DamageContributors.Add(attacker.Id);
@@ -1649,10 +1685,15 @@ internal sealed class FpsSimulation
         if (!selfDamage)
         {
             attacker.Kills++;
+            if (IsTeamMatch(_configuration.MatchType))
+            {
+                if (attacker.Team == FpsTeamAssignment.Team1) Team1Kills++;
+                else if (attacker.Team == FpsTeamAssignment.Team2) Team2Kills++;
+            }
             attacker.Score += 100;
             attacker.FinalScoreAttainedAtSeconds = ElapsedSeconds;
             var killFlags = FpsAwardFlags.Kill;
-            if (hitHeightRatio >= 0.8f) killFlags |= FpsAwardFlags.Headshot;
+            if (headshot) killFlags |= FpsAwardFlags.Headshot;
             if (healthBefore == _configuration.Bots.Health && damage >= healthBefore)
                 killFlags |= FpsAwardFlags.OneShot;
             _awardEvents.Add(new FpsAwardEvent(attacker.Id, victim.Id, 100,
@@ -1978,6 +2019,7 @@ internal sealed class FpsSimulation
         foreach (var victim in _actors.Values.Where(actor => actor.Active && !actor.Dead)
                      .OrderBy(actor => actor.Id))
         {
+            if (AreTeammates(owner, victim)) continue;
             var target = victim.Position + Vector3.UnitY * EyeHeight(victim.Stance);
             var fromExplosion = target - grenade.Position;
             float distance = fromExplosion.Length();
@@ -2267,13 +2309,56 @@ internal sealed class FpsSimulation
     private void FinishMatch()
     {
         MatchState = FpsMatchState.Finished;
-        WinnerId = _actors.Values.Where(actor => actor.Active)
+        if (IsTeamMatch(_configuration.MatchType))
+            WinnerTeam = Team1Kills == Team2Kills ? (byte)0
+                : Team1Kills > Team2Kills ? (byte)1 : (byte)2;
+        if (IsTeamMatch(_configuration.MatchType) && WinnerTeam == 0)
+        {
+            WinnerId = byte.MaxValue;
+            return;
+        }
+        WinnerId = _actors.Values.Where(actor => actor.Active
+                                                && (WinnerTeam == 0
+                                                    || (byte)actor.Team == WinnerTeam))
             .OrderByDescending(actor => actor.Kills)
             .ThenBy(actor => actor.Deaths)
             .ThenBy(actor => actor.FinalScoreAttainedAtSeconds)
             .ThenBy(actor => actor.Id)
             .Select(actor => actor.Id)
             .FirstOrDefault(byte.MaxValue);
+    }
+
+    internal static bool IsTeamMatch(FpsMatchType matchType) =>
+        matchType is FpsMatchType.TeamDeathmatch or FpsMatchType.HardcoreTeamDeathmatch;
+
+    internal static bool IsHardcore(FpsMatchType matchType) =>
+        matchType is FpsMatchType.HardcoreDeathmatch or FpsMatchType.HardcoreTeamDeathmatch;
+
+    private bool AreTeammates(FpsActorState first, FpsActorState second) =>
+        first.Id != second.Id && IsTeamMatch(_configuration.MatchType)
+        && first.Team != FpsTeamAssignment.Auto && first.Team == second.Team;
+
+    private static IReadOnlyDictionary<byte, FpsTeamAssignment> AssignTeams(
+        FpsMatchType matchType, IReadOnlyList<FpsSimulationSlot> slots)
+    {
+        if (!IsTeamMatch(matchType))
+            return slots.ToDictionary(slot => slot.Id, _ => FpsTeamAssignment.Auto);
+
+        int team1 = slots.Count(slot => slot.Team == FpsTeamAssignment.Team1);
+        int team2 = slots.Count(slot => slot.Team == FpsTeamAssignment.Team2);
+        var result = new Dictionary<byte, FpsTeamAssignment>(slots.Count);
+        foreach (var slot in slots.OrderBy(slot => slot.Id))
+        {
+            var team = slot.Team;
+            if (team == FpsTeamAssignment.Auto)
+            {
+                team = team1 <= team2 ? FpsTeamAssignment.Team1 : FpsTeamAssignment.Team2;
+                if (team == FpsTeamAssignment.Team1) team1++;
+                else team2++;
+            }
+            result[slot.Id] = team;
+        }
+        return result;
     }
 
     private float DeterministicNoise(byte actorId, uint interval, uint salt)

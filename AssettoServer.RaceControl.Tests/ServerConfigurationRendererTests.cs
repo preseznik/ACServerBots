@@ -196,11 +196,17 @@ public sealed class ServerConfigurationRendererTests
         preset.Fps.TimeLimitMinutes = 10;
         preset.Fps.KillLimit = 20;
         preset.Fps.Theme = FpsVisualTheme.Modern;
+        preset.Fps.MatchType = FpsMatchType.HardcoreTeamDeathmatch;
+        preset.Fps.HeadshotsOnly = true;
+        preset.Fps.InfiniteSprint = true;
+        preset.Fps.DisableHealthRegeneration = true;
         preset.Fps.Arena = Arena();
         preset.Grid[0].Mode = SlotMode.Auto;
         preset.Grid[1].Mode = SlotMode.Fixed;
         preset.Grid[2].Mode = SlotMode.None;
         preset.Grid[3].Mode = SlotMode.Spectator;
+        preset.Grid[0].FpsTeam = FpsTeamAssignment.Team1;
+        preset.Grid[1].FpsTeam = FpsTeamAssignment.Team2;
         foreach (var slot in preset.Grid) slot.CarId = "unused_car";
 
         var rendered = new ServerConfigurationRenderer().Render(preset, factory.Scan());
@@ -215,10 +221,18 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.EntryList.Get("CAR_1", "FPS_ROLE"), Is.EqualTo("Bot"));
             Assert.That(rendered.EntryList.Get("CAR_2", "FPS_ROLE"), Is.EqualTo("Human"));
             Assert.That(rendered.EntryList.Get("CAR_3", "FPS_ROLE"), Is.EqualTo("Spectator"));
+            Assert.That(rendered.EntryList.Get("CAR_0", "FPS_TEAM"), Is.EqualTo("Team1"));
+            Assert.That(rendered.EntryList.Get("CAR_1", "FPS_TEAM"), Is.EqualTo("Team2"));
             Assert.That(rendered.EntryList.Get("CAR_0", "AI"), Is.EqualTo("none"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("MinimumCSPVersion: 4053"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("Fps:"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  Theme: Modern"));
+            Assert.That(rendered.ExtraConfiguration,
+                Does.Contain("  MatchType: HardcoreTeamDeathmatch"));
+            Assert.That(rendered.ExtraConfiguration, Does.Contain("  HeadshotsOnly: true"));
+            Assert.That(rendered.ExtraConfiguration, Does.Contain("  InfiniteSprint: true"));
+            Assert.That(rendered.ExtraConfiguration,
+                Does.Contain("  DisableHealthRegeneration: true"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  KillLimit: 20"));
             Assert.That(rendered.ExtraConfiguration,
                 Does.Contain("    AllowedMainWeapons: [AssaultRifle, CompactSmg]"));

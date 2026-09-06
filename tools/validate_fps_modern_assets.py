@@ -371,7 +371,7 @@ def validate_modern_asset_set(directory: Path) -> dict[str, Any]:
         raise ValueError("Deferred M4A1 source must not be present")
 
     files = {path.name: path for path in directory.iterdir()
-             if path.suffix.lower() in {".kn5", ".ksanim"}}
+             if path.suffix.lower() in {".kn5", ".ksanim", ".png"}}
     recorded = manifest.get("files", {})
     if set(files) != set(recorded):
         raise ValueError("Modern manifest file list does not match generated assets")
@@ -380,9 +380,26 @@ def validate_modern_asset_set(directory: Path) -> dict[str, Any]:
         if actual != recorded[name]:
             raise ValueError(f"Modern asset hash mismatch: {name}")
 
+    team_skins = manifest["operator"].get("teamSkins", {})
+    if team_skins.get("team2Uniform") != "asrc_modern_team2_uniform.png" \
+            or team_skins.get("team2Gear") != "asrc_modern_team2_gear.png":
+        raise ValueError("Modern Team 2 skin metadata is missing")
+    for label in ("team2Uniform", "team2Gear"):
+        name = team_skins[label]
+        blob = files[name].read_bytes()
+        width, height = _png_dimensions(blob, name)
+        if len(blob) < 1024 or width > 2048 or height > 2048:
+            raise ValueError(f"Modern Team 2 texture is invalid: {name}")
+
     operator = inspect_kn5(directory / manifest["operator"]["file"])
     viewmodel = inspect_kn5(directory / manifest["viewmodel"]["file"])
     pickup = inspect_kn5(directory / manifest["pickup"]["file"])
+    operator_textures = {name for name, _, _ in operator.texture_dimensions}
+    for texture in (
+            "ASRC_OFFICER_UNIFORM_txDiffuse.png",
+            "ASRC_OFFICER_GEAR_txDiffuse.png"):
+        if texture not in operator_textures:
+            raise ValueError(f"Modern Team 2 skin source texture is missing: {texture}")
     for label, summary, metadata, triangle_limit, material_limit in (
             ("operator", operator, manifest["operator"], 40_000, 4),
             ("viewmodel", viewmodel, manifest["viewmodel"], 30_000, 3)):

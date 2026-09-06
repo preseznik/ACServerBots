@@ -142,10 +142,11 @@ public sealed class LiveRaceControlClientTests
           "sequence": 19,
           "serverRunning": true,
           "isFps": true,
-          "session": { "name": "Current match", "type": "Deathmatch", "phase": "running",
-            "timeLeftMilliseconds": 119000, "killLimit": 20 },
+          "session": { "name": "Current match", "type": "TDM", "phase": "running",
+            "timeLeftMilliseconds": 119000, "killLimit": 20,
+            "winnerTeam": 2, "team1Kills": 18, "team2Kills": 20 },
           "cars": [{ "sessionId": 3, "name": "Operative 04", "model": "FPS Operator",
-            "isBot": true, "isActive": true, "x": 12.5, "y": 3, "z": -8,
+            "isBot": true, "isActive": true, "team": 2, "x": 12.5, "y": 3, "z": -8,
             "headingRadians": 1.5, "health": 66, "kills": 7, "deaths": 2 }]
         }
         """);
@@ -173,7 +174,12 @@ public sealed class LiveRaceControlClientTests
             Assert.That(snapshot, Is.Not.Null);
             Assert.That(snapshot!.IsFps, Is.True);
             Assert.That(snapshot.Session.KillLimit, Is.EqualTo(20));
+            Assert.That(snapshot.Session.Type, Is.EqualTo("TDM"));
+            Assert.That(snapshot.Session.Team1Kills, Is.EqualTo(18));
+            Assert.That(snapshot.Session.Team2Kills, Is.EqualTo(20));
+            Assert.That(snapshot.Session.WinnerTeam, Is.EqualTo(2));
             Assert.That(snapshot.Cars.Single().Name, Is.EqualTo("Operative 04"));
+            Assert.That(snapshot.Cars.Single().Team, Is.EqualTo(2));
             Assert.That(snapshot.Cars.Single().Health, Is.EqualTo(66));
             Assert.That(snapshot.Cars.Single().Kills, Is.EqualTo(7));
             Assert.That(snapshot.Cars.Single().Deaths, Is.EqualTo(2));

@@ -45,10 +45,12 @@ public sealed class RaceControlWebServerTests
           "sequence": 42,
           "serverRunning": true,
           "isFps": true,
-          "session": { "name": "Current match", "type": "Deathmatch", "phase": "running",
-            "timeLeftMilliseconds": 90000, "killLimit": 20 },
+          "session": { "name": "Current match", "type": "TDM", "phase": "running",
+            "timeLeftMilliseconds": 90000, "killLimit": 20,
+            "team1Kills": 12, "team2Kills": 9 },
           "cars": [{ "sessionId": 1, "name": "Operative 02", "isBot": true,
-            "isActive": true, "x": 1, "z": 2, "health": 80, "kills": 3, "deaths": 1 }]
+            "isActive": true, "team": 2, "x": 1, "z": 2,
+            "health": 80, "kills": 3, "deaths": 1 }]
         }
         """);
         await File.WriteAllTextAsync(live.TrackPath, """
@@ -82,10 +84,14 @@ public sealed class RaceControlWebServerTests
             Assert.That(index, Does.Contain("LIVE SESSION"));
             Assert.That(index, Does.Contain("id=\"environment-panel\""));
             Assert.That(index, Does.Contain("id=\"selected-player-panel\""));
+            Assert.That(index, Does.Contain("id=\"preset-match-type\""));
+            Assert.That(index, Does.Contain("id=\"preset-mutators\""));
             Assert.That(index, Does.Contain("class=\"map-card panel collapsible\""));
             Assert.That(status.RootElement.GetProperty("localOwnerOnly").GetBoolean(), Is.True);
             Assert.That(status.RootElement.GetProperty("live").GetProperty("sequence").GetInt64(), Is.EqualTo(42));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("eventName").GetString(), Is.EqualTo("Test Deathmatch"));
+            Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsMatchType").GetString(), Is.EqualTo("TDM"));
+            Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsMutators").GetString(), Is.EqualTo("Infinite sprint"));
             Assert.That(track.RootElement.GetProperty("track").GetString(), Is.EqualTo("fire_pit"));
             Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
             Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
@@ -148,7 +154,8 @@ public sealed class RaceControlWebServerTests
 
         public RaceControlWebControlState GetState() => new(
             "Test Deathmatch", "Test Server", "FPS", "MATCH", "fire_pit", "", "Blocks",
-            "RUNNING", "Ready", false, false, true, true, true, true, true);
+            "RUNNING", "Ready", false, false, true, true, true, true, true,
+            "TDM", "Infinite sprint");
 
         public Task<RaceControlWebActionResult> ExecuteAsync(RaceControlWebAction action,
             CancellationToken cancellationToken = default)

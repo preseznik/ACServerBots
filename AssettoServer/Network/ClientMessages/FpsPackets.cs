@@ -33,7 +33,7 @@ public sealed class FpsInputPacket : OnlineEvent<FpsInputPacket>
 [OnlineEvent(Key = "ASRC_FpsReady")]
 public sealed class FpsReadyPacket : OnlineEvent<FpsReadyPacket>
 {
-    [OnlineEventField(Name = "protocol")] public ushort Protocol = 2;
+    [OnlineEventField(Name = "protocol")] public ushort Protocol = 3;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutSelect")]
@@ -173,6 +173,7 @@ public sealed class FpsRosterPacket : OnlineEvent<FpsRosterPacket>
 {
     [OnlineEventField(Name = "actorID")] public byte ActorId;
     [OnlineEventField(Name = "role")] public byte Role;
+    [OnlineEventField(Name = "team")] public byte Team;
     [OnlineEventField(Name = "name", Size = 32)] public string Name = string.Empty;
 }
 
@@ -184,6 +185,10 @@ public sealed class FpsMatchPacket : OnlineEvent<FpsMatchPacket>
     [OnlineEventField(Name = "killLimit")] public ushort KillLimit;
     [OnlineEventField(Name = "maximumHealth")] public ushort MaximumHealth;
     [OnlineEventField(Name = "winnerID")] public byte WinnerId = byte.MaxValue;
+    [OnlineEventField(Name = "matchType")] public byte MatchType;
+    [OnlineEventField(Name = "winnerTeam")] public byte WinnerTeam;
+    [OnlineEventField(Name = "team1Kills")] public ushort Team1Kills;
+    [OnlineEventField(Name = "team2Kills")] public ushort Team2Kills;
     [OnlineEventField(Name = "weatherType")] public byte WeatherType;
     [OnlineEventField(Name = "timeOfDaySeconds")] public uint TimeOfDaySeconds;
 }

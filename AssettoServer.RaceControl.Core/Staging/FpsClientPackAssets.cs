@@ -209,7 +209,7 @@ public static class FpsClientPackAssets
             assets.Add(($"{ModernAssetDirectory}{fileName}", data));
         }
 
-        if (assets.Count < 30)
+        if (assets.Count < 32)
             throw new InvalidDataException("Embedded Modern FPS client asset set is incomplete");
         ValidateModernAssetSet(assets);
         return assets;
@@ -281,6 +281,11 @@ public static class FpsClientPackAssets
             valid = data.AsSpan(0, 6).SequenceEqual("sc6969"u8);
         else if (fileName.EndsWith(".ksanim", StringComparison.OrdinalIgnoreCase))
             valid = BitConverter.ToUInt32(data, 0) == 2;
+        else if (fileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            ReadOnlySpan<byte> pngMagic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+            valid = data.AsSpan(0, pngMagic.Length).SequenceEqual(pngMagic);
+        }
         else if (fileName.Equals("asrc-modern-assets.json", StringComparison.Ordinal))
         {
             using var document = System.Text.Json.JsonDocument.Parse(data);
@@ -315,6 +320,13 @@ public static class FpsClientPackAssets
                 || !Sha256(data).Equals(file.Value.GetString(), StringComparison.Ordinal))
                 throw new InvalidDataException($"Embedded Modern FPS hash mismatch: {file.Name}");
         }
+        System.Text.Json.JsonElement teamSkins = root.GetProperty("operator")
+            .GetProperty("teamSkins");
+        if (teamSkins.GetProperty("team2Uniform").GetString()
+                != "asrc_modern_team2_uniform.png"
+            || teamSkins.GetProperty("team2Gear").GetString()
+                != "asrc_modern_team2_gear.png")
+            throw new InvalidDataException("Embedded Modern FPS Team 2 skin metadata is invalid");
         if (root.GetProperty("operator").GetProperty("triangles").GetInt32() > 40_000
             || root.GetProperty("operator").GetProperty("materials").GetInt32() > 4
             || root.GetProperty("viewmodel").GetProperty("triangles").GetInt32() > 30_000

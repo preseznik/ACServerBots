@@ -242,7 +242,9 @@ function renderSelectedPlayer(cars) {
   ui.selectedPlayer.value = previous;
   const selected = active.find(car => car.sessionId === selectedPlayerId);
   ui.selectedPlayerCaption.textContent = selected?.name || "No active player";
-  ui.selectedPlayerType.textContent = selected ? (selected.isBot ? "BOT" : "HUMAN") : "—";
+  ui.selectedPlayerType.textContent = selected
+    ? `${selected.isBot ? "BOT" : "HUMAN"}${selected.team ? ` / TEAM ${selected.team}` : ""}`
+    : "—";
   ui.selectedPlayerHealth.textContent = selected ? `${Math.max(0, selected.health || 0)}%` : "—";
   ui.selectedPlayerScore.textContent = selected
     ? `${selected.score || 0} / ${selected.kills || 0} / ${selected.deaths || 0}` : "—";
@@ -269,7 +271,8 @@ function renderRoster(cars, isFps) {
     addCell(row, String(index + 1));
     const name = addCell(row, car.name || `Slot ${car.sessionId + 1}`);
     if (!car.isBot) name.className = "player-human";
-    addCell(row, car.isBot ? "BOT" : car.isConnected ? "HUMAN" : "PLAYER");
+    const participantType = car.isBot ? "BOT" : car.isConnected ? "HUMAN" : "PLAYER";
+    addCell(row, isFps && car.team ? `TEAM ${car.team} / ${participantType}` : participantType);
     if (isFps) addHealthCell(row, car.health);
     else addCell(row, `${Math.round(car.speedKmh || 0)} km/h`);
     addCell(row, isFps ? String(car.score || 0) : "—");
@@ -313,6 +316,8 @@ function renderSecondaryViews(launcher) {
   setText("preset-mode", launcher.mode);
   setText("preset-track", displayTrack(launcher.track, launcher.layout));
   setText("preset-theme", launcher.mode === "FPS" ? launcher.fpsTheme : "—");
+  setText("preset-match-type", launcher.mode === "FPS" ? launcher.fpsMatchType : "—");
+  setText("preset-mutators", launcher.mode === "FPS" ? launcher.fpsMutators : "—");
   setText("settings-address", status.webAddress);
 }
 

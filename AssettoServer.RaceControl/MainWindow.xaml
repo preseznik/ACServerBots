@@ -169,7 +169,7 @@
                                     <TextBlock Text="Event mode" Style="{StaticResource FieldLabel}" />
                                     <ComboBox ItemsSource="{Binding EventModes}" SelectedItem="{Binding EventMode, Mode=TwoWay}"
                                               Margin="0,0,0,12"
-                                              ToolTip="Racing uses AssettoServer race bots and AC sessions. FPS runs the isolated CSP-required Deathmatch compatibility mode." />
+                                              ToolTip="Racing uses AssettoServer race bots and AC sessions. FPS runs the isolated CSP-required match runtime." />
                                     <TextBlock Text="Preset name" Style="{StaticResource FieldLabel}" />
                                     <TextBox Text="{Binding Preset.Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"
                                              ToolTip="Local preset name used when saving this Race Control setup." />
@@ -454,11 +454,42 @@
                                     </Style>
                                 </DataGridTextColumn.CellStyle>
                             </DataGridTextColumn>
-                            <DataGridTextColumn Binding="{Binding TeamName}" Width="130">
-                                <DataGridTextColumn.Header>
-                                    <TextBlock Text="Team" ToolTip="Optional team name advertised for this grid entry." />
-                                </DataGridTextColumn.Header>
-                            </DataGridTextColumn>
+                            <DataGridTemplateColumn Header="Team" Width="140">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <TextBox Text="{Binding TeamName, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Optional racing team name advertised for this grid entry.">
+                                                <TextBox.Style>
+                                                    <Style TargetType="TextBox">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding DataContext.IsFpsMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBox.Style>
+                                            </TextBox>
+                                            <ComboBox ItemsSource="{Binding DataContext.FpsTeams, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      SelectedValuePath="Value" DisplayMemberPath="Label"
+                                                      SelectedValue="{Binding FpsTeam}"
+                                                      ToolTip="Choose Team 1 or Team 2, or let the server auto-balance this slot.">
+                                                <ComboBox.Style>
+                                                    <Style TargetType="ComboBox">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding DataContext.IsFpsMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ComboBox.Style>
+                                            </ComboBox>
+                                        </Grid>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Binding="{Binding BallastKg}" Width="75">
                                 <DataGridTextColumn.Header>
                                     <TextBlock Text="Ballast" ToolTip="Extra ballast mass in kilograms applied to this entry." />
@@ -586,16 +617,29 @@
                     <WrapPanel Margin="24">
                         <Border Style="{StaticResource Card}" Width="420">
                             <StackPanel>
-                                <TextBlock Text="Deathmatch" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Text="Match rules" Style="{StaticResource SectionTitle}" />
                                 <TextBlock Text="Match type" Style="{StaticResource FieldLabel}" />
-                                <TextBox Text="Deathmatch" IsReadOnly="True"
-                                         ToolTip="V1 supports free-for-all Deathmatch only." />
+                                <ComboBox ItemsSource="{Binding FpsMatchTypes}"
+                                          SelectedValuePath="Value" DisplayMemberPath="Label"
+                                          SelectedValue="{Binding Preset.Fps.MatchType}"
+                                          ToolTip="FFA is free-for-all. TDM uses lobby teams and auto-balances slots left on Auto. Hardcore makes torso/head hits lethal and limbs a two-hit kill." />
                                 <TextBlock Text="Time limit (minutes)" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
                                 <TextBox Text="{Binding Preset.Fps.TimeLimitMinutes}"
                                          ToolTip="The authoritative match ends when this many minutes elapse. Set a positive value from 1 to 180." />
                                 <TextBlock Text="Kill target" Style="{StaticResource FieldLabel}" Margin="0,12,0,5" />
                                 <TextBox Text="{Binding Preset.Fps.KillLimit}"
-                                         ToolTip="The authoritative match ends as soon as a participant reaches this many kills." />
+                                         ToolTip="The authoritative match ends when a player in FFA or a team in TDM reaches this many kills." />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Width="420">
+                            <StackPanel>
+                                <TextBlock Text="Mutators" Style="{StaticResource SectionTitle}" />
+                                <CheckBox Content="Headshot only" IsChecked="{Binding Preset.Fps.HeadshotsOnly}"
+                                          ToolTip="Only hits classified as headshots can deplete health." />
+                                <CheckBox Content="Infinite sprint" IsChecked="{Binding Preset.Fps.InfiniteSprint}" Margin="0,8,0,0"
+                                          ToolTip="Stamina remains full and sprint never exhausts." />
+                                <CheckBox Content="No HP regen" IsChecked="{Binding Preset.Fps.DisableHealthRegeneration}" Margin="0,8,0,0"
+                                          ToolTip="Disable server-authoritative out-of-combat health regeneration." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Width="420">

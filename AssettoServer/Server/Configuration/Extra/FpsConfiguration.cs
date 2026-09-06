@@ -13,6 +13,9 @@ public sealed class FpsConfiguration
     public int KillLimit { get; init; } = 20;
     public float RespawnSeconds { get; init; } = 3;
     public float SpawnProtectionSeconds { get; init; } = 1;
+    public bool HeadshotsOnly { get; init; }
+    public bool InfiniteSprint { get; init; }
+    public bool DisableHealthRegeneration { get; init; }
     public FpsBotConfiguration Bots { get; init; } = new();
     public FpsLoadoutConfiguration Loadouts { get; init; } = new();
     public FpsArenaConfiguration Arena { get; init; } = new();
@@ -64,6 +67,9 @@ public enum FpsVisualTheme
 public enum FpsMatchType
 {
     Deathmatch,
+    TeamDeathmatch,
+    HardcoreDeathmatch,
+    HardcoreTeamDeathmatch,
 }
 
 public sealed class FpsBotConfiguration

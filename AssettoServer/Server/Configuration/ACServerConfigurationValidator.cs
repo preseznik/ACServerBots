@@ -44,7 +44,6 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 .WithMessage("FPS mode requires CSP 0.3.0-preview520 (build 4053) or newer");
             extra.RuleFor(x => x.Fps).ChildRules(fps =>
             {
-                fps.RuleFor(x => x.MatchType).Equal(Extra.FpsMatchType.Deathmatch);
                 fps.RuleFor(x => x.TimeLimitMinutes).InclusiveBetween(1, 1440);
                 fps.RuleFor(x => x.KillLimit).InclusiveBetween(1, 999);
                 fps.RuleFor(x => x.RespawnSeconds).InclusiveBetween(0, 30);
@@ -189,6 +188,23 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
             .IsInEnum()
             .When(cfg => cfg.Extra.Fps.Enabled)
             .WithMessage("FPS Theme must be Blocks or Modern");
+        RuleFor(cfg => cfg.Extra.Fps.MatchType)
+            .IsInEnum()
+            .When(cfg => cfg.Extra.Fps.Enabled)
+            .WithMessage("FPS MatchType must be Deathmatch, TeamDeathmatch, HardcoreDeathmatch, or HardcoreTeamDeathmatch");
+        RuleForEach(cfg => cfg.EntryList.Cars)
+            .ChildRules(car => car.RuleFor(entry => entry.FpsTeam).IsInEnum())
+            .When(cfg => cfg.Extra.Fps.Enabled);
+        RuleFor(cfg => cfg.EntryList.Cars)
+            .Must(cars => cars.Any(car => car.FpsRole != Kunos.FpsSlotRole.Spectator
+                                          && car.FpsTeam == Kunos.FpsTeamAssignment.Auto)
+                          || (cars.Any(car => car.FpsRole != Kunos.FpsSlotRole.Spectator
+                                             && car.FpsTeam == Kunos.FpsTeamAssignment.Team1)
+                              && cars.Any(car => car.FpsRole != Kunos.FpsSlotRole.Spectator
+                                                 && car.FpsTeam == Kunos.FpsTeamAssignment.Team2)))
+            .When(cfg => cfg.Extra.Fps.Enabled
+                         && Fps.FpsSimulation.IsTeamMatch(cfg.Extra.Fps.MatchType))
+            .WithMessage("FPS team matches require both teams or at least one FPS_TEAM=Auto slot");
         RuleFor(cfg => cfg.EntryList.Cars)
             .Must(cars => cars.Count(car => car.FpsRole != Kunos.FpsSlotRole.Spectator) is >= 2 and <= 32)
             .When(cfg => cfg.Extra.Fps.Enabled)

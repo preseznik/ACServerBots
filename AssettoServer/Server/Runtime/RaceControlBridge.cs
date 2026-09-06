@@ -12,6 +12,7 @@ using AssettoServer.Server.Ai.Physics;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.RaceSimulation;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Server.Fps;
 using AssettoServer.Server.Weather;
 using AssettoServer.Shared.Weather;
@@ -520,6 +521,7 @@ public sealed class RaceControlBridge : IHostedService
                 isDnf = actor.Dead,
                 hasFinished = match.State == FpsMatchState.Finished,
                 controlMode = actor.IsBot ? "automatic" : "human",
+                team = (int)actor.Team,
                 health = actor.Health,
                 kills = actor.Kills,
                 deaths = actor.Deaths,
@@ -554,7 +556,13 @@ public sealed class RaceControlBridge : IHostedService
             {
                 index = 0,
                 name = "Current match",
-                type = "Deathmatch",
+                type = match.MatchType switch
+                {
+                    FpsMatchType.TeamDeathmatch => "TDM",
+                    FpsMatchType.HardcoreDeathmatch => "Hardcore FFA",
+                    FpsMatchType.HardcoreTeamDeathmatch => "Hardcore TDM",
+                    _ => "FFA",
+                },
                 phase,
                 startTimeMilliseconds = 0,
                 countdownMilliseconds = 0,
@@ -562,6 +570,9 @@ public sealed class RaceControlBridge : IHostedService
                 laps = 0,
                 killLimit = match.KillLimit,
                 winnerId = match.WinnerId,
+                winnerTeam = match.WinnerTeam,
+                team1Kills = match.Team1Kills,
+                team2Kills = match.Team2Kills,
             },
             lastCommand = _lastCommandId == null ? null : new
             {

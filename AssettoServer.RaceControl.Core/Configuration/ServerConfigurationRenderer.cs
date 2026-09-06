@@ -124,7 +124,7 @@ public sealed class ServerConfigurationRenderer
 
         if (preset.Mode == EventMode.Fps)
         {
-            Set(ini, "PRACTICE", "NAME", "FPS Deathmatch carrier session");
+            Set(ini, "PRACTICE", "NAME", "FPS match carrier session");
             Set(ini, "PRACTICE", "TIME", 1440);
             Set(ini, "PRACTICE", "IS_OPEN", 1);
             Set(ini, "PRACTICE", "INFINITE", 1);
@@ -190,7 +190,10 @@ public sealed class ServerConfigurationRenderer
             Set(ini, section, "AI_DIFFICULTY", OptionalRacecraftValue(slot.Difficulty));
             Set(ini, section, "AI_AGGRESSION", OptionalRacecraftValue(slot.Aggression));
             if (preset.Mode == EventMode.Fps)
+            {
                 Set(ini, section, "FPS_ROLE", FpsRole(slot.Mode));
+                Set(ini, section, "FPS_TEAM", slot.FpsTeam);
+            }
         }
 
         return ini;
@@ -257,11 +260,14 @@ public sealed class ServerConfigurationRenderer
             Line("Fps:");
             Line("  Enabled: true");
             Line($"  Theme: {fps.Theme}");
-            Line("  MatchType: Deathmatch");
+            Line($"  MatchType: {fps.MatchType}");
             Line($"  TimeLimitMinutes: {fps.TimeLimitMinutes}");
             Line($"  KillLimit: {fps.KillLimit}");
             Line($"  RespawnSeconds: {fps.RespawnSeconds.ToString("0.###", invariant)}");
             Line($"  SpawnProtectionSeconds: {fps.SpawnProtectionSeconds.ToString("0.###", invariant)}");
+            Line($"  HeadshotsOnly: {Lower(fps.HeadshotsOnly)}");
+            Line($"  InfiniteSprint: {Lower(fps.InfiniteSprint)}");
+            Line($"  DisableHealthRegeneration: {Lower(fps.DisableHealthRegeneration)}");
             Line("  Bots:");
             Line($"    Difficulty: {fps.Bots.Difficulty.ToString("0.###", invariant)}");
             Line($"    DifficultyVariancePercent: {fps.Bots.DifficultyVariancePercent.ToString("0.###", invariant)}");
@@ -342,6 +348,7 @@ public sealed class ServerConfigurationRenderer
         Difficulty = source.Difficulty,
         Aggression = source.Aggression,
         Mode = source.Mode,
+        FpsTeam = source.FpsTeam,
     };
 
     private static string AiValue(SlotMode mode) => mode switch

@@ -29,6 +29,7 @@ public class EntryList
         [IniField("AI_AGGRESSION")] public float AiAggression { get; init; } = -1;
         [IniField("LEGAL_TYRES")] public string? LegalTyres { get; init; }
         [IniField("FPS_ROLE")] public FpsSlotRole FpsRole { get; init; } = FpsSlotRole.Human;
+        [IniField("FPS_TEAM")] public FpsTeamAssignment FpsTeam { get; init; } = FpsTeamAssignment.Auto;
     }
     
     public static EntryList FromFile(string path)
@@ -68,4 +69,11 @@ public enum FpsSlotRole
     Bot,
     Human,
     Spectator,
+}
+
+public enum FpsTeamAssignment
+{
+    Auto,
+    Team1,
+    Team2,
 }

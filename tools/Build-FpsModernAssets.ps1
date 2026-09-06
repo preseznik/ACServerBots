@@ -41,6 +41,8 @@ $expected = @(
     "asrc_modern_operator_carbine.kn5",
     "asrc_modern_carbine_viewmodel.kn5",
     "asrc_modern_carbine_pickup.kn5",
+    "asrc_modern_team2_uniform.png",
+    "asrc_modern_team2_gear.png",
     "asrc-modern-assets.json"
 )
 $expected += @(

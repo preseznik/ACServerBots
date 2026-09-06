@@ -22,6 +22,8 @@ public sealed record TimeOfDayOption(int Hour, string Label);
 public sealed record LiveWeatherOption(int Type, string Label);
 public sealed record GridPopulationCategoryOption(GridPopulationCategory Value, string Label);
 public sealed record SlotModeOption(SlotMode Value, string Label);
+public sealed record FpsMatchTypeOption(FpsMatchType Value, string Label);
+public sealed record FpsTeamOption(FpsTeamAssignment Value, string Label);
 
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
@@ -197,6 +199,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ];
     public IReadOnlyList<PhysicsFidelity> PhysicsFidelities { get; } = Enum.GetValues<PhysicsFidelity>();
     public IReadOnlyList<FpsVisualTheme> FpsVisualThemes { get; } = Enum.GetValues<FpsVisualTheme>();
+    public IReadOnlyList<FpsMatchTypeOption> FpsMatchTypes { get; } =
+    [
+        new(FpsMatchType.Deathmatch, "FFA"),
+        new(FpsMatchType.TeamDeathmatch, "TDM"),
+        new(FpsMatchType.HardcoreDeathmatch, "Hardcore FFA"),
+        new(FpsMatchType.HardcoreTeamDeathmatch, "Hardcore TDM"),
+    ];
+    public IReadOnlyList<FpsTeamOption> FpsTeams { get; } =
+    [
+        new(FpsTeamAssignment.Auto, "Auto-balance"),
+        new(FpsTeamAssignment.Team1, "Team 1"),
+        new(FpsTeamAssignment.Team2, "Team 2"),
+    ];
     public IReadOnlyList<FpsMainWeapon> FpsMainWeapons { get; } = Enum.GetValues<FpsMainWeapon>();
     public IReadOnlyList<FpsLethalEquipment> FpsLethals { get; } = Enum.GetValues<FpsLethalEquipment>();
     public IReadOnlyList<FpsSecondaryWeapon> FpsSecondaryWeapons { get; } = Enum.GetValues<FpsSecondaryWeapon>();
@@ -292,7 +307,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string FillGridToolTip => IsFpsMode
         ? "Add or remove entries until the lobby matches the prepared arena's participant capacity."
         : "Add or remove entries until the grid matches the selected layout's pit-box capacity.";
-    public string SessionSectionTitle => IsFpsMode ? "DEATHMATCH" : "SESSIONS & RULES";
+    public string SessionSectionTitle => IsFpsMode ? "MATCH SETTINGS" : "SESSIONS & RULES";
     public string BotSectionTitle => IsFpsMode ? "FPS BOTS" : "RACE BOTS";
     public string LiveTabTitle => IsFpsMode ? "LIVE MATCH" : "LIVE RACE";
     public string LiveSessionTitle => IsFpsMode ? "Current match" : "Race session";
@@ -729,7 +744,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ? "Waiting for a staged server instance"
         : LiveSnapshot.IsFps
             ? $"Time left {TimeSpan.FromMilliseconds(Math.Max(0, LiveSnapshot.Session.TimeLeftMilliseconds)):mm\\:ss}"
-              + $"  •  Target {LiveSnapshot.Session.KillLimit} kills"
+              + (LiveSnapshot.Session.Type.Contains("TDM", StringComparison.OrdinalIgnoreCase)
+                  ? $"  •  T1 {LiveSnapshot.Session.Team1Kills} - {LiveSnapshot.Session.Team2Kills} T2"
+                    + $"  •  Target {LiveSnapshot.Session.KillLimit} kills"
+                  : $"  •  Target {LiveSnapshot.Session.KillLimit} kills")
         : LiveSnapshot.Session.Phase == "countdown"
             ? $"Race starts in {TimeSpan.FromMilliseconds(LiveSnapshot.Session.CountdownMilliseconds):mm\\:ss}"
             : LiveSnapshot.IsSimulation
@@ -922,7 +940,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         CanRestartServer: RestartCommand.CanExecute(null),
         CanStartSession: StartRaceCommand.CanExecute(null),
         CanStopSession: StopRaceCommand.CanExecute(null),
-        CanRestartSession: RestartRaceCommand.CanExecute(null));
+        CanRestartSession: RestartRaceCommand.CanExecute(null),
+        FpsMatchType: FpsMatchTypes.First(option => option.Value == Preset.Fps.MatchType).Label,
+        FpsMutators: FormatFpsMutators(Preset.Fps));
+
+    private static string FormatFpsMutators(FpsOptions options)
+    {
+        var enabled = new List<string>(3);
+        if (options.HeadshotsOnly) enabled.Add("Headshot only");
+        if (options.InfiniteSprint) enabled.Add("Infinite sprint");
+        if (options.DisableHealthRegeneration) enabled.Add("No HP regen");
+        return enabled.Count == 0 ? "None" : string.Join(", ", enabled);
+    }
 
     public async Task<RaceControlWebActionResult> ExecuteWebActionAsync(
         RaceControlWebAction action, CancellationToken cancellationToken = default)
@@ -1320,7 +1349,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var preset = RaceControlPreset.CreateDefault(source.AssettoCorsaRoot, source.ServerPayloadPath);
         preset.Mode = mode;
         preset.Name = mode == EventMode.Fps ? "New LAN deathmatch" : "New LAN race";
-        preset.ServerName = mode == EventMode.Fps ? "AssettoServer LAN Deathmatch" : "AssettoServer LAN Race";
+        preset.ServerName = mode == EventMode.Fps ? "AssettoServer LAN FPS Match" : "AssettoServer LAN Race";
         preset.TrackId = source.TrackId;
         preset.TrackLayoutId = source.TrackLayoutId;
         preset.Conditions = new ConditionOptions
@@ -1354,7 +1383,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 CarId = preset.Fps.CarrierCarId,
                 DriverName = $"Operative {index:00}",
-                TeamName = "Deathmatch",
+                TeamName = "FPS",
+                FpsTeam = FpsTeamAssignment.Auto,
                 Mode = SlotMode.Auto,
             }).ToList();
         }
@@ -1597,7 +1627,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         source.DriverName = IsFpsMode
             ? $"Operative {Grid.Count + 1:00}"
             : $"{Preset.Bots.NamePrefix} {Grid.Count + 1:00}";
-        source.TeamName = IsFpsMode ? "Deathmatch" : source.TeamName;
+        source.TeamName = IsFpsMode ? "FPS" : source.TeamName;
+        if (IsFpsMode) source.FpsTeam = FpsTeamAssignment.Auto;
         source.Mode = SlotMode.Auto;
         var row = CreateGridSlotViewModel(source, Grid.Count + 1);
         var firstSpectatorIndex = Grid.ToList().FindIndex(slot => slot.Mode == SlotMode.Spectator);
@@ -1874,7 +1905,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             source.DriverName = IsFpsMode
                 ? $"Operative {Grid.Count + 1:00}"
                 : $"{Preset.Bots.NamePrefix} {Grid.Count + 1:00}";
-            source.TeamName = IsFpsMode ? "Deathmatch" : source.TeamName;
+            source.TeamName = IsFpsMode ? "FPS" : source.TeamName;
+            if (IsFpsMode) source.FpsTeam = FpsTeamAssignment.Auto;
             source.Mode = SlotMode.Auto;
             var row = CreateGridSlotViewModel(source, Grid.Count + 1);
             var firstSpectatorIndex = Grid.ToList().FindIndex(slot => slot.Mode == SlotMode.Spectator);

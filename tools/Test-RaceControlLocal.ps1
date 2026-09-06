@@ -21,6 +21,8 @@ param(
     [switch] $VerifyLiveControl,
     [switch] $VerifyStoppedObstaclePassing,
     [switch] $FpsGate,
+    [ValidateSet('Deathmatch', 'TeamDeathmatch', 'HardcoreDeathmatch', 'HardcoreTeamDeathmatch')]
+    [string] $FpsMatchType = 'Deathmatch',
     [switch] $SimulateRace,
     [ValidateRange(1, 100)]
     [double] $SimulationTimeScale = 10
@@ -91,6 +93,8 @@ if ($FpsGate) {
     $preset.Name = 'Race Control FPS Compatibility Gate'
     $preset.ServerName = 'Race Control FPS Compatibility Gate'
     $preset.Fps.CarrierCarId = $selectedCars[0].Id
+    $preset.Fps.MatchType = [Enum]::Parse(
+        [AssettoServer.RaceControl.Core.Models.FpsMatchType], $FpsMatchType)
 }
 
 $grid = [Collections.Generic.List[AssettoServer.RaceControl.Core.Models.GridSlotPreset]]::new()
@@ -101,6 +105,13 @@ for ($index = 0; $index -lt $Slots; $index++) {
     $slot.SkinId = $selectedCar.Skins[$index % $selectedCar.Skins.Count].Id
     $slot.DriverName = "Smoke Bot $($index + 1)"
     $slot.Mode = [AssettoServer.RaceControl.Core.Models.SlotMode]::Auto
+    if ($FpsGate -and $FpsMatchType -in @('TeamDeathmatch', 'HardcoreTeamDeathmatch')) {
+        $slot.FpsTeam = if ($index % 2 -eq 0) {
+            [AssettoServer.RaceControl.Core.Models.FpsTeamAssignment]::Team1
+        } else {
+            [AssettoServer.RaceControl.Core.Models.FpsTeamAssignment]::Team2
+        }
+    }
     $grid.Add($slot)
 }
 $preset.Grid = $grid
@@ -456,8 +467,11 @@ $presetLogPattern = if ($SimulateRace) {
 }
 if ($combinedLog -notmatch $presetLogPattern) { throw 'Server log did not confirm the generated preset' }
 if ($combinedLog -notmatch 'Shutdown requested by control file') { throw 'Server log did not confirm graceful control-file shutdown' }
-if ($FpsGate -and $combinedLog -notmatch 'FPS deathmatch world started') {
+if ($FpsGate -and $combinedLog -notmatch 'FPS .+ world started') {
     throw 'Server log did not confirm the authoritative FPS world startup.'
+}
+if ($FpsGate -and $combinedLog -notmatch "FPS $([regex]::Escape($FpsMatchType)) world started") {
+    throw "Server log did not confirm startup of FPS match type $FpsMatchType."
 }
 if ($FpsGate -and $combinedLog -notmatch '\d+ (?:physical arena|collision) triangles') {
     throw 'Server log did not confirm loading physical FPS arena geometry.'
@@ -555,7 +569,7 @@ if ($VerifyMovingBots) {
     }
 }
 if ($FpsGate) {
-    Write-Host "PASS: FPS arena navigation, $Slots named moving actors in Live Match, authoritative-world startup, rifle fire, and graceful shutdown succeeded."
+    Write-Host "PASS: FPS $FpsMatchType arena navigation, $Slots named moving actors in Live Match, authoritative-world startup, rifle fire, and graceful shutdown succeeded."
 } else {
     Write-Host 'PASS: installed content scan, exact physics preparation, headless startup, and graceful shutdown succeeded.'
 }
