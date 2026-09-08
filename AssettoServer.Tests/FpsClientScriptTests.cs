@@ -616,6 +616,18 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("hud.drawingFallback = true"));
             Assert.That(script, Does.Contain("if mode == 'pause' and previewCamera.everEnteredGameplay"));
             Assert.That(script, Does.Contain("function hud.drawPauseMenu()"));
+            Assert.That(script, Does.Contain("function hud.drawPreDriveMenu()"));
+            Assert.That(script, Does.Contain("function hud.requestDeployment()"));
+            Assert.That(script, Does.Contain("ac.tryToStart, true"));
+            Assert.That(script, Does.Contain("mode == 'menu' and not previewCamera.everEnteredGameplay"));
+            Assert.That(script, Does.Contain("if hud.nativePreDriveMenu then"));
+            Assert.That(script, Does.Contain("hud.drawLoadoutMenu(true, true)"));
+            Assert.That(script, Does.Contain("DEPLOY   [ENTER / A]"));
+            Assert.That(script, Does.Contain("CUSTOMIZE LOADOUT   [L / X]"));
+            Assert.That(script, Does.Contain("NATIVE AC MENU   [B]"));
+            Assert.That(script, Does.Contain("FPS DEPLOYMENT RESTORED"));
+            Assert.That(script, Does.Contain("TEAM 1"));
+            Assert.That(script, Does.Contain("TEAM 2"));
             Assert.That(script, Does.Contain("local mouse = ui.mousePos()"));
             Assert.That(script, Does.Contain("local function pauseButton("));
             Assert.That(script, Does.Contain("ui.mouseClicked(ui.MouseButton.Left)"));

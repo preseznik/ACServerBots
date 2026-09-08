@@ -266,7 +266,7 @@ state and elimination; the client only presents it.
 
 ## Hybrid HUD ownership
 
-Client pack version 46 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+Client pack version 47 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
 script publishes presentation state through the local shared structure `asrc.fps.hud.v12`. Bridge v12
 adds hostile grenade position, velocity, and fuse state while retaining the authoritative opening
 countdown, unboxed hold-to-swap prompt, progress, active-slot, item, and lethal-count presentation;
@@ -274,9 +274,11 @@ it remains presentation-only.
 
 While both sides exchange a current version-12 heartbeat, the app draws the modular FPS HUD through
 `ui.onExclusiveHUD()` and suppresses regular AC UI and third-party apps only in active gameplay. The
-app returns normal control in pre-match menus, results, replay, and non-FPS sessions. In `pause` mode,
-the server-delivered online script owns a match-specific menu and standings panel; its options action
-can explicitly yield to the native AC/CSP menu. If the app is absent, disabled, incompatible, or silent
+app returns normal control in results, replay, and non-FPS sessions. Before the first Drive, the
+server-delivered online script owns an FPS deployment menu over the arena camera with match briefing,
+FFA or team roster, loadout selection, controls, deployment, and leave actions. It can explicitly yield
+to the native AC/CSP menu, and F2 restores the deployment surface. In `pause` mode, the same online
+script owns a match-specific menu and standings panel. If the app is absent, disabled, incompatible, or silent
 for more than 0.5 seconds, the online script resumes its complete exclusive gameplay HUD. A bridge
 mismatch is logged once and must never produce a blank frame.
 

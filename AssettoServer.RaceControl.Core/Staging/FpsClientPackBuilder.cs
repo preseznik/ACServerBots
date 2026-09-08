@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 46;
+    public const int ClientPackVersion = 47;
     public const int BridgeProtocol = 12;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v46.zip";
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v47.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -213,7 +213,7 @@ public static class FpsClientPackBuilder
                 operator UV skin under
                 content/objects3D/asrc_fps, plus the 54-clip FPS sound catalog
                 under extension/audio/asrc_fps. It also installs the local ASRC FPS HUD and audio
-                player under apps/lua/asrc_fps_hud. Client pack v46 also contains the animated Modern
+                player under apps/lua/asrc_fps_hud. Client pack v47 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.
@@ -221,6 +221,10 @@ public static class FpsClientPackBuilder
                 Live enemy grenades within 18 metres have a world-anchored danger indicator which
                 follows their flight, points toward off-screen threats, and changes colour as the
                 fuse expires. Own grenades and TDM teammate grenades are intentionally excluded.
+
+                Before the first Drive, the server-delivered FPS script replaces the racing menu
+                with an FPS deployment screen for match briefing, roster, loadout, controls and
+                deployment. A native-menu fallback remains available and F2 restores deployment.
 
                 The HUD app is background-loaded and takes over the exclusive HUD layer only
                 while its versioned local bridge is receiving a live FPS session heartbeat.

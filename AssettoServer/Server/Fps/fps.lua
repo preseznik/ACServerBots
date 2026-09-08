@@ -689,6 +689,15 @@ local hud = {
   drawingFallback = false,
   exclusiveSubscription = nil,
   nativePauseMenu = false,
+  nativePreDriveMenu = false,
+  preDrivePage = 'briefing',
+  preDriveLeaveArmed = false,
+  preDriveDeployPending = false,
+  preDriveReturnAfterLoadout = false,
+  preDriveStatus = '',
+  preDriveGamepadAWasDown = false,
+  preDriveGamepadBWasDown = false,
+  preDriveGamepadXWasDown = false,
   leaveServerArmed = false,
   pauseInputLogged = false,
   pausePage = 'main',
@@ -707,6 +716,7 @@ local hud = {
   loadout = {
     catalogReceived = false,
     confirmed = false,
+    dirty = false,
     result = 'WAITING FOR SERVER CATALOG',
     allowedMainWeapons = 0,
     allowedLethals = 0,
@@ -1382,6 +1392,7 @@ hud.loadoutCatalogEvent = ac.OnlineEvent({
   selection.secondaryWeapon = hud.itemAllowed(message.allowedSecondaryWeapons,
       hud.loadoutStorage.secondaryWeapon) and hud.loadoutStorage.secondaryWeapon
     or message.defaultSecondaryWeapon
+  selection.dirty = false
   selection.result = 'CONFIRM A LOADOUT TO JOIN'
 end)
 
@@ -1395,16 +1406,39 @@ hud.loadoutResultEvent = ac.OnlineEvent({
   if sender ~= nil then return end
   if message.result == 1 then
     hud.loadout.confirmed = true
+    hud.loadout.dirty = false
     hud.loadout.result = 'LOADOUT APPLIED'
     hud.loadoutStorage.mainWeapon = message.mainWeapon
     hud.loadoutStorage.lethal = message.lethal
     hud.loadoutStorage.secondaryWeapon = message.secondaryWeapon
+    if hud.preDriveDeployPending then
+      hud.preDriveDeployPending = false
+      hud.preDriveReturnAfterLoadout = false
+      hud.tryStartFromDeployment()
+    elseif hud.preDriveReturnAfterLoadout then
+      hud.preDriveReturnAfterLoadout = false
+      hud.preDrivePage = 'briefing'
+      hud.preDriveStatus = 'LOADOUT READY'
+    end
   elseif message.result == 2 then
+    hud.loadout.dirty = false
     hud.loadout.result = 'QUEUED FOR NEXT RESPAWN'
     hud.loadoutStorage.mainWeapon = message.mainWeapon
     hud.loadoutStorage.lethal = message.lethal
     hud.loadoutStorage.secondaryWeapon = message.secondaryWeapon
+    if hud.preDriveDeployPending then
+      hud.preDriveDeployPending = false
+      hud.preDriveReturnAfterLoadout = false
+      hud.tryStartFromDeployment()
+    elseif hud.preDriveReturnAfterLoadout then
+      hud.preDriveReturnAfterLoadout = false
+      hud.preDrivePage = 'briefing'
+      hud.preDriveStatus = 'LOADOUT QUEUED FOR NEXT SPAWN'
+    end
   else
+    hud.preDriveDeployPending = false
+    hud.preDriveReturnAfterLoadout = false
+    hud.preDriveStatus = 'LOADOUT WAS REJECTED BY THE SERVER'
     hud.loadout.result = message.result == 3 and 'SELECTION REJECTED BY SERVER'
       or 'LOADOUT UNAVAILABLE'
   end
@@ -4067,6 +4101,11 @@ function script.update(dt)
   -- transition instead, which is observed by script.update() in either case.
   if gameplayActive and not previousGameplayActive then
     hud.nativePauseMenu = false
+    hud.nativePreDriveMenu = false
+    hud.preDrivePage = 'briefing'
+    hud.preDriveLeaveArmed = false
+    hud.preDriveDeployPending = false
+    hud.preDriveReturnAfterLoadout = false
     hud.leaveServerArmed = false
     hud.pauseInputLogged = false
     hud.pausePage = 'main'
@@ -5078,9 +5117,9 @@ function hud.cycleLoadoutItem(mask, current, items, direction)
 end
 
 function hud.submitLoadout()
-  if not hud.loadout.catalogReceived then return end
+  if not hud.loadout.catalogReceived then return false end
   for field, row in pairs(hud.loadoutRows) do
-    if not hud.itemAllowed(hud.loadout[row.mask], hud.loadout[field]) then return end
+    if not hud.itemAllowed(hud.loadout[row.mask], hud.loadout[field]) then return false end
   end
   hud.loadout.result = 'SENDING TO SERVER...'
   hud.loadoutSelectEvent({
@@ -5088,9 +5127,10 @@ function hud.submitLoadout()
     lethal = hud.loadout.lethal,
     secondaryWeapon = hud.loadout.secondaryWeapon,
   })
+  return true
 end
 
-function hud.drawLoadoutMenu(initialSelection)
+function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
   local size = ui.windowSize()
   local scale = math.min((size.x - 32) / 1600, (size.y - 32) / 880, 1.5)
   local panelSize = vec2(1600, 880) * scale
@@ -5182,7 +5222,9 @@ function hud.drawLoadoutMenu(initialSelection)
       local hot = allowed and hovered(cx, y, cardWidth, height)
       if hot and clicked then
         hud.loadout[field] = item.id
-        hud.loadout.result = initialSelection and 'CONFIRM A LOADOUT TO JOIN'
+        hud.loadout.dirty = true
+        hud.loadout.result = fromPreDrive and 'SAVE THIS LOADOUT BEFORE DEPLOYING'
+          or initialSelection and 'CONFIRM A LOADOUT TO JOIN'
           or 'CHANGES APPLY ON NEXT RESPAWN'
       end
       local selected = hud.loadout[field] == item.id and allowed
@@ -5215,8 +5257,10 @@ function hud.drawLoadoutMenu(initialSelection)
   end
 
   text('L O A D O U T', 42, 24, 500, 24, 15, muted)
-  text(initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 1300, 52, 46, white)
-  text(initialSelection and 'Choose one item per slot. Confirm to spawn.'
+  text(fromPreDrive and 'PREPARE TO DEPLOY'
+    or initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 1300, 52, 46, white)
+  text(fromPreDrive and 'Choose one item per slot, then save and return to the match briefing.'
+    or initialSelection and 'Choose one item per slot. Confirm to spawn.'
     or 'Choose one item per slot. Changes apply on your next respawn.', 42, 105, 1300, 26, 18, muted)
   line(42, 145, 1558, 145, border)
   text('01', 42, 158, 45, 30, 25, accent)
@@ -5242,7 +5286,7 @@ function hud.drawLoadoutMenu(initialSelection)
       selectedCount = selectedCount + 1
     end
   end
-  local summaryX = initialSelection and 42 or 290
+  local summaryX = (initialSelection and not fromPreDrive) and 42 or 290
   if selectedCount == 3 then check(summaryX, 814) end
   text(string.format('%d / 3 SLOTS SELECTED', selectedCount), summaryX + 28, 805, 680, 28, 17, white)
   text(hud.loadout.result, 972, 106, 586, 26, 15,
@@ -5250,13 +5294,284 @@ function hud.drawLoadoutMenu(initialSelection)
   text(string.format('%s  /  %s  /  %s', hud.itemNames[hud.loadout.mainWeapon] or '?',
     hud.itemNames[hud.loadout.secondaryWeapon] or '?', hud.itemNames[hud.loadout.lethal] or '?'),
     summaryX, 834, 810, 24, 14, muted)
-  if button(initialSelection and 'CONFIRM & SPAWN  >' or 'QUEUE FOR RESPAWN  >',
+  if button(fromPreDrive and 'SAVE LOADOUT  >'
+      or initialSelection and 'CONFIRM & SPAWN  >' or 'QUEUE FOR RESPAWN  >',
       1126, 809, 432, 53, selectedCount == 3, true) then
+    if fromPreDrive then
+      hud.preDriveReturnAfterLoadout = true
+      hud.preDriveDeployPending = false
+      hud.preDriveStatus = 'CONFIRMING LOADOUT...'
+    end
     hud.submitLoadout()
   end
-  if not initialSelection and button('<  MATCH MENU', 42, 809, 220, 53, true, false) then
-    hud.pausePage = 'main'
+  if (not initialSelection or fromPreDrive) and button(fromPreDrive and '<  MATCH BRIEFING'
+      or '<  MATCH MENU', 42, 809, 220, 53, true, false) then
+    if fromPreDrive then
+      hud.preDriveReturnAfterLoadout = false
+      hud.preDrivePage = 'briefing'
+    else
+      hud.pausePage = 'main'
+    end
   end
+end
+
+function hud.tryStartFromDeployment()
+  hud.preDriveStatus = 'DEPLOYING...'
+  local ok, started = pcall(ac.tryToStart, true)
+  if ok and started then
+    ac.log('[ASRC FPS] deployment menu action: deploy')
+    return true
+  end
+  hud.preDriveStatus = 'DEPLOY FAILED — OPEN THE NATIVE AC MENU AND PRESS DRIVE'
+  ac.warn('[ASRC FPS] deployment menu could not start session: ' .. tostring(started))
+  return false
+end
+
+function hud.requestDeployment()
+  if hud.preDriveDeployPending then return end
+  if not hud.loadout.catalogReceived then
+    hud.preDriveStatus = 'WAITING FOR THE SERVER LOADOUT CATALOG...'
+    return
+  end
+  if hud.loadout.confirmed and not hud.loadout.dirty then
+    hud.tryStartFromDeployment()
+    return
+  end
+  hud.preDriveDeployPending = true
+  hud.preDriveReturnAfterLoadout = false
+  hud.preDriveStatus = 'CONFIRMING LOADOUT...'
+  if not hud.submitLoadout() then
+    hud.preDriveDeployPending = false
+    hud.preDriveStatus = 'SELECT ONE AVAILABLE ITEM IN EVERY LOADOUT SLOT'
+  end
+end
+
+function hud.drawPreDriveMenu()
+  local size = ui.windowSize()
+  local scale = math.clamp(math.min((size.x - 32) / 1200, (size.y - 32) / 720), 0.70, 1.55)
+  local panelSize = vec2(1200, 720) * scale
+  local panelMin = (size - panelSize) * 0.5
+  local panelMax = panelMin + panelSize
+  local mouse = ui.mousePos()
+  local clicked = ui.mouseClicked(ui.MouseButton.Left)
+  local accent = rgbm(0.10, 0.72, 0.96, 1)
+  local white = rgbm(0.94, 0.97, 1, 1)
+  local muted = rgbm(0.55, 0.67, 0.76, 1)
+  local border = rgbm(0.22, 0.38, 0.49, 0.78)
+  local teamBlue = rgbm(0.18, 0.58, 1, 1)
+  local teamRed = rgbm(0.95, 0.20, 0.17, 1)
+  local aDown = ac.isGamepadButtonPressed(0, ac.GamepadButton.A)
+  local bDown = ac.isGamepadButtonPressed(0, ac.GamepadButton.B)
+  local xDown = ac.isGamepadButtonPressed(0, ac.GamepadButton.X)
+  local aPressed = aDown and not hud.preDriveGamepadAWasDown
+  local bPressed = bDown and not hud.preDriveGamepadBWasDown
+  local xPressed = xDown and not hud.preDriveGamepadXWasDown
+  hud.preDriveGamepadAWasDown = aDown
+  hud.preDriveGamepadBWasDown = bDown
+  hud.preDriveGamepadXWasDown = xDown
+
+  ui.captureMouse(true)
+  ui.setMouseCursor(ui.MouseCursor.Arrow)
+
+  if hud.preDrivePage == 'loadout' then
+    if bPressed or ac.isKeyPressed(ac.KeyIndex.Escape) then
+      hud.preDriveReturnAfterLoadout = false
+      hud.preDrivePage = 'briefing'
+    else
+      hud.drawLoadoutMenu(true, true)
+    end
+    return
+  end
+
+  ui.drawRectFilled(vec2(), size, rgbm(0.004, 0.008, 0.014, 0.72))
+  ui.drawRectFilled(panelMin, panelMax, rgbm(0.018, 0.027, 0.038, 0.97), 10 * scale)
+  ui.drawRect(panelMin, panelMax, border, 10 * scale, nil, math.max(1, 1.5 * scale))
+  ui.drawRectFilled(panelMin, vec2(panelMax.x, panelMin.y + 5 * scale), accent, 10 * scale)
+
+  local function point(x, y) return panelMin + vec2(x, y) * scale end
+  local function hovered(x, y, w, h)
+    local p1, p2 = point(x, y), point(x + w, y + h)
+    return mouse.x >= p1.x and mouse.x <= p2.x and mouse.y >= p1.y and mouse.y <= p2.y
+  end
+  local function text(label, x, y, w, h, fontSize, color, alignment)
+    ui.dwriteDrawTextClipped(label, fontSize * scale, point(x, y), point(x + w, y + h),
+      alignment or ui.Alignment.Start, ui.Alignment.Center, false, color or white)
+  end
+  local function line(x1, y1, x2, y2, color, width)
+    ui.drawLine(point(x1, y1), point(x2, y2), color,
+      math.max(1, (width or 1) * scale))
+  end
+  local function button(label, x, y, w, h, enabled, primary, danger)
+    local hot = enabled and hovered(x, y, w, h)
+    local fill = danger and rgbm(0.42, 0.08, 0.07, 0.96)
+      or primary and rgbm(0.03, 0.34, 0.49, 0.98) or rgbm(0.05, 0.10, 0.14, 0.96)
+    if hot then
+      fill = danger and rgbm(0.72, 0.16, 0.11, 1) or rgbm(0.09, 0.42, 0.56, 1)
+    elseif not enabled then
+      fill = rgbm(0.035, 0.055, 0.065, 0.92)
+    end
+    ui.drawRectFilled(point(x, y), point(x + w, y + h), fill, 5 * scale)
+    ui.drawRect(point(x, y), point(x + w, y + h), enabled and (primary and accent or border)
+      or rgbm(0.16, 0.21, 0.24, 0.75), 5 * scale, nil, math.max(1, 1.2 * scale))
+    text(label, x + 8, y, w - 16, h, primary and 20 or 16,
+      enabled and white or rgbm(0.30, 0.36, 0.40, 1), ui.Alignment.Center)
+    return hot and clicked
+  end
+
+  local function controlsButton(label, position, dimensions, danger)
+    local p2 = position + dimensions
+    local hot = mouse.x >= position.x and mouse.x <= p2.x
+      and mouse.y >= position.y and mouse.y <= p2.y
+    local fill = danger and rgbm(0.42, 0.08, 0.07, 0.96) or rgbm(0.05, 0.10, 0.14, 0.96)
+    if hot then fill = danger and rgbm(0.72, 0.16, 0.11, 1) or rgbm(0.09, 0.42, 0.56, 1) end
+    ui.drawRectFilled(position, p2, fill, 5 * scale)
+    ui.drawRect(position, p2, hot and accent or border, 5 * scale, nil,
+      math.max(1, 1.2 * scale))
+    ui.setCursor(position + vec2(14, 11) * scale)
+    ui.text(label)
+    return hot and clicked
+  end
+
+  if hud.preDrivePage == 'controls' then
+    hud.drawControlsMenu(panelMin, panelSize, scale, controlsButton, 'deployment')
+    if bPressed or ac.isKeyPressed(ac.KeyIndex.Escape) then
+      hud.bindingCapture = nil
+      hud.preDrivePage = 'briefing'
+    end
+    return
+  end
+
+  if ac.isKeyPressed(ac.KeyIndex.Return) or aPressed then hud.requestDeployment() end
+  if ac.isKeyPressed(ac.KeyIndex.L) or xPressed then
+    hud.preDrivePage = 'loadout'
+    hud.preDriveLeaveArmed = false
+    hud.loadout.result = hud.loadout.confirmed and 'CURRENT LOADOUT' or 'CONFIRM A LOADOUT TO JOIN'
+  end
+  if bPressed then hud.nativePreDriveMenu = true end
+
+  local ok, trackName = pcall(ac.getTrackName)
+  if not ok or trackName == nil or trackName == '' then trackName = ac.getTrackID() end
+  local own = actors[localSessionID]
+  local ownTeam = own and own.team or teams[localSessionID] or 0
+  local status = matchState == 0 and (fpsVisual.startCountdownSeconds > 0
+      and string.format('STARTING IN %d', math.max(1, math.ceil(fpsVisual.startCountdownSeconds)))
+      or 'WAITING FOR PLAYERS') or 'MATCH IN PROGRESS'
+
+  text('A S R C   F P S', 38, 26, 500, 22, 14, muted)
+  text('DEPLOYMENT', 38, 47, 520, 52, 42, white)
+  text(fpsVisual.matchModeTitle(), 38, 101, 520, 28, 18, accent)
+  text(tostring(trackName), 660, 42, 500, 32, 18, muted, ui.Alignment.End)
+  text(status, 660, 75, 500, 26, 15, white, ui.Alignment.End)
+  line(38, 139, 1162, 139, border)
+  line(444, 162, 444, 610, border)
+
+  text('MATCH BRIEFING', 38, 160, 360, 34, 24, white)
+  text('MODE', 38, 211, 120, 22, 13, muted)
+  text(fpsVisual.matchModeTitle(), 170, 207, 230, 28, 17, white)
+  text('OBJECTIVE', 38, 250, 120, 22, 13, muted)
+  text(matchTargetText(), 170, 246, 230, 28, 17, white)
+  text('TIME', 38, 289, 120, 22, 13, muted)
+  text(string.format('%02d:%02d', math.floor(remainingSeconds / 60),
+    math.floor(remainingSeconds % 60)), 170, 285, 230, 28, 17, white)
+  text('ASSIGNMENT', 38, 328, 120, 22, 13, muted)
+  text(isTeamMatch() and (ownTeam == 2 and 'TEAM 2' or ownTeam == 1 and 'TEAM 1'
+    or 'AUTO-BALANCE') or 'FREE AGENT', 170, 324, 230, 28, 17,
+    ownTeam == 2 and teamRed or ownTeam == 1 and teamBlue or white)
+
+  line(38, 371, 412, 371, border)
+  text('ACTIVE LOADOUT', 38, 389, 360, 26, 17, muted)
+  text(hud.itemNames[hud.loadout.mainWeapon] or 'WAITING FOR CATALOG', 38, 421, 360, 30, 22, white)
+  text((hud.itemNames[hud.loadout.secondaryWeapon] or 'SECONDARY') .. '  /  '
+    .. (hud.itemNames[hud.loadout.lethal] or 'LETHAL'), 38, 454, 360, 25, 15, muted)
+  if button('CUSTOMIZE LOADOUT   [L / X]', 38, 495, 374, 48,
+      hud.loadout.catalogReceived, false, false) then
+    hud.preDrivePage = 'loadout'
+    hud.preDriveLeaveArmed = false
+    hud.loadout.result = hud.loadout.confirmed and 'CURRENT LOADOUT' or 'CONFIRM A LOADOUT TO JOIN'
+  end
+  text(hud.preDriveStatus ~= '' and hud.preDriveStatus or hud.loadout.result,
+    38, 555, 374, 40, 13, hud.preDriveDeployPending and accent or muted)
+
+  local roster = {}
+  for id, name in pairs(names) do
+    roster[#roster + 1] = { id = id, name = name, actor = actors[id], team = teams[id] or 0 }
+  end
+  table.sort(roster, function(a, b)
+    if a.team ~= b.team then return a.team < b.team end
+    local aScore = a.actor and a.actor.score or 0
+    local bScore = b.actor and b.actor.score or 0
+    if aScore ~= bScore then return aScore > bScore end
+    return a.id < b.id
+  end)
+  text('ROSTER', 478, 160, 684, 34, 24, white)
+  text(string.format('%d CONNECTED', #roster), 918, 164, 244, 26, 14, muted, ui.Alignment.End)
+
+  local function rosterHeader(label, score, x, width, color)
+    ui.drawRectFilled(point(x, 205), point(x + width, 249), rgbm(color.r, color.g, color.b, 0.14), 4 * scale)
+    ui.drawRectFilled(point(x, 205), point(x + 4, 249), color, 2 * scale)
+    text(label, x + 16, 205, width - 100, 44, 18, white)
+    text(tostring(score), x + width - 82, 205, 66, 44, 23, color, ui.Alignment.End)
+  end
+  local function rosterRows(team, x, y, width, maximum)
+    local row = 0
+    for index = 1, #roster do
+      local entry = roster[index]
+      if team == nil or entry.team == team then
+        if row >= maximum then break end
+        local actor = entry.actor
+        local color = entry.id == localSessionID and accent or white
+        if row % 2 == 0 then
+          ui.drawRectFilled(point(x, y + row * 35), point(x + width, y + row * 35 + 33),
+            rgbm(0.05, 0.075, 0.095, 0.72), 2 * scale)
+        end
+        text(entry.id == localSessionID and '>  ' .. entry.name or entry.name,
+          x + 12, y + row * 35, width - 150, 33, 15, color)
+        text(string.format('%d / %d', actor and actor.kills or 0, actor and actor.deaths or 0),
+          x + width - 132, y + row * 35, 120, 33, 14, muted, ui.Alignment.End)
+        row = row + 1
+      end
+    end
+    if row == 0 then text('WAITING FOR OPERATIVES', x + 12, y, width - 24, 38, 14, muted) end
+  end
+  if isTeamMatch() then
+    local columnWidth = 326
+    rosterHeader('TEAM 1', team1Kills, 478, columnWidth, teamBlue)
+    rosterHeader('TEAM 2', team2Kills, 836, columnWidth, teamRed)
+    rosterRows(1, 478, 260, columnWidth, 9)
+    rosterRows(2, 836, 260, columnWidth, 9)
+  else
+    rosterHeader('FREE FOR ALL', #roster, 478, 684, accent)
+    rosterRows(nil, 478, 260, 684, 9)
+  end
+
+  line(38, 623, 1162, 623, border)
+  if button(hud.preDriveDeployPending and 'CONFIRMING...' or 'DEPLOY   [ENTER / A]',
+      750, 642, 412, 52, hud.loadout.catalogReceived and not hud.preDriveDeployPending,
+      true, false) then hud.requestDeployment() end
+  if button('FPS CONTROLS', 38, 642, 180, 52, true, false, false) then
+    hud.preDrivePage = 'controls'
+    hud.preDriveLeaveArmed = false
+  end
+  if button('NATIVE AC MENU   [B]', 228, 642, 220, 52, true, false, false) then
+    ac.log('[ASRC FPS] deployment menu action: native AC menu')
+    hud.nativePreDriveMenu = true
+    hud.preDriveLeaveArmed = false
+  end
+  if not hud.preDriveLeaveArmed then
+    if button('LEAVE SERVER', 458, 642, 170, 52, true, false, true) then
+      hud.preDriveLeaveArmed = true
+    end
+  else
+    if button('CONFIRM LEAVE', 458, 642, 170, 52, true, false, true) then
+      ac.log('[ASRC FPS] deployment menu action: leave server confirmed')
+      ac.shutdownAssettoCorsa()
+    end
+    if button('CANCEL', 638, 642, 102, 52, true, false, false) then
+      hud.preDriveLeaveArmed = false
+    end
+  end
+  text('F2 restores this FPS deployment screen from the native AC menu.',
+    478, 603, 684, 18, 12, muted, ui.Alignment.End)
 end
 
 local function drawMatchStartOverlay(size, scale)
@@ -5403,7 +5718,7 @@ function script.drawUI()
   end
 end
 
-function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
+function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton, returnPage)
   local controls = {
     { label = 'FIRE', action = 'fire' },
     { label = 'SPRINT', action = 'sprint' },
@@ -5516,10 +5831,15 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton)
     hud.bindingCapture = nil
     ac.log('[ASRC FPS] FPS controls reset to defaults')
   end
-  if pauseButton('BACK TO MATCH MENU', left + vec2(0, 530) * scale,
+  if pauseButton(returnPage == 'deployment' and 'BACK TO DEPLOYMENT' or 'BACK TO MATCH MENU',
+      left + vec2(0, 530) * scale,
       vec2(260, 42) * scale, false) then
     hud.bindingCapture = nil
-    hud.pausePage = 'main'
+    if returnPage == 'deployment' then
+      hud.preDrivePage = 'briefing'
+    else
+      hud.pausePage = 'main'
+    end
   end
 end
 
@@ -5738,7 +6058,7 @@ function hud.drawPauseMenu()
 end
 
 function hud.exclusiveCallback(mode)
-  if mode ~= 'pause' then
+  if mode ~= 'pause' and mode ~= 'menu' then
     hud.nativePauseMenu = false
     hud.leaveServerArmed = false
     hud.pauseInputLogged = false
@@ -5749,6 +6069,19 @@ function hud.exclusiveCallback(mode)
   if mode == 'pause' and previewCamera.everEnteredGameplay then
     if hud.nativePauseMenu then return false end
     hud.drawPauseMenu()
+    return true
+  end
+  if mode == 'menu' and not previewCamera.everEnteredGameplay then
+    if hud.nativePreDriveMenu then
+      if ac.isKeyPressed(ac.KeyIndex.F2) then
+        hud.nativePreDriveMenu = false
+        hud.preDriveStatus = 'FPS DEPLOYMENT RESTORED'
+        ac.log('[ASRC FPS] native pre-Drive menu released: FPS deployment restored')
+      else
+        return false
+      end
+    end
+    hud.drawPreDriveMenu()
     return true
   end
   if mode ~= 'game' or not gameplayActive then return false end
