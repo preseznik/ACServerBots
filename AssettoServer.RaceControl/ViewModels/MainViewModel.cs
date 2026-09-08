@@ -44,6 +44,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly List<AcTrackLayout> _allTracks = [];
     private RaceControlPreset? _racingDraft;
     private RaceControlPreset? _fpsDraft;
+    private string _lastFpsTrackId = string.Empty;
+    private string _lastFpsTrackLayoutId = string.Empty;
     private string? _catalogRoot;
     private CancellationTokenSource? _contentRefreshCancellation;
     private Task? _contentRefreshTask;
@@ -284,7 +286,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 Preset.TrackId = value.TrackId;
                 Preset.TrackLayoutId = value.LayoutId;
                 if (IsFpsMode)
+                {
+                    _lastFpsTrackId = value.TrackId;
+                    _lastFpsTrackLayoutId = value.LayoutId;
                     Preset.Fps.Arena = _fpsArenaStore.Load(value.TrackId, value.LayoutId);
+                }
                 OnPropertyChanged(nameof(SelectedTrackDetails));
                 OnPropertyChanged(nameof(FpsArenaStatus));
                 RaiseCommandStates();
@@ -840,6 +846,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             IsBusy = true;
+            _lastFpsTrackId = settings?.LastFpsTrackId ?? string.Empty;
+            _lastFpsTrackLayoutId = settings?.LastFpsTrackLayoutId ?? string.Empty;
             StatusText = "Locating Assetto Corsa…";
             _paths.EnsureCreated();
             _presetStore = new PresetStore(_paths);
@@ -1040,6 +1048,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Preset = newPreset;
             RememberModeDraft(newPreset);
             Replace(Tracks, FilteredTracks());
+            if (newPreset.Mode == EventMode.Fps)
+                RestoreFpsTrackSelection(newPreset);
             await ApplyCurrentCatalogOrRefreshAsync();
             SelectedPageIndex = 0;
             StatusText = "Created a new unsaved LAN race.";
@@ -1243,10 +1253,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             preset.Fps.Arena = _fpsArenaStore.Load(preset.TrackId, preset.TrackLayoutId);
         _selectedWeather = selectedWeather;
         OnPropertyChanged(nameof(SelectedWeather));
-        SelectedTrack = Tracks.FirstOrDefault(track =>
+        var matchingTrack = Tracks.FirstOrDefault(track =>
             track.TrackId.Equals(preset.TrackId, StringComparison.OrdinalIgnoreCase)
-            && track.LayoutId.Equals(preset.TrackLayoutId, StringComparison.OrdinalIgnoreCase))
-            ?? Tracks.FirstOrDefault();
+            && track.LayoutId.Equals(preset.TrackLayoutId, StringComparison.OrdinalIgnoreCase));
+        if (preset.Mode == EventMode.Fps && matchingTrack is not null)
+        {
+            _lastFpsTrackId = matchingTrack.TrackId;
+            _lastFpsTrackLayoutId = matchingTrack.LayoutId;
+        }
+        SelectedTrack = matchingTrack ?? (preset.Mode == EventMode.Fps ? null : Tracks.FirstOrDefault());
         if (SelectedTrack is not null)
         {
             preset.TrackId = SelectedTrack.TrackId;
@@ -1335,6 +1350,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         Preset = target;
         Replace(Tracks, FilteredTracks());
+        if (mode == EventMode.Fps)
+            RestoreFpsTrackSelection(target);
         ApplyPresetToUi(target);
         RefreshSavedPresets();
         Validate();
@@ -1347,6 +1364,43 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             _fpsDraft = preset;
         else
             _racingDraft = preset;
+    }
+
+    private void RestoreFpsTrackSelection(RaceControlPreset preset)
+    {
+        var selected = FindTrack(_lastFpsTrackId, _lastFpsTrackLayoutId)
+                       ?? FindPreparedTrack(preset.TrackId, preset.TrackLayoutId)
+                       ?? Tracks.FirstOrDefault(track =>
+                           _fpsArenaStore.IsPrepared(track.TrackId, track.LayoutId));
+        if (selected is null)
+        {
+            preset.TrackId = string.Empty;
+            preset.TrackLayoutId = string.Empty;
+            preset.Fps.Arena = null;
+            return;
+        }
+
+        preset.TrackId = selected.TrackId;
+        preset.TrackLayoutId = selected.LayoutId;
+        preset.Fps.Arena = _fpsArenaStore.Load(selected.TrackId, selected.LayoutId);
+    }
+
+    private AcTrackLayout? FindTrack(string trackId, string layoutId) =>
+        Tracks.FirstOrDefault(track =>
+            track.TrackId.Equals(trackId, StringComparison.OrdinalIgnoreCase)
+            && track.LayoutId.Equals(layoutId, StringComparison.OrdinalIgnoreCase));
+
+    private AcTrackLayout? FindPreparedTrack(string trackId, string layoutId)
+    {
+        var track = FindTrack(trackId, layoutId);
+        return track is not null && _fpsArenaStore.IsPrepared(track.TrackId, track.LayoutId) ? track : null;
+    }
+
+    public void WritePersistentSettings(ApplicationSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        settings.LastFpsTrackId = _lastFpsTrackId;
+        settings.LastFpsTrackLayoutId = _lastFpsTrackLayoutId;
     }
 
     private RaceControlPreset CreateModePreset(EventMode mode, RaceControlPreset source)
@@ -1367,8 +1421,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         preset.Mode = mode;
         preset.Name = mode == EventMode.Fps ? "New LAN deathmatch" : "New LAN race";
         preset.ServerName = mode == EventMode.Fps ? "AssettoServer LAN FPS Match" : "AssettoServer LAN Race";
-        preset.TrackId = source.TrackId;
-        preset.TrackLayoutId = source.TrackLayoutId;
+        preset.TrackId = mode == EventMode.Fps ? string.Empty : source.TrackId;
+        preset.TrackLayoutId = mode == EventMode.Fps ? string.Empty : source.TrackLayoutId;
         preset.Conditions = new ConditionOptions
         {
             WeatherId = source.Conditions.WeatherId,

@@ -297,6 +297,7 @@ public partial class MainWindow : Window
 
     private void PersistWindowSettings()
     {
+        _viewModel.WritePersistentSettings(RaceControlApp.Settings);
         if (RaceControlApp.Settings.RememberLastPage)
         {
             RaceControlApp.Settings.LastPageIndex = _viewModel.SelectedPageIndex;

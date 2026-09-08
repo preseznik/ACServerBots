@@ -21,6 +21,8 @@ public sealed class ApplicationSettingsStoreTests
             CompactGridRows = true,
             AssettoCorsaRoot = @"C:\Games\Assetto Corsa",
             ServerPayloadPath = @"C:\Servers\AssettoServer",
+            LastFpsTrackId = "bo2_nuketown_2020",
+            LastFpsTrackLayoutId = "night",
             WebUiEnabled = true,
             WebUiBindAddress = "192.168.1.25",
             WebUiPort = 8872,
@@ -38,6 +40,8 @@ public sealed class ApplicationSettingsStoreTests
             Assert.That(loaded.CompactGridRows, Is.True);
             Assert.That(loaded.AssettoCorsaRoot, Is.EqualTo(@"C:\Games\Assetto Corsa"));
             Assert.That(loaded.ServerPayloadPath, Is.EqualTo(@"C:\Servers\AssettoServer"));
+            Assert.That(loaded.LastFpsTrackId, Is.EqualTo("bo2_nuketown_2020"));
+            Assert.That(loaded.LastFpsTrackLayoutId, Is.EqualTo("night"));
             Assert.That(loaded.WebUiEnabled, Is.True);
             Assert.That(loaded.WebUiBindAddress, Is.EqualTo("192.168.1.25"));
             Assert.That(loaded.WebUiPort, Is.EqualTo(8872));

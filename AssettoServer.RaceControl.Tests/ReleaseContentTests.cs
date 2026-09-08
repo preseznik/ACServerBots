@@ -44,6 +44,7 @@ public sealed class ReleaseContentTests
         {
             Theme = AppThemeMode.Light, CompactGridRows = true, LastPageIndex = 6,
             AssettoCorsaRoot = factory.AcRoot, ServerPayloadPath = factory.PayloadRoot,
+            LastFpsTrackId = "private_track", LastFpsTrackLayoutId = "private_layout",
             WebUiBindAddress = "192.168.123.45", WebUiPort = 9999,
         });
         Assert.Multiple(() =>
@@ -53,6 +54,8 @@ public sealed class ReleaseContentTests
             Assert.That(settings.LastPageIndex, Is.Zero);
             Assert.That(settings.AssettoCorsaRoot, Is.Empty);
             Assert.That(settings.ServerPayloadPath, Is.Empty);
+            Assert.That(settings.LastFpsTrackId, Is.Empty);
+            Assert.That(settings.LastFpsTrackLayoutId, Is.Empty);
             Assert.That(settings.WebUiBindAddress, Is.EqualTo("127.0.0.1"));
             Assert.That(settings.WebUiPort, Is.EqualTo(8772));
         });
