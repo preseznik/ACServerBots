@@ -316,7 +316,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV45ContainsGrenadeIndicatorAndBothThemes()
+    public async Task ClientPackV46ContainsLoadoutArtworkGrenadeIndicatorAndBothThemes()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -326,15 +326,20 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(45));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(46));
             Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(12));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v45.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v46.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudScriptPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudWeaponImagePath));
+            foreach ((string path, byte[] data) in FpsClientPackAssets.GetLoadoutImages())
+            {
+                Assert.That(entries.Keys, Does.Contain(path));
+                Assert.That(ReadEntry(entries[path]), Is.EqualTo(data), path);
+            }
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.RifleViewmodelPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.CompactSmgViewmodelPath));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.CompactSmgWorldModelPath));
@@ -399,7 +404,7 @@ public sealed class FpsClientPackAssetsTests
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(3));
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(45));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(46));
             Assert.That(root.GetProperty("loadoutItems").GetArrayLength(), Is.EqualTo(5));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),

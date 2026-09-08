@@ -39,7 +39,7 @@ one another. The kill target applies to an individual in FFA and to the shared t
 Hardcore direct weapon hits kill with one torso/head hit or two limb hits. The optional **Headshot
 only**, **Infinite sprint**, and **No HP regen** mutators are authoritative server rules and compose
 with every match type. Presets created before these fields existed load as Blocks + FFA, with Auto
-  teams and all mutators disabled. Current delivery uses client pack 45, ready protocol 3, and HUD
+  teams and all mutators disabled. Current delivery uses client pack 46, ready protocol 3, and HUD
   bridge `asrc.fps.hud.v12`; older incompatible clients fall back to the server HUD instead of masking newer presentation fields
 the expanded roster and match packets incorrectly.
 
@@ -267,6 +267,18 @@ For an ordinary FPS connection, an available `Human` slot is selected before an
 The claimed actor name comes from Assetto Corsa's handshake, which Content Manager
 populates from **Settings -> Content Manager -> Online -> Online name**. Releasing
 an `Auto` slot restores its configured bot name before bot control resumes.
+
+## FPS loadout selection
+
+The join and pause-menu loadout screens use clickable pictures of all six actual weapon/equipment
+assets. Cyan outlines and checkmarks identify the chosen item in each slot. Primary filters are
+All, Assault Rifles, and SMGs; LMG, Sniper, and Shotgun are shown disabled. Secondary has Pistol,
+with Launcher and Special shown disabled. Future items automatically enable their category and
+extend its horizontal card row. Rows show two cards at a time; additional cards are reached with
+left/right buttons or the mouse wheel over that row. Changing a filter never changes the selection.
+Server restrictions still gate selection, and Confirm & Spawn remains explicit. During a match,
+Queue for Respawn applies changes to the next life. Client pack 46 / base asset archive v22 deliver
+the thumbnails; restart/re-stage the server and reconnect to receive the updated menu and images.
 
 ## FPS grenade input
 

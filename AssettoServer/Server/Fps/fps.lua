@@ -66,13 +66,13 @@ local fpsVisual = {
     exhaustionRelease = 25,
   },
   hudWeapon = {
-    archivePath = '/fps/assets/asrc-fps-assets-v21.zip',
+    archivePath = '/fps/assets/asrc-fps-assets-v22.zip',
     fileName = 'asrc_carbine_hud.png',
     imagePath = nil,
     loading = false,
     failed = false,
   },
-  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v21.zip',
+  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v22.zip',
   loadoutAssetFolder = nil,
   loadoutAssetsLoading = false,
   loadoutAssetsFailed = false,
@@ -293,7 +293,7 @@ local function clientAssetPath(relativePath)
   if assettoRoot == nil or assettoRoot == '' then return relativePath end
   return assettoRoot .. '/' .. relativePath
 end
-local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v21.zip'
+local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v22.zip'
 local rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
 local rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
 local rifleDiffuseFileName = 'asrc_rifle_diffuse.png'
@@ -757,6 +757,54 @@ hud.itemNames = {
   [3] = 'DESERT EAGLE', [4] = 'COLT 1911',
   [16] = 'FRAG GRENADE', [17] = 'STICKY GRENADE',
 }
+
+-- Category and image metadata live with the presentation catalog. Adding another
+-- item to a slot automatically makes its row scrollable and enables its category.
+hud.loadoutItems = {
+  { id = 1, slot = 'mainWeapon', category = 'rifle', subtitle = 'Assault Rifle', image = 'asrc_loadout_assault_rifle.png' },
+  { id = 2, slot = 'mainWeapon', category = 'smg', subtitle = 'SMG', image = 'asrc_loadout_compact_smg.png' },
+  { id = 3, slot = 'secondaryWeapon', category = 'pistol', subtitle = 'Pistol', image = 'asrc_loadout_desert_eagle.png' },
+  { id = 4, slot = 'secondaryWeapon', category = 'pistol', subtitle = 'Pistol', image = 'asrc_loadout_colt_1911.png' },
+  { id = 16, slot = 'lethal', category = 'grenade', subtitle = 'M67', image = 'asrc_loadout_frag_grenade.png' },
+  { id = 17, slot = 'lethal', category = 'grenade', subtitle = 'Semtex', image = 'asrc_loadout_sticky_grenade.png' },
+}
+hud.loadoutRows = {
+  mainWeapon = { filter = 'all', first = 1, mask = 'allowedMainWeapons', categories = {
+    { 'all', 'All', 62 }, { 'rifle', 'Assault Rifles', 154 }, { 'smg', 'SMGs', 94 },
+    { 'lmg', 'LMG', 92 }, { 'sniper', 'Sniper', 108 }, { 'shotgun', 'Shotgun', 116 },
+  } },
+  secondaryWeapon = { filter = 'pistol', first = 1, mask = 'allowedSecondaryWeapons', categories = {
+    { 'pistol', 'Pistol', 92 }, { 'launcher', 'Launcher', 140 }, { 'special', 'Special', 116 },
+  } },
+  lethal = { filter = 'all', first = 1, mask = 'allowedLethals', categories = {} },
+}
+
+function hud.loadoutRowItems(field, filter)
+  local items = {}
+  for _, item in ipairs(hud.loadoutItems) do
+    if item.slot == field and (filter == 'all' or filter == item.category) then
+      items[#items + 1] = item
+    end
+  end
+  return items
+end
+
+function hud.setLoadoutFilter(field, filter)
+  local items = hud.loadoutRowItems(field, filter)
+  if #items == 0 then return end
+  local row = hud.loadoutRows[field]
+  row.filter = filter
+  row.first = 1
+  for index, item in ipairs(items) do
+    if item.id == hud.loadout[field] then row.first = math.max(1, index - 1); break end
+  end
+end
+
+function hud.scrollLoadoutRow(field, direction)
+  local row = hud.loadoutRows[field]
+  local count = #hud.loadoutRowItems(field, row.filter)
+  row.first = math.clamp(row.first + direction, 1, math.max(1, count - 1))
+end
 
 function hud.itemAllowed(mask, itemID)
   return bit.band(mask, bit.lshift(1, itemID)) ~= 0
@@ -2369,7 +2417,7 @@ function fpsVisual.fallback(reason)
   rifleAssetsLoading = false
   rifleAssetsFailed = false
   rifleAssetWaitLogged = false
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v21.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v22.zip'
   rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
   fpsVisual.pickupFileName = rifleWorldModelFileName
@@ -5031,6 +5079,9 @@ end
 
 function hud.submitLoadout()
   if not hud.loadout.catalogReceived then return end
+  for field, row in pairs(hud.loadoutRows) do
+    if not hud.itemAllowed(hud.loadout[row.mask], hud.loadout[field]) then return end
+  end
   hud.loadout.result = 'SENDING TO SERVER...'
   hud.loadoutSelectEvent({
     mainWeapon = hud.loadout.mainWeapon,
@@ -5041,77 +5092,169 @@ end
 
 function hud.drawLoadoutMenu(initialSelection)
   local size = ui.windowSize()
-  local scale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.5)
-  local panelSize = vec2(760, 560) * scale
+  local scale = math.min((size.x - 32) / 1600, (size.y - 32) / 880, 1.5)
+  local panelSize = vec2(1600, 880) * scale
   local panelMin = (size - panelSize) * 0.5
-  local mouse = ui.mousePos()
+  local mouse = (ui.mousePos() - panelMin) / scale
+  local clicked = ui.mouseClicked(ui.MouseButton.Left)
+  local accent = rgbm(0.05, 0.78, 0.96, 1)
+  local white = rgbm(0.93, 0.96, 0.98, 1)
+  local muted = rgbm(0.58, 0.72, 0.80, 1)
+  local disabled = rgbm(0.30, 0.38, 0.43, 1)
+  local border = rgbm(0.18, 0.27, 0.32, 1)
+  fpsVisual.requestLoadoutAssets()
   ui.captureMouse(true)
   ui.setMouseCursor(ui.MouseCursor.Arrow)
-  ui.drawRectFilled(vec2(), size, rgbm(0.006, 0.01, 0.016, 0.82))
-  ui.drawRectFilled(panelMin, panelMin + panelSize, rgbm(0.025, 0.035, 0.05, 0.98),
-    10 * scale)
-  ui.drawRect(panelMin, panelMin + panelSize, rgbm(0.42, 0.68, 0.88, 0.85),
-    10 * scale, nil, math.max(1, 1.5 * scale))
+  ui.drawRectFilled(vec2(), size, rgbm(0.006, 0.01, 0.016, 0.88))
+  ui.drawRectFilled(panelMin, panelMin + panelSize, rgbm(0.022, 0.032, 0.038, 0.99), 12 * scale)
+  ui.drawRect(panelMin, panelMin + panelSize, rgbm(0.20, 0.56, 0.70, 0.9), 12 * scale,
+    nil, math.max(1, scale))
 
-  local function button(label, position, dimensions, accent)
-    local maximum = position + dimensions
-    local hovered = mouse.x >= position.x and mouse.x <= maximum.x
-      and mouse.y >= position.y and mouse.y <= maximum.y
-    local base = accent and rgbm(0.12, 0.42, 0.58, 1) or rgbm(0.10, 0.18, 0.25, 1)
-    ui.drawRectFilled(position, maximum, hovered and rgbm(0.2, 0.5, 0.68, 1) or base,
-      5 * scale)
-    ui.drawRect(position, maximum, rgbm(0.42, 0.66, 0.82, 0.9), 5 * scale,
-      nil, math.max(1, scale))
-    ui.setCursor(position + vec2(14, 12) * scale)
-    ui.text(label)
-    return hovered and ui.mouseClicked(ui.MouseButton.Left)
+  local function point(x, y) return panelMin + vec2(x, y) * scale end
+  local function hovered(x, y, w, h)
+    return mouse.x >= x and mouse.x < x + w and mouse.y >= y and mouse.y < y + h
   end
-
-  local left = panelMin + vec2(42, 32) * scale
-  ui.setCursor(left)
-  ui.pushFont(ui.Font.Huge)
-  ui.text(initialSelection and 'SELECT LOADOUT' or 'CHANGE LOADOUT')
-  ui.popFont()
-  ui.setCursor(left + vec2(0, 52) * scale)
-  ui.textColored(initialSelection and 'Confirmation is required before spawning.'
-      or 'Changes apply on your next respawn.', rgbm(0.55, 0.78, 0.94, 1))
-
-  local rows = {
-    { label = 'MAIN WEAPON', field = 'mainWeapon', mask = 'allowedMainWeapons',
-      items = { 1, 2 } },
-    { label = 'LETHAL EQUIPMENT', field = 'lethal', mask = 'allowedLethals',
-      items = { 16, 17 } },
-    { label = 'SECONDARY WEAPON', field = 'secondaryWeapon',
-      mask = 'allowedSecondaryWeapons', items = { 3, 4 } },
-  }
-  for index = 1, #rows do
-    local row = rows[index]
-    local y = 105 + (index - 1) * 100
-    ui.setCursor(left + vec2(0, y) * scale)
-    ui.textColored(row.label, rgbm(0.62, 0.72, 0.8, 1))
-    if button('<', left + vec2(0, y + 28) * scale, vec2(52, 44) * scale, false) then
-      hud.loadout[row.field] = hud.cycleLoadoutItem(hud.loadout[row.mask],
-        hud.loadout[row.field], row.items, -1)
-    end
-    ui.setCursor(left + vec2(90, y + 40) * scale)
-    ui.pushFont(ui.Font.Title)
-    ui.text(hud.itemNames[hud.loadout[row.field]] or 'UNKNOWN')
-    ui.popFont()
-    if button('>', left + vec2(560, y + 28) * scale, vec2(52, 44) * scale, false) then
-      hud.loadout[row.field] = hud.cycleLoadoutItem(hud.loadout[row.mask],
-        hud.loadout[row.field], row.items, 1)
+  local function text(label, x, y, w, h, fontSize, color, centered)
+    ui.dwriteDrawTextClipped(label, fontSize * scale, point(x, y), point(x + w, y + h),
+      centered and ui.Alignment.Center or ui.Alignment.Start, ui.Alignment.Center, false, color)
+  end
+  local function rect(x, y, w, h, fill, stroke)
+    ui.drawRectFilled(point(x, y), point(x + w, y + h), fill, 7 * scale)
+    if stroke then ui.drawRect(point(x, y), point(x + w, y + h), stroke,
+      7 * scale, nil, math.max(1, 1.5 * scale)) end
+  end
+  local function line(x1, y1, x2, y2, color, width)
+    ui.drawLine(point(x1, y1), point(x2, y2), color, math.max(1, (width or 1) * scale))
+  end
+  local function check(x, y)
+    line(x, y + 6, x + 5, y + 11, accent, 2)
+    line(x + 5, y + 11, x + 15, y, accent, 2)
+  end
+  local function lock(x, y)
+    ui.drawRect(point(x, y + 7), point(x + 9, y + 15), disabled, 1 * scale)
+    ui.drawRect(point(x + 2, y + 1), point(x + 7, y + 10), disabled, 3 * scale)
+  end
+  local function button(label, x, y, w, h, enabled, primary)
+    local hot = enabled and hovered(x, y, w, h)
+    rect(x, y, w, h, hot and rgbm(0.08, 0.40, 0.52, 1)
+      or primary and enabled and rgbm(0.03, 0.37, 0.52, 1) or rgbm(0.045, 0.075, 0.09, 1),
+      enabled and (primary and accent or border) or border)
+    text(label, x + 8, y, w - 16, h, 18, enabled and white or disabled, true)
+    return hot and clicked
+  end
+  local function filters(field, x, y)
+    local row = hud.loadoutRows[field]
+    for _, category in ipairs(row.categories) do
+      local enabled = #hud.loadoutRowItems(field, category[1]) > 0
+      local selected = category[1] == row.filter
+      local hot = enabled and hovered(x, y, category[3], 32)
+      text(category[2], x + 10, y, category[3] - (enabled and 20 or 32), 30, 17,
+        enabled and (selected and white or hot and accent or muted) or disabled)
+      if not enabled then lock(x + category[3] - 22, y + 7) end
+      if selected then line(x + 6, y + 32, x + category[3] - 6, y + 32, accent, 2) end
+      if hot and clicked then hud.setLoadoutFilter(field, category[1]) end
+      x = x + category[3]
     end
   end
+  local function cards(field, x, y, width, height)
+    local row = hud.loadoutRows[field]
+    local items = hud.loadoutRowItems(field, row.filter)
+    row.first = math.clamp(row.first, 1, math.max(1, #items - 1))
+    if #items > 2 then
+      if hovered(x, y, width, height) then
+        local wheel = ui.mouseWheel()
+        if wheel ~= 0 then hud.scrollLoadoutRow(field, wheel > 0 and -1 or 1) end
+      end
+      text(string.format('%d-%d / %d', row.first, math.min(row.first + 1, #items), #items),
+        x + width - 196, y + height + 4, 112, 28, 14, muted, true)
+      if button('<', x + width - 76, y + height + 3, 34, 29, row.first > 1, false) then
+        hud.scrollLoadoutRow(field, -1)
+      end
+      if button('>', x + width - 34, y + height + 3, 34, 29, row.first < #items - 1, false) then
+        hud.scrollLoadoutRow(field, 1)
+      end
+    end
+    local cardWidth = (width - 16) / 2
+    for index = row.first, math.min(row.first + 1, #items) do
+      local item = items[index]
+      local cx = x + (index - row.first) * (cardWidth + 16)
+      local allowed = hud.loadout.catalogReceived and hud.itemAllowed(hud.loadout[row.mask], item.id)
+      local hot = allowed and hovered(cx, y, cardWidth, height)
+      if hot and clicked then
+        hud.loadout[field] = item.id
+        hud.loadout.result = initialSelection and 'CONFIRM A LOADOUT TO JOIN'
+          or 'CHANGES APPLY ON NEXT RESPAWN'
+      end
+      local selected = hud.loadout[field] == item.id and allowed
+      rect(cx, y, cardWidth, height, selected and rgbm(0.035, 0.085, 0.11, 1)
+        or hot and rgbm(0.06, 0.10, 0.12, 1) or rgbm(0.033, 0.047, 0.057, 1),
+        selected and accent or hot and muted or border)
+      local folder = fpsVisual.loadoutAssetFolder
+      if folder ~= nil then
+        local imageBottom = field == 'mainWeapon' and 8 or 36
+        ui.drawImage(folder .. '/' .. item.image, point(cx + 18, y + 8),
+          point(cx + cardWidth - 18, y + height - imageBottom),
+          allowed and rgbm.colors.white or rgbm(0.35, 0.35, 0.35, 0.7), nil, nil, ui.ImageFit.Fit)
+      else
+        text(fpsVisual.loadoutAssetsFailed and 'IMAGE UNAVAILABLE' or 'LOADING IMAGE...',
+          cx + 16, y + 52, cardWidth - 32, height - 114, 15, disabled, true)
+      end
+      if selected then
+        check(cx + cardWidth - 123, y + 15)
+        text('SELECTED', cx + cardWidth - 98, y + 9, 86, 25, 14, accent)
+      elseif not allowed then
+        text(hud.loadout.catalogReceived and 'SERVER LOCKED' or 'WAITING FOR SERVER',
+          cx + 12, y + 8, cardWidth - 24, 25, 13, disabled)
+      end
+      text(hud.itemNames[item.id] or 'UNKNOWN', cx + 20, y + height - 58,
+        cardWidth - 40, 31, field == 'mainWeapon' and 25 or 21, allowed and white or disabled)
+      text(item.subtitle, cx + 20, y + height - 28, cardWidth - 40, 24, 16,
+        allowed and muted or disabled)
+    end
+    if #items == 0 then text('NO ITEMS IN THIS CATEGORY', x, y, width, height, 19, muted, true) end
+  end
 
-  ui.setCursor(left + vec2(0, 417) * scale)
-  ui.textColored(hud.loadout.result, hud.loadout.catalogReceived
-    and rgbm(0.65, 0.88, 1, 1) or rgbm(1, 0.6, 0.2, 1))
-  if button(initialSelection and 'CONFIRM & SPAWN' or 'QUEUE FOR RESPAWN',
-      left + vec2(360, 410) * scale, vec2(252, 46) * scale, true) then
+  text('L O A D O U T', 42, 24, 500, 24, 15, muted)
+  text(initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 1300, 52, 46, white)
+  text(initialSelection and 'Choose one item per slot. Confirm to spawn.'
+    or 'Choose one item per slot. Changes apply on your next respawn.', 42, 105, 1300, 26, 18, muted)
+  line(42, 145, 1558, 145, border)
+  text('01', 42, 158, 45, 30, 25, accent)
+  text('MAIN WEAPON', 96, 158, 210, 30, 23, white)
+  filters('mainWeapon', 320, 157)
+  text('Locked categories: coming soon', 1215, 158, 343, 30, 14, muted)
+  cards('mainWeapon', 42, 202, 1516, 234)
+  line(42, 474, 1558, 474, border)
+  text('02', 42, 487, 45, 30, 25, accent)
+  text('SECONDARY WEAPON', 96, 487, 650, 30, 23, white)
+  text('03', 816, 487, 45, 30, 25, accent)
+  text('LETHAL EQUIPMENT', 870, 487, 670, 30, 23, white)
+  filters('secondaryWeapon', 42, 523)
+  text('One grenade per life', 816, 523, 700, 30, 17, muted)
+  line(800, 492, 800, 784, border)
+  cards('secondaryWeapon', 42, 568, 742, 184)
+  cards('lethal', 816, 568, 742, 184)
+  line(42, 795, 1558, 795, border)
+
+  local selectedCount = 0
+  for field, row in pairs(hud.loadoutRows) do
+    if hud.loadout.catalogReceived and hud.itemAllowed(hud.loadout[row.mask], hud.loadout[field]) then
+      selectedCount = selectedCount + 1
+    end
+  end
+  local summaryX = initialSelection and 42 or 290
+  if selectedCount == 3 then check(summaryX, 814) end
+  text(string.format('%d / 3 SLOTS SELECTED', selectedCount), summaryX + 28, 805, 680, 28, 17, white)
+  text(hud.loadout.result, 972, 106, 586, 26, 15,
+    selectedCount == 3 and muted or rgbm(1, 0.62, 0.25, 1))
+  text(string.format('%s  /  %s  /  %s', hud.itemNames[hud.loadout.mainWeapon] or '?',
+    hud.itemNames[hud.loadout.secondaryWeapon] or '?', hud.itemNames[hud.loadout.lethal] or '?'),
+    summaryX, 834, 810, 24, 14, muted)
+  if button(initialSelection and 'CONFIRM & SPAWN  >' or 'QUEUE FOR RESPAWN  >',
+      1126, 809, 432, 53, selectedCount == 3, true) then
     hud.submitLoadout()
   end
-  if not initialSelection and button('BACK TO MATCH MENU', left + vec2(0, 472) * scale,
-      vec2(245, 42) * scale, false) then
+  if not initialSelection and button('<  MATCH MENU', 42, 809, 220, 53, true, false) then
     hud.pausePage = 'main'
   end
 end

@@ -15,7 +15,7 @@ public sealed class FpsClientAssetArchiveTests
         Assert.That(bytes, Has.Length.GreaterThan(10_000));
         Assert.That(bytes.AsSpan(0, 2).SequenceEqual("PK"u8), Is.True);
         Assert.That(FpsClientAssetArchive.Route,
-            Is.EqualTo("/fps/assets/asrc-fps-assets-v21.zip"));
+            Is.EqualTo("/fps/assets/asrc-fps-assets-v22.zip"));
         Assert.That(archive.Entries.Select(entry => entry.FullName), Is.EquivalentTo(new[]
         {
             FpsClientAssetArchive.ViewmodelFileName,
@@ -39,7 +39,8 @@ public sealed class FpsClientAssetArchiveTests
         }.Concat(FpsClientAssetArchive.CompactSmgAnimationFileNames)
             .Concat(FpsClientAssetArchive.DesertEagleAnimationFileNames)
             .Concat(FpsClientAssetArchive.Colt1911AnimationFileNames)
-            .Concat(FpsClientAssetArchive.GrenadeModelFileNames)));
+            .Concat(FpsClientAssetArchive.GrenadeModelFileNames)
+            .Concat(FpsClientAssetArchive.LoadoutImageFileNames)));
 
         Assert.Multiple(() =>
         {

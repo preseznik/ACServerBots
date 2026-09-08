@@ -1,6 +1,6 @@
 # FPS client rendering handoff
 
-Current match-mode delivery uses compatibility client pack 45, ready protocol 3, and presentation
+Current match-mode delivery uses compatibility client pack 46, ready protocol 3, and presentation
 bridge `asrc.fps.hud.v12`. Protocol 3 adds authoritative team identity, match type, winning team, and
 team scores; older protocol/bridge references below describe the milestone that originally introduced
 the relevant rendering or audio surface.
@@ -8,6 +8,39 @@ the relevant rendering or audio surface.
 This document is the source of truth for the CSP client-side FPS scene and HUD. The server remains
 authoritative for movement, shots, damage, scoring, ammunition, death, and respawn. Client scene
 nodes and HUD widgets are presentation only.
+
+## Loadout image cards and category scrolling
+
+The initial join screen and pause-menu loadout editor share `hud.drawLoadoutMenu()` in `fps.lua`.
+The primary row has All, Assault Rifles, and SMGs filters; LMG, Sniper, and Shotgun remain visible
+but disabled until the presentation catalog contains an item in that category. Secondary exposes
+Pistol with disabled Launcher and Special filters. Each card selects one item without submitting;
+the explicit Confirm & Spawn / Queue for Respawn action still requires server acceptance.
+Server-disabled items are labelled SERVER LOCKED and cannot be selected or submitted.
+
+Each slot shows two cards with independent filter/scroll state. When there are more than two
+matching items, left/right buttons and the mouse wheel over the cards scroll one item at a time;
+the range indicator shows the visible indexes. Paging clamps at both ends. Changing filters
+reveals the selected item if it belongs to that category, otherwise starts at the first card without
+changing the selection. `hud.loadoutItems` supplies slot, category, subtitle and thumbnail metadata;
+additional server-supported items use the same row implementation. The layout scales as one panel
+to fit the viewport and uses DirectWrite text at the same scale as its hit rectangles.
+
+Base archive v22 and client pack 46 include six transparent `asrc_loadout_*.png` thumbnails.
+`tools/render_fps_loadout_items.py` renders the existing source meshes with their material assignments,
+inserted magazines and no arms or loose bullets. It takes the weapons source root, an extracted MP5
+source directory (`MP5.fbx` and its textures), and an output directory. The images use the existing
+weapon attribution notices. They are downloaded through the shared loadout-asset request, avoiding
+duplicate extraction of the same archive. Source thumbnail changes require another archive revision.
+
+`tools/test_fps_loadout_menu.py --lua-runtime .artifacts/lua-runtime` runs the changed menu functions
+using Lupa's LuaJIT 2.1 with stubbed CSP draw/input calls. It checks card selection, server restrictions,
+confirmation, disabled filters, arrow/wheel paging, last-item selection, and filter clamping using an
+expanded test-only catalog. Pillow renders those actual draw calls to `.artifacts/loadout-menu` at
+desktop, 1280x720, and 831x619 sizes. These are layout previews, not captured in-game frames; CSP's
+font metrics and colour output still need visual acceptance in the game. The existing full client's
+update function exceeds stock LuaJIT's 60-upvalue limit even before this change; the harness parses
+the full script with Lua 5.4 and executes the isolated changed menu with LuaJIT.
 
 ## Confirmed remote-avatar desynchronization fix
 
@@ -233,7 +266,7 @@ state and elimination; the client only presents it.
 
 ## Hybrid HUD ownership
 
-Client pack version 45 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
+Client pack version 46 installs one background-loaded CSP app at `apps/lua/asrc_fps_hud`. The online
 script publishes presentation state through the local shared structure `asrc.fps.hud.v12`. Bridge v12
 adds hostile grenade position, velocity, and fuse state while retaining the authoritative opening
 countdown, unboxed hold-to-swap prompt, progress, active-slot, item, and lethal-count presentation;

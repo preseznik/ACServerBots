@@ -83,6 +83,16 @@ public static class FpsClientPackAssets
     public const string HudManifestPath = "apps/lua/asrc_fps_hud/manifest.ini";
     public const string HudScriptPath = "apps/lua/asrc_fps_hud/asrc_fps_hud.lua";
     public const string HudWeaponImagePath = "apps/lua/asrc_fps_hud/asrc_carbine_hud.png";
+    public static readonly string[] LoadoutImageFileNames =
+    [
+        "asrc_loadout_assault_rifle.png", "asrc_loadout_compact_smg.png",
+        "asrc_loadout_desert_eagle.png", "asrc_loadout_colt_1911.png",
+        "asrc_loadout_frag_grenade.png", "asrc_loadout_sticky_grenade.png",
+    ];
+
+    public static IReadOnlyList<(string Path, byte[] Data)> GetLoadoutImages() =>
+        LoadoutImageFileNames.Select(fileName => ($"content/objects3D/asrc_fps/{fileName}",
+            ReadEmbeddedPng($"AssettoServer.RaceControl.Core.Assets.Fps.{fileName}"))).ToArray();
 
     public static byte[] GetRifleViewmodel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_assault_rifle_viewmodel.kn5");

@@ -326,7 +326,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("web.loadRemoteAssets"));
             Assert.That(script, Does.Contain("ac.getServerIP()"));
             Assert.That(script, Does.Contain("ac.getServerPortHTTP()"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v21.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v22.zip"));
             Assert.That(script, Does.Contain("asrc_compact_smg_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_compact_smg_world.kn5"));
             Assert.That(script, Does.Contain("asrc_compact_smg_reload_empty.ksanim"));

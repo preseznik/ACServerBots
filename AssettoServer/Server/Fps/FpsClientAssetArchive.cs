@@ -9,13 +9,19 @@ namespace AssettoServer.Server.Fps;
 
 internal static class FpsClientAssetArchive
 {
-    public const string Route = "/fps/assets/asrc-fps-assets-v21.zip";
-    public const string FileName = "asrc-fps-assets-v21.zip";
+    public const string Route = "/fps/assets/asrc-fps-assets-v22.zip";
+    public const string FileName = "asrc-fps-assets-v22.zip";
     public const string ViewmodelFileName = "asrc_assault_rifle_viewmodel.kn5";
     public const string WorldModelFileName = "asrc_assault_rifle_world.kn5";
     public const string RifleDiffuseFileName = "asrc_rifle_diffuse.png";
     public const string OperatorSkinFileName = "asrc_operator_skin.png";
     public const string HudWeaponImageFileName = "asrc_carbine_hud.png";
+    public static readonly string[] LoadoutImageFileNames =
+    [
+        "asrc_loadout_assault_rifle.png", "asrc_loadout_compact_smg.png",
+        "asrc_loadout_desert_eagle.png", "asrc_loadout_colt_1911.png",
+        "asrc_loadout_frag_grenade.png", "asrc_loadout_sticky_grenade.png",
+    ];
     public const string CompactSmgViewmodelFileName = "asrc_compact_smg_viewmodel.kn5";
     public const string CompactSmgWorldModelFileName = "asrc_compact_smg_world.kn5";
     public const string CompactSmgAttributionFileName = "compact-smg-attribution.txt";
@@ -112,6 +118,8 @@ internal static class FpsClientAssetArchive
                 "AssettoServer.Server.Fps.Assets.asrc_operator_skin.png");
             AddPng(archive, HudWeaponImageFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_carbine_hud.png");
+            foreach (string fileName in LoadoutImageFileNames)
+                AddPng(archive, fileName, $"AssettoServer.Server.Fps.Assets.{fileName}");
             AddText(archive, DesertEagleAttributionFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_desert_eagle_attribution.txt", "ELIZION");
             AddText(archive, Colt1911AttributionFileName,
