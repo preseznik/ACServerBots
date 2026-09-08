@@ -1,5 +1,27 @@
 # FPS client rendering handoff
 
+## Match results and automatic rounds
+
+The server retains `Finished` for 20 seconds, publishes `restartCountdownSeconds`, then resets the
+existing simulation on the same arena. Spawn and shot sequences stay monotonic so existing client
+interpolation and respawn handling continue working. Scores also reset through reliable zero-point
+award packets; score is not part of the positional snapshot. The online client clears prior-round
+HUD notices and pickup/grenade models when the match leaves `Finished`.
+
+Client pack 48 uses ready protocol 4, HUD bridge `asrc.fps.hud.v13`, and HUD app 1.12.0. Both HUD
+paths show the full results panel before ordinary gameplay widgets, without requiring TAB. The
+renderer uses two columns above 16 participants so all 32 fit without scrolling. Its draw function
+is identical in the online and companion scripts; `tools/test_fps_match_results.py` executes both
+with LuaJIT and renders their actual draw calls at desktop, 720p, and compact viewport sizes.
+Those previews approximate CSP fonts; live multi-client gameplay remains a separate acceptance step.
+
+The packaged gate is `tools/Test-RaceControlLocal.ps1 -FpsGate -UseBundledArena
+-VerifyFpsRestart -Slots 8 -SmokeSeconds 55`. It uses a one-kill match, observes the authoritative
+intermission countdown, and requires the same server process to return to running with zero scores.
+Validation on 2026-09-08 passed 243 server tests, 97 Race Control tests, both LuaJIT results
+renderers, and this packaged gate (20.04 seconds of results before restart). The .NET 9 test suite
+used process-scoped .NET 10 roll-forward; the packaged server ran with its own .NET 9 runtime.
+
 Current match-mode delivery uses compatibility client pack 46, ready protocol 3, and presentation
 bridge `asrc.fps.hud.v12`. Protocol 3 adds authoritative team identity, match type, winning team, and
 team scores; older protocol/bridge references below describe the milestone that originally introduced

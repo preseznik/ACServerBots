@@ -34,7 +34,7 @@ public sealed class FpsInputPacket : OnlineEvent<FpsInputPacket>
 [OnlineEvent(Key = "ASRC_FpsReady")]
 public sealed class FpsReadyPacket : OnlineEvent<FpsReadyPacket>
 {
-    [OnlineEventField(Name = "protocol")] public ushort Protocol = 3;
+    [OnlineEventField(Name = "protocol")] public ushort Protocol = 4;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutSelect")]
@@ -184,6 +184,7 @@ public sealed class FpsMatchPacket : OnlineEvent<FpsMatchPacket>
     [OnlineEventField(Name = "state")] public byte State;
     [OnlineEventField(Name = "remainingSeconds")] public float RemainingSeconds;
     [OnlineEventField(Name = "startCountdownSeconds")] public float StartCountdownSeconds;
+    [OnlineEventField(Name = "restartCountdownSeconds")] public float RestartCountdownSeconds;
     [OnlineEventField(Name = "killLimit")] public ushort KillLimit;
     [OnlineEventField(Name = "maximumHealth")] public ushort MaximumHealth;
     [OnlineEventField(Name = "winnerID")] public byte WinnerId = byte.MaxValue;

@@ -219,6 +219,7 @@ internal sealed class FpsActorState
 internal sealed class FpsSimulation
 {
     internal const float MatchStartCountdownSeconds = 5;
+    internal const float MatchRestartDelaySeconds = 20;
     private const float WalkSpeed = 6;
     private const float SprintSpeed = 9;
     internal const float MaximumStamina = 100;
@@ -289,6 +290,7 @@ internal sealed class FpsSimulation
     public FpsMatchState MatchState { get; private set; } = FpsMatchState.Waiting;
     public float RemainingSeconds { get; private set; }
     public float StartCountdownRemaining { get; private set; }
+    public float RestartCountdownRemaining { get; private set; }
     public float ElapsedSeconds { get; private set; }
     public byte WinnerId { get; private set; } = byte.MaxValue;
     public byte WinnerTeam { get; private set; }
@@ -442,6 +444,12 @@ internal sealed class FpsSimulation
         LastStepDiagnostics = default;
         _surface?.BeginTickDiagnostics();
         if (!float.IsFinite(dt) || dt <= 0) return;
+        if (MatchState == FpsMatchState.Finished)
+        {
+            RestartCountdownRemaining = Math.Max(0, RestartCountdownRemaining - dt);
+            if (RestartCountdownRemaining <= 0.0001f) RestartMatch();
+            return;
+        }
         dt = Math.Min(dt, 0.05f);
         if (MatchState == FpsMatchState.Waiting)
         {
@@ -2462,6 +2470,7 @@ internal sealed class FpsSimulation
     private void FinishMatch()
     {
         MatchState = FpsMatchState.Finished;
+        RestartCountdownRemaining = MatchRestartDelaySeconds;
         if (IsTeamMatch(_configuration.MatchType))
             WinnerTeam = Team1Kills == Team2Kills ? (byte)0
                 : Team1Kills > Team2Kills ? (byte)1 : (byte)2;
@@ -2479,6 +2488,44 @@ internal sealed class FpsSimulation
             .ThenBy(actor => actor.Id)
             .Select(actor => actor.Id)
             .FirstOrDefault(byte.MaxValue);
+    }
+
+    private void RestartMatch()
+    {
+        RemainingSeconds = Math.Max(1, _configuration.TimeLimitMinutes) * 60;
+        ElapsedSeconds = 0;
+        StartCountdownRemaining = 0;
+        RestartCountdownRemaining = 0;
+        WinnerId = byte.MaxValue;
+        WinnerTeam = 0;
+        Team1Kills = 0;
+        Team2Kills = 0;
+        _grenades.Clear();
+        foreach (var pickup in _pickups)
+            _pickupEvents.Add(new FpsPickupEvent(pickup.Id, FpsPickupState.Removed,
+                pickup.WeaponType, pickup.Position, pickup.DroppedByActorId));
+        _pickups.Clear();
+
+        foreach (var actor in _actors.Values)
+        {
+            actor.Kills = 0;
+            actor.Deaths = 0;
+            actor.Score = 0;
+            actor.FinalScoreAttainedAtSeconds = 0;
+            actor.DamageContributors.Clear();
+            actor.HasInput = false;
+            actor.Input = default;
+            // Ignore previous-round positions when choosing the new spawn roster.
+            actor.Dead = true;
+        }
+        foreach (var actor in _actors.Values.Where(actor => actor.Active).OrderBy(actor => actor.Id))
+            Spawn(actor);
+
+        // Preserve connections, teams, loadout confirmations and monotonically
+        // increasing network/spawn sequences. The results screen was the countdown.
+        MatchState = _configuration.StartWithBotsOnly
+                     || _actors.Values.Any(actor => actor.Active && actor.HumanControlled)
+            ? FpsMatchState.Running : FpsMatchState.Waiting;
     }
 
     internal static bool IsTeamMatch(FpsMatchType matchType) =>

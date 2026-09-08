@@ -13,6 +13,8 @@ local fpsVisual = {
   adsInput = 0,
   ads = 0,
   startCountdownSeconds = 0,
+  restartCountdownSeconds = 0,
+  restartCountdownUpdatedAt = 0,
   thirdPersonDistance = 3.2,
   thirdPersonDistanceTarget = 3.2,
   thirdPersonDistanceMin = 1.25,
@@ -671,7 +673,7 @@ local requestRifleAssets
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 12,
+  protocol = 13,
   capacity = 32,
   grenadeCapacity = 8,
   killFeedCapacity = 6,
@@ -902,7 +904,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v12'),
+      ac.StructItem.key('asrc.fps.hud.v13'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -928,6 +930,7 @@ function hud.connect()
       matchState = ac.StructItem.byte(),
       remainingSeconds = ac.StructItem.float(),
       startCountdownSeconds = ac.StructItem.float(),
+      restartCountdownSeconds = ac.StructItem.float(),
       killLimit = ac.StructItem.uint16(),
       winnerID = ac.StructItem.byte(),
       matchType = ac.StructItem.byte(),
@@ -971,7 +974,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v12')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v13')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -1069,6 +1072,8 @@ function hud.publish(dt)
   hud.bridge.matchState = matchState
   hud.bridge.remainingSeconds = remainingSeconds
   hud.bridge.startCountdownSeconds = fpsVisual.startCountdownSeconds
+  hud.bridge.restartCountdownSeconds = math.max(0, fpsVisual.restartCountdownSeconds
+    - (ui.time() - fpsVisual.restartCountdownUpdatedAt))
   hud.bridge.killLimit = killLimit
   hud.bridge.winnerID = winnerID
   hud.bridge.matchType = matchType
@@ -1747,6 +1752,7 @@ hud.matchEvent = ac.OnlineEvent({
   state = ac.StructItem.byte(),
   remainingSeconds = ac.StructItem.float(),
   startCountdownSeconds = ac.StructItem.float(),
+  restartCountdownSeconds = ac.StructItem.float(),
   killLimit = ac.StructItem.uint16(),
   maximumHealth = ac.StructItem.uint16(),
   winnerID = ac.StructItem.byte(),
@@ -1758,7 +1764,26 @@ hud.matchEvent = ac.OnlineEvent({
   timeOfDaySeconds = ac.StructItem.uint32(),
 }, function(sender, message)
   if sender ~= nil then return end
+  if matchState == 2 and message.state ~= 2 then
+    killFeed = {}
+    hud.awardPopups = {}
+    hitMarkerUntil = 0
+    outOfBoundsRemaining = 0
+    hud.loadout.activeSlot = 0
+    for _, actor in pairs(actors) do
+      actor.score, actor.kills, actor.deaths = 0, 0, 0
+    end
+    fpsVisual.activeGrenadeType = nil
+    fpsVisual.grenadeInputHeld = false
+    for id in pairs(fpsVisual.grenades) do fpsVisual.removeGrenade(id) end
+    for id, pickup in pairs(fpsVisual.pickups) do
+      if pickup.root ~= nil then pcall(function() pickup.root:dispose() end) end
+      fpsVisual.pickups[id] = nil
+    end
+  end
   matchState = message.state
+  fpsVisual.restartCountdownSeconds = message.restartCountdownSeconds
+  fpsVisual.restartCountdownUpdatedAt = ui.time()
   remainingSeconds = message.remainingSeconds
   fpsVisual.startCountdownSeconds = message.startCountdownSeconds
   killLimit = message.killLimit
@@ -4231,7 +4256,7 @@ function script.update(dt)
     -- Main/pits/results UI was excluded above. Once gameplay is active, FPS
     -- owns the pointer even if a third-party app incorrectly asks for it.
     scoreboardHeld = ac.isKeyDown(ac.KeyIndex.Tab)
-    cursorUnlocked = scoreboardHeld or persistentCursor or not hud.loadout.confirmed
+    cursorUnlocked = matchState == 2 or scoreboardHeld or persistentCursor or not hud.loadout.confirmed
     local thirdPersonToggle = ac.isKeyDown(ac.KeyIndex.F6)
     if thirdPersonToggle and not thirdPersonToggleWasHeld then
       thirdPersonEnabled = not thirdPersonEnabled
@@ -5604,10 +5629,105 @@ local function drawMatchStartOverlay(size, scale)
   end
 end
 
+function hud.drawMatchResults(size, rows, modeTitle, winnerText, countdown, localID, teamScores)
+  local scale = math.min((size.x - 48) / 1400, (size.y - 48) / 820, 1.5)
+  local p = (size - vec2(1400, 820) * scale) * 0.5
+  local gold = rgbm(1, 0.74, 0.25, 1)
+  local white = rgbm(0.93, 0.96, 1, 1)
+  local muted = rgbm(0.58, 0.66, 0.75, 1)
+  local function text(value, x, y, width, height, fontSize, color, align)
+    ui.dwriteDrawTextClipped(tostring(value), fontSize * scale,
+      p + vec2(x, y) * scale, p + vec2(x + width, y + height) * scale,
+      align or ui.Alignment.Start, ui.Alignment.Center, false, color)
+  end
+  local function rect(x, y, width, height, color)
+    ui.drawRectFilled(p + vec2(x, y) * scale,
+      p + vec2(x + width, y + height) * scale, color)
+  end
+  ui.drawRectFilled(vec2(), size, rgbm(0.005, 0.008, 0.012, 0.82))
+  rect(0, 0, 1400, 820, rgbm(0.025, 0.035, 0.05, 0.98))
+  rect(0, 0, 1400, 5, gold)
+  text('MATCH COMPLETE', 32, 24, 870, 62, 46, white)
+  text(modeTitle .. '  /  FINAL STANDINGS', 34, 91, 860, 28, 18, muted)
+  text(winnerText, 32, 130, 860, 48, 30, gold)
+  text('NEXT MATCH IN', 940, 27, 425, 32, 18, muted, ui.Alignment.End)
+  text(tostring(math.max(0, math.ceil(countdown))) .. 's', 940, 62, 425, 62,
+    48, gold, ui.Alignment.End)
+  text(teamScores or 'SAME ARENA  /  TEAMS AND LOADOUTS RETAINED',
+    880, 139, 485, 34, 17, white, ui.Alignment.End)
+  rect(32, 190, 1336, 1, rgbm(0.2, 0.27, 0.34, 1))
+
+  local columns = #rows > 16 and 2 or 1
+  local columnWidth = columns == 2 and 650 or 1336
+  local fields = {
+    {label = '#', x = 0.012, width = 0.05},
+    {label = 'OPERATOR', x = 0.075, width = 0.405},
+    {label = 'SCORE', x = 0.49, width = 0.13},
+    {label = 'KILLS', x = 0.635, width = 0.10},
+    {label = 'DEATHS', x = 0.747, width = 0.105},
+    {label = 'K/D', x = 0.868, width = 0.12},
+  }
+  for column = 0, columns - 1 do
+    local x = 32 + column * 686
+    for _, field in ipairs(fields) do
+      text(field.label, x + field.x * columnWidth, 201, field.width * columnWidth,
+        28, 15, muted, field.x >= 0.49 and ui.Alignment.End or ui.Alignment.Start)
+    end
+    for row = 1, 16 do
+      local place = column * 16 + row
+      local actor = rows[place]
+      if actor ~= nil then
+        local y = 238 + (row - 1) * 31
+        local own = actor.id == localID
+        rect(x, y, columnWidth, 29, own and rgbm(0.12, 0.32, 0.48, 1)
+          or rgbm(0.065, 0.085, 0.11, row % 2 == 0 and 0.9 or 0.55))
+        local stripe = actor.team == 1 and rgbm(0.2, 0.58, 1, 1)
+          or actor.team == 2 and rgbm(1, 0.28, 0.22, 1) or place == 1 and gold or muted
+        rect(x, y, 3, 29, stripe)
+        local values = {place, actor.name, actor.score, actor.kills, actor.deaths,
+          string.format('%.2f', actor.kills / math.max(1, actor.deaths))}
+        for index, field in ipairs(fields) do
+          text(values[index], x + field.x * columnWidth, y, field.width * columnWidth,
+            29, index == 2 and 20 or 18, own and white or rgbm(0.82, 0.88, 0.94, 1),
+            field.x >= 0.49 and ui.Alignment.End or ui.Alignment.Start)
+        end
+      end
+    end
+  end
+  text(#rows .. ' OPERATORS', 32, 759, 400, 32, 16, muted)
+  text('NEXT ROUND STARTS AUTOMATICALLY', 790, 759, 576, 32, 16, muted, ui.Alignment.End)
+  rect(32, 801, 1336, 3, rgbm(0.1, 0.14, 0.18, 1))
+  rect(32, 801, 1336 * math.clamp(countdown / 20, 0, 1), 3, gold)
+end
+
+function hud.drawCompletion(size)
+  local rows = {}
+  for _, actor in pairs(actors) do
+    if bit.band(actor.flags, 1) ~= 0 then
+      rows[#rows + 1] = {id = actor.id, name = names[actor.id] or ('Player ' .. actor.id),
+        score = actor.score, kills = actor.kills, deaths = actor.deaths, team = actor.team}
+    end
+  end
+  table.sort(rows, function(a, b)
+    if a.kills ~= b.kills then return a.kills > b.kills end
+    if a.deaths ~= b.deaths then return a.deaths < b.deaths end
+    return a.id < b.id
+  end)
+  hud.drawMatchResults(size, rows, fpsVisual.matchModeTitle(),
+    isTeamMatch() and (winnerTeam == 0 and 'DRAW' or ('WINNER: TEAM ' .. winnerTeam))
+      or ('WINNER: ' .. (names[winnerID] or 'No winner')),
+    math.max(0, fpsVisual.restartCountdownSeconds - (ui.time() - fpsVisual.restartCountdownUpdatedAt)),
+    localSessionID, isTeamMatch() and string.format('TEAM 1   %d  :  %d   TEAM 2', team1Kills, team2Kills) or nil)
+end
+
 function script.drawUI()
   if hud.exclusiveSubscription ~= nil and not hud.drawingFallback then return end
   viewmodelDrawUICalls = viewmodelDrawUICalls + 1
   if not gameplayActive then return end
+  if matchState == 2 then
+    hud.drawCompletion(ui.windowSize())
+    return
+  end
   if not hud.loadout.confirmed then
     hud.drawLoadoutMenu(true)
     return
@@ -5703,19 +5823,7 @@ function script.drawUI()
     ui.setCursor(vec2(center.x - 300, center.y - 20))
     ui.textColored('FPS camera compatibility gate failed: ' .. tostring(cameraError), rgbm.colors.red)
   end
-  if matchState == 2 then
-    ui.setCursor(vec2(center.x - 220, center.y - 120))
-    ui.pushFont(ui.Font.Huge)
-    ui.text('MATCH COMPLETE')
-    ui.popFont()
-    ui.text(isTeamMatch() and (winnerTeam == 0 and 'Draw' or ('Winner: Team ' .. winnerTeam))
-      or ('Winner: ' .. (names[winnerID] or 'No winner')))
-    for i = 1, #ranking do
-      local rankedActor = ranking[i]
-      ui.text(string.format('%2d. %-22s  %3d kills  %3d deaths', i,
-        names[rankedActor.id] or ('Player ' .. rankedActor.id), rankedActor.kills, rankedActor.deaths))
-    end
-  end
+
 end
 
 function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton, returnPage)
@@ -6103,5 +6211,5 @@ else
   ac.log('[ASRC FPS] exclusive online HUD fallback registered')
 end
 
-hud.readySent = hud.readyEvent({ protocol = 3 })
-ac.log(string.format('[ASRC FPS] ready sent: protocol=3 result=%s', tostring(hud.readySent)))
+hud.readySent = hud.readyEvent({ protocol = 4 })
+ac.log(string.format('[ASRC FPS] ready sent: protocol=4 result=%s', tostring(hud.readySent)))

@@ -24,7 +24,7 @@ internal readonly record struct FpsLiveActorSnapshot(byte Id, string Name, bool 
     ushort Kills, ushort Deaths, uint Score, FpsTeamAssignment Team);
 
 internal sealed record FpsLiveMatchSnapshot(FpsMatchState State, float ElapsedSeconds,
-    float RemainingSeconds, int KillLimit, byte WinnerId, FpsMatchType MatchType,
+    float RemainingSeconds, float RestartCountdownSeconds, int KillLimit, byte WinnerId, FpsMatchType MatchType,
     byte WinnerTeam, ushort Team1Kills, ushort Team2Kills,
     IReadOnlyList<FpsLiveActorSnapshot> Actors);
 
@@ -46,6 +46,7 @@ public sealed class FpsWorld : IHostedService
     private int _snapshotTicks;
     private int _matchTicks;
     private bool _finalSent;
+    private long _lastUpdateTimestamp;
     private readonly HashSet<byte> _clientsWithAcceptedInput = [];
     private readonly HashSet<byte> _clientsWithActiveInput = [];
     private readonly HashSet<byte> _clientsWithAcceptedShot = [];
@@ -195,7 +196,7 @@ public sealed class FpsWorld : IHostedService
                 actor.Score,
                 actor.Team)).ToArray();
         return new FpsLiveMatchSnapshot(simulation.MatchState, simulation.ElapsedSeconds,
-            simulation.RemainingSeconds, killLimit, simulation.WinnerId,
+            simulation.RemainingSeconds, simulation.RestartCountdownRemaining, killLimit, simulation.WinnerId,
             simulation.MatchType, simulation.WinnerTeam, simulation.Team1Kills,
             simulation.Team2Kills, actors);
     }
@@ -337,7 +338,7 @@ public sealed class FpsWorld : IHostedService
 
     private void OnReady(ACTcpClient client, FpsReadyPacket packet)
     {
-        if (packet.Protocol != 3)
+        if (packet.Protocol != 4)
         {
             client.Logger.Warning("FPS client protocol {Protocol} is not supported", packet.Protocol);
             _ = client.DisconnectAsync();
@@ -460,7 +461,13 @@ public sealed class FpsWorld : IHostedService
         {
             if (_simulation is null) return;
             long simulationStart = Stopwatch.GetTimestamp();
-            _simulation.Step(1f / _configuration.Server.RefreshRateHz);
+            // Intermission is elapsed time, independent of the fixed gameplay step
+            // and millisecond rounding in the server's tick scheduler.
+            float step = _simulation.MatchState == FpsMatchState.Finished && _lastUpdateTimestamp != 0
+                ? (float)Stopwatch.GetElapsedTime(_lastUpdateTimestamp, simulationStart).TotalSeconds
+                : 1f / _configuration.Server.RefreshRateHz;
+            _lastUpdateTimestamp = simulationStart;
+            _simulation.Step(step);
             double simulationMilliseconds = Stopwatch.GetElapsedTime(simulationStart).TotalMilliseconds;
             _simulationMillisecondsTotal += simulationMilliseconds;
             if (simulationMilliseconds > _simulationMillisecondsMaximum)
@@ -618,6 +625,16 @@ public sealed class FpsWorld : IHostedService
                 BroadcastMatch();
                 Log.Information("FPS match finished; winner session {Winner}, team {WinnerTeam}",
                     _simulation.WinnerId, _simulation.WinnerTeam);
+            }
+            else if (_simulation.MatchState != FpsMatchState.Finished && _finalSent)
+            {
+                _finalSent = false;
+                foreach (var actor in _simulation.Actors)
+                    Broadcast(new FpsAwardPacket { ActorId = actor.Id, TotalScore = actor.Score });
+                SendSnapshots();
+                SendGrenadeSnapshots();
+                BroadcastMatch();
+                Log.Information("FPS match restarted on the same arena after the results countdown");
             }
         }
     }
@@ -931,6 +948,7 @@ public sealed class FpsWorld : IHostedService
             State = (byte)_simulation.MatchState,
             RemainingSeconds = _simulation.RemainingSeconds,
             StartCountdownSeconds = _simulation.StartCountdownRemaining,
+            RestartCountdownSeconds = _simulation.RestartCountdownRemaining,
             KillLimit = (ushort)_configuration.Extra.Fps.KillLimit,
             MaximumHealth = (ushort)Math.Clamp(_configuration.Extra.Fps.Bots.Health, 1,
                 ushort.MaxValue),

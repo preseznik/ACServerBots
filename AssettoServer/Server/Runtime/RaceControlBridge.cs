@@ -565,7 +565,7 @@ public sealed class RaceControlBridge : IHostedService
                 },
                 phase,
                 startTimeMilliseconds = 0,
-                countdownMilliseconds = 0,
+                countdownMilliseconds = (long)Math.Max(0, Math.Round(match.RestartCountdownSeconds * 1000)),
                 timeLeftMilliseconds = (int)Math.Max(0, Math.Round(match.RemainingSeconds * 1000)),
                 laps = 0,
                 killLimit = match.KillLimit,

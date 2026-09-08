@@ -21,6 +21,7 @@ param(
     [switch] $VerifyLiveControl,
     [switch] $VerifyStoppedObstaclePassing,
     [switch] $FpsGate,
+    [switch] $VerifyFpsRestart,
     [switch] $UseBundledArena,
     [ValidateSet('Deathmatch', 'TeamDeathmatch', 'HardcoreDeathmatch', 'HardcoreTeamDeathmatch')]
     [string] $FpsMatchType = 'Deathmatch',
@@ -30,6 +31,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($VerifyFpsRestart -and (-not $FpsGate -or $SmokeSeconds -lt 25)) {
+    throw '-VerifyFpsRestart requires -FpsGate and -SmokeSeconds 25 or greater.'
+}
 if ($VerifyMovingBots -and $SmokeSeconds -lt 30) {
     throw '-VerifyMovingBots requires -SmokeSeconds 30 or greater so the race countdown can finish.'
 }
@@ -101,6 +105,7 @@ if ($FpsGate) {
     $preset.Fps.MatchType = [Enum]::Parse(
         [AssettoServer.RaceControl.Core.Models.FpsMatchType], $FpsMatchType)
     $preset.Fps.StartWithBotsOnly = $true
+    if ($VerifyFpsRestart) { $preset.Fps.KillLimit = 1 }
 }
 
 $grid = [Collections.Generic.List[AssettoServer.RaceControl.Core.Models.GridSlotPreset]]::new()
@@ -427,7 +432,35 @@ try {
         }
     }
 
-    Start-Sleep -Seconds $SmokeSeconds
+    if ($VerifyFpsRestart) {
+        $restartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($SmokeSeconds)
+        $finishedAt = $null
+        $restartVerified = $false
+        while ([DateTimeOffset]::UtcNow -lt $restartDeadline -and -not $serverProcess.HasExited) {
+            $state = $liveClient.TryReadSnapshot()
+            if ($null -ne $state) {
+                if ($null -eq $finishedAt -and $state.Session.Phase -eq 'finished') {
+                    # Asset endpoint checks can finish partway through intermission.
+                    # Recover its start from the authoritative remaining countdown.
+                    $finishedAt = [DateTimeOffset]::UtcNow.AddMilliseconds(
+                        $state.Session.CountdownMilliseconds - 20000)
+                } elseif ($null -ne $finishedAt -and $state.Session.Phase -eq 'running') {
+                    $resultsSeconds = ([DateTimeOffset]::UtcNow - $finishedAt).TotalSeconds
+                    if ($resultsSeconds -lt 19) { throw "FPS results closed early after $resultsSeconds seconds." }
+                    if (@($state.Cars | Where-Object { $_.Kills -ne 0 -or $_.Deaths -ne 0 -or $_.Score -ne 0 }).Count -gt 0) {
+                        throw 'FPS round restarted without resetting the leaderboard.'
+                    }
+                    $restartVerified = $true
+                    Write-Host "Verified FPS match finished, held results for $([Math]::Round($resultsSeconds, 2)) seconds, and restarted with zero scores in the same process."
+                    break
+                }
+            }
+            Start-Sleep -Milliseconds 50
+        }
+        if (-not $restartVerified) { throw 'FPS match did not finish and restart within the smoke deadline.' }
+    } else {
+        Start-Sleep -Seconds $SmokeSeconds
+    }
     if ($serverProcess.HasExited) {
         throw "Server exited early with code $($serverProcess.ExitCode): $((Get-Content -Raw -LiteralPath $stderr -ErrorAction SilentlyContinue))"
     }

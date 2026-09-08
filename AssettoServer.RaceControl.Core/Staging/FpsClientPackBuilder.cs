@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 47;
-    public const int BridgeProtocol = 12;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v47.zip";
+    public const int ClientPackVersion = 48;
+    public const int BridgeProtocol = 13;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v48.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -70,7 +70,7 @@ public static class FpsClientPackBuilder
         {
             await JsonSerializer.SerializeAsync(manifestStream, new
             {
-                protocol = 3,
+                protocol = 4,
                 clientPackVersion = ClientPackVersion,
                 compatibilityGate = true,
                 minimumCspVersion = MinimumCspVersion,
@@ -176,7 +176,7 @@ public static class FpsClientPackBuilder
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v12",
+                    bridge = "asrc.fps.hud.v13",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),
@@ -213,7 +213,7 @@ public static class FpsClientPackBuilder
                 operator UV skin under
                 content/objects3D/asrc_fps, plus the 54-clip FPS sound catalog
                 under extension/audio/asrc_fps. It also installs the local ASRC FPS HUD and audio
-                player under apps/lua/asrc_fps_hud. Client pack v47 also contains the animated Modern
+                player under apps/lua/asrc_fps_hud. Client pack v48 also contains the animated Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.

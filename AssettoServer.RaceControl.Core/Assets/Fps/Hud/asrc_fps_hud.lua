@@ -5,13 +5,13 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 12
+local bridgeProtocol = 13
 local actorCapacity = 32
 local grenadeCapacity = 8
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v12'),
+  ac.StructItem.key('asrc.fps.hud.v13'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -37,6 +37,7 @@ local bridge = ac.connect({
   matchState = ac.StructItem.byte(),
   remainingSeconds = ac.StructItem.float(),
   startCountdownSeconds = ac.StructItem.float(),
+  restartCountdownSeconds = ac.StructItem.float(),
   killLimit = ac.StructItem.uint16(),
   winnerID = ac.StructItem.byte(),
   matchType = ac.StructItem.byte(),
@@ -649,27 +650,89 @@ local function drawScoreboard(size, scale)
     end)
 end
 
+local function drawMatchResults(size, rows, modeTitle, winnerText, countdown, localID, teamScores)
+  local scale = math.min((size.x - 48) / 1400, (size.y - 48) / 820, 1.5)
+  local p = (size - vec2(1400, 820) * scale) * 0.5
+  local gold = rgbm(1, 0.74, 0.25, 1)
+  local white = rgbm(0.93, 0.96, 1, 1)
+  local muted = rgbm(0.58, 0.66, 0.75, 1)
+  local function text(value, x, y, width, height, fontSize, color, align)
+    ui.dwriteDrawTextClipped(tostring(value), fontSize * scale,
+      p + vec2(x, y) * scale, p + vec2(x + width, y + height) * scale,
+      align or ui.Alignment.Start, ui.Alignment.Center, false, color)
+  end
+  local function rect(x, y, width, height, color)
+    ui.drawRectFilled(p + vec2(x, y) * scale,
+      p + vec2(x + width, y + height) * scale, color)
+  end
+  ui.drawRectFilled(vec2(), size, rgbm(0.005, 0.008, 0.012, 0.82))
+  rect(0, 0, 1400, 820, rgbm(0.025, 0.035, 0.05, 0.98))
+  rect(0, 0, 1400, 5, gold)
+  text('MATCH COMPLETE', 32, 24, 870, 62, 46, white)
+  text(modeTitle .. '  /  FINAL STANDINGS', 34, 91, 860, 28, 18, muted)
+  text(winnerText, 32, 130, 860, 48, 30, gold)
+  text('NEXT MATCH IN', 940, 27, 425, 32, 18, muted, ui.Alignment.End)
+  text(tostring(math.max(0, math.ceil(countdown))) .. 's', 940, 62, 425, 62,
+    48, gold, ui.Alignment.End)
+  text(teamScores or 'SAME ARENA  /  TEAMS AND LOADOUTS RETAINED',
+    880, 139, 485, 34, 17, white, ui.Alignment.End)
+  rect(32, 190, 1336, 1, rgbm(0.2, 0.27, 0.34, 1))
+
+  local columns = #rows > 16 and 2 or 1
+  local columnWidth = columns == 2 and 650 or 1336
+  local fields = {
+    {label = '#', x = 0.012, width = 0.05},
+    {label = 'OPERATOR', x = 0.075, width = 0.405},
+    {label = 'SCORE', x = 0.49, width = 0.13},
+    {label = 'KILLS', x = 0.635, width = 0.10},
+    {label = 'DEATHS', x = 0.747, width = 0.105},
+    {label = 'K/D', x = 0.868, width = 0.12},
+  }
+  for column = 0, columns - 1 do
+    local x = 32 + column * 686
+    for _, field in ipairs(fields) do
+      text(field.label, x + field.x * columnWidth, 201, field.width * columnWidth,
+        28, 15, muted, field.x >= 0.49 and ui.Alignment.End or ui.Alignment.Start)
+    end
+    for row = 1, 16 do
+      local place = column * 16 + row
+      local actor = rows[place]
+      if actor ~= nil then
+        local y = 238 + (row - 1) * 31
+        local own = actor.id == localID
+        rect(x, y, columnWidth, 29, own and rgbm(0.12, 0.32, 0.48, 1)
+          or rgbm(0.065, 0.085, 0.11, row % 2 == 0 and 0.9 or 0.55))
+        local stripe = actor.team == 1 and rgbm(0.2, 0.58, 1, 1)
+          or actor.team == 2 and rgbm(1, 0.28, 0.22, 1) or place == 1 and gold or muted
+        rect(x, y, 3, 29, stripe)
+        local values = {place, actor.name, actor.score, actor.kills, actor.deaths,
+          string.format('%.2f', actor.kills / math.max(1, actor.deaths))}
+        for index, field in ipairs(fields) do
+          text(values[index], x + field.x * columnWidth, y, field.width * columnWidth,
+            29, index == 2 and 20 or 18, own and white or rgbm(0.82, 0.88, 0.94, 1),
+            field.x >= 0.49 and ui.Alignment.End or ui.Alignment.Start)
+        end
+      end
+    end
+  end
+  text(#rows .. ' OPERATORS', 32, 759, 400, 32, 16, muted)
+  text('NEXT ROUND STARTS AUTOMATICALLY', 790, 759, 576, 32, 16, muted, ui.Alignment.End)
+  rect(32, 801, 1336, 3, rgbm(0.1, 0.14, 0.18, 1))
+  rect(32, 801, 1336 * math.clamp(countdown / 20, 0, 1), 3, gold)
+end
+
 local function drawCompletion(size, scale)
-  if bridge.matchState ~= 2 then return end
-  local center = size * 0.5
-  local p1, p2 = center - vec2(260, 150) * scale, center + vec2(260, 150) * scale
-  panel(p1, p2, scale, 0.94)
-  ui.setCursor(p1 + vec2(28, 24) * scale)
-  ui.pushFont(ui.Font.Huge)
-  ui.text('MATCH COMPLETE')
-  ui.popFont()
-  local winner = 'No winner'
-  for index = 0, math.min(actorCapacity, bridge.actorCount) - 1 do
+  local rows, winner = {}, 'No winner'
+  for _, index in ipairs(ranking) do
+    rows[#rows + 1] = {id = bridge.actorIDs[index], name = actorName(index),
+      score = bridge.actorScores[index], kills = bridge.actorKills[index],
+      deaths = bridge.actorDeaths[index], team = bridge.actorTeams[index]}
     if bridge.actorIDs[index] == bridge.winnerID then winner = actorName(index) end
   end
-  ui.text(isTeamMatch()
-    and (bridge.winnerTeam == 0 and 'Draw' or ('Winner: Team ' .. bridge.winnerTeam))
-    or ('Winner: ' .. winner))
-  for place = 1, math.min(8, #ranking) do
-    local index = ranking[place]
-    ui.text(string.format('%2d. %-20s  %5d pts  %3d K  %3d D', place, actorName(index),
-      bridge.actorScores[index], bridge.actorKills[index], bridge.actorDeaths[index]))
-  end
+  drawMatchResults(size, rows, matchModeTitle(),
+    isTeamMatch() and (bridge.winnerTeam == 0 and 'DRAW' or ('WINNER: TEAM ' .. bridge.winnerTeam))
+      or ('WINNER: ' .. winner), bridge.restartCountdownSeconds, bridge.localActorID,
+    isTeamMatch() and string.format('TEAM 1   %d  :  %d   TEAM 2', bridge.team1Kills, bridge.team2Kills) or nil)
 end
 
 local function drawPickupPrompt(size, scale)
@@ -820,6 +883,10 @@ local function drawHud()
     ui.setMouseCursor(ui.MouseCursor.Arrow)
   end
   buildRanking()
+  if bridge.matchState == 2 then
+    drawCompletion(size, scale)
+    return
+  end
   drawRadar(size, scale, margin)
   drawCompactRanking(scale, margin)
   drawStatusWidgets(size, scale, margin)
@@ -831,7 +898,6 @@ local function drawHud()
   drawBoundaryWarning(size, scale)
   drawMatchStart(size, scale)
   drawScoreboard(size, scale)
-  drawCompletion(size, scale)
   local clientError = bridgeString(bridge.clientError)
   if clientError ~= '' then
     ui.setCursor(vec2(margin, size.y - margin - 126 * scale))

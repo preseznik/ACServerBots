@@ -39,9 +39,19 @@ one another. The kill target applies to an individual in FFA and to the shared t
 Hardcore direct weapon hits kill with one torso/head hit or two limb hits. The optional **Headshot
 only**, **Infinite sprint**, and **No HP regen** mutators are authoritative server rules and compose
 with every match type. Presets created before these fields existed load as Blocks + FFA, with Auto
-  teams and all mutators disabled. Current delivery uses client pack 46, ready protocol 3, and HUD
-  bridge `asrc.fps.hud.v12`; older incompatible clients fall back to the server HUD instead of masking newer presentation fields
+  teams and all mutators disabled. Current delivery uses client pack 48, ready protocol 4, and HUD
+  bridge `asrc.fps.hud.v13`; older incompatible HUD apps fall back to the server HUD instead of masking newer presentation fields
 the expanded roster and match packets incorrectly.
+
+When the time or kill limit is reached, combat freezes and the full-screen **MATCH COMPLETE**
+leaderboard shows every participant (up to 32), score, kills, deaths, K/D, winner, and team totals.
+Both the companion HUD and online fallback show the same server-controlled **20-second** countdown.
+At zero the server starts another round on the same arena without disconnecting clients or restarting
+the AC carrier session. Scores, team totals, health, ammunition, stamina, positions, grenades, and
+dropped weapons reset. Connections, teams, confirmed loadouts, and slot ownership remain; queued
+loadout changes apply at the new spawn. Players who have not confirmed a loadout remain inactive.
+If everyone leaves and bots-only start is disabled, the reset match waits for a human as usual.
+This cycle repeats after every completed round. Map rotation and client travel are not implemented.
 
 Hostile live grenades within 18 metres are exposed to HUD bridge v12 and rendered by both the companion
 HUD and its online fallback. Their marker follows the snapshot trajectory, points toward off-screen

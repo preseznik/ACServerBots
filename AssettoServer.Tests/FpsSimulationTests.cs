@@ -3400,6 +3400,134 @@ public sealed class FpsSimulationTests
         });
     }
 
+    [TestCase(FpsMatchType.Deathmatch)]
+    [TestCase(FpsMatchType.TeamDeathmatch)]
+    [TestCase(FpsMatchType.HardcoreDeathmatch)]
+    [TestCase(FpsMatchType.HardcoreTeamDeathmatch)]
+    public void CompletedMatchesShowResultsForTwentySecondsAndRestartRepeatedly(FpsMatchType matchType)
+    {
+        var simulation = new FpsSimulation(Configuration(killLimit: 1, matchType: matchType),
+        [
+            new(0, "Player", FpsSlotRole.Human, Team: FpsTeamAssignment.Team1),
+            new(1, "Opponent", FpsSlotRole.Human, Team: FpsTeamAssignment.Team2),
+            new(2, "Joining", FpsSlotRole.Human),
+            new(3, "Spectator", FpsSlotRole.Spectator),
+        ]);
+        simulation.ClaimHuman(0, playerName: "Connected player");
+        simulation.ClaimHuman(1);
+        simulation.ClaimHuman(2, requireLoadoutConfirmation: true);
+        var player = simulation.Actors.Single(actor => actor.Id == 0);
+        var opponent = simulation.Actors.Single(actor => actor.Id == 1);
+        var joining = simulation.Actors.Single(actor => actor.Id == 2);
+        var nextLoadout = new FpsLoadout(FpsWeaponType.CompactSmg,
+            FpsLethalType.StickyGrenade, FpsWeaponType.Colt1911);
+
+        for (uint round = 0; round < 2; round++)
+        {
+            player.Position = Vector3.Zero;
+            opponent.Position = new Vector3(0, 0, 5);
+            simulation.ApplyInput(1, new FpsInputCommand(round * 100 + 1, Vector2.Zero,
+                MathF.PI, 0, FpsInputButtons.ThrowLethal));
+            simulation.Step(0.01f);
+            simulation.ApplyInput(1, new FpsInputCommand(round * 100 + 2, Vector2.Zero,
+                MathF.PI, 0, FpsInputButtons.None));
+            for (int tick = 0; tick < 6; tick++) simulation.Step(0.05f);
+            Assert.That(simulation.Grenades, Has.Count.EqualTo(1));
+
+            simulation.ApplyInput(0, new FpsInputCommand(round * 100 + 1, Vector2.Zero,
+                0, -0.129f, FpsInputButtons.Fire));
+            for (int tick = 0; tick < 40 && simulation.MatchState != FpsMatchState.Finished; tick++)
+                simulation.Step(0.05f);
+            Assert.Multiple(() =>
+            {
+                Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Finished));
+                Assert.That(simulation.RestartCountdownRemaining, Is.EqualTo(20));
+                Assert.That(player.Kills, Is.EqualTo(1));
+                Assert.That(opponent.Deaths, Is.EqualTo(1));
+                Assert.That(simulation.Pickups, Has.Count.EqualTo(1));
+            });
+            uint score = player.Score;
+            uint spawn = player.SpawnCount;
+            uint shot = player.ShotSequence;
+            float clock = simulation.RemainingSeconds;
+            Vector3 position = player.Position;
+            simulation.SelectLoadout(0, nextLoadout);
+            simulation.ApplyInput(0, new FpsInputCommand(round * 100 + 2, Vector2.UnitY,
+                1, 0, FpsInputButtons.Fire | FpsInputButtons.ThrowLethal));
+            for (int tick = 0; tick < 399; tick++) simulation.Step(0.05f);
+            Assert.Multiple(() =>
+            {
+                Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Finished));
+                Assert.That(simulation.RemainingSeconds, Is.EqualTo(clock));
+                Assert.That(player.Position, Is.EqualTo(position));
+                Assert.That(player.Score, Is.EqualTo(score));
+                Assert.That(player.ShotSequence, Is.EqualTo(shot));
+                Assert.That(opponent.Dead, Is.True);
+                Assert.That(simulation.KillEvents, Is.Empty);
+                Assert.That(simulation.GrenadeExplosionEvents, Is.Empty);
+            });
+            simulation.Step(0.05f);
+            Assert.Multiple(() =>
+            {
+                Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Running));
+                Assert.That(simulation.RestartCountdownRemaining, Is.Zero);
+                Assert.That(simulation.RemainingSeconds, Is.EqualTo(600));
+                Assert.That(simulation.ElapsedSeconds, Is.Zero);
+                Assert.That(simulation.WinnerId, Is.EqualTo(byte.MaxValue));
+                Assert.That(simulation.WinnerTeam, Is.Zero);
+                Assert.That(simulation.Team1Kills, Is.Zero);
+                Assert.That(simulation.Team2Kills, Is.Zero);
+                Assert.That(simulation.Actors.All(actor => actor.Kills == 0 && actor.Deaths == 0
+                    && actor.Score == 0), Is.True);
+                Assert.That(simulation.Grenades, Is.Empty);
+                Assert.That(simulation.Pickups, Is.Empty);
+                Assert.That(simulation.PickupEvents.Single().State, Is.EqualTo(FpsPickupState.Removed));
+                Assert.That(player.SpawnCount, Is.EqualTo(spawn + 1));
+                Assert.That(player.ShotSequence, Is.EqualTo(shot));
+                Assert.That(player.HasInput, Is.False);
+                Assert.That(player.Loadout, Is.EqualTo(nextLoadout));
+                Assert.That(player.PendingLoadout, Is.Null);
+                Assert.That(player.Health, Is.EqualTo(100));
+                Assert.That(player.AmmoInMagazine, Is.EqualTo(FpsItems.Firearm(nextLoadout.MainWeapon).MagazineCapacity));
+                Assert.That(player.LethalsRemaining, Is.EqualTo(1));
+                Assert.That(player.Name, Is.EqualTo("Connected player"));
+                Assert.That(player.HumanControlled && player.LoadoutConfirmed, Is.True);
+                Assert.That(opponent.Dead, Is.False);
+                Assert.That(joining.Active || joining.LoadoutConfirmed, Is.False);
+                Assert.That(simulation.Actors, Has.Count.EqualTo(3));
+            });
+        }
+    }
+
+    [Test]
+    public void TimeLimitedDrawRestartsAndKeepsBotsAndUnclaimedSlots()
+    {
+        var simulation = new FpsSimulation(Configuration(matchType: FpsMatchType.TeamDeathmatch),
+        [new(0, "Bot", FpsSlotRole.Bot), new(1, "Auto", FpsSlotRole.Auto),
+            new(2, "Human", FpsSlotRole.Human)]);
+        // Freeze movement without changing roster ownership to exercise the time limit.
+        foreach (var actor in simulation.Actors.Where(actor => actor.Active))
+            actor.RespawnRemaining = 1000;
+        foreach (var actor in simulation.Actors) actor.Dead = true;
+        for (int tick = 0; tick < 12010 && simulation.MatchState != FpsMatchState.Finished; tick++)
+            simulation.Step(0.05f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Finished));
+            Assert.That(simulation.WinnerTeam, Is.Zero);
+            Assert.That(simulation.WinnerId, Is.EqualTo(byte.MaxValue));
+        });
+        simulation.Step(19.9f);
+        Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Finished));
+        simulation.Step(0.1f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(simulation.MatchState, Is.EqualTo(FpsMatchState.Running));
+            Assert.That(simulation.Actors.Count(actor => actor.Active && !actor.HumanControlled && !actor.Dead), Is.EqualTo(2));
+            Assert.That(simulation.Actors.Single(actor => actor.Id == 2).Active, Is.False);
+        });
+    }
+
     private static FpsConfiguration Configuration(int killLimit = 20, float difficulty = 0,
         float difficultyVariance = 0, float aggression = 0, float aggressionVariance = 0,
         int health = 100, FpsMatchType matchType = FpsMatchType.Deathmatch,

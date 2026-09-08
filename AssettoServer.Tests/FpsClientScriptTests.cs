@@ -254,7 +254,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("ac.KeyIndex.R"));
             Assert.That(script, Does.Contain("(reload and 16 or 0)"));
             Assert.That(script, Does.Contain("scoreboardHeld = ac.isKeyDown(ac.KeyIndex.Tab)"));
-            Assert.That(script, Does.Contain("cursorUnlocked = scoreboardHeld or persistentCursor"));
+            Assert.That(script, Does.Contain("cursorUnlocked = matchState == 2 or scoreboardHeld or persistentCursor"));
             Assert.That(script, Does.Contain("if not cursorUnlocked then"));
             Assert.That(script, Does.Contain("ui.captureMouse(true)"));
             Assert.That(script, Does.Contain("ui.transparentWindow('asrc-fps-scoreboard-controls'"));
@@ -555,8 +555,8 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("extension/audio/asrc_fps/explosion.wav"));
             Assert.That(script, Does.Not.Contain("event == nil or not event:isValid()"));
             Assert.That(script, Does.Not.Contain("sound.ttl <= 0 or not sound.event:isValid()"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v12')"));
-            Assert.That(script, Does.Contain("protocol = 12"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v13')"));
+            Assert.That(script, Does.Contain("protocol = 13"));
             Assert.That(script, Does.Contain("grenadeThreatCount = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("grenadeThreatPositions = ac.StructItem.array"));
             Assert.That(script, Does.Contain("grenadeThreatVelocities = ac.StructItem.array"));
