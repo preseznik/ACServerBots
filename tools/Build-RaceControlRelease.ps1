@@ -5,6 +5,10 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$modernManifest = Get-Content -LiteralPath (Join-Path $repo 'AssettoServer.RaceControl.Core/Assets/Fps/Modern/asrc-modern-assets.json') -Raw | ConvertFrom-Json
+if ($modernManifest.operators.ghost -and -not $modernManifest.operators.ghost.redistributionRightsConfirmedByUser) {
+    throw 'Public release packaging requires a recorded Ghost-specific redistribution permission. Local development builds remain available with Publish-RaceControl.ps1.'
+}
 [xml]$versions = Get-Content (Join-Path $repo 'Release\Release.props')
 $version = [string]$versions.Project.PropertyGroup[0].RaceControlReleaseVersion
 if ($version -notmatch '^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$') { throw 'Invalid release version.' }

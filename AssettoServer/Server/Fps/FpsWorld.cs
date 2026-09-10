@@ -54,6 +54,7 @@ public sealed class FpsWorld : IHostedService
     private readonly Dictionary<byte, int> _neutralInputCounts = [];
     private readonly Dictionary<byte, uint> _knownSpawnCounts = [];
     private readonly Dictionary<byte, ulong> _knownLoadoutStates = [];
+    private readonly Dictionary<byte, FpsOperatorModel> _knownOperatorModels = [];
     private readonly Dictionary<byte, Vector3> _lastDiagnosticPositions = [];
     private readonly Dictionary<byte, (float GroundY, bool Grounded, bool Mantling)>
         _lastMovementStates = [];
@@ -151,9 +152,9 @@ public sealed class FpsWorld : IHostedService
             _lastDiagnosticPositions[actor.Id] = actor.Position;
             _lastMovementStates[actor.Id] = (actor.GroundY, actor.IsGrounded, actor.IsMantling);
             Log.Debug(
-                "FPS actor initial spawn: actor={ActorId}, role={Role}, human={Human}, spawn={SpawnCount}, position={Position}, yaw={Yaw:F3}, health={Health}",
+                "FPS actor initial spawn: actor={ActorId}, role={Role}, human={Human}, spawn={SpawnCount}, position={Position}, yaw={Yaw:F3}, health={Health}, operator={OperatorModel}",
                 actor.Id, actor.Role, actor.HumanControlled, actor.SpawnCount, actor.Position,
-                actor.Yaw, actor.Health);
+                actor.Yaw, actor.Health, actor.OperatorModel);
         }
         return Task.CompletedTask;
     }
@@ -338,7 +339,7 @@ public sealed class FpsWorld : IHostedService
 
     private void OnReady(ACTcpClient client, FpsReadyPacket packet)
     {
-        if (packet.Protocol != 4)
+        if (packet.Protocol != 5)
         {
             client.Logger.Warning("FPS client protocol {Protocol} is not supported", packet.Protocol);
             _ = client.DisconnectAsync();
@@ -387,13 +388,15 @@ public sealed class FpsWorld : IHostedService
         lock (_sync)
         {
             if (_simulation is null) return;
-            var result = _simulation.SelectLoadout(client.SessionId, loadout);
+            var result = _simulation.SelectLoadout(client.SessionId, loadout,
+                (FpsOperatorModel)packet.OperatorModel);
             client.SendPacket(new FpsLoadoutResultPacket
             {
                 Result = result,
                 MainWeapon = packet.MainWeapon,
                 Lethal = packet.Lethal,
                 SecondaryWeapon = packet.SecondaryWeapon,
+                OperatorModel = packet.OperatorModel,
             });
             if (result == FpsLoadoutResultCode.Applied)
             {
@@ -404,11 +407,13 @@ public sealed class FpsWorld : IHostedService
                 _lastMovementStates[actor.Id] =
                     (actor.GroundY, actor.IsGrounded, actor.IsMantling);
                 BroadcastLoadoutState(actor);
+                Broadcast(CreateRosterPacket(actor));
+                _knownOperatorModels[actor.Id] = actor.OperatorModel;
                 BroadcastMatch();
             }
             client.Logger.Information(
-                "FPS loadout selection {Result}: main={MainWeapon}, lethal={Lethal}, secondary={SecondaryWeapon}",
-                result, loadout.MainWeapon, loadout.Lethal, loadout.SecondaryWeapon);
+                "FPS loadout selection {Result}: main={MainWeapon}, lethal={Lethal}, secondary={SecondaryWeapon}, operator={OperatorModel}",
+                result, loadout.MainWeapon, loadout.Lethal, loadout.SecondaryWeapon, packet.OperatorModel);
         }
     }
 
@@ -785,6 +790,7 @@ public sealed class FpsWorld : IHostedService
         Role = (byte)actor.Role,
         Team = (byte)actor.Team,
         Name = actor.Name.Length <= 32 ? actor.Name : actor.Name[..32],
+        OperatorModel = (byte)actor.OperatorModel,
     };
 
     private static void SendRoster(ACTcpClient client, FpsActorState actor) =>
@@ -847,6 +853,12 @@ public sealed class FpsWorld : IHostedService
         foreach (var actor in _simulation.Actors.Where(actor => actor.Active)
                      .OrderBy(actor => actor.Id))
         {
+            if (!_knownOperatorModels.TryGetValue(actor.Id, out var knownModel)
+                || knownModel != actor.OperatorModel)
+            {
+                _knownOperatorModels[actor.Id] = actor.OperatorModel;
+                Broadcast(CreateRosterPacket(actor));
+            }
             ulong signature = LoadoutSignature(actor);
             if (_knownLoadoutStates.GetValueOrDefault(actor.Id) == signature) continue;
             _knownLoadoutStates[actor.Id] = signature;
@@ -865,6 +877,8 @@ public sealed class FpsWorld : IHostedService
             DefaultMainWeapon = (byte)loadouts.HumanDefault.MainWeapon,
             DefaultLethal = (byte)loadouts.HumanDefault.Lethal,
             DefaultSecondaryWeapon = (byte)loadouts.HumanDefault.SecondaryWeapon,
+            AllowedOperatorModels = FpsOperatorModels.AllowedMask(_configuration.Extra.Fps.Theme),
+            DefaultOperatorModel = (byte)FpsOperatorModel.Officer,
         });
     }
 

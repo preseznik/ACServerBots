@@ -272,10 +272,10 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("function fpsVisual.actorStance(actor)"));
             Assert.That(script, Does.Contain("if actor.id == localSessionID then return localStance end"));
             Assert.That(script, Does.Contain("bit.band(actionState, 2) ~= 0"));
-            Assert.That(script, Does.Contain("modernAssetRevision = 9"));
+            Assert.That(script, Does.Contain("modernAssetRevision = 10"));
             Assert.That(script, Does.Contain("fpsVisual.crouchSuppressedUntilRelease = true"));
             Assert.That(script, Does.Contain(
-                "operatorStanceGroundOffsets = { [1] = -0.50, [2] = -0.50 }"));
+                "stanceOffsets = { [1] = -0.50, [2] = -0.50 }"));
             Assert.That(script, Does.Contain(
                 "actor.modernModel:setPosition(vec3(0, stanceGroundOffset, 0))"));
             Assert.That(script, Does.Not.Contain("actorVisualGroundOffset"));
@@ -383,7 +383,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
             Assert.That(script, Does.Contain("asrc_operator_skin.png"));
             Assert.That(script, Does.Contain("__ASRC_FPS_THEME__"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v9.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v10.zip"));
             Assert.That(script, Does.Contain("asrc_modern_operator_carbine.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_pickup.kn5"));
@@ -391,7 +391,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("asrc_modern_team2_gear.png"));
             Assert.That(script, Does.Contain("function fpsVisual.applyOperatorTeamSkin"));
             Assert.That(script, Does.Contain(
-                "findAny('material:ASRC_OFFICER_UNIFORM')"));
+                "findAny('material:' .. descriptor.materialPrefix .. 'UNIFORM')"));
             Assert.That(script, Does.Contain("uniform:ensureUniqueMaterials()"));
             Assert.That(script, Does.Contain(
                 "uniform:setMaterialTexture('txDiffuse', uniformPath)"));
@@ -597,9 +597,9 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("hud.radarVisible[id] = 3"));
             Assert.That(script, Does.Contain("friendly and rgbm(0.18, 0.58, 1, 1)"));
             Assert.That(script, Does.Contain(
-                "findAny('material:ASRC_OFFICER_UNIFORM')"));
+                "findAny('material:' .. descriptor.materialPrefix .. 'UNIFORM')"));
             Assert.That(script, Does.Contain(
-                "findAny('material:ASRC_OFFICER_GEAR')"));
+                "findAny('material:' .. descriptor.materialPrefix .. 'GEAR')"));
             Assert.That(script, Does.Contain("if actor.team ~= 2 then"));
             Assert.That(script, Does.Contain("uniform:ensureUniqueMaterials()"));
             Assert.That(script, Does.Contain("gear:ensureUniqueMaterials()"));

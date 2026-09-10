@@ -3,6 +3,7 @@ param(
     [string]$BlenderPath = "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe",
     [string]$OfficerZip = "F:\Coding\Codex\.resources\AssettoCorsaMods\FPS\Characters\army-officer\source\army_officer.zip",
     [string]$CarbineFbx = "F:\Coding\Codex\.resources\AssettoCorsaMods\FPS\Weapons\fps-animated-carbine\source\arms@carbine.fbx",
+    [string]$GhostBlend = "F:\Coding\Codex\.resources\AssettoCorsaMods\FPS\Characters\Ghost_IURgXpX\Ghost.blend",
     [string]$OutputDirectory = (Join-Path $PSScriptRoot "..\AssettoServer.RaceControl.Core\Assets\Fps\Modern")
 )
 
@@ -14,6 +15,8 @@ $requiredInputs = @(
     $BlenderPath,
     $OfficerZip,
     $CarbineFbx,
+    $GhostBlend,
+    (Join-Path $PSScriptRoot "build_fps_ghost_assets.py"),
     $sourceScript,
     (Join-Path $PSScriptRoot "validate_fps_modern_assets.py"),
     (Join-Path $exporterRoot "__init__.py"),
@@ -28,7 +31,7 @@ foreach ($required in $requiredInputs) {
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
-& $BlenderPath --background --python $sourceScript -- `
+& $BlenderPath --background --factory-startup --disable-autoexec --python-exit-code 1 --python $sourceScript -- `
     --output-dir $OutputDirectory `
     --exporter-root $exporterRoot `
     --officer-zip $OfficerZip `
@@ -37,6 +40,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Blender Modern FPS asset generation failed with exit code $LASTEXITCODE."
 }
 
+& $BlenderPath --background --factory-startup --disable-autoexec --python-exit-code 1 `
+    --python (Join-Path $PSScriptRoot "build_fps_ghost_assets.py") -- `
+    --source $GhostBlend --officer-zip $OfficerZip --carbine-fbx $CarbineFbx `
+    --output-dir $OutputDirectory --cache-dir (Join-Path $PSScriptRoot "..\.artifacts\ghost-work")
+if ($LASTEXITCODE -ne 0) { throw "Ghost asset generation failed with exit code $LASTEXITCODE." }
+
 $expected = @(
     "asrc_modern_operator_carbine.kn5",
     "asrc_modern_carbine_viewmodel.kn5",
@@ -44,6 +53,11 @@ $expected = @(
     "asrc_modern_team2_uniform.png",
     "asrc_modern_team2_gear.png",
     "asrc-modern-assets.json"
+    "asrc_modern_ghost_carbine.kn5"
+    "asrc_modern_ghost_team2_uniform.png"
+    "asrc_modern_ghost_team2_gear.png"
+    "asrc_operator_officer.png"
+    "asrc_operator_ghost.png"
 )
 $expected += @(
     "aim_idle", "aim_up", "aim_down", "walk_forward", "walk_backward",

@@ -20,16 +20,18 @@ local fpsVisual = {
   thirdPersonDistanceMin = 1.25,
   thirdPersonDistanceMax = 7.0,
   thirdPersonZoomStep = 0.4,
-  modernAssetRevision = 9,
-  team2UniformFileName = 'asrc_modern_team2_uniform.png',
-  team2GearFileName = 'asrc_modern_team2_gear.png',
-  team2UniformPath = nil,
-  team2GearPath = nil,
-  -- KSANIM conversion maps the officer's local vertical root translation to Z.
-  -- CSP preview520 then raises the crouch/prone hips track by 50 cm relative to
-  -- standing. Ground the complete animated child in scene space, whose Y axis is
-  -- unambiguous, so feet, hips, torso and head all move together.
-  operatorStanceGroundOffsets = { [1] = -0.50, [2] = -0.50 },
+  modernAssetRevision = 10,
+  actorModels = {},
+  operatorModels = {
+    [0] = { id = 0, name = 'OFFICER', file = 'asrc_modern_operator_carbine.kn5',
+      portrait = 'asrc_operator_officer.png', materialPrefix = 'ASRC_OFFICER_',
+      team2Uniform = 'asrc_modern_team2_uniform.png', team2Gear = 'asrc_modern_team2_gear.png',
+      stanceOffsets = { [1] = -0.50, [2] = -0.50 } },
+    [1] = { id = 1, name = 'GHOST', file = 'asrc_modern_ghost_carbine.kn5',
+      portrait = 'asrc_operator_ghost.png', materialPrefix = 'ASRC_GHOST_',
+      team2Uniform = 'asrc_modern_ghost_team2_uniform.png', team2Gear = 'asrc_modern_ghost_team2_gear.png',
+      stanceOffsets = { [1] = -0.50, [2] = -0.50 } },
+  },
   crouchSuppressedUntilRelease = false,
   crouchToggleReleaseStands = false,
   carrierControlsOverride = nil,
@@ -315,7 +317,7 @@ if fpsVisual.requested == 'Modern' then
   fpsVisual.active = 'Modern'
   -- CSP caches remote asset archives by URL. Every regenerated KN5/KSANIM payload
   -- must advance this revision or clients can keep rendering the previous poses.
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v9.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v10.zip'
   rifleViewmodelFileName = 'asrc_modern_carbine_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_modern_operator_carbine.kn5'
   fpsVisual.pickupFileName = 'asrc_modern_carbine_pickup.kn5'
@@ -726,6 +728,8 @@ local hud = {
     mainWeapon = 1,
     lethal = 16,
     secondaryWeapon = 4,
+    operatorModel = 0,
+    allowedOperatorModels = 1,
     activeSlot = 0,
     lethalsRemaining = 0,
   },
@@ -762,6 +766,7 @@ hud.loadoutStorage = ac.storage({
   mainWeapon = 1,
   lethal = 16,
   secondaryWeapon = 4,
+  operatorModel = 0,
 }, 'asrc.fps.loadout.')
 hud.itemNames = {
   [0] = 'OUT OF BOUNDS',
@@ -1371,6 +1376,7 @@ hud.loadoutSelectEvent = ac.OnlineEvent({
   mainWeapon = ac.StructItem.byte(),
   lethal = ac.StructItem.byte(),
   secondaryWeapon = ac.StructItem.byte(),
+  operatorModel = ac.StructItem.byte(),
 }, function() end)
 
 hud.loadoutCatalogEvent = ac.OnlineEvent({
@@ -1381,6 +1387,8 @@ hud.loadoutCatalogEvent = ac.OnlineEvent({
   defaultMainWeapon = ac.StructItem.byte(),
   defaultLethal = ac.StructItem.byte(),
   defaultSecondaryWeapon = ac.StructItem.byte(),
+  allowedOperatorModels = ac.StructItem.uint32(),
+  defaultOperatorModel = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   local selection = hud.loadout
@@ -1388,6 +1396,10 @@ hud.loadoutCatalogEvent = ac.OnlineEvent({
   selection.allowedMainWeapons = message.allowedMainWeapons
   selection.allowedLethals = message.allowedLethals
   selection.allowedSecondaryWeapons = message.allowedSecondaryWeapons
+  selection.allowedOperatorModels = message.allowedOperatorModels
+  selection.operatorModel = fpsVisual.operatorModels[hud.loadoutStorage.operatorModel] ~= nil
+      and hud.itemAllowed(message.allowedOperatorModels, hud.loadoutStorage.operatorModel)
+      and hud.loadoutStorage.operatorModel or message.defaultOperatorModel
   selection.mainWeapon = hud.itemAllowed(message.allowedMainWeapons,
       hud.loadoutStorage.mainWeapon) and hud.loadoutStorage.mainWeapon
     or message.defaultMainWeapon
@@ -1407,6 +1419,7 @@ hud.loadoutResultEvent = ac.OnlineEvent({
   mainWeapon = ac.StructItem.byte(),
   lethal = ac.StructItem.byte(),
   secondaryWeapon = ac.StructItem.byte(),
+  operatorModel = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   if message.result == 1 then
@@ -1416,6 +1429,7 @@ hud.loadoutResultEvent = ac.OnlineEvent({
     hud.loadoutStorage.mainWeapon = message.mainWeapon
     hud.loadoutStorage.lethal = message.lethal
     hud.loadoutStorage.secondaryWeapon = message.secondaryWeapon
+    hud.loadoutStorage.operatorModel = message.operatorModel
     if hud.preDriveDeployPending then
       hud.preDriveDeployPending = false
       hud.preDriveReturnAfterLoadout = false
@@ -1431,6 +1445,7 @@ hud.loadoutResultEvent = ac.OnlineEvent({
     hud.loadoutStorage.mainWeapon = message.mainWeapon
     hud.loadoutStorage.lethal = message.lethal
     hud.loadoutStorage.secondaryWeapon = message.secondaryWeapon
+    hud.loadoutStorage.operatorModel = message.operatorModel
     if hud.preDriveDeployPending then
       hud.preDriveDeployPending = false
       hud.preDriveReturnAfterLoadout = false
@@ -1730,11 +1745,14 @@ hud.rosterEvent = ac.OnlineEvent({
   role = ac.StructItem.byte(),
   team = ac.StructItem.byte(),
   name = ac.StructItem.string(32),
+  operatorModel = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   local previousName = names[message.actorID]
   names[message.actorID] = message.name
   teams[message.actorID] = message.team
+  local model = fpsVisual.operatorModels[message.operatorModel] ~= nil and message.operatorModel or 0
+  fpsVisual.actorModels[message.actorID] = model
   hud.radarReveal[message.actorID] = nil
   hud.radarVisible[message.actorID] = nil
   local actor = actors[message.actorID]
@@ -1743,6 +1761,11 @@ hud.rosterEvent = ac.OnlineEvent({
       fpsAudio.resetActor(actor, true)
     end
     actor.role = message.role
+    if actor.team ~= message.team or actor.operatorModel ~= model then
+      fpsVisual.resetOperatorAvatar(actor)
+      actor.operatorFallback = false
+    end
+    actor.operatorModel = model
     actor.team = message.team
   end
 end)
@@ -2462,6 +2485,30 @@ function fpsVisual.asset(fileName)
     and (rifleAssetFolder .. '/' .. fileName) or nil
 end
 
+function fpsVisual.resetOperatorAvatar(actor)
+  if actor.root ~= nil and actor.root ~= false then pcall(function() actor.root:dispose() end) end
+  actor.root, actor.modernModel, actor.weaponRoot, actor.weaponMesh = nil, nil, nil, nil
+  actor.weaponAsset, actor.loadedOperatorModel, actor.teamSkinApplied = nil, nil, nil
+  actor.animationClip, actor.animationPreviousClip, actor.animationPhase = nil, nil, 0
+  actor.nativeScenePrepared, actor.nativeSceneVisible = false, false
+end
+
+function fpsVisual.operatorForActor(actor)
+  local id = actor.operatorFallback and 0 or fpsVisual.actorModels[actor.id] or 0
+  return fpsVisual.operatorModels[id] or fpsVisual.operatorModels[0]
+end
+
+function fpsVisual.operatorFailed(actor, reason)
+  if fpsVisual.operatorForActor(actor).id == 1 then
+    fpsVisual.resetOperatorAvatar(actor)
+    actor.operatorFallback = true
+    ac.warn('[ASRC FPS] Ghost unavailable for actor ' .. tostring(actor.id)
+      .. '; using Officer: ' .. tostring(reason))
+  else
+    fpsVisual.fallback(reason)
+  end
+end
+
 function fpsVisual.fallback(reason)
   if not fpsVisual.modern then return end
   fpsVisual.modern = false
@@ -2489,8 +2536,6 @@ function fpsVisual.fallback(reason)
   rifleDiffusePath = nil
   operatorSkinPath = nil
   fpsVisual.pickupPath = nil
-  fpsVisual.team2UniformPath = nil
-  fpsVisual.team2GearPath = nil
   for _, actor in pairs(actors) do
     if actor.root ~= nil and actor.root ~= false then
       pcall(function() actor.root:dispose() end)
@@ -2731,10 +2776,6 @@ requestRifleAssets = function()
     rifleDiffusePath = rifleDiffuseFileName ~= nil and (folder .. '/' .. rifleDiffuseFileName) or nil
     operatorSkinPath = operatorSkinFileName ~= nil and (folder .. '/' .. operatorSkinFileName) or nil
     fpsVisual.pickupPath = folder .. '/' .. fpsVisual.pickupFileName
-    fpsVisual.team2UniformPath = fpsVisual.modern
-      and (folder .. '/' .. fpsVisual.team2UniformFileName) or nil
-    fpsVisual.team2GearPath = fpsVisual.modern
-      and (folder .. '/' .. fpsVisual.team2GearFileName) or nil
     clientPackError = fpsVisual.error
     viewmodelRoot = nil
     if fpsVisual.modern then
@@ -2760,7 +2801,8 @@ function fpsVisual.applyOperatorTeamSkin(actor)
     return true
   end
   local ok, err = pcall(function()
-    local uniformPath, gearPath = fpsVisual.team2UniformPath, fpsVisual.team2GearPath
+    local descriptor = fpsVisual.operatorForActor(actor)
+    local uniformPath, gearPath = fpsVisual.asset(descriptor.team2Uniform), fpsVisual.asset(descriptor.team2Gear)
     if uniformPath == nil or gearPath == nil
         or not io.fileExists(uniformPath) or not io.fileExists(gearPath) then
       error('Team 2 operator textures are missing')
@@ -2768,8 +2810,8 @@ function fpsVisual.applyOperatorTeamSkin(actor)
     -- loadKN5() pools material resources. Select the two descendants by their
     -- authored material names, then fork those materials for this actor before
     -- replacing textures so Team 2 cannot recolor Team 1 instances.
-    local uniform = actor.modernModel:findAny('material:ASRC_OFFICER_UNIFORM')
-    local gear = actor.modernModel:findAny('material:ASRC_OFFICER_GEAR')
+    local uniform = actor.modernModel:findAny('material:' .. descriptor.materialPrefix .. 'UNIFORM')
+    local gear = actor.modernModel:findAny('material:' .. descriptor.materialPrefix .. 'GEAR')
     if uniform == nil or uniform:size() ~= 1 or gear == nil or gear:size() ~= 1 then
       error(string.format('operator uniform or gear material was not found (uniform=%d, gear=%d)',
         uniform ~= nil and uniform:size() or -1, gear ~= nil and gear:size() or -1))
@@ -2780,7 +2822,7 @@ function fpsVisual.applyOperatorTeamSkin(actor)
     gear:setMaterialTexture('txDiffuse', gearPath)
   end)
   if not ok then
-    fpsVisual.fallback('Team 2 operator skin actor ' .. tostring(actor.id) .. ': '
+    fpsVisual.operatorFailed(actor, 'Team 2 operator skin actor ' .. tostring(actor.id) .. ': '
       .. tostring(err))
     return false
   end
@@ -2944,6 +2986,11 @@ local function ensureAvatar(actor)
     requestRifleAssets()
     return
   end
+  local descriptor = fpsVisual.operatorForActor(actor)
+  if fpsVisual.modern and actor.loadedOperatorModel ~= nil
+      and actor.loadedOperatorModel ~= descriptor.id then
+    fpsVisual.resetOperatorAvatar(actor)
+  end
   if actor.root == nil then
     local root = carsRoot:createBoundingSphereNode('ASRC_FPS_' .. actor.id, 1.5)
     if root == nil then
@@ -2953,7 +3000,7 @@ local function ensureAvatar(actor)
     end
     if fpsVisual.modern then
       local loaded, model = pcall(function()
-        local child = root:loadKN5({filename = rifleWorldModelPath, forceRenderableOn = true})
+        local child = root:loadKN5({filename = fpsVisual.asset(descriptor.file), forceRenderableOn = true})
         if child == nil then error('loadKN5 returned no operator model') end
         child:setShadows(true)
         child:setVisible(true, false)
@@ -2966,10 +3013,11 @@ local function ensureAvatar(actor)
       if not loaded or model == nil then
         root:dispose()
         actor.root = nil
-        fpsVisual.fallback('operator load actor ' .. tostring(actor.id) .. ': ' .. tostring(model))
+        fpsVisual.operatorFailed(actor, 'operator load actor ' .. tostring(actor.id) .. ': ' .. tostring(model))
         return
       end
       actor.modernModel = model
+      actor.loadedOperatorModel = descriptor.id
       local weaponMeshOk, weaponMesh = pcall(function()
         return model:findSkinnedMeshes('ASRC_CARBINE_WORLD')
       end)
@@ -3550,7 +3598,7 @@ function fpsVisual.updateActorAnimation(actor, dt)
   actor.animationPosition = position
   actor.animationBlend = math.min(1, (actor.animationBlend or 0) + dt / 0.12)
   local ok, err = pcall(function()
-    local stanceGroundOffset = fpsVisual.operatorStanceGroundOffsets[stance] or 0
+    local stanceGroundOffset = fpsVisual.operatorForActor(actor).stanceOffsets[stance] or 0
     actor.modernModel:setPosition(vec3(0, stanceGroundOffset, 0))
     actor.modernModel:setAnimation(fpsVisual.asset(fpsVisual.operatorClips[clip]),
       position, true)
@@ -3569,7 +3617,7 @@ function fpsVisual.updateActorAnimation(actor, dt)
     end
   end)
   if not ok then
-    fpsVisual.fallback('operator animation actor ' .. tostring(actor.id) .. ': ' .. tostring(err))
+    fpsVisual.operatorFailed(actor, 'operator animation actor ' .. tostring(actor.id) .. ': ' .. tostring(err))
     return false
   end
   return true
@@ -5146,11 +5194,14 @@ function hud.submitLoadout()
   for field, row in pairs(hud.loadoutRows) do
     if not hud.itemAllowed(hud.loadout[row.mask], hud.loadout[field]) then return false end
   end
+  if fpsVisual.operatorModels[hud.loadout.operatorModel] == nil
+      or not hud.itemAllowed(hud.loadout.allowedOperatorModels, hud.loadout.operatorModel) then return false end
   hud.loadout.result = 'SENDING TO SERVER...'
   hud.loadoutSelectEvent({
     mainWeapon = hud.loadout.mainWeapon,
     lethal = hud.loadout.lethal,
     secondaryWeapon = hud.loadout.secondaryWeapon,
+    operatorModel = hud.loadout.operatorModel,
   })
   return true
 end
@@ -5282,12 +5333,47 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
   end
 
   text('L O A D O U T', 42, 24, 500, 24, 15, muted)
-  text(fromPreDrive and 'PREPARE TO DEPLOY'
-    or initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 1300, 52, 46, white)
-  text(fromPreDrive and 'Choose one item per slot, then save and return to the match briefing.'
+  text(fpsVisual.modern and hud.loadoutTab == 'operator' and 'SELECT YOUR OPERATOR'
+    or fromPreDrive and 'PREPARE TO DEPLOY'
+    or initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 1060, 52, 46, white)
+  if fpsVisual.modern then
+    requestRifleAssets()
+    if button('GEAR', 1190, 53, 164, 42, true, hud.loadoutTab ~= 'operator') then hud.loadoutTab = 'gear' end
+    if button('OPERATOR', 1370, 53, 188, 42, true, hud.loadoutTab == 'operator') then hud.loadoutTab = 'operator' end
+  end
+  text(fpsVisual.modern and hud.loadoutTab == 'operator' and 'Choose your appearance. First-person arms and gameplay stay the same.'
+    or fromPreDrive and 'Choose one item per slot, then save and return to the match briefing.'
     or initialSelection and 'Choose one item per slot. Confirm to spawn.'
     or 'Choose one item per slot. Changes apply on your next respawn.', 42, 105, 1300, 26, 18, muted)
   line(42, 145, 1558, 145, border)
+  if fpsVisual.modern and hud.loadoutTab == 'operator' then
+    for id = 0, 1 do
+      local descriptor = fpsVisual.operatorModels[id]
+      local x = 42 + id * 774
+      local allowed = hud.loadout.catalogReceived and hud.itemAllowed(hud.loadout.allowedOperatorModels, id)
+      local selected = hud.loadout.operatorModel == id
+      local hot = allowed and hovered(x, 166, 742, 610)
+      if hot and clicked then
+        hud.loadout.operatorModel = id
+        hud.loadout.dirty = true
+        hud.loadout.result = fromPreDrive and 'SAVE YOUR OPERATOR BEFORE DEPLOYING'
+          or initialSelection and 'CONFIRM TO SPAWN' or 'OPERATOR CHANGES ON NEXT RESPAWN'
+      end
+      rect(x, 166, 742, 610, selected and rgbm(0.035, 0.085, 0.11, 1)
+        or rgbm(0.033, 0.047, 0.057, 1), selected and accent or hot and muted or border)
+      local portrait = fpsVisual.asset(descriptor.portrait)
+      if portrait ~= nil and io.fileExists(portrait) then
+        ui.drawImage(portrait, point(x + 100, 184), point(x + 642, 682),
+          allowed and rgbm.colors.white or rgbm(0.35, 0.35, 0.35, 0.7), nil, nil, ui.ImageFit.Fit)
+      else
+        text('LOADING OPERATOR...', x + 30, 360, 682, 60, 20, muted, true)
+      end
+      text(descriptor.name, x + 24, 688, 480, 42, 30, allowed and white or disabled)
+      text(id == 1 and 'NIGHTWAR' or 'STANDARD ISSUE', x + 24, 733, 500, 26, 16, muted)
+      text(not allowed and 'UNAVAILABLE' or selected and 'SELECTED' or 'SELECT OPERATOR',
+        x + 504, 700, 212, 42, 17, selected and accent or muted, true)
+    end
+  else
   text('01', 42, 158, 45, 30, 25, accent)
   text('MAIN WEAPON', 96, 158, 210, 30, 23, white)
   filters('mainWeapon', 320, 157)
@@ -5303,6 +5389,7 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
   line(800, 492, 800, 784, border)
   cards('secondaryWeapon', 42, 568, 742, 184)
   cards('lethal', 816, 568, 742, 184)
+  end
   line(42, 795, 1558, 795, border)
 
   local selectedCount = 0
@@ -5312,8 +5399,12 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
     end
   end
   local summaryX = (initialSelection and not fromPreDrive) and 42 or 290
+  local operatorValid = fpsVisual.operatorModels[hud.loadout.operatorModel] ~= nil
+    and hud.itemAllowed(hud.loadout.allowedOperatorModels, hud.loadout.operatorModel)
   if selectedCount == 3 then check(summaryX, 814) end
-  text(string.format('%d / 3 SLOTS SELECTED', selectedCount), summaryX + 28, 805, 680, 28, 17, white)
+  text(string.format('%d / 3 SLOTS SELECTED%s', selectedCount, fpsVisual.modern and ('  /  '
+    .. ((fpsVisual.operatorModels[hud.loadout.operatorModel] or {}).name or 'SELECT OPERATOR')) or ''),
+    summaryX + 28, 805, 680, 28, 17, white)
   text(hud.loadout.result, 972, 106, 586, 26, 15,
     selectedCount == 3 and muted or rgbm(1, 0.62, 0.25, 1))
   text(string.format('%s  /  %s  /  %s', hud.itemNames[hud.loadout.mainWeapon] or '?',
@@ -5321,7 +5412,7 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
     summaryX, 834, 810, 24, 14, muted)
   if button(fromPreDrive and 'SAVE LOADOUT  >'
       or initialSelection and 'CONFIRM & SPAWN  >' or 'QUEUE FOR RESPAWN  >',
-      1126, 809, 432, 53, selectedCount == 3, true) then
+      1126, 809, 432, 53, selectedCount == 3 and operatorValid, true) then
     if fromPreDrive then
       hud.preDriveReturnAfterLoadout = true
       hud.preDriveDeployPending = false
@@ -6211,5 +6302,5 @@ else
   ac.log('[ASRC FPS] exclusive online HUD fallback registered')
 end
 
-hud.readySent = hud.readyEvent({ protocol = 4 })
-ac.log(string.format('[ASRC FPS] ready sent: protocol=4 result=%s', tostring(hud.readySent)))
+hud.readySent = hud.readyEvent({ protocol = 5 })
+ac.log(string.format('[ASRC FPS] ready sent: protocol=5 result=%s', tostring(hud.readySent)))

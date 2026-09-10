@@ -6,6 +6,9 @@ without changes. Theme selection is server-wide, is written as `Extra.Fps.Theme`
 when Race Control stages the server. Editing the selector during a match affects only the next stage
 or restart.
 
+Modern now offers Officer and Ghost in the in-game loadout menu. The conversion, selection,
+validation, and outstanding release requirements are documented in [fps-operators.md](fps-operators.md).
+
 ## Source and redistribution record
 
 The user confirmed redistribution rights for generated derivatives of these supplied sources:
@@ -40,14 +43,14 @@ successful build.
 KN5 version and structure, node and inverse-bind matrices, finite vertices, four normalized weights,
 valid bone indices, skinned shaders, material references, triangle counts, 2K texture limits,
 KSANIM track compatibility, a non-rest rifle-ready grip, finite frames, planar root lock, file
-hashes, and shipping budgets. Two successive builds currently produce identical hashes for all 30
-files.
+hashes, and shipping budgets. Officer and Ghost share the same 20 operator animation files.
 
 Current generated budgets:
 
 | Asset | Triangles | Materials | Bones | Animated meshes |
 |---|---:|---:|---:|---:|
-| Operator plus world carbine | 36,322 | 4 | 68 | 4 |
+| Officer plus world carbine | 36,322 | 4 | 68 | 4 |
+| Ghost plus world carbine | 39,684 | 4 | 68 | 4 |
 | First-person carbine and arms | 25,111 | 3 | 50 | 3 |
 | Dropped carbine pickup | 6,000 | 1 | 0 | 0 |
 
@@ -131,9 +134,9 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 ## Runtime ownership and fallback
 
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
-downloads `/fps/assets/asrc-fps-modern-v9.zip` through the same `web.loadRemoteAssets()` path as the
+downloads `/fps/assets/asrc-fps-modern-v10.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5, KSANIM, or team texture changes. Client pack version 44 also installs both themes under the project-owned
+embedded KN5, KSANIM, or team texture changes. Client pack version 49 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
 Team 1 uses the officer source's original uniform and gear textures. Team 2 replaces only those two

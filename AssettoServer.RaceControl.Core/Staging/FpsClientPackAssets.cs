@@ -333,6 +333,17 @@ public static class FpsClientPackAssets
         }
         System.Text.Json.JsonElement teamSkins = root.GetProperty("operator")
             .GetProperty("teamSkins");
+        var ghost = root.GetProperty("operators").GetProperty("ghost");
+        const string ghostFile = "asrc_modern_ghost_carbine.kn5";
+        if (ghost.GetProperty("file").GetString() != ghostFile
+            || !byName.TryGetValue(ghostFile, out var ghostBytes)
+            || ghostBytes.Length > 60_000_000
+            || ghost.GetProperty("triangles").GetInt32() > 40_000
+            || ghost.GetProperty("materials").GetInt32() != 4
+            || ghost.GetProperty("bones").GetInt32() != 68
+            || ghost.GetProperty("sharedAnimations").GetString() != "officer"
+            || !root.GetProperty("validation").GetProperty("ghostSharedSkeletonValidated").GetBoolean())
+            throw new InvalidDataException("Embedded Ghost asset integrity is invalid");
         if (teamSkins.GetProperty("team2Uniform").GetString()
                 != "asrc_modern_team2_uniform.png"
             || teamSkins.GetProperty("team2Gear").GetString()

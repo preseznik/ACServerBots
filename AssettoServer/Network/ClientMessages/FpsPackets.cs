@@ -34,7 +34,7 @@ public sealed class FpsInputPacket : OnlineEvent<FpsInputPacket>
 [OnlineEvent(Key = "ASRC_FpsReady")]
 public sealed class FpsReadyPacket : OnlineEvent<FpsReadyPacket>
 {
-    [OnlineEventField(Name = "protocol")] public ushort Protocol = 4;
+    [OnlineEventField(Name = "protocol")] public ushort Protocol = 5;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutSelect")]
@@ -43,6 +43,7 @@ public sealed class FpsLoadoutSelectPacket : OnlineEvent<FpsLoadoutSelectPacket>
     [OnlineEventField(Name = "mainWeapon")] public byte MainWeapon;
     [OnlineEventField(Name = "lethal")] public byte Lethal;
     [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
+    [OnlineEventField(Name = "operatorModel")] public byte OperatorModel;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutCatalog")]
@@ -54,6 +55,8 @@ public sealed class FpsLoadoutCatalogPacket : OnlineEvent<FpsLoadoutCatalogPacke
     [OnlineEventField(Name = "defaultMainWeapon")] public byte DefaultMainWeapon;
     [OnlineEventField(Name = "defaultLethal")] public byte DefaultLethal;
     [OnlineEventField(Name = "defaultSecondaryWeapon")] public byte DefaultSecondaryWeapon;
+    [OnlineEventField(Name = "allowedOperatorModels")] public uint AllowedOperatorModels;
+    [OnlineEventField(Name = "defaultOperatorModel")] public byte DefaultOperatorModel;
 }
 
 public enum FpsLoadoutResultCode : byte
@@ -71,6 +74,7 @@ public sealed class FpsLoadoutResultPacket : OnlineEvent<FpsLoadoutResultPacket>
     [OnlineEventField(Name = "mainWeapon")] public byte MainWeapon;
     [OnlineEventField(Name = "lethal")] public byte Lethal;
     [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
+    [OnlineEventField(Name = "operatorModel")] public byte OperatorModel;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutState")]
@@ -176,6 +180,7 @@ public sealed class FpsRosterPacket : OnlineEvent<FpsRosterPacket>
     [OnlineEventField(Name = "role")] public byte Role;
     [OnlineEventField(Name = "team")] public byte Team;
     [OnlineEventField(Name = "name", Size = 32)] public string Name = string.Empty;
+    [OnlineEventField(Name = "operatorModel")] public byte OperatorModel;
 }
 
 [OnlineEvent(Key = "ASRC_FpsMatch")]

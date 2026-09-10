@@ -25,6 +25,8 @@ param(
     [switch] $UseBundledArena,
     [ValidateSet('Deathmatch', 'TeamDeathmatch', 'HardcoreDeathmatch', 'HardcoreTeamDeathmatch')]
     [string] $FpsMatchType = 'Deathmatch',
+    [ValidateSet('Blocks', 'Modern')]
+    [string] $FpsTheme = 'Blocks',
     [switch] $SimulateRace,
     [ValidateRange(1, 100)]
     [double] $SimulationTimeScale = 10
@@ -105,6 +107,8 @@ if ($FpsGate) {
     $preset.Fps.MatchType = [Enum]::Parse(
         [AssettoServer.RaceControl.Core.Models.FpsMatchType], $FpsMatchType)
     $preset.Fps.StartWithBotsOnly = $true
+    $preset.Fps.Theme = [Enum]::Parse(
+        [AssettoServer.RaceControl.Core.Models.FpsVisualTheme], $FpsTheme)
     if ($VerifyFpsRestart) { $preset.Fps.KillLimit = 1 }
 }
 
@@ -169,6 +173,9 @@ $stager = [AssettoServer.RaceControl.Core.Staging.ServerInstanceStager]::new($pa
 Write-Host $(if ($FpsGate) { 'Staging FPS compatibility server...' } else { 'Staging and preparing rigid-body inputs...' })
 $instance = $stager.StageAsync($preset, $catalog, $null, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
 Write-Host "Staged $($instance.SlotCount) slots ($($instance.BotSlotCount) bot-capable) at $($instance.RootPath)"
+if ($FpsGate -and $instance.SlotCount -ne $Slots) {
+    throw "Requested $Slots FPS actors, but this track's carrier grid supports only $($instance.SlotCount). Choose a track with enough pit slots."
+}
 if ($FpsGate) {
     $fpsGeometry = Join-Path $instance.RootPath 'presets\race-control\fps-arena-geometry.bin'
     $fpsNavigation = Join-Path $instance.RootPath 'presets\race-control\fps-arena-navigation.bin'
@@ -290,6 +297,23 @@ try {
                     throw "FPS server did not expose a valid CSP asset archive at $assetUrl"
                 }
                 Write-Host "Verified CSP asset archive endpoint $assetUrl ($($assetArchiveBytes.Length) bytes)."
+                if ($assetUrl -match 'modern-v') {
+                    $assetStream = [IO.MemoryStream]::new($assetArchiveBytes, $false)
+                    $assetArchive = [IO.Compression.ZipArchive]::new($assetStream, [IO.Compression.ZipArchiveMode]::Read)
+                    try {
+                        foreach ($file in @('asrc_modern_operator_carbine.kn5', 'asrc_modern_ghost_carbine.kn5',
+                                'asrc_modern_ghost_team2_uniform.png', 'asrc_modern_ghost_team2_gear.png',
+                                'asrc_operator_officer.png', 'asrc_operator_ghost.png')) {
+                            if ($null -eq $assetArchive.GetEntry($file)) {
+                                throw "Packaged Modern archive is missing $file."
+                            }
+                        }
+                        Write-Host 'Verified both operators, Ghost team textures, and portrait cards in the served archive.'
+                    } finally {
+                        $assetArchive.Dispose()
+                        $assetStream.Dispose()
+                    }
+                }
             }
         } finally {
             $httpClient.Dispose()
@@ -541,6 +565,14 @@ if ($FpsGate) {
         'FPS actor initial spawn: actor=\d+, role=(?:Auto|Bot), human=False,'))
     if ($initialBotSpawns.Count -ne $Slots) {
         throw "FPS world spawned $($initialBotSpawns.Count) bots; expected $Slots."
+    }
+    if ($FpsTheme -eq 'Modern' -and $Slots -ge 4) {
+        foreach ($model in @('Officer', 'Ghost')) {
+            if ($combinedLog -notmatch "FPS actor initial spawn:[^\r\n]+operator=$model") {
+                throw "Modern FPS world did not assign any bots to $model."
+            }
+        }
+        Write-Host 'Verified authoritative Officer/Ghost bot assignments.'
     }
     $activeBots = @([regex]::Matches($combinedLog,
         'FPS bot behavior active: actor=\d+,'))

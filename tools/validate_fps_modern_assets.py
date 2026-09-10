@@ -27,6 +27,7 @@ class Kn5Summary:
     mesh_rendering: tuple[tuple[str, str, bool], ...]
     mesh_bounds: tuple[tuple[str, int, tuple[float, float, float],
                              tuple[float, float, float]], ...]
+    bone_bindings: tuple[tuple[str, tuple[float, ...]], ...]
 
 
 class Reader:
@@ -80,6 +81,7 @@ def _png_dimensions(blob: bytes, name: str) -> tuple[int, int]:
 
 
 def inspect_kn5(path: Path) -> Kn5Summary:
+    bone_bindings: dict[str, tuple[float, ...]] = {}
     reader = Reader(path.read_bytes(), path.name)
     if reader.read(6) != b"sc6969" or reader.uint() != 5:
         raise ValueError(f"Unsupported KN5 header: {path.name}")
@@ -163,6 +165,9 @@ def inspect_kn5(path: Path) -> Kn5Summary:
                     raise ValueError(f"Invalid skin bind matrix for {node_name}")
                 mesh_bones.append(bone_name)
                 bone_names.add(bone_name)
+                if bone_name in bone_bindings and bone_bindings[bone_name] != matrix:
+                    raise ValueError(f"Inconsistent bind matrix for {bone_name}")
+                bone_bindings[bone_name] = matrix
             if not mesh_bones or len(mesh_bones) != len(set(mesh_bones)):
                 raise ValueError(f"Invalid skin bone table for {node_name}")
         else:
@@ -219,7 +224,8 @@ def inspect_kn5(path: Path) -> Kn5Summary:
     return Kn5Summary(triangles, material_count, tuple(material_names), tuple(shaders),
                       tuple(material_blend_modes), tuple(material_depth_modes),
                       skinned_meshes, rigid_meshes, len(bone_names), tuple(textures),
-                      tuple(sorted(node_names)), tuple(mesh_rendering), tuple(mesh_bounds))
+                      tuple(sorted(node_names)), tuple(mesh_rendering), tuple(mesh_bounds),
+                      tuple(sorted(bone_bindings.items())))
 
 
 def inspect_ksanim(path: Path) -> dict[str, tuple[tuple[float, ...], ...]]:
@@ -467,8 +473,36 @@ def validate_modern_asset_set(directory: Path) -> dict[str, Any]:
     _validate_death_pose(directory / "asrc_modern_operator_death.ksanim")
     _validate_animation_family(viewmodel_animations, root_lock=False,
                                compatible_nodes=set(viewmodel.node_names))
+    ghost = None
+    if "operators" in manifest:
+        metadata = manifest["operators"]["ghost"]
+        ghost_path = directory / metadata["file"]
+        ghost = inspect_kn5(ghost_path)
+        if ghost.triangles != metadata["triangles"] or ghost.triangles > 40_000 \
+                or ghost.materials != 4 or ghost.skinned_meshes != 4 \
+                or ghost.rigid_meshes != 0 or ghost_path.stat().st_size > 60_000_000:
+            raise ValueError("Ghost geometry/material/file-size budget or manifest mismatch")
+        if ghost.bones != operator.bones or ghost.bone_bindings != operator.bone_bindings:
+            raise ValueError("Ghost must use the exact Officer skin bind matrices")
+        if metadata["sharedAnimations"] != "officer" or metadata["sourceSha256"] == "" \
+                or not isinstance(metadata.get("redistributionRightsConfirmedByUser"), bool):
+            raise ValueError("Ghost source/animation provenance is missing")
+        for suffix in ("HEAD", "UNIFORM", "GEAR"):
+            if "ASRC_GHOST_" + suffix not in ghost.material_names:
+                raise ValueError(f"Ghost atlas material is missing: {suffix}")
+        for key in ("team2Uniform", "team2Gear"):
+            name = metadata["teamSkins"][key]
+            width, height = _png_dimensions(files[name].read_bytes(), name)
+            if (width, height) != (2048, 2048):
+                raise ValueError("Ghost team atlases must match their 2K source atlas")
+        for name in ("asrc_operator_officer.png", "asrc_operator_ghost.png"):
+            if _png_dimensions(files[name].read_bytes(), name) != (640, 800):
+                raise ValueError("Operator portrait dimensions do not match the menu")
+        _validate_animation_family(operator_animations, root_lock=True,
+                                   compatible_nodes=set(ghost.node_names))
     return {
         "operator": operator,
+        "ghost": ghost,
         "viewmodel": viewmodel,
         "pickup": pickup,
         "viewmodelWeaponSkinnedMeshes": len(weapon_meshes),

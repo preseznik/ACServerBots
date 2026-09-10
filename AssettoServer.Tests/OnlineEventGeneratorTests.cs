@@ -28,6 +28,22 @@ public class OnlineEventGeneratorTests
     }
 
     [Test]
+    public void OperatorSelectionAndRosterUseReliableMatchingModelFields()
+    {
+        foreach (var type in new[] { typeof(FpsLoadoutSelectPacket),
+                     typeof(FpsLoadoutResultPacket), typeof(FpsRosterPacket) })
+        {
+            var definition = OnlineEventGenerator.ParseClientMessage(type);
+            Assert.That(definition.Udp, Is.False);
+            Assert.That(definition.Structure, Does.Contain("uint8_t operatorModel"));
+        }
+        var catalog = OnlineEventGenerator.ParseClientMessage(typeof(FpsLoadoutCatalogPacket));
+        Assert.That(catalog.Structure, Does.Contain("uint32_t allowedOperatorModels"));
+        Assert.That(catalog.Structure, Does.Contain("uint8_t defaultOperatorModel"));
+        Assert.That(new FpsReadyPacket().Protocol, Is.EqualTo(5));
+    }
+
+    [Test]
     public void FpsProtocol_ProducesDistinctCspCompatibleMessageDefinitions()
     {
         Type[] packets =

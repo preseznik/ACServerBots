@@ -127,6 +127,9 @@ internal sealed class FpsActorState
     public int ReserveMagazines { get; set; }
     public FpsLoadout Loadout { get; set; }
     public FpsLoadout? PendingLoadout { get; set; }
+    public FpsOperatorModel OperatorModel { get; set; }
+    public FpsOperatorModel? PendingOperatorModel { get; set; }
+    public FpsOperatorModel BotOperatorModel { get; set; }
     public bool LoadoutConfirmed { get; set; }
     public byte ActiveWeaponSlot { get; set; }
     public int PrimaryAmmoInMagazine { get; set; }
@@ -348,6 +351,19 @@ internal sealed class FpsSimulation
                 };
             });
 
+        // Alternate within each team: slot parity alone would make alternating
+        // team assignments accidentally map one model to each whole team.
+        foreach (var team in _actors.Values.GroupBy(actor => actor.Team))
+        {
+            int index = 0;
+            foreach (var actor in team.Where(actor => actor.Role is FpsSlotRole.Auto or FpsSlotRole.Bot)
+                         .OrderBy(actor => actor.Id))
+            {
+                actor.BotOperatorModel = configuration.Theme == FpsVisualTheme.Modern
+                    && index++ % 2 == 1 ? FpsOperatorModel.Ghost : FpsOperatorModel.Officer;
+                actor.OperatorModel = actor.BotOperatorModel;
+            }
+        }
         foreach (var actor in _actors.Values.Where(actor => actor.Active)) Spawn(actor);
         if (configuration.StartWithBotsOnly) MatchState = FpsMatchState.Running;
     }
@@ -360,6 +376,8 @@ internal sealed class FpsSimulation
         actor.HumanControlled = true;
         actor.Loadout = FpsItems.FromConfiguration(_configuration.Loadouts.HumanDefault);
         actor.PendingLoadout = null;
+        actor.OperatorModel = FpsOperatorModel.Officer;
+        actor.PendingOperatorModel = null;
         actor.LoadoutConfirmed = !requireLoadoutConfirmation;
         actor.Active = !requireLoadoutConfirmation;
         actor.Dead = false;
@@ -373,17 +391,21 @@ internal sealed class FpsSimulation
         return true;
     }
 
-    public FpsLoadoutResultCode SelectLoadout(byte actorId, in FpsLoadout loadout)
+    public FpsLoadoutResultCode SelectLoadout(byte actorId, in FpsLoadout loadout,
+        FpsOperatorModel operatorModel = FpsOperatorModel.Officer)
     {
         if (!_actors.TryGetValue(actorId, out var actor) || !actor.HumanControlled)
             return FpsLoadoutResultCode.NotAvailable;
-        if (!FpsItems.IsAllowed(_configuration.Loadouts, loadout))
+        if (!FpsItems.IsAllowed(_configuration.Loadouts, loadout)
+            || !FpsOperatorModels.IsAllowed(_configuration.Theme, operatorModel))
             return FpsLoadoutResultCode.InvalidSelection;
 
         if (!actor.LoadoutConfirmed || !actor.Active)
         {
             actor.Loadout = loadout;
             actor.PendingLoadout = null;
+            actor.OperatorModel = operatorModel;
+            actor.PendingOperatorModel = null;
             actor.LoadoutConfirmed = true;
             actor.Active = true;
             Spawn(actor);
@@ -392,6 +414,7 @@ internal sealed class FpsSimulation
         }
 
         actor.PendingLoadout = loadout;
+        actor.PendingOperatorModel = operatorModel;
         return FpsLoadoutResultCode.QueuedForRespawn;
     }
 
@@ -408,6 +431,8 @@ internal sealed class FpsSimulation
         actor.HumanControlled = false;
         actor.HasInput = false;
         actor.PendingLoadout = null;
+        actor.OperatorModel = actor.BotOperatorModel;
+        actor.PendingOperatorModel = null;
         actor.Loadout = FpsItems.FromConfiguration(_configuration.Loadouts.BotDefault);
         actor.LoadoutConfirmed = true;
         _grenades.RemoveAll(grenade => grenade.OwnerId == actorId);
@@ -2280,6 +2305,11 @@ internal sealed class FpsSimulation
 
     private void Spawn(FpsActorState actor)
     {
+        if (actor.PendingOperatorModel is { } pendingOperatorModel)
+        {
+            actor.OperatorModel = pendingOperatorModel;
+            actor.PendingOperatorModel = null;
+        }
         if (actor.PendingLoadout is { } pendingLoadout)
         {
             actor.Loadout = pendingLoadout;

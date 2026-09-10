@@ -14,9 +14,10 @@ internal static class FpsModernClientAssetArchive
 {
     // CSP caches web.loadRemoteAssets() payloads by URL. Advance this revision whenever
     // any embedded KN5 or KSANIM changes, otherwise clients keep the previous poses.
-    public const int AssetRevision = 9;
-    public const string Route = "/fps/assets/asrc-fps-modern-v9.zip";
-    public const string FileName = "asrc-fps-modern-v9.zip";
+    public const int AssetRevision = 10;
+    public const string Route = "/fps/assets/asrc-fps-modern-v10.zip";
+    public const string FileName = "asrc-fps-modern-v10.zip";
+    public const string GhostFileName = "asrc_modern_ghost_carbine.kn5";
     public const string OperatorFileName = "asrc_modern_operator_carbine.kn5";
     public const string ViewmodelFileName = "asrc_modern_carbine_viewmodel.kn5";
     public const string PickupFileName = "asrc_modern_carbine_pickup.kn5";
@@ -128,6 +129,16 @@ internal static class FpsModernClientAssetArchive
                 throw new InvalidDataException($"Modern FPS asset hash mismatch: {file.Name}");
         }
         JsonElement teamSkins = root.GetProperty("operator").GetProperty("teamSkins");
+        JsonElement ghost = root.GetProperty("operators").GetProperty("ghost");
+        if (ghost.GetProperty("file").GetString() != GhostFileName
+            || !assets.TryGetValue(GhostFileName, out var ghostBytes)
+            || ghostBytes.Length > 60_000_000
+            || ghost.GetProperty("triangles").GetInt32() > 40_000
+            || ghost.GetProperty("materials").GetInt32() != 4
+            || ghost.GetProperty("bones").GetInt32() != 68
+            || ghost.GetProperty("sharedAnimations").GetString() != "officer"
+            || !root.GetProperty("validation").GetProperty("ghostSharedSkeletonValidated").GetBoolean())
+            throw new InvalidDataException("Modern Ghost asset integrity is invalid");
         if (teamSkins.GetProperty("team2Uniform").GetString() != Team2UniformFileName
             || teamSkins.GetProperty("team2Gear").GetString() != Team2GearFileName)
             throw new InvalidDataException("Modern FPS Team 2 skin metadata is invalid");
