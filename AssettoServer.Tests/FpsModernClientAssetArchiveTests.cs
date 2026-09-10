@@ -16,8 +16,8 @@ public sealed class FpsModernClientAssetArchiveTests
         Assert.Multiple(() =>
         {
             Assert.That(FpsModernClientAssetArchive.Route,
-                Is.EqualTo("/fps/assets/asrc-fps-modern-v10.zip"));
-            Assert.That(FpsModernClientAssetArchive.AssetRevision, Is.EqualTo(10));
+                Is.EqualTo("/fps/assets/asrc-fps-modern-v11.zip"));
+            Assert.That(FpsModernClientAssetArchive.AssetRevision, Is.EqualTo(11));
             Assert.That(bytes.AsSpan(0, 2).SequenceEqual("PK"u8), Is.True);
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.OperatorFileName));
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.GhostFileName));
@@ -25,6 +25,11 @@ public sealed class FpsModernClientAssetArchiveTests
             Assert.That(names, Does.Contain("asrc_operator_officer.png"));
             Assert.That(names, Does.Contain("asrc_modern_ghost_team2_uniform.png"));
             Assert.That(names, Does.Contain("asrc_modern_ghost_team2_gear.png"));
+            Assert.That(names, Does.Contain("asrc_modern_ghost_desert_uniform.png"));
+            Assert.That(names, Does.Contain("asrc_modern_ghost_desert_gear.png"));
+            Assert.That(names, Does.Contain("asrc_operator_officer_bluegrey.png"));
+            Assert.That(names, Does.Contain("asrc_operator_ghost_bluegrey.png"));
+            Assert.That(names, Does.Contain("asrc_operator_ghost_desert.png"));
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.ViewmodelFileName));
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.PickupFileName));
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.Team2UniformFileName));

@@ -130,6 +130,8 @@ internal sealed class FpsActorState
     public FpsOperatorModel OperatorModel { get; set; }
     public FpsOperatorModel? PendingOperatorModel { get; set; }
     public FpsOperatorModel BotOperatorModel { get; set; }
+    public FpsOperatorSkin OperatorSkin { get; set; }
+    public FpsOperatorSkin? PendingOperatorSkin { get; set; }
     public bool LoadoutConfirmed { get; set; }
     public byte ActiveWeaponSlot { get; set; }
     public int PrimaryAmmoInMagazine { get; set; }
@@ -351,16 +353,18 @@ internal sealed class FpsSimulation
                 };
             });
 
-        // Alternate within each team: slot parity alone would make alternating
-        // team assignments accidentally map one model to each whole team.
+        // Team silhouettes are fixed. FFA keeps a stable mixed bot roster.
         foreach (var team in _actors.Values.GroupBy(actor => actor.Team))
         {
             int index = 0;
-            foreach (var actor in team.Where(actor => actor.Role is FpsSlotRole.Auto or FpsSlotRole.Bot)
-                         .OrderBy(actor => actor.Id))
+            foreach (var actor in team.OrderBy(actor => actor.Id))
             {
-                actor.BotOperatorModel = configuration.Theme == FpsVisualTheme.Modern
-                    && index++ % 2 == 1 ? FpsOperatorModel.Ghost : FpsOperatorModel.Officer;
+                actor.BotOperatorModel = FpsOperatorModels.DefaultModel(configuration.Theme,
+                    configuration.MatchType, actor.Team);
+                if (configuration.Theme == FpsVisualTheme.Modern
+                    && (configuration.MatchType is FpsMatchType.Deathmatch or FpsMatchType.HardcoreDeathmatch)
+                    && (actor.Role is FpsSlotRole.Auto or FpsSlotRole.Bot))
+                    actor.BotOperatorModel = index++ % 2 == 1 ? FpsOperatorModel.Ghost : FpsOperatorModel.Officer;
                 actor.OperatorModel = actor.BotOperatorModel;
             }
         }
@@ -376,8 +380,11 @@ internal sealed class FpsSimulation
         actor.HumanControlled = true;
         actor.Loadout = FpsItems.FromConfiguration(_configuration.Loadouts.HumanDefault);
         actor.PendingLoadout = null;
-        actor.OperatorModel = FpsOperatorModel.Officer;
+        actor.OperatorModel = FpsOperatorModels.DefaultModel(_configuration.Theme,
+            _configuration.MatchType, actor.Team);
         actor.PendingOperatorModel = null;
+        actor.OperatorSkin = FpsOperatorSkin.Standard;
+        actor.PendingOperatorSkin = null;
         actor.LoadoutConfirmed = !requireLoadoutConfirmation;
         actor.Active = !requireLoadoutConfirmation;
         actor.Dead = false;
@@ -392,12 +399,14 @@ internal sealed class FpsSimulation
     }
 
     public FpsLoadoutResultCode SelectLoadout(byte actorId, in FpsLoadout loadout,
-        FpsOperatorModel operatorModel = FpsOperatorModel.Officer)
+        FpsOperatorModel operatorModel = FpsOperatorModel.Officer,
+        FpsOperatorSkin operatorSkin = FpsOperatorSkin.Standard)
     {
         if (!_actors.TryGetValue(actorId, out var actor) || !actor.HumanControlled)
             return FpsLoadoutResultCode.NotAvailable;
         if (!FpsItems.IsAllowed(_configuration.Loadouts, loadout)
-            || !FpsOperatorModels.IsAllowed(_configuration.Theme, operatorModel))
+            || !FpsOperatorModels.IsAllowed(_configuration.Theme, _configuration.MatchType,
+                actor.Team, operatorModel, operatorSkin))
             return FpsLoadoutResultCode.InvalidSelection;
 
         if (!actor.LoadoutConfirmed || !actor.Active)
@@ -406,6 +415,8 @@ internal sealed class FpsSimulation
             actor.PendingLoadout = null;
             actor.OperatorModel = operatorModel;
             actor.PendingOperatorModel = null;
+            actor.OperatorSkin = operatorSkin;
+            actor.PendingOperatorSkin = null;
             actor.LoadoutConfirmed = true;
             actor.Active = true;
             Spawn(actor);
@@ -415,6 +426,7 @@ internal sealed class FpsSimulation
 
         actor.PendingLoadout = loadout;
         actor.PendingOperatorModel = operatorModel;
+        actor.PendingOperatorSkin = operatorSkin;
         return FpsLoadoutResultCode.QueuedForRespawn;
     }
 
@@ -433,6 +445,8 @@ internal sealed class FpsSimulation
         actor.PendingLoadout = null;
         actor.OperatorModel = actor.BotOperatorModel;
         actor.PendingOperatorModel = null;
+        actor.OperatorSkin = FpsOperatorSkin.Standard;
+        actor.PendingOperatorSkin = null;
         actor.Loadout = FpsItems.FromConfiguration(_configuration.Loadouts.BotDefault);
         actor.LoadoutConfirmed = true;
         _grenades.RemoveAll(grenade => grenade.OwnerId == actorId);
@@ -2305,6 +2319,11 @@ internal sealed class FpsSimulation
 
     private void Spawn(FpsActorState actor)
     {
+        if (actor.PendingOperatorSkin is { } pendingOperatorSkin)
+        {
+            actor.OperatorSkin = pendingOperatorSkin;
+            actor.PendingOperatorSkin = null;
+        }
         if (actor.PendingOperatorModel is { } pendingOperatorModel)
         {
             actor.OperatorModel = pendingOperatorModel;

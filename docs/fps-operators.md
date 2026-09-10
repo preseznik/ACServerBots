@@ -1,25 +1,30 @@
 # FPS operator selection and Ghost conversion
 
-Modern supports Officer (model ID 0, default) and Ghost Nightwar (ID 1). The Operator tab in the
-existing loadout menu changes third-person appearance. Save/deploy submits weapons and appearance
+Modern supports Officer (model ID 0) and Ghost (ID 1). Team Deathmatch and Hardcore Team Deathmatch
+assign Officer to Team 1 and Ghost to Team 2, including humans and bots. The Operator tab shows these
+assignments; free-for-all modes still allow either model. The separate Skin tab selects colors:
+Officer has Standard issue (skin ID 0) and Blue-grey (1); Ghost has Nightwar (0), Blue-grey (1),
+and Desert tan (2). Save/deploy submits weapons and appearance
 together. An accepted initial choice spawns immediately; later choices apply on the next spawn.
 Only accepted choices are remembered in local CSP storage. First-person arms and weapon animations
-remain shared. Blocks keeps its existing presentation and accepts only model ID 0.
+remain shared. Blocks keeps its existing presentation and accepts only model ID 0 and skin ID 0.
 
 ## Ownership and multiplayer contract
 
-- `FpsOperatorModel.cs` owns IDs and the theme allowlist. Unknown IDs are rejected before any
+- `FpsOperatorModel.cs` owns IDs and the theme/team/model allowlists. Invalid combinations are rejected before any
   loadout state changes. Cosmetic selection does not change teams, hitboxes, health, or movement.
 - `FpsSimulation.cs` stores active, pending, and assigned-bot appearance separately from weapons.
-  Auto/Bot slots alternate Officer/Ghost by sorted actor ID within each team. Assignments survive
-  respawn and automatic round restart. Releasing a human-controlled Auto slot restores its bot model.
-- Reliable loadout/catalog/roster packets carry the model and allowed/default IDs. The server sends
+  Team matches fix the model by team; free-for-all Auto/Bot slots alternate by sorted actor ID.
+  Assignments survive respawn and automatic round restart. Releasing a human-controlled Auto slot
+  restores its assigned bot model and Standard skin.
+- Reliable loadout/catalog/roster packets carry model/skin and allowed/default IDs. The server sends
   the roster to late joiners and broadcasts appearance changes when pending choices become active.
-- `fps.lua` owns a small model catalog with paths, portraits, team materials, and stance offsets.
-  Team materials become unique before recoloring. A failed Ghost model, skin, or animation load
+- `fps.lua` owns a small model catalog with paths, skin portraits, materials, and stance offsets.
+  Each actor's materials become unique before recoloring. A failed Ghost model, skin, or animation load
   falls back to Officer for that actor; unchanged roster packets do not repeatedly retry the failure.
 
-Packet layout and cache versions move together: **FPS protocol 5, client pack 49, Modern archive 10**.
+Current versions: **FPS protocol 6, client pack 51, Modern archive 11, HUD app 1.14.0**.
+HUD bridge **14** carries target identification for both hip aiming and ADS.
 The base weapon archive and shared KSANIM files are unchanged.
 
 ## Source and production asset
@@ -48,7 +53,7 @@ terminal fingers, and toes use uniform scale instead. This prevents stretched ma
 
 Head, uniform, and gear have separate diffuse/normal/material atlases. Source UVs remain explicitly
 connected while new atlas UVs are baked. Material maps retain the existing specular/gloss convention.
-Team 2 replaces uniform and gear diffuse maps, preserving the mask. The rifle, attachments, shared
+Selectable skins replace uniform and gear diffuse maps, preserving the mask. The rifle, attachments, shared
 animations, and first-person assets come from the established pipeline.
 
 Build everything with:
@@ -58,13 +63,18 @@ Build everything with:
 ```
 
 The Ghost builder also accepts `--geometry-only` to inspect binding and stance renders before baking.
+`tools/build_fps_operator_skins.py` runs after the Ghost builder and uses the cached production blends
+to produce skin portraits and Ghost's 2K Desert tan uniform/gear maps. It preserves seams and wear,
+leaves the head atlas unchanged, and does not re-export geometry or animations. To rebuild colors only,
+run Blender in background with that script, `--output-dir` pointing to the Modern asset directory,
+and `--cache-dir .artifacts/ghost-work`.
 Working assets are in `.artifacts/ghost-work`, including `ghost-production.blend`, pose renders,
 source metadata, and `ghost-pose-validation.json`. Shipping files and hashes are in
 `AssettoServer.RaceControl.Core/Assets/Fps/Modern/asrc-modern-assets.json`.
 
 ## Validation and acceptance
 
-- All 250 server tests and 97 Race Control tests passed. Server tests target .NET 9 and were run
+- All 257 server tests and 97 Race Control tests passed for the team/skin update. Server tests target .NET 9 and are run
   with `DOTNET_ROLL_FORWARD=Major` on the installed .NET 10 runtime; the development package is
   self-contained. Use SDK 10.0.400 and cached assets (`--no-restore`) on this workstation.
 - `tools/test_fps_loadout_menu.py` passes rendered menu interaction checks at desktop and small
@@ -75,12 +85,22 @@ source metadata, and `ghost-pose-validation.json`. Shipping files and hashes are
 - `tools/validate_fps_modern_assets.py` passes hashes, geometry, texture dimensions, weights,
   exact Officer/Ghost inverse-bind equality, and compatibility with all 20 shared operator clips.
   Blender also evaluates 60 sampled skinned poses across those clips and rejects invalid geometry.
-- The self-contained development package passed Modern Team Deathmatch smoke tests with 8 and 16
+- Earlier Ghost integration: the self-contained development package passed Modern Team Deathmatch smoke tests with 8 and 16
   moving bots on `bo2_nuketown_2020`, both authoritative operator assignments, live arena coordinates,
   rifle fire, and graceful shutdown. The eight-bot round held results for 20.03 seconds and restarted
   with zero scores. Both asset endpoints passed; the served Modern v10 archive contains both operators.
 - The exported v49 ZIP passed protocol/version checks and all 37 Modern file hashes. The original
   Ghost source hash is unchanged. The public-release permission gate was exercised and stopped correctly.
+
+The v51 team/skin update passed the packaged eight-bot Nuketown Team Deathmatch gate on 2026-09-10:
+every Team 1 bot was Officer, every Team 2 bot was Ghost, and the match restarted in the same process
+after 20.06 seconds with zero scores. The served Modern v11 archive contained the new Desert tan
+textures and skin portraits. All 42 Modern files passed manifest/asset validation. The canonical
+`out-race-control` launcher/server and exported v51 client ZIP are the delivery artifacts. Ten changed
+client files were installed locally and hash-verified; the five replaced files are backed up in
+`.artifacts/team-skins-client-backup`. The menu and both target-HUD draw paths passed LuaJIT checks;
+skin-only queuing, invalid combinations, human/bot handover, and repeated restarts have automated coverage.
+Real-client visual acceptance of hip-aim labels and selectable skins remains pending.
 
 Reproduce the packaged restart smoke with:
 

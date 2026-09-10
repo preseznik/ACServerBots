@@ -272,7 +272,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("function fpsVisual.actorStance(actor)"));
             Assert.That(script, Does.Contain("if actor.id == localSessionID then return localStance end"));
             Assert.That(script, Does.Contain("bit.band(actionState, 2) ~= 0"));
-            Assert.That(script, Does.Contain("modernAssetRevision = 10"));
+            Assert.That(script, Does.Contain("modernAssetRevision = 11"));
             Assert.That(script, Does.Contain("fpsVisual.crouchSuppressedUntilRelease = true"));
             Assert.That(script, Does.Contain(
                 "stanceOffsets = { [1] = -0.50, [2] = -0.50 }"));
@@ -383,13 +383,13 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
             Assert.That(script, Does.Contain("asrc_operator_skin.png"));
             Assert.That(script, Does.Contain("__ASRC_FPS_THEME__"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v10.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v11.zip"));
             Assert.That(script, Does.Contain("asrc_modern_operator_carbine.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_pickup.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_team2_uniform.png"));
             Assert.That(script, Does.Contain("asrc_modern_team2_gear.png"));
-            Assert.That(script, Does.Contain("function fpsVisual.applyOperatorTeamSkin"));
+            Assert.That(script, Does.Contain("function fpsVisual.applyOperatorSkin"));
             Assert.That(script, Does.Contain(
                 "findAny('material:' .. descriptor.materialPrefix .. 'UNIFORM')"));
             Assert.That(script, Does.Contain("uniform:ensureUniqueMaterials()"));
@@ -555,8 +555,8 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("extension/audio/asrc_fps/explosion.wav"));
             Assert.That(script, Does.Not.Contain("event == nil or not event:isValid()"));
             Assert.That(script, Does.Not.Contain("sound.ttl <= 0 or not sound.event:isValid()"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v13')"));
-            Assert.That(script, Does.Contain("protocol = 13"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v14')"));
+            Assert.That(script, Does.Contain("protocol = 14"));
             Assert.That(script, Does.Contain("grenadeThreatCount = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("grenadeThreatPositions = ac.StructItem.array"));
             Assert.That(script, Does.Contain("grenadeThreatVelocities = ac.StructItem.array"));
@@ -600,7 +600,7 @@ public sealed class FpsClientScriptTests
                 "findAny('material:' .. descriptor.materialPrefix .. 'UNIFORM')"));
             Assert.That(script, Does.Contain(
                 "findAny('material:' .. descriptor.materialPrefix .. 'GEAR')"));
-            Assert.That(script, Does.Contain("if actor.team ~= 2 then"));
+            Assert.That(script, Does.Contain("local skin, skinID = fpsVisual.skinForActor(actor)"));
             Assert.That(script, Does.Contain("uniform:ensureUniqueMaterials()"));
             Assert.That(script, Does.Contain("gear:ensureUniqueMaterials()"));
             Assert.That(script, Does.Not.Contain("actor.modernModel:applySkin({"));

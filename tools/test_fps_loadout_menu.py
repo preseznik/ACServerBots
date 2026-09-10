@@ -56,7 +56,8 @@ def main():
         hud = {loadout={catalogReceived=true,confirmed=false,
             mainWeapon=1, secondaryWeapon=3, lethal=17,
             allowedMainWeapons=6, allowedSecondaryWeapons=24, allowedLethals=196608,
-            operatorModel=0, allowedOperatorModels=3,
+            operatorModel=0, operatorSkin=0, allowedOperatorModels=3,
+            allowedOfficerSkins=3, allowedGhostSkins=7,
             result='CONFIRM A LOADOUT TO JOIN'}}
         hud.loadoutSelectEvent = function(message) sent=sent+1; submitted=message end
         fpsVisual = {requestLoadoutAssets=function() end}
@@ -138,7 +139,7 @@ def main():
     render("loadout-1280.png")
     frame(width=831, height=619)
     render("loadout-831.png")
-    frame(x=1460, y=74, clicked=True)
+    frame(x=1270, y=74, clicked=True)
     assert lua.globals().hud.loadoutTab == "operator"
     frame()  # Capture the settled tab after the click frame.
     assert sum(kind == "image" for kind, _ in commands) == 2
@@ -151,19 +152,41 @@ def main():
     render("operators-1280.png")
     frame(width=831, height=619)
     render("operators-831.png")
+    frame(x=1460, y=74, clicked=True)
+    assert lua.globals().hud.loadoutTab == "skin"
+    frame()
+    assert sum(kind == "image" for kind, _ in commands) == 3
+    frame(x=1300, y=400, clicked=True)
+    assert lua.globals().hud.loadout.operatorSkin == 2
+    assert lua.globals().sent == 0, "Skin selection must not deploy implicitly"
+    frame()
+    render("ghost-skins-desktop.png")
+    frame(width=1280, height=720)
+    render("ghost-skins-1280.png")
+    frame(width=831, height=619)
+    render("ghost-skins-831.png")
+    frame(x=1270, y=74, clicked=True)
     lua.execute("hud.loadout.allowedOperatorModels=1")
     frame(x=1300, y=829, clicked=True)
     assert lua.globals().sent == 0, "Server-locked model must prevent submission"
     frame(x=300, y=400, clicked=True)
     assert lua.globals().hud.loadout.operatorModel == 0
+    assert lua.globals().hud.loadout.operatorSkin == 0, "Desert tan is only allowed for Ghost"
     frame(x=1100, y=400, clicked=True)
     assert lua.globals().hud.loadout.operatorModel == 0, "Locked card must be inert"
+    frame()
+    render("team1-operators-desktop.png")
+    lua.execute("hud.loadout.allowedOperatorModels=2; hud.loadout.operatorModel=1")
+    frame(x=300, y=400, clicked=True)
+    assert lua.globals().hud.loadout.operatorModel == 1, "Team 2 cannot choose Officer"
+    frame()
+    render("team2-operators-desktop.png")
     lua.execute("hud.loadout.allowedOperatorModels=3")
     frame(x=1100, y=400, clicked=True)
     frame(x=1300, y=829, clicked=True)
     assert lua.globals().submitted.operatorModel == 1
     lua.execute("sent=0; hud.loadout.operatorModel=0")
-    frame(x=1250, y=74, clicked=True)
+    frame(x=1100, y=74, clicked=True)
     assert lua.globals().hud.loadoutTab == "gear"
     frame(x=1130, y=300, clicked=True)
     assert lua.globals().hud.loadout.mainWeapon == 2, "MP5 card must select primary only"

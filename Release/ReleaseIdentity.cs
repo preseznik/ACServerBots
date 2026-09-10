@@ -15,7 +15,7 @@ public static class ReleaseIdentity
     public static bool IsReleaseBuild => false;
 #endif
     public const int ControlProtocol = 1;
-    public const int FpsPackVersion = 49;
+    public const int FpsPackVersion = 51;
     public static string Version => typeof(ReleaseIdentity).Assembly
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
         .InformationalVersion.Split('+')[0];
@@ -23,7 +23,7 @@ public static class ReleaseIdentity
     public static string CapabilitiesJson => JsonSerializer.Serialize(new
     {
         product = Product, version = Version, controlProtocol = ControlProtocol,
-        racePhysics = 1, fpsPreparation = 4, fpsReadyProtocol = 5,
+        racePhysics = 1, fpsPreparation = 4, fpsReadyProtocol = 6,
         fpsPackVersion = FpsPackVersion, modes = new[] { "Racing", "Fps" }
     });
 

@@ -17,6 +17,7 @@ $requiredInputs = @(
     $CarbineFbx,
     $GhostBlend,
     (Join-Path $PSScriptRoot "build_fps_ghost_assets.py"),
+    (Join-Path $PSScriptRoot "build_fps_operator_skins.py"),
     $sourceScript,
     (Join-Path $PSScriptRoot "validate_fps_modern_assets.py"),
     (Join-Path $exporterRoot "__init__.py"),
@@ -46,6 +47,11 @@ if ($LASTEXITCODE -ne 0) {
     --output-dir $OutputDirectory --cache-dir (Join-Path $PSScriptRoot "..\.artifacts\ghost-work")
 if ($LASTEXITCODE -ne 0) { throw "Ghost asset generation failed with exit code $LASTEXITCODE." }
 
+& $BlenderPath --background --factory-startup --disable-autoexec --python-exit-code 1 `
+    --python (Join-Path $PSScriptRoot "build_fps_operator_skins.py") -- `
+    --output-dir $OutputDirectory --cache-dir (Join-Path $PSScriptRoot "..\.artifacts\ghost-work")
+if ($LASTEXITCODE -ne 0) { throw "Operator skin generation failed with exit code $LASTEXITCODE." }
+
 $expected = @(
     "asrc_modern_operator_carbine.kn5",
     "asrc_modern_carbine_viewmodel.kn5",
@@ -58,6 +64,11 @@ $expected = @(
     "asrc_modern_ghost_team2_gear.png"
     "asrc_operator_officer.png"
     "asrc_operator_ghost.png"
+    "asrc_operator_officer_bluegrey.png"
+    "asrc_operator_ghost_bluegrey.png"
+    "asrc_operator_ghost_desert.png"
+    "asrc_modern_ghost_desert_uniform.png"
+    "asrc_modern_ghost_desert_gear.png"
 )
 $expected += @(
     "aim_idle", "aim_up", "aim_down", "walk_forward", "walk_backward",

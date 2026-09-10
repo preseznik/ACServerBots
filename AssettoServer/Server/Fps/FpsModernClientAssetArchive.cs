@@ -14,9 +14,9 @@ internal static class FpsModernClientAssetArchive
 {
     // CSP caches web.loadRemoteAssets() payloads by URL. Advance this revision whenever
     // any embedded KN5 or KSANIM changes, otherwise clients keep the previous poses.
-    public const int AssetRevision = 10;
-    public const string Route = "/fps/assets/asrc-fps-modern-v10.zip";
-    public const string FileName = "asrc-fps-modern-v10.zip";
+    public const int AssetRevision = 11;
+    public const string Route = "/fps/assets/asrc-fps-modern-v11.zip";
+    public const string FileName = "asrc-fps-modern-v11.zip";
     public const string GhostFileName = "asrc_modern_ghost_carbine.kn5";
     public const string OperatorFileName = "asrc_modern_operator_carbine.kn5";
     public const string ViewmodelFileName = "asrc_modern_carbine_viewmodel.kn5";
@@ -142,6 +142,24 @@ internal static class FpsModernClientAssetArchive
         if (teamSkins.GetProperty("team2Uniform").GetString() != Team2UniformFileName
             || teamSkins.GetProperty("team2Gear").GetString() != Team2GearFileName)
             throw new InvalidDataException("Modern FPS Team 2 skin metadata is invalid");
+        foreach (string model in new[] { "officer", "ghost" })
+        {
+            var skins = root.GetProperty("operators").GetProperty(model).GetProperty("skins");
+            if (skins.GetArrayLength() != (model == "ghost" ? 3 : 2))
+                throw new InvalidDataException($"Modern FPS {model} skin catalog is incomplete");
+            int id = 0;
+            foreach (var skin in skins.EnumerateArray())
+            {
+                if (skin.GetProperty("id").GetInt32() != id++)
+                    throw new InvalidDataException($"Modern FPS {model} skin ID is invalid");
+                foreach (string field in id == 1 ? new[] { "portrait" } : new[] { "portrait", "uniform", "gear" })
+                {
+                    string fileName = skin.GetProperty(field).GetString() ?? string.Empty;
+                    if (!fileName.EndsWith(".png", StringComparison.Ordinal) || !assets.ContainsKey(fileName))
+                        throw new InvalidDataException($"Modern FPS {model} skin asset is missing: {fileName}");
+                }
+            }
+        }
         if (root.GetProperty("operator").GetProperty("triangles").GetInt32() > 40_000
             || root.GetProperty("operator").GetProperty("materials").GetInt32() > 4
             || root.GetProperty("viewmodel").GetProperty("triangles").GetInt32() > 30_000

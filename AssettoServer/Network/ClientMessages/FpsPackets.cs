@@ -34,7 +34,7 @@ public sealed class FpsInputPacket : OnlineEvent<FpsInputPacket>
 [OnlineEvent(Key = "ASRC_FpsReady")]
 public sealed class FpsReadyPacket : OnlineEvent<FpsReadyPacket>
 {
-    [OnlineEventField(Name = "protocol")] public ushort Protocol = 5;
+    [OnlineEventField(Name = "protocol")] public ushort Protocol = 6;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutSelect")]
@@ -44,6 +44,7 @@ public sealed class FpsLoadoutSelectPacket : OnlineEvent<FpsLoadoutSelectPacket>
     [OnlineEventField(Name = "lethal")] public byte Lethal;
     [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
     [OnlineEventField(Name = "operatorModel")] public byte OperatorModel;
+    [OnlineEventField(Name = "operatorSkin")] public byte OperatorSkin;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutCatalog")]
@@ -57,6 +58,9 @@ public sealed class FpsLoadoutCatalogPacket : OnlineEvent<FpsLoadoutCatalogPacke
     [OnlineEventField(Name = "defaultSecondaryWeapon")] public byte DefaultSecondaryWeapon;
     [OnlineEventField(Name = "allowedOperatorModels")] public uint AllowedOperatorModels;
     [OnlineEventField(Name = "defaultOperatorModel")] public byte DefaultOperatorModel;
+    [OnlineEventField(Name = "allowedOfficerSkins")] public uint AllowedOfficerSkins;
+    [OnlineEventField(Name = "allowedGhostSkins")] public uint AllowedGhostSkins;
+    [OnlineEventField(Name = "defaultOperatorSkin")] public byte DefaultOperatorSkin;
 }
 
 public enum FpsLoadoutResultCode : byte
@@ -75,6 +79,7 @@ public sealed class FpsLoadoutResultPacket : OnlineEvent<FpsLoadoutResultPacket>
     [OnlineEventField(Name = "lethal")] public byte Lethal;
     [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
     [OnlineEventField(Name = "operatorModel")] public byte OperatorModel;
+    [OnlineEventField(Name = "operatorSkin")] public byte OperatorSkin;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutState")]
@@ -181,6 +186,7 @@ public sealed class FpsRosterPacket : OnlineEvent<FpsRosterPacket>
     [OnlineEventField(Name = "team")] public byte Team;
     [OnlineEventField(Name = "name", Size = 32)] public string Name = string.Empty;
     [OnlineEventField(Name = "operatorModel")] public byte OperatorModel;
+    [OnlineEventField(Name = "operatorSkin")] public byte OperatorSkin;
 }
 
 [OnlineEvent(Key = "ASRC_FpsMatch")]

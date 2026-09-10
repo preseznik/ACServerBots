@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 49;
-    public const int BridgeProtocol = 13;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v49.zip";
+    public const int ClientPackVersion = 51;
+    public const int BridgeProtocol = 14;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v51.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -70,7 +70,7 @@ public static class FpsClientPackBuilder
         {
             await JsonSerializer.SerializeAsync(manifestStream, new
             {
-                protocol = 5,
+                protocol = 6,
                 clientPackVersion = ClientPackVersion,
                 compatibilityGate = true,
                 minimumCspVersion = MinimumCspVersion,
@@ -176,7 +176,7 @@ public static class FpsClientPackBuilder
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v13",
+                    bridge = "asrc.fps.hud.v14",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),
@@ -213,7 +213,8 @@ public static class FpsClientPackBuilder
                 operator UV skin under
                 content/objects3D/asrc_fps, plus the 54-clip FPS sound catalog
                 under extension/audio/asrc_fps. It also installs the local ASRC FPS HUD and audio
-                player under apps/lua/asrc_fps_hud. Client pack v49 also contains selectable Officer/Ghost Modern
+                player under apps/lua/asrc_fps_hud. Client pack v51 adds hip-aim and ADS target names and health bars, team-specific
+                Officer/Ghost operators, and separate skins including Ghost Desert tan. It contains the Modern
                 operator and carbine theme under content/objects3D/asrc_fps/modern. Existing files
                 are not replaced outside those project-owned folders. Blocks remains the default;
                 the server chooses one theme for the next staged match.

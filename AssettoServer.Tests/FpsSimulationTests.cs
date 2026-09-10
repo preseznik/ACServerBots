@@ -3452,7 +3452,10 @@ public sealed class FpsSimulationTests
             uint shot = player.ShotSequence;
             float clock = simulation.RemainingSeconds;
             Vector3 position = player.Position;
-            simulation.SelectLoadout(0, nextLoadout, FpsOperatorModel.Ghost);
+            var selectedModel = matchType is FpsMatchType.TeamDeathmatch or FpsMatchType.HardcoreTeamDeathmatch
+                ? FpsOperatorModel.Officer : FpsOperatorModel.Ghost;
+            Assert.That(simulation.SelectLoadout(0, nextLoadout, selectedModel, FpsOperatorSkin.BlueGrey),
+                Is.EqualTo(FpsLoadoutResultCode.QueuedForRespawn));
             simulation.ApplyInput(0, new FpsInputCommand(round * 100 + 2, Vector2.UnitY,
                 1, 0, FpsInputButtons.Fire | FpsInputButtons.ThrowLethal));
             for (int tick = 0; tick < 399; tick++) simulation.Step(0.05f);
@@ -3487,7 +3490,9 @@ public sealed class FpsSimulationTests
                 Assert.That(player.ShotSequence, Is.EqualTo(shot));
                 Assert.That(player.HasInput, Is.False);
                 Assert.That(player.Loadout, Is.EqualTo(nextLoadout));
-                Assert.That(player.OperatorModel, Is.EqualTo(FpsOperatorModel.Ghost));
+                Assert.That(player.OperatorModel, Is.EqualTo(selectedModel));
+                Assert.That(player.OperatorSkin, Is.EqualTo(FpsOperatorSkin.BlueGrey));
+                Assert.That(player.PendingOperatorSkin, Is.Null);
                 Assert.That(player.PendingOperatorModel, Is.Null);
                 Assert.That(player.PendingLoadout, Is.Null);
                 Assert.That(player.Health, Is.EqualTo(100));
@@ -3569,7 +3574,7 @@ public sealed class FpsSimulationTests
     [TestCase(9)]
     [TestCase(16)]
     [TestCase(32)]
-    public void BotOperatorsAlternateWithinTeamsAndReturnAfterHumanHandover(int actorCount)
+    public void TeamOperatorsStayDistinctAndReturnAfterHumanHandover(int actorCount)
     {
         var slots = Enumerable.Range(0, actorCount).Select(id =>
             new FpsSimulationSlot((byte)id, $"Bot {id}", FpsSlotRole.Auto)).ToArray();
@@ -3579,25 +3584,104 @@ public sealed class FpsSimulationTests
         var reversed = new FpsSimulation(config, slots.Reverse());
         foreach (var team in simulation.Actors.GroupBy(actor => actor.Team))
         {
-            Assert.That(Math.Abs(team.Count(actor => actor.OperatorModel == FpsOperatorModel.Officer)
-                - team.Count(actor => actor.OperatorModel == FpsOperatorModel.Ghost)), Is.LessThanOrEqualTo(1));
-            Assert.That(team.OrderBy(actor => actor.Id).Select(actor => actor.OperatorModel),
-                Is.EqualTo(Enumerable.Range(0, team.Count()).Select(index => index % 2 == 0
-                    ? FpsOperatorModel.Officer : FpsOperatorModel.Ghost)));
+            Assert.That(team.All(actor => actor.OperatorModel == (team.Key == FpsTeamAssignment.Team1
+                ? FpsOperatorModel.Officer : FpsOperatorModel.Ghost)), Is.True);
         }
         Assert.That(simulation.Actors.OrderBy(a => a.Id).Select(a => a.OperatorModel),
             Is.EqualTo(reversed.Actors.OrderBy(a => a.Id).Select(a => a.OperatorModel)));
         var ghost = simulation.Actors.First(actor => actor.OperatorModel == FpsOperatorModel.Ghost);
         simulation.ClaimHuman(ghost.Id, requireLoadoutConfirmation: true);
-        Assert.That(ghost.OperatorModel, Is.EqualTo(FpsOperatorModel.Officer));
-        simulation.SelectLoadout(ghost.Id, ghost.Loadout, FpsOperatorModel.Officer);
+        Assert.That(ghost.OperatorModel, Is.EqualTo(FpsOperatorModel.Ghost));
+        Assert.That(simulation.SelectLoadout(ghost.Id, ghost.Loadout, FpsOperatorModel.Ghost,
+            FpsOperatorSkin.DesertTan), Is.EqualTo(FpsLoadoutResultCode.Applied));
+        Assert.That(ghost.OperatorSkin, Is.EqualTo(FpsOperatorSkin.DesertTan));
         simulation.ReleaseHuman(ghost.Id);
         Assert.Multiple(() =>
         {
             Assert.That(ghost.OperatorModel, Is.EqualTo(FpsOperatorModel.Ghost));
+            Assert.That(ghost.OperatorSkin, Is.EqualTo(FpsOperatorSkin.Standard));
+            Assert.That(ghost.PendingOperatorSkin, Is.Null);
             Assert.That(ghost.PendingOperatorModel, Is.Null);
             Assert.That(ghost.HumanControlled, Is.False);
         });
+    }
+
+    [TestCase(FpsMatchType.TeamDeathmatch, FpsTeamAssignment.Team1, FpsOperatorModel.Officer)]
+    [TestCase(FpsMatchType.TeamDeathmatch, FpsTeamAssignment.Team2, FpsOperatorModel.Ghost)]
+    [TestCase(FpsMatchType.HardcoreTeamDeathmatch, FpsTeamAssignment.Team1, FpsOperatorModel.Officer)]
+    [TestCase(FpsMatchType.HardcoreTeamDeathmatch, FpsTeamAssignment.Team2, FpsOperatorModel.Ghost)]
+    public void TeamModelIsEnforcedWhileSkinOnlyChangesApplyOnRespawn(
+        FpsMatchType matchType, FpsTeamAssignment team, FpsOperatorModel model)
+    {
+        var simulation = new FpsSimulation(Configuration(theme: FpsVisualTheme.Modern, matchType: matchType),
+            [new(0, "Player", FpsSlotRole.Human, Team: team)]);
+        simulation.ClaimHuman(0, requireLoadoutConfirmation: true);
+        var actor = simulation.Actors.Single();
+        var otherModel = model == FpsOperatorModel.Officer ? FpsOperatorModel.Ghost : FpsOperatorModel.Officer;
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.OperatorModel, Is.EqualTo(model));
+            Assert.That(FpsOperatorModels.AllowedMask(FpsVisualTheme.Modern, matchType, team),
+                Is.EqualTo(1u << (byte)model));
+            Assert.That(simulation.SelectLoadout(0, actor.Loadout, otherModel),
+                Is.EqualTo(FpsLoadoutResultCode.InvalidSelection));
+            Assert.That(simulation.SelectLoadout(0, actor.Loadout, model, (FpsOperatorSkin)255),
+                Is.EqualTo(FpsLoadoutResultCode.InvalidSelection));
+            Assert.That(actor.LoadoutConfirmed || actor.Active, Is.False);
+        });
+        Assert.That(simulation.SelectLoadout(0, actor.Loadout, model), Is.EqualTo(FpsLoadoutResultCode.Applied));
+        var skin = model == FpsOperatorModel.Ghost ? FpsOperatorSkin.DesertTan : FpsOperatorSkin.BlueGrey;
+        uint spawn = actor.SpawnCount;
+        var loadout = actor.Loadout;
+        Assert.That(simulation.SelectLoadout(0, loadout, model, skin), Is.EqualTo(FpsLoadoutResultCode.QueuedForRespawn));
+        Assert.That(simulation.SelectLoadout(0, loadout, otherModel), Is.EqualTo(FpsLoadoutResultCode.InvalidSelection));
+        Assert.That(simulation.SelectLoadout(0, loadout, model, (FpsOperatorSkin)255), Is.EqualTo(FpsLoadoutResultCode.InvalidSelection));
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.OperatorSkin, Is.EqualTo(FpsOperatorSkin.Standard));
+            Assert.That(actor.PendingOperatorSkin, Is.EqualTo(skin));
+            Assert.That(actor.SpawnCount, Is.EqualTo(spawn));
+            Assert.That(actor.Loadout, Is.EqualTo(loadout));
+        });
+        actor.Dead = true;
+        actor.RespawnRemaining = 0;
+        simulation.Step(0.01f);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actor.OperatorModel, Is.EqualTo(model));
+            Assert.That(actor.OperatorSkin, Is.EqualTo(skin));
+            Assert.That(actor.PendingOperatorSkin, Is.Null);
+            Assert.That(actor.Team, Is.EqualTo(team));
+            Assert.That(actor.Loadout, Is.EqualTo(loadout));
+            Assert.That(actor.SpawnCount, Is.EqualTo(spawn + 1));
+        });
+    }
+
+    [TestCase(FpsMatchType.Deathmatch)]
+    [TestCase(FpsMatchType.HardcoreDeathmatch)]
+    public void FreeForAllRetainsStableMixedOperators(FpsMatchType matchType)
+    {
+        var slots = Enumerable.Range(0, 9).Select(id =>
+            new FpsSimulationSlot((byte)id, $"Bot {id}", FpsSlotRole.Auto)).ToArray();
+        var config = Configuration(theme: FpsVisualTheme.Modern, matchType: matchType);
+        var simulation = new FpsSimulation(config, slots);
+        var reversed = new FpsSimulation(config, slots.Reverse());
+        Assert.That(simulation.Actors.OrderBy(a => a.Id).Select(a => a.OperatorModel),
+            Is.EqualTo(reversed.Actors.OrderBy(a => a.Id).Select(a => a.OperatorModel)));
+        Assert.That(simulation.Actors.Count(a => a.OperatorModel == FpsOperatorModel.Ghost), Is.EqualTo(4));
+        Assert.That(FpsOperatorModels.AllowedMask(FpsVisualTheme.Modern, matchType), Is.EqualTo(3));
+    }
+
+    [Test]
+    public void DesertTanCannotBeSelectedForOfficer()
+    {
+        var simulation = new FpsSimulation(Configuration(theme: FpsVisualTheme.Modern),
+            [new(0, "Player", FpsSlotRole.Human)]);
+        simulation.ClaimHuman(0, requireLoadoutConfirmation: true);
+        var actor = simulation.Actors.Single();
+        Assert.That(simulation.SelectLoadout(0, actor.Loadout, FpsOperatorModel.Officer, FpsOperatorSkin.DesertTan),
+            Is.EqualTo(FpsLoadoutResultCode.InvalidSelection));
+        Assert.That(actor.LoadoutConfirmed || actor.Active, Is.False);
     }
 
     [Test]
@@ -3607,6 +3691,8 @@ public sealed class FpsSimulationTests
         simulation.ClaimHuman(0, requireLoadoutConfirmation: true);
         var actor = simulation.Actors.Single();
         Assert.That(simulation.SelectLoadout(0, actor.Loadout, FpsOperatorModel.Ghost),
+            Is.EqualTo(FpsLoadoutResultCode.InvalidSelection));
+        Assert.That(simulation.SelectLoadout(0, actor.Loadout, FpsOperatorModel.Officer, FpsOperatorSkin.BlueGrey),
             Is.EqualTo(FpsLoadoutResultCode.InvalidSelection));
         Assert.Multiple(() =>
         {

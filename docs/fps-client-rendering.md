@@ -345,3 +345,25 @@ online script's exclusive callback. It has fewer packaging concerns but no modul
    guard.
 7. After any rendering change, test visible movement, rotation, shooting alignment, death, and respawn
    in a live multi-bot match; compilation alone does not validate CSP scene behavior.
+## Hip-aim and ADS target identification
+
+While hip aiming or aiming down sights in a running match, the closest living actor under the reticle
+shows their authoritative name and health above their head. Name and bar are blue for a teammate,
+red for an enemy; everyone else is an enemy in FFA. Both Modern and Blocks use the same indicator.
+The marker disappears when the actor leaves the reticle, cover blocks the ray,
+either player dies, or menus/results interrupt gameplay. Reloading, sprinting, and grenades suppress it.
+
+`hud.updateAimTarget()` in `fps.lua` tests the existing 0.42 m actor capsule at the interpolated render
+position, with standing/crouch/prone heights of 1.8/1.15/0.65 m, up to 120 m. One track raycast checks
+the closest candidate. Selection is cosmetic; it never changes shooting or damage. The label anchor
+follows the stance height. Health uses the server's maximum, including Hardcore settings.
+
+The selected actor ID and anchor are published every frame through HUD bridge **v14**, avoiding
+the 20 Hz roster publication delay for reticle changes. The app discards targets older than 150 ms.
+The installed HUD and online fallback share identical drawing code, verified by
+`tools/test_fps_aim_target.py --lua-runtime .artifacts/lua-runtime`. Its tests exercise visibility,
+hip/ADS aiming, stance/lifecycle gates, nearest target, team colors, health fill, bridge layout, and stale data.
+Preview images approximate CSP rendering; actual gameplay remains the visual acceptance step.
+
+Client pack **51** includes HUD app **1.14.0**, FPS network protocol **6**, and Modern archive **11**.
+The network and asset revisions also cover the team operators and separate skin selection.

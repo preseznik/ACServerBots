@@ -500,6 +500,23 @@ def validate_modern_asset_set(directory: Path) -> dict[str, Any]:
                 raise ValueError("Operator portrait dimensions do not match the menu")
         _validate_animation_family(operator_animations, root_lock=True,
                                    compatible_nodes=set(ghost.node_names))
+        for model, ids in (("officer", [0, 1]), ("ghost", [0, 1, 2])):
+            # The base and Ghost conversion stages validate before the skin builder runs.
+            skins = manifest["operators"][model].get("skins")
+            if skins is None:
+                continue
+            if [skin["id"] for skin in skins] != ids:
+                raise ValueError(f"Unexpected {model} skin IDs")
+            for skin in skins:
+                name = skin["portrait"]
+                if _png_dimensions(files[name].read_bytes(), name) != (640, 800):
+                    raise ValueError(f"Skin portrait dimensions are invalid: {name}")
+                if skin["id"] == 0:
+                    continue
+                for key in ("uniform", "gear"):
+                    name = skin[key]
+                    if _png_dimensions(files[name].read_bytes(), name) != (2048, 2048):
+                        raise ValueError(f"Skin atlas dimensions are invalid: {name}")
     return {
         "operator": operator,
         "ghost": ghost,

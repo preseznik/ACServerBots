@@ -303,12 +303,15 @@ try {
                     try {
                         foreach ($file in @('asrc_modern_operator_carbine.kn5', 'asrc_modern_ghost_carbine.kn5',
                                 'asrc_modern_ghost_team2_uniform.png', 'asrc_modern_ghost_team2_gear.png',
-                                'asrc_operator_officer.png', 'asrc_operator_ghost.png')) {
+                                'asrc_operator_officer.png', 'asrc_operator_ghost.png',
+                                'asrc_modern_ghost_desert_uniform.png', 'asrc_modern_ghost_desert_gear.png',
+                                'asrc_operator_officer_bluegrey.png', 'asrc_operator_ghost_bluegrey.png',
+                                'asrc_operator_ghost_desert.png')) {
                             if ($null -eq $assetArchive.GetEntry($file)) {
                                 throw "Packaged Modern archive is missing $file."
                             }
                         }
-                        Write-Host 'Verified both operators, Ghost team textures, and portrait cards in the served archive.'
+                        Write-Host 'Verified both operators, selectable skins including Desert tan, and portraits in the served archive.'
                     } finally {
                         $assetArchive.Dispose()
                         $assetStream.Dispose()
@@ -573,6 +576,16 @@ if ($FpsGate) {
             }
         }
         Write-Host 'Verified authoritative Officer/Ghost bot assignments.'
+        if ($FpsMatchType -in @('TeamDeathmatch', 'HardcoreTeamDeathmatch')) {
+            $appearances = @([regex]::Matches($combinedLog,
+                'FPS actor initial spawn:[^\r\n]+operator=(Officer|Ghost), team=(Team1|Team2), skin=Standard'))
+            if ($appearances.Count -ne $Slots) { throw 'Missing team/skin spawn diagnostics.' }
+            foreach ($appearance in $appearances) {
+                $expectedModel = if ($appearance.Groups[2].Value -eq 'Team2') { 'Ghost' } else { 'Officer' }
+                if ($appearance.Groups[1].Value -ne $expectedModel) { throw 'Team operator assignment mismatch.' }
+            }
+            Write-Host 'Verified Team 1 Officer and Team 2 Ghost for every bot.'
+        }
     }
     $activeBots = @([regex]::Matches($combinedLog,
         'FPS bot behavior active: actor=\d+,'))

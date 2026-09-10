@@ -18,7 +18,7 @@ def main():
     lua.execute('''
         bit=require('bit')
         actors={}; names={}; teams={}; warnings={}; callbacks={}
-        hud={radarReveal={},radarVisible={},loadout={},loadoutStorage={operatorModel=1}}
+        hud={radarReveal={},radarVisible={},loadout={},loadoutStorage={operatorModel=1,operatorSkin=2}}
         ac={StructItem={key=function(v) return v end, byte=function() end,
             uint32=function() end, string=function() end}}
         ac.OnlineEvent=function(def, fn) callbacks[def[1]]=fn; return fn end
@@ -36,9 +36,11 @@ def main():
     ''')
     lua.execute(source[source.index("function fpsVisual.resetOperatorAvatar("):
                        source.index("function fpsVisual.fallback(")])
+    lua.execute(source[source.index("function hud.skinAllowed("):
+                       source.index("function hud.aimSensitivity(")])
     lua.execute(source[source.index("hud.rosterEvent = ac.OnlineEvent({"):
                        source.index("hud.matchEvent = ac.OnlineEvent({")])
-    lua.execute(source[source.index("function fpsVisual.applyOperatorTeamSkin("):
+    lua.execute(source[source.index("function fpsVisual.applyOperatorSkin("):
                        source.index("local function ensureLocalViewmodel(")])
     lua.execute(source[source.index("hud.loadoutCatalogEvent = ac.OnlineEvent({"):
                        source.index("hud.loadoutResultEvent = ac.OnlineEvent({")])
@@ -50,10 +52,11 @@ def main():
         fpsVisual.modern=true
         local roster=callbacks.ASRC_FpsRoster
         -- Roster can arrive before the unreliable positional snapshot creates an actor.
-        roster(nil,{actorID=7,role=1,team=2,name='Remote',operatorModel=1})
+        roster(nil,{actorID=7,role=1,team=2,name='Remote',operatorModel=1,operatorSkin=2})
         actors[7]=fakeActor(7,2)
         assert(fpsVisual.operatorForActor(actors[7]).id==1)
-        roster(nil,{actorID=7,role=1,team=2,name='Remote',operatorModel=1})
+        local _, skinID=fpsVisual.skinForActor(actors[7]); assert(skinID==2)
+        roster(nil,{actorID=7,role=1,team=2,name='Remote',operatorModel=1,operatorSkin=2})
         assert(actors[7].operatorModel==1 and actors[7].root==nil)
         actors[0]=fakeActor(0,1)
         fpsVisual.actorModels[0]=0
@@ -66,12 +69,13 @@ def main():
         -- Fail only this Ghost instance; a repeated roster must not cause a retry loop.
         fpsVisual.operatorFailed(actors[7],'missing KN5')
         assert(fpsVisual.operatorForActor(actors[7]).id==0)
+        local _, fallbackSkin=fpsVisual.skinForActor(actors[7]); assert(fallbackSkin==0)
         assert(fpsVisual.modern and globalFallback==nil)
-        roster(nil,{actorID=7,role=1,team=2,name='Remote',operatorModel=1})
+        roster(nil,{actorID=7,role=1,team=2,name='Remote',operatorModel=1,operatorSkin=2})
         assert(actors[7].operatorFallback)
         roster(nil,{actorID=7,role=1,team=2,name='Remote',operatorModel=0})
         assert(not actors[7].operatorFallback)
-        -- Team 2 forks each material before editing it; Team 1 remains untouched.
+        -- Each skin forks its materials; another player on the same team stays unchanged.
         local edits={}
         local material=function(name)
             local unique=false
@@ -82,35 +86,54 @@ def main():
                 end}
         end
         actors[7].modernModel={findAny=function(_,name) return material(name) end}
-        actors[7].team=2; actors[7].teamSkinApplied=nil
+        actors[7].team=2; actors[7].skinApplied=nil
         fpsVisual.actorModels[7]=1
-        assert(fpsVisual.applyOperatorTeamSkin(actors[7]))
+        fpsVisual.actorSkins[7]=1
+        assert(fpsVisual.applyOperatorSkin(actors[7]))
         assert(#edits==2 and edits[1][1]=='material:ASRC_GHOST_UNIFORM')
         assert(edits[1][2]=='/assets/asrc_modern_ghost_team2_uniform.png')
-        actors[0].modernModel={findAny=function() error('Team 1 must not be recolored') end}
-        assert(fpsVisual.applyOperatorTeamSkin(actors[0]))
+        actors[0].team=2; fpsVisual.actorModels[0]=1
+        actors[0].modernModel={findAny=function() error('Default skin must not be recolored') end}
+        assert(fpsVisual.applyOperatorSkin(actors[0]))
+        actors[7].skinApplied=nil; fpsVisual.actorSkins[7]=2
+        assert(fpsVisual.applyOperatorSkin(actors[7]))
+        assert(#edits==4 and edits[3][2]=='/assets/asrc_modern_ghost_desert_uniform.png')
+        -- A skin-only reliable roster update rebuilds the instance, including return to default.
+        actors[7].operatorModel=1; actors[7].operatorSkin=2
+        actors[7].root={dispose=function() end}
+        roster(nil,{actorID=7,role=1,team=2,name='Remote',operatorModel=1,operatorSkin=0})
+        assert(actors[7].root==nil and actors[7].skinApplied==nil and fpsVisual.actorSkins[7]==0)
+        actors[7].modernModel={findAny=function(_,name) return material(name) end}
         -- Model-specific texture failure also stays within the actor.
-        actors[7].teamSkinApplied=nil; missingTextures=true
-        assert(not fpsVisual.applyOperatorTeamSkin(actors[7]))
+        fpsVisual.actorSkins[7]=2; missingTextures=true
+        assert(not fpsVisual.applyOperatorSkin(actors[7]))
         assert(actors[7].operatorFallback and globalFallback==nil)
         -- Persist acknowledged selection, then restore only server-allowed choices.
         hud.loadoutStorage.mainWeapon=1; hud.loadoutStorage.lethal=16
         hud.loadoutStorage.secondaryWeapon=4
         local result=callbacks.ASRC_FpsLoadoutResult
-        result(nil,{result=2,mainWeapon=1,lethal=16,secondaryWeapon=4,operatorModel=1})
-        assert(hud.loadoutStorage.operatorModel==1)
+        result(nil,{result=2,mainWeapon=1,lethal=16,secondaryWeapon=4,operatorModel=1,operatorSkin=2})
+        assert(hud.loadoutStorage.operatorModel==1 and hud.loadoutStorage.operatorSkin==2)
         local catalog=callbacks.ASRC_FpsLoadoutCatalog
         local message={allowedMainWeapons=6,allowedLethals=196608,allowedSecondaryWeapons=24,
             defaultMainWeapon=1,defaultLethal=16,defaultSecondaryWeapon=4,
-            allowedOperatorModels=3,defaultOperatorModel=0}
+            allowedOperatorModels=3,defaultOperatorModel=0,
+            allowedOfficerSkins=3,allowedGhostSkins=7,defaultOperatorSkin=0}
         catalog(nil,message)
-        assert(hud.loadout.operatorModel==1)
+        assert(hud.loadout.operatorModel==1 and hud.loadout.operatorSkin==2)
         message.allowedOperatorModels=1
         catalog(nil,message)
-        assert(hud.loadout.operatorModel==0)
+        assert(hud.loadout.operatorModel==0 and hud.loadout.operatorSkin==0)
         hud.loadoutStorage.operatorModel=255
         catalog(nil,message)
         assert(hud.loadout.operatorModel==0)
+        message.allowedOperatorModels=2; message.defaultOperatorModel=1
+        hud.loadoutStorage.operatorModel=0; hud.loadoutStorage.operatorSkin=1
+        catalog(nil,message)
+        assert(hud.loadout.operatorModel==1 and hud.loadout.operatorSkin==1)
+        -- Rejected selections never overwrite the last accepted local choice.
+        result(nil,{result=3,operatorModel=255,operatorSkin=255})
+        assert(hud.loadoutStorage.operatorModel==0 and hud.loadoutStorage.operatorSkin==1)
     ''')
     print("PASS: roster-before-snapshot, different players, spoof rejection, unknown IDs, "
           "per-actor fallback, pooled-material isolation, acknowledged persistence and catalog fallback.")

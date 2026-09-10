@@ -5,13 +5,13 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 13
+local bridgeProtocol = 14
 local actorCapacity = 32
 local grenadeCapacity = 8
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v13'),
+  ac.StructItem.key('asrc.fps.hud.v14'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -51,6 +51,9 @@ local bridge = ac.connect({
   appPersistentCursor = ac.StructItem.byte(),
   hitMarkerRemaining = ac.StructItem.float(),
   adsActive = ac.StructItem.byte(),
+  aimTargetID = ac.StructItem.byte(),
+  aimTargetPosition = ac.StructItem.vec3(),
+  aimTargetUpdatedAt = ac.StructItem.float(),
   linkState = ac.StructItem.byte(),
   clientError = ac.StructItem.string(128),
   pickupPrompt = ac.StructItem.string(72),
@@ -508,6 +511,47 @@ local function drawMatchAndFeed(size, scale, margin)
   end
 end
 
+local function drawAimNameplate(size, scale, position, name, health, maximumHealth, friendly)
+  local offset = position - ac.getCameraPosition()
+  local forward = ac.getCameraForward()
+  if offset.x * forward.x + offset.y * forward.y + offset.z * forward.z <= 0 then return end
+  local ok, point = pcall(render.projectPoint, position, render.ProjectFace.Center)
+  if not ok or point == nil or point.x ~= point.x or point.y ~= point.y
+      or point.x < 0 or point.x > 1 or point.y < 0 or point.y > 1 then return end
+  local anchor = vec2(point.x * size.x, point.y * size.y)
+  local color = friendly and rgbm(0.18, 0.58, 1, 1) or rgbm(1, 0.2, 0.16, 1)
+  local textMin, textMax = anchor + vec2(-112, -39) * scale, anchor + vec2(112, -13) * scale
+  ui.dwriteDrawTextClipped(name, 19 * scale, textMin + vec2(1, 1) * scale,
+    textMax + vec2(1, 1) * scale, ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0, 0, 0, 0.95))
+  ui.dwriteDrawTextClipped(name, 19 * scale, textMin, textMax,
+    ui.Alignment.Center, ui.Alignment.Center, false, color)
+  local barMin, barMax = anchor + vec2(-62, -10) * scale, anchor + vec2(62, -3) * scale
+  ui.drawRectFilled(barMin - vec2(2, 2) * scale, barMax + vec2(2, 2) * scale,
+    rgbm(0.015, 0.02, 0.03, 0.95), 3 * scale)
+  ui.drawRectFilled(barMin, barMax, rgbm(0.12, 0.14, 0.17, 0.95), 2 * scale)
+  local ratio = math.clamp(health / math.max(1, maximumHealth), 0, 1)
+  ui.drawRectFilled(barMin, vec2(barMin.x + (barMax.x - barMin.x) * ratio, barMax.y), color, 2 * scale)
+end
+
+local function drawAimTarget(size, scale)
+  local age = ui.time() - bridge.aimTargetUpdatedAt
+  if bridge.aimTargetID == 255 or age < 0 or age > 0.15
+      or bridge.cursorUnlocked ~= 0 or bridge.scoreboardHeld ~= 0
+      or bridge.matchState ~= 1 or bridge.localHealth <= 0 then return end
+  local ownIndex = localActorIndex()
+  if ownIndex == nil then return end
+  for index = 0, math.min(actorCapacity, bridge.actorCount) - 1 do
+    if bridge.actorIDs[index] == bridge.aimTargetID and bridge.actorHealth[index] > 0
+        and bit.band(bridge.actorFlags[index], 3) == 1 then
+      drawAimNameplate(size, scale, bridge.aimTargetPosition, actorName(index),
+        bridge.actorHealth[index], bridge.localMaximumHealth,
+        isTeamMatch() and bridge.actorTeams[ownIndex] ~= 0
+          and bridge.actorTeams[ownIndex] == bridge.actorTeams[index])
+      return
+    end
+  end
+end
+
 local function drawAim(size, scale)
   if bridge.cursorUnlocked ~= 0 then return end
   local center = size * 0.5
@@ -892,6 +936,7 @@ local function drawHud()
   drawStatusWidgets(size, scale, margin)
   drawMatchAndFeed(size, scale, margin)
   drawAim(size, scale)
+  drawAimTarget(size, scale)
   drawAwards(size, scale)
   drawGrenadeIndicators(size, scale)
   drawPickupPrompt(size, scale)

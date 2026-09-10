@@ -349,6 +349,24 @@ public static class FpsClientPackAssets
             || teamSkins.GetProperty("team2Gear").GetString()
                 != "asrc_modern_team2_gear.png")
             throw new InvalidDataException("Embedded Modern FPS Team 2 skin metadata is invalid");
+        foreach (string model in new[] { "officer", "ghost" })
+        {
+            var skins = root.GetProperty("operators").GetProperty(model).GetProperty("skins");
+            if (skins.GetArrayLength() != (model == "ghost" ? 3 : 2))
+                throw new InvalidDataException($"Modern FPS {model} skin catalog is incomplete");
+            int id = 0;
+            foreach (var skin in skins.EnumerateArray())
+            {
+                if (skin.GetProperty("id").GetInt32() != id++)
+                    throw new InvalidDataException($"Modern FPS {model} skin ID is invalid");
+                foreach (string field in id == 1 ? new[] { "portrait" } : new[] { "portrait", "uniform", "gear" })
+                {
+                    string fileName = skin.GetProperty(field).GetString() ?? string.Empty;
+                    if (!fileName.EndsWith(".png", StringComparison.Ordinal) || !byName.ContainsKey(fileName))
+                        throw new InvalidDataException($"Modern FPS {model} skin asset is missing: {fileName}");
+                }
+            }
+        }
         if (root.GetProperty("operator").GetProperty("triangles").GetInt32() > 40_000
             || root.GetProperty("operator").GetProperty("materials").GetInt32() > 4
             || root.GetProperty("viewmodel").GetProperty("triangles").GetInt32() > 30_000

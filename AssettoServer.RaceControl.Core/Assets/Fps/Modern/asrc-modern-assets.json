@@ -76,6 +76,8 @@
     "asrc_modern_carbine_sprint.ksanim": "a3bc66fa9f47e6e04eb9ab8495a6ac693894acd1db8c551c7285545515a1d114",
     "asrc_modern_carbine_viewmodel.kn5": "751ee8eec86f2a353019bd58115c6650993fdc942cde29743c68be7de75ec53c",
     "asrc_modern_ghost_carbine.kn5": "4c8df28b10a515942e04b64b0f0981c09b6286c8205ac072647a988880cca29b",
+    "asrc_modern_ghost_desert_gear.png": "b020100b02a8a95e1b87d419874ed22f0fb0ddbb622018d133ab1a7b46a78cbf",
+    "asrc_modern_ghost_desert_uniform.png": "6e198f6cd682da53d7276372c05c0a9c484af9bd57a5b0dcc73c69de88209ae2",
     "asrc_modern_ghost_team2_gear.png": "54e210660fc02ea955348535468c63cb327d165712117e8309472acd15619a0e",
     "asrc_modern_ghost_team2_uniform.png": "9320d1d65e09e5789128d921ab8e9b43e8133d554578e94724b85a2227d53332",
     "asrc_modern_operator_aim_down.ksanim": "1740fcab511d0bbaa00e22cf0be59a16afc9afa0a6914fc1b3e825f69890b772",
@@ -102,7 +104,10 @@
     "asrc_modern_team2_gear.png": "a905579979d73be288067f45526ce0004137206a615fa8de83fcf118ad52def1",
     "asrc_modern_team2_uniform.png": "575639ea6c0dbf32e0a5056db4d2c3c70064ac4846dda179c042b5c37f8d3dc5",
     "asrc_operator_ghost.png": "17b9f7b19b16f4ad050cabddb5616af91619fca7ae7a526ea36f8025e3060180",
-    "asrc_operator_officer.png": "7a42d58274a2f6481c188a04b3a17d4fc22d31c25ed4fd254a1feaa4a1d24c50"
+    "asrc_operator_ghost_bluegrey.png": "984033ebd3109abcb195872fcf38086fbb159a4d7be2d64841bda91219086076",
+    "asrc_operator_ghost_desert.png": "50a3aa89829ee214c2e5b2bcf9a5ab393ca5737f2febd4d330239546a7f5f968",
+    "asrc_operator_officer.png": "7a42d58274a2f6481c188a04b3a17d4fc22d31c25ed4fd254a1feaa4a1d24c50",
+    "asrc_operator_officer_bluegrey.png": "865449dd6405e4917e2cdbcd79f93e8b33f94eede4854248f6d2bdb6aab7747d"
   },
   "validation": {
     "status": "passed",
@@ -151,7 +156,21 @@
         "team1": "embedded original uniform and gear",
         "team2Uniform": "asrc_modern_team2_uniform.png",
         "team2Gear": "asrc_modern_team2_gear.png"
-      }
+      },
+      "skins": [
+        {
+          "id": 0,
+          "name": "Standard issue",
+          "portrait": "asrc_operator_officer.png"
+        },
+        {
+          "id": 1,
+          "name": "Blue-grey",
+          "uniform": "asrc_modern_team2_uniform.png",
+          "gear": "asrc_modern_team2_gear.png",
+          "portrait": "asrc_operator_officer_bluegrey.png"
+        }
+      ]
     },
     "ghost": {
       "id": 1,
@@ -189,7 +208,28 @@
         "team1": "embedded original uniform and gear",
         "team2Uniform": "asrc_modern_ghost_team2_uniform.png",
         "team2Gear": "asrc_modern_ghost_team2_gear.png"
-      }
+      },
+      "skins": [
+        {
+          "id": 0,
+          "name": "Nightwar",
+          "portrait": "asrc_operator_ghost.png"
+        },
+        {
+          "id": 1,
+          "name": "Blue-grey",
+          "uniform": "asrc_modern_ghost_team2_uniform.png",
+          "gear": "asrc_modern_ghost_team2_gear.png",
+          "portrait": "asrc_operator_ghost_bluegrey.png"
+        },
+        {
+          "id": 2,
+          "name": "Desert tan",
+          "uniform": "asrc_modern_ghost_desert_uniform.png",
+          "gear": "asrc_modern_ghost_desert_gear.png",
+          "portrait": "asrc_operator_ghost_desert.png"
+        }
+      ]
     }
   }
 }

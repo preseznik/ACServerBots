@@ -20,16 +20,27 @@ local fpsVisual = {
   thirdPersonDistanceMin = 1.25,
   thirdPersonDistanceMax = 7.0,
   thirdPersonZoomStep = 0.4,
-  modernAssetRevision = 10,
+  modernAssetRevision = 11,
   actorModels = {},
+  actorSkins = {},
   operatorModels = {
     [0] = { id = 0, name = 'OFFICER', file = 'asrc_modern_operator_carbine.kn5',
       portrait = 'asrc_operator_officer.png', materialPrefix = 'ASRC_OFFICER_',
-      team2Uniform = 'asrc_modern_team2_uniform.png', team2Gear = 'asrc_modern_team2_gear.png',
+      skins = {
+        [0] = { name = 'STANDARD ISSUE', portrait = 'asrc_operator_officer.png' },
+        [1] = { name = 'BLUE-GREY', portrait = 'asrc_operator_officer_bluegrey.png',
+          uniform = 'asrc_modern_team2_uniform.png', gear = 'asrc_modern_team2_gear.png' },
+      },
       stanceOffsets = { [1] = -0.50, [2] = -0.50 } },
     [1] = { id = 1, name = 'GHOST', file = 'asrc_modern_ghost_carbine.kn5',
       portrait = 'asrc_operator_ghost.png', materialPrefix = 'ASRC_GHOST_',
-      team2Uniform = 'asrc_modern_ghost_team2_uniform.png', team2Gear = 'asrc_modern_ghost_team2_gear.png',
+      skins = {
+        [0] = { name = 'NIGHTWAR', portrait = 'asrc_operator_ghost.png' },
+        [1] = { name = 'BLUE-GREY', portrait = 'asrc_operator_ghost_bluegrey.png',
+          uniform = 'asrc_modern_ghost_team2_uniform.png', gear = 'asrc_modern_ghost_team2_gear.png' },
+        [2] = { name = 'DESERT TAN', portrait = 'asrc_operator_ghost_desert.png',
+          uniform = 'asrc_modern_ghost_desert_uniform.png', gear = 'asrc_modern_ghost_desert_gear.png' },
+      },
       stanceOffsets = { [1] = -0.50, [2] = -0.50 } },
   },
   crouchSuppressedUntilRelease = false,
@@ -317,7 +328,7 @@ if fpsVisual.requested == 'Modern' then
   fpsVisual.active = 'Modern'
   -- CSP caches remote asset archives by URL. Every regenerated KN5/KSANIM payload
   -- must advance this revision or clients can keep rendering the previous poses.
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v10.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v11.zip'
   rifleViewmodelFileName = 'asrc_modern_carbine_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_modern_operator_carbine.kn5'
   fpsVisual.pickupFileName = 'asrc_modern_carbine_pickup.kn5'
@@ -675,7 +686,7 @@ local requestRifleAssets
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 13,
+  protocol = 14,
   capacity = 32,
   grenadeCapacity = 8,
   killFeedCapacity = 6,
@@ -729,6 +740,9 @@ local hud = {
     lethal = 16,
     secondaryWeapon = 4,
     operatorModel = 0,
+    operatorSkin = 0,
+    allowedOfficerSkins = 1,
+    allowedGhostSkins = 1,
     allowedOperatorModels = 1,
     activeSlot = 0,
     lethalsRemaining = 0,
@@ -767,6 +781,7 @@ hud.loadoutStorage = ac.storage({
   lethal = 16,
   secondaryWeapon = 4,
   operatorModel = 0,
+  operatorSkin = 0,
 }, 'asrc.fps.loadout.')
 hud.itemNames = {
   [0] = 'OUT OF BOUNDS',
@@ -825,6 +840,12 @@ end
 
 function hud.itemAllowed(mask, itemID)
   return bit.band(mask, bit.lshift(1, itemID)) ~= 0
+end
+
+function hud.skinAllowed(model, skin)
+  local descriptor = fpsVisual.operatorModels[model]
+  local mask = model == 1 and hud.loadout.allowedGhostSkins or hud.loadout.allowedOfficerSkins
+  return descriptor ~= nil and descriptor.skins[skin] ~= nil and hud.itemAllowed(mask, skin)
 end
 
 function hud.aimSensitivity(ads)
@@ -909,7 +930,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v13'),
+      ac.StructItem.key('asrc.fps.hud.v14'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -949,6 +970,9 @@ function hud.connect()
       appPersistentCursor = ac.StructItem.byte(),
       hitMarkerRemaining = ac.StructItem.float(),
       adsActive = ac.StructItem.byte(),
+      aimTargetID = ac.StructItem.byte(),
+      aimTargetPosition = ac.StructItem.vec3(),
+      aimTargetUpdatedAt = ac.StructItem.float(),
       linkState = ac.StructItem.byte(),
       clientError = ac.StructItem.string(128),
       pickupPrompt = ac.StructItem.string(72),
@@ -979,7 +1003,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v13')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v14')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -1035,12 +1059,85 @@ function hud.updateRadar(localActor)
   end
 end
 
+-- Match the server's vertical actor capsule, using the interpolated visual position
+-- so the reticle selects the player the client actually sees. This is HUD-only.
+function hud.aimCapsuleDistance(origin, direction, position, height)
+  local radius = 0.42
+  local inset = math.min(radius, height * 0.5)
+  local bottom, top = position.y + inset, position.y + height - inset
+  local best = math.huge
+  local ox, oz = origin.x - position.x, origin.z - position.z
+  local a = direction.x * direction.x + direction.z * direction.z
+  if a > 1e-8 then
+    local b = 2 * (ox * direction.x + oz * direction.z)
+    local c = ox * ox + oz * oz - radius * radius
+    local d = b * b - 4 * a * c
+    if d >= 0 then
+      local root = math.sqrt(d)
+      for sign = -1, 1, 2 do
+        local distance = (-b + sign * root) / (2 * a)
+        local y = origin.y + direction.y * distance
+        if distance >= 0 and y >= bottom and y <= top then best = math.min(best, distance) end
+      end
+    end
+  end
+  for cap = 0, 1 do
+    local oy = origin.y - (cap == 0 and bottom or top)
+    local b = ox * direction.x + oy * direction.y + oz * direction.z
+    local c = ox * ox + oy * oy + oz * oz - radius * radius
+    local d = b * b - c
+    if c <= 0 then best = 0
+    elseif d >= 0 then
+      local distance = -b - math.sqrt(d)
+      if distance >= 0 then best = math.min(best, distance) end
+    end
+  end
+  return best
+end
+
+function hud.updateAimTarget()
+  hud.aimTarget = nil
+  local own = actors[localSessionID]
+  if not gameplayActive or matchState ~= 1 or not hud.loadout.confirmed
+      or cursorUnlocked or scoreboardHeld or thirdPersonEnabled
+      or fpsVisual.activeGrenadeType ~= nil or viewmodelSprint
+      or own == nil or own.health <= 0 or own.reloadRemaining > 0
+      or bit.band(own.flags, 3) ~= 1 or camera == nil or not camera:active() then return end
+  local origin, direction = camera.transform.position, camera.transform.look
+  local nearest, nearestHeight, nearestDistance = nil, 0, 120
+  for id, actor in pairs(actors) do
+    if id ~= localSessionID and actor.health > 0 and bit.band(actor.flags, 3) == 1 then
+      local stance = fpsVisual.actorStance(actor)
+      local height = stance == 2 and 0.65 or stance == 1 and 1.15 or 1.8
+      local distance = hud.aimCapsuleDistance(origin, direction, actor.render, height)
+      if distance < nearestDistance or (distance == nearestDistance
+          and nearest ~= nil and id < nearest.id) then
+        nearest, nearestHeight, nearestDistance = actor, height, distance
+      end
+    end
+  end
+  if nearest == nil then return end
+  -- Only the closest actor can own the reticle. Never disclose a name through cover.
+  local ok, obstruction = pcall(physics.raycastTrack, origin, direction,
+    nearestDistance, nil, nil, false, false)
+  if not ok or obstruction == nil or (obstruction >= 0 and obstruction < nearestDistance) then return end
+  hud.aimTarget = nearest
+  hud.aimTargetPosition = nearest.render + vec3(0, nearestHeight + 0.2, 0)
+end
+
+function hud.publishAimTarget(now)
+  hud.bridge.aimTargetID = hud.aimTarget ~= nil and hud.aimTarget.id or 255
+  if hud.aimTarget ~= nil then hud.bridge.aimTargetPosition = hud.aimTargetPosition end
+  hud.bridge.aimTargetUpdatedAt = now
+end
+
 function hud.publish(dt)
   if hud.bridge == nil then return end
   local now = ui.time()
   hud.bridge.protocol = hud.protocol
   hud.bridge.onlineHeartbeat = now
   hud.bridge.gameplayActive = gameplayActive and 1 or 0
+  hud.publishAimTarget(now)
   hud.publishAccumulator = hud.publishAccumulator + dt
   hud.radarAccumulator = hud.radarAccumulator + dt
   if hud.publishAccumulator < 0.05 then return end
@@ -1377,6 +1474,7 @@ hud.loadoutSelectEvent = ac.OnlineEvent({
   lethal = ac.StructItem.byte(),
   secondaryWeapon = ac.StructItem.byte(),
   operatorModel = ac.StructItem.byte(),
+  operatorSkin = ac.StructItem.byte(),
 }, function() end)
 
 hud.loadoutCatalogEvent = ac.OnlineEvent({
@@ -1389,6 +1487,9 @@ hud.loadoutCatalogEvent = ac.OnlineEvent({
   defaultSecondaryWeapon = ac.StructItem.byte(),
   allowedOperatorModels = ac.StructItem.uint32(),
   defaultOperatorModel = ac.StructItem.byte(),
+  allowedOfficerSkins = ac.StructItem.uint32(),
+  allowedGhostSkins = ac.StructItem.uint32(),
+  defaultOperatorSkin = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   local selection = hud.loadout
@@ -1397,9 +1498,13 @@ hud.loadoutCatalogEvent = ac.OnlineEvent({
   selection.allowedLethals = message.allowedLethals
   selection.allowedSecondaryWeapons = message.allowedSecondaryWeapons
   selection.allowedOperatorModels = message.allowedOperatorModels
+  selection.allowedOfficerSkins = message.allowedOfficerSkins
+  selection.allowedGhostSkins = message.allowedGhostSkins
   selection.operatorModel = fpsVisual.operatorModels[hud.loadoutStorage.operatorModel] ~= nil
       and hud.itemAllowed(message.allowedOperatorModels, hud.loadoutStorage.operatorModel)
       and hud.loadoutStorage.operatorModel or message.defaultOperatorModel
+  selection.operatorSkin = hud.skinAllowed(selection.operatorModel, hud.loadoutStorage.operatorSkin)
+    and hud.loadoutStorage.operatorSkin or message.defaultOperatorSkin
   selection.mainWeapon = hud.itemAllowed(message.allowedMainWeapons,
       hud.loadoutStorage.mainWeapon) and hud.loadoutStorage.mainWeapon
     or message.defaultMainWeapon
@@ -1420,6 +1525,7 @@ hud.loadoutResultEvent = ac.OnlineEvent({
   lethal = ac.StructItem.byte(),
   secondaryWeapon = ac.StructItem.byte(),
   operatorModel = ac.StructItem.byte(),
+  operatorSkin = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   if message.result == 1 then
@@ -1430,6 +1536,7 @@ hud.loadoutResultEvent = ac.OnlineEvent({
     hud.loadoutStorage.lethal = message.lethal
     hud.loadoutStorage.secondaryWeapon = message.secondaryWeapon
     hud.loadoutStorage.operatorModel = message.operatorModel
+    hud.loadoutStorage.operatorSkin = message.operatorSkin
     if hud.preDriveDeployPending then
       hud.preDriveDeployPending = false
       hud.preDriveReturnAfterLoadout = false
@@ -1446,6 +1553,7 @@ hud.loadoutResultEvent = ac.OnlineEvent({
     hud.loadoutStorage.lethal = message.lethal
     hud.loadoutStorage.secondaryWeapon = message.secondaryWeapon
     hud.loadoutStorage.operatorModel = message.operatorModel
+    hud.loadoutStorage.operatorSkin = message.operatorSkin
     if hud.preDriveDeployPending then
       hud.preDriveDeployPending = false
       hud.preDriveReturnAfterLoadout = false
@@ -1746,6 +1854,7 @@ hud.rosterEvent = ac.OnlineEvent({
   team = ac.StructItem.byte(),
   name = ac.StructItem.string(32),
   operatorModel = ac.StructItem.byte(),
+  operatorSkin = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   local previousName = names[message.actorID]
@@ -1753,6 +1862,8 @@ hud.rosterEvent = ac.OnlineEvent({
   teams[message.actorID] = message.team
   local model = fpsVisual.operatorModels[message.operatorModel] ~= nil and message.operatorModel or 0
   fpsVisual.actorModels[message.actorID] = model
+  local skin = fpsVisual.operatorModels[model].skins[message.operatorSkin] ~= nil and message.operatorSkin or 0
+  fpsVisual.actorSkins[message.actorID] = skin
   hud.radarReveal[message.actorID] = nil
   hud.radarVisible[message.actorID] = nil
   local actor = actors[message.actorID]
@@ -1761,11 +1872,12 @@ hud.rosterEvent = ac.OnlineEvent({
       fpsAudio.resetActor(actor, true)
     end
     actor.role = message.role
-    if actor.team ~= message.team or actor.operatorModel ~= model then
+    if actor.team ~= message.team or actor.operatorModel ~= model or actor.operatorSkin ~= skin then
       fpsVisual.resetOperatorAvatar(actor)
       actor.operatorFallback = false
     end
     actor.operatorModel = model
+    actor.operatorSkin = skin
     actor.team = message.team
   end
 end)
@@ -2488,7 +2600,7 @@ end
 function fpsVisual.resetOperatorAvatar(actor)
   if actor.root ~= nil and actor.root ~= false then pcall(function() actor.root:dispose() end) end
   actor.root, actor.modernModel, actor.weaponRoot, actor.weaponMesh = nil, nil, nil, nil
-  actor.weaponAsset, actor.loadedOperatorModel, actor.teamSkinApplied = nil, nil, nil
+  actor.weaponAsset, actor.loadedOperatorModel, actor.skinApplied = nil, nil, nil
   actor.animationClip, actor.animationPreviousClip, actor.animationPhase = nil, nil, 0
   actor.nativeScenePrepared, actor.nativeSceneVisible = false, false
 end
@@ -2507,6 +2619,13 @@ function fpsVisual.operatorFailed(actor, reason)
   else
     fpsVisual.fallback(reason)
   end
+end
+
+function fpsVisual.skinForActor(actor)
+  local descriptor = fpsVisual.operatorForActor(actor)
+  local id = fpsVisual.actorSkins[actor.id] or 0
+  if descriptor.skins[id] == nil then id = 0 end
+  return descriptor.skins[id], id
 end
 
 function fpsVisual.fallback(reason)
@@ -2791,25 +2910,25 @@ requestRifleAssets = function()
   end)
 end
 
-function fpsVisual.applyOperatorTeamSkin(actor)
+function fpsVisual.applyOperatorSkin(actor)
+  local skin, skinID = fpsVisual.skinForActor(actor)
   if not fpsVisual.modern or actor.modernModel == nil
-      or actor.teamSkinApplied == actor.team then return true end
-  if actor.team ~= 2 then
-    -- Freshly loaded instances already have the authored Team 1 textures. Do
-    -- not reset or recolor them: the pooled KN5 can share materials initially.
-    actor.teamSkinApplied = actor.team
+      or actor.skinApplied == skinID then return true end
+  if skinID == 0 then
+    -- A skin change rebuilds the instance, restoring its embedded original maps.
+    actor.skinApplied = 0
     return true
   end
   local ok, err = pcall(function()
     local descriptor = fpsVisual.operatorForActor(actor)
-    local uniformPath, gearPath = fpsVisual.asset(descriptor.team2Uniform), fpsVisual.asset(descriptor.team2Gear)
+    local uniformPath, gearPath = fpsVisual.asset(skin.uniform), fpsVisual.asset(skin.gear)
     if uniformPath == nil or gearPath == nil
         or not io.fileExists(uniformPath) or not io.fileExists(gearPath) then
-      error('Team 2 operator textures are missing')
+      error('Operator skin textures are missing')
     end
     -- loadKN5() pools material resources. Select the two descendants by their
     -- authored material names, then fork those materials for this actor before
-    -- replacing textures so Team 2 cannot recolor Team 1 instances.
+    -- replacing textures so one player's skin cannot recolor another instance.
     local uniform = actor.modernModel:findAny('material:' .. descriptor.materialPrefix .. 'UNIFORM')
     local gear = actor.modernModel:findAny('material:' .. descriptor.materialPrefix .. 'GEAR')
     if uniform == nil or uniform:size() ~= 1 or gear == nil or gear:size() ~= 1 then
@@ -2822,11 +2941,11 @@ function fpsVisual.applyOperatorTeamSkin(actor)
     gear:setMaterialTexture('txDiffuse', gearPath)
   end)
   if not ok then
-    fpsVisual.operatorFailed(actor, 'Team 2 operator skin actor ' .. tostring(actor.id) .. ': '
+    fpsVisual.operatorFailed(actor, 'operator skin actor ' .. tostring(actor.id) .. ': '
       .. tostring(err))
     return false
   end
-  actor.teamSkinApplied = 2
+  actor.skinApplied = skinID
   return true
 end
 
@@ -3894,7 +4013,7 @@ local function updateRemoteActors(dt)
         end
         actor.root:setPosition(scenePosition + ac.getSim().originShift)
         actor.root:setOrientation(sceneLook, sceneUp)
-        if not fpsVisual.applyOperatorTeamSkin(actor) then return false end
+        if not fpsVisual.applyOperatorSkin(actor) then return false end
         local dead = bit.band(actor.flags, 2) ~= 0
         fpsVisual.setActorWeaponVisible(actor, not dead)
         if not fpsVisual.updateActorAnimation(actor, dt) then return false end
@@ -4041,7 +4160,7 @@ local function updateLocalThirdPersonAvatar(actor, prepareOnly)
     else
       actor.root:setOrientation(vec3(math.sin(yaw), 0, math.cos(yaw)), vec3(0, 1, 0))
     end
-    if not fpsVisual.applyOperatorTeamSkin(actor) then return end
+    if not fpsVisual.applyOperatorSkin(actor) then return end
     fpsVisual.setActorWeaponVisible(actor, not dead)
     if not fpsVisual.updateActorAnimation(actor, viewmodelFrameDt) then return end
     if actor.weaponRoot ~= nil and actor.weaponRoot ~= false then
@@ -4736,7 +4855,38 @@ function script.update(dt)
     popup.ttl = popup.ttl - dt
     if popup.ttl <= 0 then table.remove(hud.awardPopups, i) end
   end
+  hud.updateAimTarget()
   hud.publish(dt)
+end
+
+function hud.drawAimNameplate(size, scale, position, name, health, maximumHealth, friendly)
+  local offset = position - ac.getCameraPosition()
+  local forward = ac.getCameraForward()
+  if offset.x * forward.x + offset.y * forward.y + offset.z * forward.z <= 0 then return end
+  local ok, point = pcall(render.projectPoint, position, render.ProjectFace.Center)
+  if not ok or point == nil or point.x ~= point.x or point.y ~= point.y
+      or point.x < 0 or point.x > 1 or point.y < 0 or point.y > 1 then return end
+  local anchor = vec2(point.x * size.x, point.y * size.y)
+  local color = friendly and rgbm(0.18, 0.58, 1, 1) or rgbm(1, 0.2, 0.16, 1)
+  local textMin, textMax = anchor + vec2(-112, -39) * scale, anchor + vec2(112, -13) * scale
+  ui.dwriteDrawTextClipped(name, 19 * scale, textMin + vec2(1, 1) * scale,
+    textMax + vec2(1, 1) * scale, ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0, 0, 0, 0.95))
+  ui.dwriteDrawTextClipped(name, 19 * scale, textMin, textMax,
+    ui.Alignment.Center, ui.Alignment.Center, false, color)
+  local barMin, barMax = anchor + vec2(-62, -10) * scale, anchor + vec2(62, -3) * scale
+  ui.drawRectFilled(barMin - vec2(2, 2) * scale, barMax + vec2(2, 2) * scale,
+    rgbm(0.015, 0.02, 0.03, 0.95), 3 * scale)
+  ui.drawRectFilled(barMin, barMax, rgbm(0.12, 0.14, 0.17, 0.95), 2 * scale)
+  local ratio = math.clamp(health / math.max(1, maximumHealth), 0, 1)
+  ui.drawRectFilled(barMin, vec2(barMin.x + (barMax.x - barMin.x) * ratio, barMax.y), color, 2 * scale)
+end
+
+function hud.drawAimTarget(size, scale)
+  local target, own = hud.aimTarget, actors[localSessionID]
+  if target == nil or own == nil or cursorUnlocked or scoreboardHeld or target.health <= 0 then return end
+  hud.drawAimNameplate(size, scale, hud.aimTargetPosition,
+    names[target.id] or ('Operative ' .. target.id), target.health, hud.maximumHealth,
+    isTeamMatch() and own.team ~= 0 and own.team == target.team)
 end
 
 function hud.drawAwardPopups(center)
@@ -5195,13 +5345,15 @@ function hud.submitLoadout()
     if not hud.itemAllowed(hud.loadout[row.mask], hud.loadout[field]) then return false end
   end
   if fpsVisual.operatorModels[hud.loadout.operatorModel] == nil
-      or not hud.itemAllowed(hud.loadout.allowedOperatorModels, hud.loadout.operatorModel) then return false end
+      or not hud.itemAllowed(hud.loadout.allowedOperatorModels, hud.loadout.operatorModel)
+      or not hud.skinAllowed(hud.loadout.operatorModel, hud.loadout.operatorSkin) then return false end
   hud.loadout.result = 'SENDING TO SERVER...'
   hud.loadoutSelectEvent({
     mainWeapon = hud.loadout.mainWeapon,
     lethal = hud.loadout.lethal,
     secondaryWeapon = hud.loadout.secondaryWeapon,
     operatorModel = hud.loadout.operatorModel,
+    operatorSkin = hud.loadout.operatorSkin,
   })
   return true
 end
@@ -5333,20 +5485,52 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
   end
 
   text('L O A D O U T', 42, 24, 500, 24, 15, muted)
-  text(fpsVisual.modern and hud.loadoutTab == 'operator' and 'SELECT YOUR OPERATOR'
+  text(fpsVisual.modern and hud.loadoutTab == 'skin' and 'SELECT YOUR SKIN'
+    or fpsVisual.modern and hud.loadoutTab == 'operator' and 'SELECT YOUR OPERATOR'
     or fromPreDrive and 'PREPARE TO DEPLOY'
-    or initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 1060, 52, 46, white)
+    or initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 980, 52, 46, white)
   if fpsVisual.modern then
     requestRifleAssets()
-    if button('GEAR', 1190, 53, 164, 42, true, hud.loadoutTab ~= 'operator') then hud.loadoutTab = 'gear' end
-    if button('OPERATOR', 1370, 53, 188, 42, true, hud.loadoutTab == 'operator') then hud.loadoutTab = 'operator' end
+    if button('GEAR', 1040, 53, 134, 42, true, hud.loadoutTab == nil or hud.loadoutTab == 'gear') then hud.loadoutTab = 'gear' end
+    if button('OPERATOR', 1190, 53, 188, 42, true, hud.loadoutTab == 'operator') then hud.loadoutTab = 'operator' end
+    if button('SKIN', 1394, 53, 164, 42, true, hud.loadoutTab == 'skin') then hud.loadoutTab = 'skin' end
   end
-  text(fpsVisual.modern and hud.loadoutTab == 'operator' and 'Choose your appearance. First-person arms and gameplay stay the same.'
+  text(fpsVisual.modern and hud.loadoutTab == 'skin' and 'Choose colors for your operator. Changes apply on your next spawn.'
+    or fpsVisual.modern and hud.loadoutTab == 'operator' and (hud.loadout.allowedOperatorModels ~= 3
+      and 'Your team assigns your operator. Choose its colors in the Skin tab.'
+      or 'Choose your operator, then customize its colors in the Skin tab.')
     or fromPreDrive and 'Choose one item per slot, then save and return to the match briefing.'
     or initialSelection and 'Choose one item per slot. Confirm to spawn.'
     or 'Choose one item per slot. Changes apply on your next respawn.', 42, 105, 1300, 26, 18, muted)
   line(42, 145, 1558, 145, border)
-  if fpsVisual.modern and hud.loadoutTab == 'operator' then
+  if fpsVisual.modern and hud.loadoutTab == 'skin' then
+    local model = fpsVisual.operatorModels[hud.loadout.operatorModel] or fpsVisual.operatorModels[0]
+    local count = hud.loadout.operatorModel == 1 and 3 or 2
+    local width = (1516 - (count - 1) * 24) / count
+    for id = 0, count - 1 do
+      local skin = model.skins[id]
+      local x = 42 + id * (width + 24)
+      local allowed = hud.loadout.catalogReceived and hud.skinAllowed(hud.loadout.operatorModel, id)
+      local selected = hud.loadout.operatorSkin == id
+      local hot = allowed and hovered(x, 166, width, 610)
+      if hot and clicked then
+        hud.loadout.operatorSkin = id
+        hud.loadout.dirty = true
+        hud.loadout.result = fromPreDrive and 'SAVE YOUR SKIN BEFORE DEPLOYING'
+          or initialSelection and 'CONFIRM YOUR SKIN TO SPAWN' or 'SKIN CHANGES ON NEXT RESPAWN'
+      end
+      rect(x, 166, width, 610, selected and rgbm(0.035, 0.085, 0.11, 1)
+        or rgbm(0.033, 0.047, 0.057, 1), selected and accent or hot and muted or border)
+      local portrait = fpsVisual.asset(skin.portrait)
+      if portrait ~= nil and io.fileExists(portrait) then
+        ui.drawImage(portrait, point(x + 24, 184), point(x + width - 24, 674),
+          allowed and rgbm.colors.white or rgbm(0.35, 0.35, 0.35, 0.7), nil, nil, ui.ImageFit.Fit)
+      end
+      text(skin.name, x + 24, 690, width - 48, 40, 29, allowed and white or disabled)
+      text(selected and 'SELECTED' or allowed and 'SELECT SKIN' or 'UNAVAILABLE',
+        x + 24, 736, width - 48, 24, 17, selected and accent or muted)
+    end
+  elseif fpsVisual.modern and hud.loadoutTab == 'operator' then
     for id = 0, 1 do
       local descriptor = fpsVisual.operatorModels[id]
       local x = 42 + id * 774
@@ -5355,6 +5539,7 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
       local hot = allowed and hovered(x, 166, 742, 610)
       if hot and clicked then
         hud.loadout.operatorModel = id
+        if not hud.skinAllowed(id, hud.loadout.operatorSkin) then hud.loadout.operatorSkin = 0 end
         hud.loadout.dirty = true
         hud.loadout.result = fromPreDrive and 'SAVE YOUR OPERATOR BEFORE DEPLOYING'
           or initialSelection and 'CONFIRM TO SPAWN' or 'OPERATOR CHANGES ON NEXT RESPAWN'
@@ -5369,8 +5554,9 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
         text('LOADING OPERATOR...', x + 30, 360, 682, 60, 20, muted, true)
       end
       text(descriptor.name, x + 24, 688, 480, 42, 30, allowed and white or disabled)
-      text(id == 1 and 'NIGHTWAR' or 'STANDARD ISSUE', x + 24, 733, 500, 26, 16, muted)
-      text(not allowed and 'UNAVAILABLE' or selected and 'SELECTED' or 'SELECT OPERATOR',
+      text(hud.loadout.allowedOperatorModels ~= 3 and (id == 1 and 'TEAM 2' or 'TEAM 1')
+        or id == 1 and 'NIGHTWAR' or 'STANDARD ISSUE', x + 24, 733, 500, 26, 16, muted)
+      text(not allowed and 'OTHER TEAM' or selected and 'SELECTED' or 'SELECT OPERATOR',
         x + 504, 700, 212, 42, 17, selected and accent or muted, true)
     end
   else
@@ -5401,6 +5587,7 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
   local summaryX = (initialSelection and not fromPreDrive) and 42 or 290
   local operatorValid = fpsVisual.operatorModels[hud.loadout.operatorModel] ~= nil
     and hud.itemAllowed(hud.loadout.allowedOperatorModels, hud.loadout.operatorModel)
+    and hud.skinAllowed(hud.loadout.operatorModel, hud.loadout.operatorSkin)
   if selectedCount == 3 then check(summaryX, 814) end
   text(string.format('%d / 3 SLOTS SELECTED%s', selectedCount, fpsVisual.modern and ('  /  '
     .. ((fpsVisual.operatorModels[hud.loadout.operatorModel] or {}).name or 'SELECT OPERATOR')) or ''),
@@ -5851,6 +6038,7 @@ function script.drawUI()
     ui.drawLine(center + vec2(-8, 8), center + vec2(-3, 3), c, 3)
   end
   hud.drawAwardPopups(center)
+  hud.drawAimTarget(size, hudScale)
   hud.drawGrenadeIndicators(size, hudScale)
   hud.drawPickupPrompt(size, hudScale)
   drawMatchStartOverlay(size, hudScale)
@@ -6302,5 +6490,5 @@ else
   ac.log('[ASRC FPS] exclusive online HUD fallback registered')
 end
 
-hud.readySent = hud.readyEvent({ protocol = 5 })
-ac.log(string.format('[ASRC FPS] ready sent: protocol=5 result=%s', tostring(hud.readySent)))
+hud.readySent = hud.readyEvent({ protocol = 6 })
+ac.log(string.format('[ASRC FPS] ready sent: protocol=6 result=%s', tostring(hud.readySent)))

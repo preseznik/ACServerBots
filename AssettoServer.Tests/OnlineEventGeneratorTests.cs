@@ -36,11 +36,15 @@ public class OnlineEventGeneratorTests
             var definition = OnlineEventGenerator.ParseClientMessage(type);
             Assert.That(definition.Udp, Is.False);
             Assert.That(definition.Structure, Does.Contain("uint8_t operatorModel"));
+            Assert.That(definition.Structure, Does.Contain("uint8_t operatorSkin"));
         }
         var catalog = OnlineEventGenerator.ParseClientMessage(typeof(FpsLoadoutCatalogPacket));
         Assert.That(catalog.Structure, Does.Contain("uint32_t allowedOperatorModels"));
         Assert.That(catalog.Structure, Does.Contain("uint8_t defaultOperatorModel"));
-        Assert.That(new FpsReadyPacket().Protocol, Is.EqualTo(5));
+        Assert.That(catalog.Structure, Does.Contain("uint32_t allowedOfficerSkins"));
+        Assert.That(catalog.Structure, Does.Contain("uint32_t allowedGhostSkins"));
+        Assert.That(catalog.Structure, Does.Contain("uint8_t defaultOperatorSkin"));
+        Assert.That(new FpsReadyPacket().Protocol, Is.EqualTo(6));
     }
 
     [Test]
