@@ -316,7 +316,7 @@ public sealed class FpsClientPackAssetsTests
     }
 
     [Test]
-    public async Task ClientPackV51ContainsTeamOperatorsSkinsAndAimTargetHud()
+    public async Task ClientPackV52ContainsTeamOperatorsSkinsAndLocomotion()
     {
         await using var stream = new MemoryStream();
         await FpsClientPackBuilder.WriteAsync(stream, "asrc_fps_carrier");
@@ -326,13 +326,13 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(51));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(52));
             Assert.That(FpsClientPackBuilder.ClientPackVersion,
                 Is.EqualTo(AssettoServer.Release.ReleaseIdentity.FpsPackVersion),
                 "The exported pack must be accepted by the release loader.");
             Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(14));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v51.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v52.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
@@ -407,7 +407,7 @@ public sealed class FpsClientPackAssetsTests
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(6));
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(51));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(52));
             Assert.That(root.GetProperty("loadoutItems").GetArrayLength(), Is.EqualTo(5));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),
@@ -552,7 +552,12 @@ public sealed class FpsClientPackAssetsTests
             Assert.That(assets.Select(asset => asset.Path), Has.Some.EndsWith(
                 "asrc_modern_team2_gear.png"));
             Assert.That(assets.Count(asset => asset.Path.EndsWith(".ksanim",
-                StringComparison.OrdinalIgnoreCase)), Is.EqualTo(26));
+                StringComparison.OrdinalIgnoreCase)), Is.EqualTo(31));
+            Assert.That(root.GetProperty("operatorAnimations").EnumerateObject().Count(), Is.EqualTo(25));
+            Assert.That(root.GetProperty("operatorAnimations").GetProperty("fire")
+                .GetProperty("trackCoverage").GetString(), Is.EqualTo("upperBody"));
+            Assert.That(root.GetProperty("operatorAnimations").GetProperty("jog_forward")
+                .GetProperty("strideMeters").GetDouble(), Is.InRange(4.9, 5.1));
             foreach ((string path, byte[] data) in assets)
             {
                 Assert.That(path, Does.StartWith(FpsClientPackAssets.ModernAssetDirectory));

@@ -73,6 +73,17 @@ carbine's existing arm mesh, skeleton, and animation ranges, plus a separately
 animated magazine for normal and empty reloads. The CC BY 4.0 license text is
 available at https://creativecommons.org/licenses/by/4.0/.
 
+## Quaternius Universal Animation Library
+
+Modern Officer and Ghost standing locomotion derives from Quaternius Universal
+Animation Library Source v3.0, licensed CC0-1.0 (public-domain dedication).
+Source: https://quaternius.itch.io/universal-animation-library
+License: https://creativecommons.org/publicdomain/zero/1.0/
+
+Animations are retargeted to the existing operator skeleton, converted to in-place
+KSANIM, grounded, and adapted to the two-hand rifle grip. The source blend remains
+unmodified; its SHA-256 and license-file hash are recorded in `asrc-modern-assets.json`.
+
 ## M67 Grenade 3D model
 
 The FPS loadout uses the downloadable M67 grenade model and textures by Tiago

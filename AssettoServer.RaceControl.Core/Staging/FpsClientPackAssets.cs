@@ -333,6 +333,19 @@ public static class FpsClientPackAssets
         }
         System.Text.Json.JsonElement teamSkins = root.GetProperty("operator")
             .GetProperty("teamSkins");
+        var animations = root.GetProperty("operatorAnimations");
+        if (animations.EnumerateObject().Count() != 25
+            || !root.GetProperty("validation").GetProperty("quaterniusLocomotionValidated").GetBoolean())
+            throw new InvalidDataException("Modern FPS locomotion catalog is incomplete");
+        foreach (var clip in animations.EnumerateObject())
+        {
+            string file = $"asrc_modern_operator_{clip.Name}.ksanim";
+            bool upperBody = clip.Name is "fire" or "reload";
+            if (clip.Value.GetProperty("file").GetString() != file || !byName.ContainsKey(file)
+                || clip.Value.GetProperty("trackCoverage").GetString() != (upperBody ? "upperBody" : "fullBody")
+                || clip.Value.GetProperty("trackCount").GetInt32() != (upperBody ? 56 : 68))
+                throw new InvalidDataException($"Modern FPS animation catalog is invalid: {clip.Name}");
+        }
         var ghost = root.GetProperty("operators").GetProperty("ghost");
         const string ghostFile = "asrc_modern_ghost_carbine.kn5";
         if (ghost.GetProperty("file").GetString() != ghostFile

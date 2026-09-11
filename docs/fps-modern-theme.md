@@ -9,6 +9,9 @@ or restart.
 Modern now offers Officer and Ghost in the in-game loadout menu. The conversion, selection,
 validation, and outstanding release requirements are documented in [fps-operators.md](fps-operators.md).
 
+Standing locomotion uses Quaternius Source clips shared by both operators. See
+[fps-locomotion.md](fps-locomotion.md) for conversion, playback and validation.
+
 ## Source and redistribution record
 
 The user confirmed redistribution rights for generated derivatives of these supplied sources:
@@ -43,7 +46,7 @@ successful build.
 KN5 version and structure, node and inverse-bind matrices, finite vertices, four normalized weights,
 valid bone indices, skinned shaders, material references, triangle counts, 2K texture limits,
 KSANIM track compatibility, a non-rest rifle-ready grip, finite frames, planar root lock, file
-hashes, and shipping budgets. Officer and Ghost share the same 20 operator animation files.
+hashes, and shipping budgets. Officer and Ghost share the same 25 operator animation files.
 
 Current generated budgets:
 
@@ -134,9 +137,9 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 ## Runtime ownership and fallback
 
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
-downloads `/fps/assets/asrc-fps-modern-v11.zip` through the same `web.loadRemoteAssets()` path as the
+downloads `/fps/assets/asrc-fps-modern-v12.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5, KSANIM, or skin texture changes. Client pack version 51 also installs both themes under the project-owned
+embedded KN5, KSANIM, or skin texture changes. Client pack version 52 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
 Team matches use Officer for Team 1 and Ghost for Team 2. Colors are selected separately in the Skin

@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 51;
+    public const int ClientPackVersion = 52;
     public const int BridgeProtocol = 14;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v51.zip";
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v52.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,

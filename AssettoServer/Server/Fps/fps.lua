@@ -20,7 +20,13 @@ local fpsVisual = {
   thirdPersonDistanceMin = 1.25,
   thirdPersonDistanceMax = 7.0,
   thirdPersonZoomStep = 0.4,
-  modernAssetRevision = 11,
+  modernAssetRevision = 12,
+  operatorAnimations = {},
+  standingClipOrder = { 'aim_idle', 'aim_up', 'aim_down', 'walk_forward',
+    'jog_forward', 'jog_forward_right', 'strafe_right', 'jog_backward_right',
+    'walk_backward', 'jog_backward_left', 'strafe_left', 'jog_forward_left', 'sprint' },
+  joggingDirections = { 'jog_forward', 'jog_forward_right', 'strafe_right',
+    'jog_backward_right', 'walk_backward', 'jog_backward_left', 'strafe_left', 'jog_forward_left' },
   actorModels = {},
   actorSkins = {},
   operatorModels = {
@@ -132,6 +138,11 @@ local fpsVisual = {
     aim_up = 'asrc_modern_operator_aim_up.ksanim',
     aim_down = 'asrc_modern_operator_aim_down.ksanim',
     walk_forward = 'asrc_modern_operator_walk_forward.ksanim',
+    jog_forward = 'asrc_modern_operator_jog_forward.ksanim',
+    jog_forward_left = 'asrc_modern_operator_jog_forward_left.ksanim',
+    jog_forward_right = 'asrc_modern_operator_jog_forward_right.ksanim',
+    jog_backward_left = 'asrc_modern_operator_jog_backward_left.ksanim',
+    jog_backward_right = 'asrc_modern_operator_jog_backward_right.ksanim',
     walk_backward = 'asrc_modern_operator_walk_backward.ksanim',
     strafe_left = 'asrc_modern_operator_strafe_left.ksanim',
     strafe_right = 'asrc_modern_operator_strafe_right.ksanim',
@@ -328,7 +339,7 @@ if fpsVisual.requested == 'Modern' then
   fpsVisual.active = 'Modern'
   -- CSP caches remote asset archives by URL. Every regenerated KN5/KSANIM payload
   -- must advance this revision or clients can keep rendering the previous poses.
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v11.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v12.zip'
   rifleViewmodelFileName = 'asrc_modern_carbine_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_modern_operator_carbine.kn5'
   fpsVisual.pickupFileName = 'asrc_modern_carbine_pickup.kn5'
@@ -1730,6 +1741,7 @@ hud.snapshotEvent = ac.OnlineEvent({
       actor.animationClip = nil
       actor.animationPreviousClip = nil
       actor.animationLastPosition = nil
+      actor.animationLocomotion = nil
       actor.animationDeathStarted = nil
       actor.animationPhase = 0
       actor.animationWasGrounded = nil
@@ -1789,6 +1801,7 @@ hud.snapshotEvent = ac.OnlineEvent({
         predictionClearSnapshots = 0
         if (actor.target - actor.render):length() > 1.2 then
           actor.render:set(actor.target)
+          actor.animationLastPosition = nil
           predictedHorizontalVelocity = vec2()
           predictedVerticalVelocity = 0
           predictedAirborne = not (bit.band(actor.flags, 16) ~= 0)
@@ -1815,6 +1828,7 @@ hud.snapshotEvent = ac.OnlineEvent({
         yaw = message.yaws[i]
         pitch = message.pitches[i]
         actor.render:set(actor.target)
+        actor.animationLastPosition = nil
         actor.localInitialized = true
         predictedGroundY = actor.target.y
         predictedVerticalVelocity = 0
@@ -2602,6 +2616,7 @@ function fpsVisual.resetOperatorAvatar(actor)
   actor.root, actor.modernModel, actor.weaponRoot, actor.weaponMesh = nil, nil, nil, nil
   actor.weaponAsset, actor.loadedOperatorModel, actor.skinApplied = nil, nil, nil
   actor.animationClip, actor.animationPreviousClip, actor.animationPhase = nil, nil, 0
+  actor.animationLastPosition, actor.animationLocomotion = nil, nil
   actor.nativeScenePrepared, actor.nativeSceneVisible = false, false
 end
 
@@ -2890,6 +2905,13 @@ requestRifleAssets = function()
     end
 
     rifleAssetFolder = folder
+    if fpsVisual.modern then
+      local catalogOk, catalogError = pcall(fpsVisual.loadOperatorAnimations, folder)
+      if not catalogOk then
+        fpsVisual.fallback('operator animation catalog: ' .. tostring(catalogError))
+        return
+      end
+    end
     rifleViewmodelPath = folder .. '/' .. rifleViewmodelFileName
     rifleWorldModelPath = folder .. '/' .. rifleWorldModelFileName
     rifleDiffusePath = rifleDiffuseFileName ~= nil and (folder .. '/' .. rifleDiffuseFileName) or nil
@@ -3619,13 +3641,117 @@ local function applyFpsCamera(actor, dt)
   return true
 end
 
+function fpsVisual.loadOperatorAnimations(folder)
+  local manifest = JSON.parse(io.load(folder .. '/asrc-modern-assets.json'))
+  local catalog = manifest.operatorAnimations
+  if type(catalog) ~= 'table' then error('Missing animation catalog') end
+  for name, file in pairs(fpsVisual.operatorClips) do
+    local entry = catalog[name]
+    if type(entry) ~= 'table' or entry.file ~= file or not io.fileExists(folder .. '/' .. file)
+        or type(entry.durationSeconds) ~= 'number' or entry.durationSeconds <= 0 then
+      error('Invalid animation: ' .. name)
+    end
+    local partial = name == 'fire' or name == 'reload'
+    if entry.trackCoverage ~= (partial and 'upperBody' or 'fullBody') then
+      error('Invalid animation track coverage: ' .. name)
+    end
+  end
+  for _, name in ipairs(fpsVisual.standingClipOrder) do
+    if name:sub(1, 4) ~= 'aim_' then
+      local entry = catalog[name]
+      if type(entry.strideMeters) ~= 'number' or entry.strideMeters <= 0.5
+          or entry.strideMeters >= 8 or entry.loop ~= true then
+        error('Invalid locomotion stride: ' .. name)
+      end
+    end
+  end
+  fpsVisual.operatorAnimations = catalog
+end
+
+function fpsVisual.sampleAnimationMotion(actor, dt)
+  local previous = actor.animationLastPosition
+  actor.animationLastPosition = actor.render:clone()
+  local dx = previous ~= nil and actor.render.x - previous.x or 0
+  local dz = previous ~= nil and actor.render.z - previous.z or 0
+  local distance = math.sqrt(dx * dx + dz * dz)
+  if previous == nil or dt <= 0 or dt > 0.25 or distance > math.max(1.5, dt * 15) then
+    actor.animationVelocityX, actor.animationVelocityZ = 0, 0
+    actor.animationLocomotion = nil
+    return 0, 0
+  end
+  local rawSpeed = distance / dt
+  local mix = 1 - math.exp(-dt * (rawSpeed < 0.08 and 40 or 18))
+  actor.animationVelocityX = math.lerp(actor.animationVelocityX or 0, dx / dt, mix)
+  actor.animationVelocityZ = math.lerp(actor.animationVelocityZ or 0, dz / dt, mix)
+  local speed = math.sqrt(actor.animationVelocityX ^ 2 + actor.animationVelocityZ ^ 2)
+  return speed, distance
+end
+
+function fpsVisual.updateStandingLocomotion(actor, speed, distance, dt)
+  local state = actor.animationLocomotion
+  if state == nil then
+    state = { weights = {}, targets = {}, phase = 0, moving = false, sprinting = false }
+    actor.animationLocomotion = state
+  end
+  for _, name in ipairs(fpsVisual.standingClipOrder) do state.targets[name] = 0 end
+  state.moving = speed > (state.moving and 0.18 or 0.30)
+  state.sprinting = speed > (state.sprinting and 6.7 or 7.2)
+  if state.moving then
+    local forwardX, forwardZ = math.sin(actor.yaw), math.cos(actor.yaw)
+    local forward = actor.animationVelocityX * forwardX + actor.animationVelocityZ * forwardZ
+    local right = actor.animationVelocityX * forwardZ - actor.animationVelocityZ * forwardX
+    local direction = (math.atan2(right, forward) / (math.pi / 4)) % 8
+    local sector = math.floor(direction)
+    local fraction = direction - sector
+    local first = fpsVisual.joggingDirections[sector + 1]
+    local second = fpsVisual.joggingDirections[(sector + 1) % 8 + 1]
+    state.targets[first], state.targets[second] = 1 - fraction, fraction
+    local forwardWeight = state.targets.jog_forward
+    local walk = math.clamp((3.6 - speed) / 1.2, 0, 1) * forwardWeight
+    local sprint = state.sprinting and math.clamp((speed - 6.7) / 1.6, 0, 1) * forwardWeight or 0
+    state.targets.walk_forward = walk
+    state.targets.sprint = sprint
+    state.targets.jog_forward = forwardWeight - walk - sprint
+  else
+    state.targets[actor.pitch > 0.32 and 'aim_up' or actor.pitch < -0.32 and 'aim_down' or 'aim_idle'] = 1
+  end
+  local mix = 1 - math.exp(-dt / 0.08)
+  local dominant, maximum = 'aim_idle', -1
+  local stride, movementWeight = 0, 0
+  for _, name in ipairs(fpsVisual.standingClipOrder) do
+    local initial = name == 'aim_idle' and 1 or 0
+    local weight = math.lerp(state.weights[name] or initial, state.targets[name], mix)
+    if weight < 0.001 then weight = 0 end
+    state.weights[name] = weight
+    if weight > maximum then dominant, maximum = name, weight end
+    local entry = fpsVisual.operatorAnimations[name]
+    if entry.strideMeters ~= nil then
+      stride = stride + entry.strideMeters * weight
+      movementWeight = movementWeight + weight
+    end
+  end
+  if state.moving and movementWeight > 0.001 then
+    state.phase = (state.phase + distance / (stride / movementWeight)) % 1
+  end
+  return dominant, state.phase
+end
+
+function fpsVisual.blendStandingLocomotion(actor, dominant, position)
+  local weights = actor.animationLocomotion.weights
+  local accumulated = weights[dominant]
+  for _, name in ipairs(fpsVisual.standingClipOrder) do
+    local weight = weights[name]
+    if name ~= dominant and weight > 0 then
+      accumulated = accumulated + weight
+      actor.modernModel:blendAnimation(fpsVisual.asset(fpsVisual.operatorClips[name]),
+        position, weight / accumulated, false)
+    end
+  end
+end
+
 function fpsVisual.updateActorAnimation(actor, dt)
   if not fpsVisual.modern or actor.modernModel == nil then return true end
-  local nowPosition = actor.render:clone()
-  local displacement = actor.animationLastPosition ~= nil
-    and (nowPosition - actor.animationLastPosition) or vec3()
-  actor.animationLastPosition = nowPosition
-  local speed = displacement:length() / math.max(dt, 0.001)
+  local speed, distance = fpsVisual.sampleAnimationMotion(actor, dt)
   local grounded = bit.band(actor.flags, 16) ~= 0
   local dead = bit.band(actor.flags, 2) ~= 0
   local actionState = actor.actionState or 0
@@ -3653,6 +3779,7 @@ function fpsVisual.updateActorAnimation(actor, dt)
   local clip = 'aim_idle'
   local position = 0
   local looping = false
+  local standing = false
   if dead then
     if actor.animationDeathStarted == nil then actor.animationDeathStarted = effectClock end
     clip = 'death'
@@ -3681,39 +3808,27 @@ function fpsVisual.updateActorAnimation(actor, dt)
     elseif stance == 1 then
       clip = speed > 0.35 and 'crouch_move' or 'crouch_idle'
       looping = speed > 0.35
-    elseif speed > 4.8 then
-      clip = 'sprint'
-      looping = true
-    elseif speed > 0.35 then
-      local forwardX, forwardZ = math.sin(actor.yaw), math.cos(actor.yaw)
-      local forwardAmount = displacement.x * forwardX + displacement.z * forwardZ
-      local rightAmount = displacement.x * forwardZ - displacement.z * forwardX
-      if math.abs(rightAmount) > math.abs(forwardAmount) * 1.15 then
-        clip = rightAmount < 0 and 'strafe_left' or 'strafe_right'
-      else
-        clip = forwardAmount < 0 and 'walk_backward' or 'walk_forward'
-      end
-      looping = true
-    elseif actor.pitch > 0.32 then
-      clip = 'aim_up'
-    elseif actor.pitch < -0.32 then
-      clip = 'aim_down'
+    else
+      standing = true
+      clip, position = fpsVisual.updateStandingLocomotion(actor, speed, distance, dt)
     end
     if looping then
       actor.animationPhase = ((actor.animationPhase or 0)
         + dt * math.max(0.75, speed * 0.35)) % 1
       position = actor.animationPhase
-    else
+    elseif not standing then
       actor.animationPhase = position
     end
   end
 
-  if actor.animationClip ~= clip then
+  if actor.animationClip ~= clip and not (standing and actor.animationWasStanding) then
     actor.animationPreviousClip = actor.animationClip
     actor.animationPreviousPosition = actor.animationPosition or 0
     actor.animationBlend = 0
     actor.animationClip = clip
   end
+  actor.animationClip = clip
+  actor.animationWasStanding = standing
   actor.animationPosition = position
   actor.animationBlend = math.min(1, (actor.animationBlend or 0) + dt / 0.12)
   local ok, err = pcall(function()
@@ -3721,6 +3836,7 @@ function fpsVisual.updateActorAnimation(actor, dt)
     actor.modernModel:setPosition(vec3(0, stanceGroundOffset, 0))
     actor.modernModel:setAnimation(fpsVisual.asset(fpsVisual.operatorClips[clip]),
       position, true)
+    if standing then fpsVisual.blendStandingLocomotion(actor, clip, position) end
     if actor.animationPreviousClip ~= nil and actor.animationBlend < 1 then
       actor.modernModel:blendAnimation(
         fpsVisual.asset(fpsVisual.operatorClips[actor.animationPreviousClip]),
@@ -4000,6 +4116,7 @@ local function updateRemoteActors(dt)
         if resetMotion or renderError:lengthSquared() > 2.25 then
           actor.render:set(actor.target)
           actor.yaw = actor.targetYaw
+          actor.animationLastPosition = nil
         else
           local poseBlend = 1 - math.exp(-dt * 40)
           actor.render:set(math.lerp(actor.render, actor.target, poseBlend))

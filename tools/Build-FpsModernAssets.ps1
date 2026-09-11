@@ -4,6 +4,7 @@ param(
     [string]$OfficerZip = "F:\Coding\Codex\.resources\AssettoCorsaMods\FPS\Characters\army-officer\source\army_officer.zip",
     [string]$CarbineFbx = "F:\Coding\Codex\.resources\AssettoCorsaMods\FPS\Weapons\fps-animated-carbine\source\arms@carbine.fbx",
     [string]$GhostBlend = "F:\Coding\Codex\.resources\AssettoCorsaMods\FPS\Characters\Ghost_IURgXpX\Ghost.blend",
+    [string]$LocomotionBlend = 'F:\Coding\Codex\.resources\AssettoCorsaMods\FPS\Characters\Universal Animation Library[Source]\UAL1.blend',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot "..\AssettoServer.RaceControl.Core\Assets\Fps\Modern")
 )
 
@@ -16,6 +17,7 @@ $requiredInputs = @(
     $OfficerZip,
     $CarbineFbx,
     $GhostBlend,
+    $LocomotionBlend,
     (Join-Path $PSScriptRoot "build_fps_ghost_assets.py"),
     (Join-Path $PSScriptRoot "build_fps_operator_skins.py"),
     $sourceScript,
@@ -52,6 +54,9 @@ if ($LASTEXITCODE -ne 0) { throw "Ghost asset generation failed with exit code $
     --output-dir $OutputDirectory --cache-dir (Join-Path $PSScriptRoot "..\.artifacts\ghost-work")
 if ($LASTEXITCODE -ne 0) { throw "Operator skin generation failed with exit code $LASTEXITCODE." }
 
+& (Join-Path $PSScriptRoot 'Build-FpsLocomotion.ps1') -BlenderPath $BlenderPath `
+    -SourceBlend $LocomotionBlend -OutputDirectory $OutputDirectory
+
 $expected = @(
     "asrc_modern_operator_carbine.kn5",
     "asrc_modern_carbine_viewmodel.kn5",
@@ -73,6 +78,7 @@ $expected = @(
 $expected += @(
     "aim_idle", "aim_up", "aim_down", "walk_forward", "walk_backward",
     "strafe_left", "strafe_right", "sprint", "crouch_idle", "crouch_move",
+    "jog_forward", "jog_forward_left", "jog_forward_right", "jog_backward_left", "jog_backward_right",
     "prone_idle", "prone_crawl", "jump_start", "airborne", "land",
     "mantle", "vault", "fire", "reload", "death"
 ) | ForEach-Object { "asrc_modern_operator_$_.ksanim" }

@@ -246,27 +246,59 @@ def inspect_ksanim(path: Path) -> dict[str, tuple[tuple[float, ...], ...]]:
 
 
 def _validate_animation_family(paths: list[Path], root_lock: bool,
-                               compatible_nodes: set[str]) -> None:
+                               compatible_nodes: set[str], catalog: dict | None = None) -> None:
     expected_tracks: tuple[str, ...] | None = None
     for path in paths:
         tracks = inspect_ksanim(path)
         names = tuple(tracks)
+        key = path.stem.removeprefix('asrc_modern_operator_')
+        entry = (catalog or {}).get(key, {})
+        partial = entry.get('trackCoverage') == 'upperBody'
         missing = set(names) - compatible_nodes
         if missing:
             raise ValueError(
                 f"KSANIM targets missing KN5 nodes in {path.name}: {sorted(missing)}")
-        if expected_tracks is None:
+        if partial:
+            forbidden = ('Hips', 'UpLeg', 'Leg_', 'Foot', 'Toe', '_rootJoint')
+            expected_upper = {n for n in compatible_nodes if n.startswith('mixamorig:')
+                              and not any(word in n for word in forbidden)}
+            if key not in ('fire', 'reload') or set(names) != expected_upper:
+                raise ValueError(f'Invalid upper-body track mask: {path.name}')
+        elif expected_tracks is None:
             expected_tracks = names
         elif names != expected_tracks:
             raise ValueError(f"Incompatible KSANIM tracks: {path.name}")
-        if root_lock:
+        if entry:
+            count = len(next(iter(tracks.values())))
+            if entry.get('file') != path.name or entry.get('trackCount') != len(names) \
+                    or abs(entry.get('durationSeconds', 0) - (count - 1) / 30) > 1e-6:
+                raise ValueError(f'Animation catalog disagrees with {path.name}')
+            if any(len(frames) != count for frames in tracks.values()):
+                raise ValueError(f'Unequal animation track lengths: {path.name}')
+        if root_lock and not partial:
             root_name = next((name for name in names if name.endswith("Hips_01")), None)
             if root_name is None:
                 raise ValueError(f"Operator KSANIM has no hips/root track: {path.name}")
             frames = tracks[root_name]
             origin_x, origin_z = frames[0][4], frames[0][6]
-            if any(abs(frame[4] - origin_x) > 1e-5 or abs(frame[6] - origin_z) > 1e-5
-                   for frame in frames):
+            if entry.get('sourceAction'):
+                # Hips are relative to the rotated root bone, in centimetres.
+                # Permit bounded pelvic sway/bob but never animation-owned travel.
+                if not 0.5 < entry.get('strideMeters', 0) < 8 or not entry.get('loop'):
+                    raise ValueError(f'Invalid locomotion stride/loop: {path.name}')
+                root = tracks['_rootJoint']
+                if any(max(abs(a - b) for a, b in zip(f, root[0])) > 1e-5 for f in root):
+                    raise ValueError(f'Locomotion moves the actor root: {path.name}')
+                if any(math.dist(f[4:7], frames[0][4:7]) > 25 for f in frames):
+                    raise ValueError(f'Locomotion hips contain root travel: {path.name}')
+                if any(max(abs(a - b) for a, b in zip(fs[0], fs[-1])) > 1e-4
+                       for fs in tracks.values()):
+                    raise ValueError(f'Locomotion loop is discontinuous: {path.name}')
+                for foot in ('mixamorig:LeftFoot_064', 'mixamorig:RightFoot_059'):
+                    if max(math.dist(f[:4], tracks[foot][0][:4]) for f in tracks[foot]) < 0.025:
+                        raise ValueError(f'Locomotion has static ankles: {path.name}')
+            elif any(abs(frame[4] - origin_x) > 1e-5 or abs(frame[6] - origin_z) > 1e-5
+                     for frame in frames):
                 raise ValueError(f"Operator KSANIM contains planar root motion: {path.name}")
 
 
@@ -464,10 +496,19 @@ def validate_modern_asset_set(directory: Path) -> dict[str, Any]:
 
     operator_animations = sorted(directory.glob("asrc_modern_operator_*.ksanim"))
     viewmodel_animations = sorted(directory.glob("asrc_modern_carbine_*.ksanim"))
-    if len(operator_animations) != 20 or len(viewmodel_animations) != 6:
+    catalog = manifest.get('operatorAnimations')
+    expected = set(manifest['operator']['clips'])
+    actual = {p.stem.removeprefix('asrc_modern_operator_') for p in operator_animations}
+    if actual != expected or len(viewmodel_animations) != 6:
         raise ValueError("Modern animation set is incomplete")
+    if catalog is not None:
+        if set(catalog) != expected or len(catalog) != 25:
+            raise ValueError('Modern animation catalog is incomplete')
+        provenance = manifest['sources']['locomotion']
+        if provenance['license'] != 'CC0-1.0' or len(provenance['sha256']) != 64:
+            raise ValueError('Locomotion provenance is incomplete')
     _validate_animation_family(operator_animations, root_lock=True,
-                               compatible_nodes=set(operator.node_names))
+                               compatible_nodes=set(operator.node_names), catalog=catalog)
     _validate_rifle_ready_pose(directory / "asrc_modern_operator_aim_idle.ksanim")
     _validate_stance_poses(directory)
     _validate_death_pose(directory / "asrc_modern_operator_death.ksanim")
@@ -499,7 +540,7 @@ def validate_modern_asset_set(directory: Path) -> dict[str, Any]:
             if _png_dimensions(files[name].read_bytes(), name) != (640, 800):
                 raise ValueError("Operator portrait dimensions do not match the menu")
         _validate_animation_family(operator_animations, root_lock=True,
-                                   compatible_nodes=set(ghost.node_names))
+                                   compatible_nodes=set(ghost.node_names), catalog=catalog)
         for model, ids in (("officer", [0, 1]), ("ghost", [0, 1, 2])):
             # The base and Ghost conversion stages validate before the skin builder runs.
             skins = manifest["operators"][model].get("skins")

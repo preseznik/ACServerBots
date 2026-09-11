@@ -18,7 +18,7 @@ class KSAnimWriter(KN5Writer):
     """Deterministic writer for Assetto Corsa KSANIM version 2 files."""
 
     def __init__(self, file, context, objects, frame_start, frame_end,
-                 frame_callback=None, reverse_animation=False):
+                 frame_callback=None, reverse_animation=False, track_names=None):
         super().__init__(file)
         self.context = context
         self.objects = list(objects)
@@ -26,6 +26,7 @@ class KSAnimWriter(KN5Writer):
         self.frame_end = int(frame_end)
         self.frame_callback = frame_callback
         self.reverse_animation = reverse_animation
+        self.track_names = frozenset(track_names) if track_names is not None else None
         self.tracks = []
 
     @staticmethod
@@ -47,6 +48,10 @@ class KSAnimWriter(KN5Writer):
         names = [name for name, _ in tracks]
         if len(names) != len(set(names)):
             raise ValueError("KSANIM track names must be unique")
+        if self.track_names is not None:
+            if not self.track_names or self.track_names - set(names):
+                raise ValueError("KSANIM track filter is empty or contains unknown bones")
+            tracks = [(name, track) for name, track in tracks if name in self.track_names]
         return tracks
 
     @staticmethod
