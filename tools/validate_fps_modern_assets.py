@@ -262,7 +262,7 @@ def _validate_animation_family(paths: list[Path], root_lock: bool,
             forbidden = ('Hips', 'UpLeg', 'Leg_', 'Foot', 'Toe', '_rootJoint')
             expected_upper = {n for n in compatible_nodes if n.startswith('mixamorig:')
                               and not any(word in n for word in forbidden)}
-            if key not in ('fire', 'reload') or set(names) != expected_upper:
+            if key not in ('fire', 'reload', 'crouch_fire', 'crouch_reload', 'prone_fire', 'prone_reload') or set(names) != expected_upper:
                 raise ValueError(f'Invalid upper-body track mask: {path.name}')
         elif expected_tracks is None:
             expected_tracks = names
@@ -284,17 +284,23 @@ def _validate_animation_family(paths: list[Path], root_lock: bool,
             if entry.get('sourceAction'):
                 # Hips are relative to the rotated root bone, in centimetres.
                 # Permit bounded pelvic sway/bob but never animation-owned travel.
-                if not 0.5 < entry.get('strideMeters', 0) < 8 or not entry.get('loop'):
+                moving = 'strideMeters' in entry
+                if moving and (not 0.2 < entry['strideMeters'] < 8 or not entry.get('loop')):
                     raise ValueError(f'Invalid locomotion stride/loop: {path.name}')
+                if key in ('jump_start', 'land', 'crouch_enter', 'crouch_exit', 'prone_enter', 'prone_exit'):
+                    if entry.get('loop') is not False or not 0.1 <= entry.get('playbackSeconds', 0) <= 0.6:
+                        raise ValueError(f'Invalid transition timing: {path.name}')
                 root = tracks['_rootJoint']
                 if any(max(abs(a - b) for a, b in zip(f, root[0])) > 1e-5 for f in root):
                     raise ValueError(f'Locomotion moves the actor root: {path.name}')
-                if any(math.dist(f[4:7], frames[0][4:7]) > 25 for f in frames):
+                vertical_limit = 90 if not entry.get('loop') else 25
+                if any(math.dist(f[4:6], frames[0][4:6]) > 25
+                       or abs(f[6] - frames[0][6]) > vertical_limit for f in frames):
                     raise ValueError(f'Locomotion hips contain root travel: {path.name}')
-                if any(max(abs(a - b) for a, b in zip(fs[0], fs[-1])) > 1e-4
+                if entry.get('loop') and any(max(abs(a - b) for a, b in zip(fs[0], fs[-1])) > 1e-4
                        for fs in tracks.values()):
                     raise ValueError(f'Locomotion loop is discontinuous: {path.name}')
-                for foot in ('mixamorig:LeftFoot_064', 'mixamorig:RightFoot_059'):
+                for foot in (('mixamorig:LeftFoot_064', 'mixamorig:RightFoot_059') if moving else ()):
                     if max(math.dist(f[:4], tracks[foot][0][:4]) for f in tracks[foot]) < 0.025:
                         raise ValueError(f'Locomotion has static ankles: {path.name}')
             elif any(abs(frame[4] - origin_x) > 1e-5 or abs(frame[6] - origin_z) > 1e-5
@@ -502,7 +508,7 @@ def validate_modern_asset_set(directory: Path) -> dict[str, Any]:
     if actual != expected or len(viewmodel_animations) != 6:
         raise ValueError("Modern animation set is incomplete")
     if catalog is not None:
-        if set(catalog) != expected or len(catalog) != 25:
+        if set(catalog) != expected or len(catalog) != 43:
             raise ValueError('Modern animation catalog is incomplete')
         provenance = manifest['sources']['locomotion']
         if provenance['license'] != 'CC0-1.0' or len(provenance['sha256']) != 64:

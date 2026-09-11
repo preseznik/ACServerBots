@@ -14,9 +14,9 @@ internal static class FpsModernClientAssetArchive
 {
     // CSP caches web.loadRemoteAssets() payloads by URL. Advance this revision whenever
     // any embedded KN5 or KSANIM changes, otherwise clients keep the previous poses.
-    public const int AssetRevision = 12;
+    public const int AssetRevision = 13;
     public const string Route = "/fps/assets/" + FileName;
-    public const string FileName = "asrc-fps-modern-v12.zip";
+    public const string FileName = "asrc-fps-modern-v13.zip";
     public const string GhostFileName = "asrc_modern_ghost_carbine.kn5";
     public const string OperatorFileName = "asrc_modern_operator_carbine.kn5";
     public const string ViewmodelFileName = "asrc_modern_carbine_viewmodel.kn5";
@@ -130,13 +130,14 @@ internal static class FpsModernClientAssetArchive
         }
         JsonElement teamSkins = root.GetProperty("operator").GetProperty("teamSkins");
         JsonElement animations = root.GetProperty("operatorAnimations");
-        if (animations.EnumerateObject().Count() != 25
-            || !root.GetProperty("validation").GetProperty("quaterniusLocomotionValidated").GetBoolean())
+        if (animations.EnumerateObject().Count() != 43
+            || !root.GetProperty("validation").GetProperty("quaterniusLocomotionValidated").GetBoolean()
+            || !root.GetProperty("validation").GetProperty("quaterniusStancesValidated").GetBoolean())
             throw new InvalidDataException("Modern FPS locomotion catalog is incomplete");
         foreach (JsonProperty clip in animations.EnumerateObject())
         {
             string file = $"asrc_modern_operator_{clip.Name}.ksanim";
-            bool upperBody = clip.Name is "fire" or "reload";
+            bool upperBody = clip.Name is "fire" or "reload" or "crouch_fire" or "crouch_reload" or "prone_fire" or "prone_reload";
             if (clip.Value.GetProperty("file").GetString() != file || !assets.ContainsKey(file)
                 || clip.Value.GetProperty("trackCoverage").GetString() != (upperBody ? "upperBody" : "fullBody")
                 || clip.Value.GetProperty("trackCount").GetInt32() != (upperBody ? 56 : 68))

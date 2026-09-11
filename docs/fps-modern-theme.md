@@ -46,7 +46,7 @@ successful build.
 KN5 version and structure, node and inverse-bind matrices, finite vertices, four normalized weights,
 valid bone indices, skinned shaders, material references, triangle counts, 2K texture limits,
 KSANIM track compatibility, a non-rest rifle-ready grip, finite frames, planar root lock, file
-hashes, and shipping budgets. Officer and Ghost share the same 25 operator animation files.
+hashes, and shipping budgets. Officer and Ghost share the same 43 operator animation files.
 
 Current generated budgets:
 
@@ -80,21 +80,15 @@ rest/T-pose and open-hand tracks. For visual QA, run `tools/render_fps_operator_
 Blender with the repository, officer ZIP, carbine FBX, and an output directory; it emits full-body,
 front, side, rear-three-quarter, and close grip PNGs.
 
-The operator set contains aim idle/up/down, forward/backward walk, left/right strafe, sprint,
-crouch idle/move, prone idle/crawl, jump start, airborne, land, mantle, vault, fire, reload, and
-death. Crouch and prone each solve their two-hand grip after applying the stance-specific torso
-transform; they do not reuse standing arm matrices. Their hips are authored on the source rig's
-actual Y-up axis. The crouch now grounds at a 1.21 m visual bound with thighs carried forward,
-knees folding backward, shins returning under the hips, and the rifle lowered with the torso; prone
-remains at 0.77 m. The asset validator rejects missing stance tracks,
-insufficient hip/knee/hand changes, and motion clips without a real crouch/crawl cycle. Locomotion
-crossfades over roughly 120 ms. Death freezes on its final frame. Snapshot flags provide stance and
-grounded state. Offline Blender validation alone is not sufficient for stance grounding: the KN5 to
-KSANIM coordinate conversion writes the crouch and prone hips track 50 cm above the standing track
-in CSP animation space. Preview520 therefore applies an exact -0.50 m world-up correction to the
-dynamically animated KN5 child for those two stances. The confirmed actor root stays at the
-authoritative position and never receives a stance offset, so collision, hitboxes, interpolation,
-and corpse anchoring remain unchanged. Prone is selected from immediate local stance in third
+The operator set includes standing locomotion, eight crouch directions, four crawling directions,
+stance idle and enter/exit clips, jump start, animated airborne, landing, mantle, vault, fire,
+reload and death. [Locomotion](fps-locomotion.md) describes the shared Quaternius conversion,
+timing and ground checks. Crouched/prone fire and reload use dedicated upper-body subsets.
+The old procedural crouch/prone -0.50 m child offset is removed with Modern revision 13;
+the new clips bake their lowering and ground correction. Their in-game visual acceptance remains
+separate from Blender validation. The confirmed actor root stays at the authoritative position,
+so collision, hitboxes, interpolation and corpse anchoring remain unchanged.
+Prone is selected from immediate local stance in third
 person and is repeated in the otherwise-unused upper traversal bit when no traversal is active, so
 remote CSP clients do not depend solely on bit 7 of the compact flags byte. The same compact
 two-bit-per-actor field still distinguishes active mantles from vaults without changing FPS protocol
@@ -137,9 +131,9 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 ## Runtime ownership and fallback
 
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
-downloads `/fps/assets/asrc-fps-modern-v12.zip` through the same `web.loadRemoteAssets()` path as the
+downloads `/fps/assets/asrc-fps-modern-v13.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5, KSANIM, or skin texture changes. Client pack version 52 also installs both themes under the project-owned
+embedded KN5, KSANIM, or skin texture changes. Client pack version 53 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
 Team matches use Officer for Team 1 and Ghost for Team 2. Colors are selected separately in the Skin

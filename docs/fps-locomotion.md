@@ -1,8 +1,10 @@
 # Quaternius operator locomotion
 
-Modern uses Quaternius Universal Animation Library Source v3.0 for standing
-locomotion. Officer and Ghost share ten converted clips: forward walk, eight
-jogging directions and forward sprint. First-person assets, operator geometry,
+Modern uses Quaternius Universal Animation Library Source v3.0 for standing,
+crouched and prone locomotion, jump takeoff, airborne and landing. Officer and
+Ghost share 31 converted clips: ten standing movement clips, crouch idle and eight
+directions, prone idle and four directions, crouch/prone enter/exit and three jump
+clips. First-person assets, operator geometry,
 skins, movement speeds, hitboxes and the FPS wire protocol are unchanged.
 
 ## Inputs and reproducible build
@@ -29,11 +31,21 @@ flight phases. The chest absorbs part of the unarmed motion; baked arm IK preser
 existing two-hand attachment positions and curled fingers. Arm stretch is bounded
 to 8%, and grip error above 5 mm fails the build. No runtime IK is needed.
 
+Lowered poses carry the grip with the chest while preserving weapon orientation.
+Prone keeps the neck aligned with the torso and aims using the head; this also
+keeps Ghost's neck-weighted equipment out of the floor. Ground checks include all
+equipment on both meshes, with a 2 cm penetration tolerance and 12 cm maximum
+clearance for crouch, prone and landing. Their old -0.50 m runtime offsets are
+removed because the converted poses already include the full lowering.
+
 Direction uses measured root travel. Quaternius's `Jog_Left` travels +X; the FPS
 client's positive right axis is +X, so source left/right labels are mapped
 accordingly. Root travel supplies stride lengths: approximately 1.29 m walk,
 4.97 m forward jog, 2.98 m lateral/backward jog and 5.47 m sprint. Endpoints are
 closed exactly and the source's shared foot phase is retained.
+Crouch cycles measure 0.99–1.76 m; prone cycles measure 0.45–1.29 m. The negative
+pre-roll on `Crouch_Bwd_R_Loop` is excluded. Non-looping transitions retain distinct
+first and last frames.
 
 ## Runtime contract
 
@@ -49,18 +61,26 @@ matching jogging clips. Adjacent directions blend continuously, and distance
 travelled advances one shared foot phase using the blended stride length.
 
 Spawn, model replacement, hard reconciliation, teleport and long frame gaps clear
-movement history. Crouch, prone, traversal, airborne and death retain their clips.
-Fire and reload contain 56 upper-body tracks, excluding hips, root and both legs;
-they no longer reset the leg cycle. Existing weapon attachment positions remain.
+movement and transition history. Crouch uses the same eight-direction blending;
+prone blends four cardinal directions, including backward and lateral crawling.
+Idle breathing and airborne loops advance by clip duration. Jump takeoff plays
+over 0.22 s, landing over 0.32 s, crouch entry/exit over 0.22 s and prone entry/exit
+over 0.35 s. The server still owns movement and collision throughout. Walking off
+a ledge goes straight into airborne; a new jump interrupts landing, and brief
+ground-state jitter does not repeatedly trigger the landing pose.
 
-Modern archive revision is 12, client pack is 52, FPS protocol is 6 and HUD bridge
+Fire and reload each have standing, crouched and prone versions with 56 upper-body
+tracks, excluding hips, root and both legs. They preserve the current stance and
+leg cycle. Mantle, vault and death retain their existing clips.
+
+Modern archive revision is 13, client pack is 53, FPS protocol is 6 and HUD bridge
 is 14. Publish development builds only to `out-race-control`.
 
 ## Validation and remaining live acceptance
 
-- Both operators pass evaluated-geometry checks at every frame of the ten new
-  clips: 588 poses total. Maximum measured grip error is 0.125 mm.
-- Binary checks cover all 25 operator and six first-person clips, shared bind
+- Both operators pass evaluated-geometry checks at every frame of the 31 converted
+  clips: 2,992 poses total. Maximum measured grip error is 0.125 mm.
+- Binary checks cover all 43 operator and six first-person clips, shared bind
   matrices, finite transforms, loop closure, bounded hips, fixed actor root,
   moving ankles, material/texture budgets and hashes.
 - `tools/test_fps_locomotion.py --lua-runtime .artifacts/lua-runtime` exercises
@@ -68,11 +88,15 @@ is 14. Publish development builds only to `out-race-control`.
   jitter, vertical motion, overlays, stance transitions and resets.
 - `tools/test_fps_animation_validation.py` rejects corrupt roots, hip travel,
   loop pops, frozen ankles, non-finite frames, foreign bones and unsafe overlays.
+- Crouch/prone/jump conversion reports and rendered pose checks live in
+  `.artifacts/quaternius-stances`; the accepted standing clips remain byte-identical.
 - `tools/render_fps_locomotion_comparison.py` renders old/new KSANIM files at their
   actual steady-state playback cadences. Local comparisons and geometry reports
   live in `.artifacts/quaternius-work`.
 
-These checks do not establish two-client CSP acceptance or client frame-time
+The user accepted walking, running and strafing in game. The added crouch, prone
+and jump poses have local Blender render checks; no desktop control or game launch
+was used for this extension. These checks do not establish two-client CSP acceptance or client frame-time
 performance. Live acceptance must cover both teams/models, every weapon, movement
 while firing/reloading, death/respawn and repeated match restarts. Compare warmed-up,
 identical 8/16/32-actor scenes against the prior build and record p95 client frame

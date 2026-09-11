@@ -23,7 +23,7 @@ remain shared. Blocks keeps its existing presentation and accepts only model ID 
   Each actor's materials become unique before recoloring. A failed Ghost model, skin, or animation load
   falls back to Officer for that actor; unchanged roster packets do not repeatedly retry the failure.
 
-Current versions: **FPS protocol 6, client pack 52, Modern archive 12, HUD app 1.14.0**.
+Current versions: **FPS protocol 6, client pack 53, Modern archive 13, HUD app 1.14.0**.
 Standing locomotion now uses shared Quaternius clips; see [fps-locomotion.md](fps-locomotion.md).
 HUD bridge **14** carries target identification for both hip aiming and ADS.
 The base weapon archive and shared KSANIM files are unchanged.
@@ -84,7 +84,7 @@ source metadata, and `ghost-pose-validation.json`. Shipping files and hashes are
 - Server tests cover invalid selection, queued appearance, respawn, team distribution, human/bot
   handover (8, 9, 16, and 32 actors), and repeated round restarts across all four match types.
 - `tools/validate_fps_modern_assets.py` passes hashes, geometry, texture dimensions, weights,
-  exact Officer/Ghost inverse-bind equality, and compatibility with all 25 shared operator clips.
+  exact Officer/Ghost inverse-bind equality, and compatibility with all 43 shared operator clips.
   Blender also evaluates 60 sampled skinned poses across those clips and rejects invalid geometry.
 - Earlier Ghost integration: the self-contained development package passed Modern Team Deathmatch smoke tests with 8 and 16
   moving bots on `bo2_nuketown_2020`, both authoritative operator assignments, live arena coordinates,

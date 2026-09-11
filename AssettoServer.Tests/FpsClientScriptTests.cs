@@ -272,10 +272,10 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("function fpsVisual.actorStance(actor)"));
             Assert.That(script, Does.Contain("if actor.id == localSessionID then return localStance end"));
             Assert.That(script, Does.Contain("bit.band(actionState, 2) ~= 0"));
-            Assert.That(script, Does.Contain("modernAssetRevision = 12"));
+            Assert.That(script, Does.Contain("modernAssetRevision = 13"));
             Assert.That(script, Does.Contain("fpsVisual.crouchSuppressedUntilRelease = true"));
             Assert.That(script, Does.Contain(
-                "stanceOffsets = { [1] = -0.50, [2] = -0.50 }"));
+                "stanceOffsets = { [1] = 0, [2] = 0 }"));
             Assert.That(script, Does.Contain(
                 "actor.modernModel:setPosition(vec3(0, stanceGroundOffset, 0))"));
             Assert.That(script, Does.Not.Contain("actorVisualGroundOffset"));
@@ -383,7 +383,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
             Assert.That(script, Does.Contain("asrc_operator_skin.png"));
             Assert.That(script, Does.Contain("__ASRC_FPS_THEME__"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v12.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-modern-v13.zip"));
             Assert.That(script, Does.Contain("asrc_modern_operator_carbine.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_modern_carbine_pickup.kn5"));

@@ -334,13 +334,14 @@ public static class FpsClientPackAssets
         System.Text.Json.JsonElement teamSkins = root.GetProperty("operator")
             .GetProperty("teamSkins");
         var animations = root.GetProperty("operatorAnimations");
-        if (animations.EnumerateObject().Count() != 25
-            || !root.GetProperty("validation").GetProperty("quaterniusLocomotionValidated").GetBoolean())
+        if (animations.EnumerateObject().Count() != 43
+            || !root.GetProperty("validation").GetProperty("quaterniusLocomotionValidated").GetBoolean()
+            || !root.GetProperty("validation").GetProperty("quaterniusStancesValidated").GetBoolean())
             throw new InvalidDataException("Modern FPS locomotion catalog is incomplete");
         foreach (var clip in animations.EnumerateObject())
         {
             string file = $"asrc_modern_operator_{clip.Name}.ksanim";
-            bool upperBody = clip.Name is "fire" or "reload";
+            bool upperBody = clip.Name is "fire" or "reload" or "crouch_fire" or "crouch_reload" or "prone_fire" or "prone_reload";
             if (clip.Value.GetProperty("file").GetString() != file || !byName.ContainsKey(file)
                 || clip.Value.GetProperty("trackCoverage").GetString() != (upperBody ? "upperBody" : "fullBody")
                 || clip.Value.GetProperty("trackCount").GetInt32() != (upperBody ? 56 : 68))

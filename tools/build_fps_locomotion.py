@@ -34,7 +34,33 @@ CLIPS = {
     'strafe_right': 'Jog_Left_Loop',
     'jog_forward_right': 'Jog_Fwd_L_Loop',
     'sprint': 'Sprint_Loop',
+    'crouch_idle': 'Crouch_Idle_Loop',
+    'crouch_move': 'Crouch_Fwd_Loop',
+    'crouch_forward_left': 'Crouch_Fwd_R_Loop',
+    'crouch_left': 'Crouch_Right_Loop',
+    'crouch_backward_left': 'Crouch_Bwd_R_Loop',
+    'crouch_backward': 'Crouch_Bwd_Loop',
+    'crouch_backward_right': 'Crouch_Bwd_L_Loop',
+    'crouch_right': 'Crouch_Left_Loop',
+    'crouch_forward_right': 'Crouch_Fwd_L_Loop',
+    'crouch_enter': 'Crouch_Enter',
+    'crouch_exit': 'Crouch_Exit',
+    'jump_start': 'Jump_Start',
+    'airborne': 'Jump_Loop',
+    'land': 'Jump_Land',
+    'prone_idle': 'Crawl_Idle_Loop',
+    'prone_crawl': 'Crawl_Fwd_Loop',
+    'prone_backward': 'Crawl_Bwd_Loop',
+    'prone_left': 'Crawl_Right_Loop',
+    'prone_right': 'Crawl_Left_Loop',
+    'prone_enter': 'Crawl_Enter',
+    'prone_exit': 'Crawl_Exit',
 }
+STANDING = set(list(CLIPS)[:10])
+OVERLAYS = ('fire', 'reload', 'crouch_fire', 'crouch_reload', 'prone_fire', 'prone_reload')
+PLAYBACK_SECONDS = {'jump_start': 0.22, 'land': 0.32,
+                    'crouch_enter': 0.22, 'crouch_exit': 0.22,
+                    'prone_enter': 0.35, 'prone_exit': 0.35}
 MAPPING = {
     'Hips_01': 'pelvis', 'Spine_02': 'spine_01', 'Spine1_03': 'spine_02',
     'Spine2_04': 'spine_03', 'Neck_05': 'neck_01', 'Head_06': 'Head',
@@ -64,7 +90,8 @@ def sample_source(path):
             group.mute = False
         for curve in bag.fcurves:
             curve.mute = False
-        start, end = map(int, action.frame_range)
+        # One crouch action contains negative pre-roll keys, outside its cycle.
+        start, end = max(0, int(action.frame_range[0])), int(action.frame_range[1])
         poses, roots = [], []
         for frame in range(start, end + 1):
             bpy.context.scene.frame_set(frame)
@@ -74,12 +101,14 @@ def sample_source(path):
             poses.append({n: root.inverted() @ rig.pose.bones[n].matrix for n in rest})
         travel = roots[-1] - roots[0]
         distance = math.hypot(travel.x, travel.y)
-        if distance <= 0.1:
+        looping = name.endswith('_Loop')
+        moving = looping and clip not in ('crouch_idle', 'prone_idle', 'airborne')
+        if moving and distance <= 0.1:
             raise ValueError(f'Missing root-motion distance in {name}')
         samples[clip] = {'poses': poses, 'distance': distance,
                          'direction': math.degrees(math.atan2(travel.x, -travel.y)),
                          'duration': (end - start) / bpy.context.scene.render.fps,
-                         'sourceAction': name}
+                         'sourceAction': name, 'loop': looping, 'moving': moving}
     return rest, source_leg, samples
 
 
@@ -115,7 +144,15 @@ def retarget(rig, rest, source_leg, sampled):
                 rotation = pose[name].to_quaternion() @ rest[name].to_quaternion().inverted()
                 if name in ('spine_03', 'neck_01', 'Head'):
                     # Keep the rifle aimed ahead while the pelvis/lower spine move.
-                    rotation = Quaternion().slerp(rotation, 0.35 if clip == 'sprint' else 0.12)
+                    # Crawling must retain its horizontal torso. The head still
+                    # faces the sights; new stance clips keep the source chest.
+                    if clip.startswith('prone_') and name in ('spine_03', 'neck_01'):
+                        lean = rotation.to_euler('XYZ')
+                        lean.y *= 0.12
+                        lean.z *= 0.12
+                        rotation = lean.to_quaternion()
+                    else:
+                        rotation = Quaternion().slerp(rotation, 0.35 if clip == 'sprint' else 0.12)
                     rotation = rotation @ aim_rotations[name]
                 else:
                     rotation = rotation @ b.bone.matrix_local.to_quaternion()
@@ -123,7 +160,7 @@ def retarget(rig, rest, source_leg, sampled):
                 position = inherited.translation
                 if b == hips:
                     position = b.bone.head_local + (pose[name].translation - rest[name].translation) * leg_scale
-                elif name == 'spine_03':
+                elif name == 'spine_03' and clip in STANDING:
                     # An aimed upper body absorbs part of the unarmed torso sway;
                     # otherwise the fully extended support hand loses the foregrip.
                     position = aim_positions[name].lerp(position, 0.35)
@@ -133,11 +170,13 @@ def retarget(rig, rest, source_leg, sampled):
             # baked two-hand grip and finger curls without importing unarmed swings.
             frames.append({b.name: b.matrix_basis.copy() for b in rig.pose.bones})
         # Source endpoint noise must not create a visible pop at cycle wrap.
-        frames[-1] = {n: m.copy() for n, m in frames[0].items()}
+        if sample['loop']:
+            frames[-1] = {n: m.copy() for n, m in frames[0].items()}
         output[clip] = {'frames': frames, 'duration': sample['duration'],
                         'stride': sample['distance'] * scale_m,
                         'direction': sample['direction'],
-                        'sourceAction': sample['sourceAction']}
+                        'sourceAction': sample['sourceAction'],
+                        'loop': sample['loop'], 'moving': sample['moving']}
     return output
 
 
@@ -153,6 +192,8 @@ def bake_rifle_grip(rig, clips):
     bpy.context.view_layer.update()
     hands = [modern.bone(rig, s) for s in ('RightHand_037', 'LeftHand_013')]
     reference = {b.name: b.matrix.copy() for b in hands}
+    chest = modern.bone(rig, 'Spine2_04')
+    reference_chest = chest.matrix.translation.copy()
     constraints, helpers, stretch = [], [], []
     for side, suffix, pole_position, angle in (
             ('Right', 'RightForeArm_036', (-38, -10, 128), -math.pi),
@@ -176,16 +217,24 @@ def bake_rifle_grip(rig, clips):
             b.ik_stretch = 0.05
         constraints.append((forearm, constraint))
     try:
-        for clip in clips.values():
+        for name, clip in clips.items():
             clip['maximumGripErrorMeters'] = 0
             for i, frame in enumerate(clip['frames']):
                 apply_frame(rig, frame)
+                # New poses carry the weapon down with the chest. Retain its
+                # two-hand spacing and level orientation even when fully prone.
+                offset = chest.matrix.translation - reference_chest if name not in STANDING else Vector()
+                for hand, (owner, constraint) in zip(hands, constraints):
+                    constraint.target.location = rig.matrix_world @ (reference[hand.name].translation + offset)
+                    constraint.pole_target.location = rig.matrix_world @ (Vector(
+                        (-38, -10, 128) if 'Right' in hand.name else (38, -20, 128)) + offset)
+                bpy.context.view_layer.update()
                 for hand in hands:
                     # Preserve wrist orientation and the authored curled fingers.
                     hand.matrix = Matrix.LocRotScale(hand.matrix.translation,
                         reference[hand.name].to_quaternion(), Vector((1, 1, 1)))
                     bpy.context.view_layer.update()
-                    error = (hand.matrix.translation - reference[hand.name].translation).length
+                    error = (hand.matrix.translation - reference[hand.name].translation - offset).length
                     error *= rig.matrix_world.to_scale().x
                     clip['maximumGripErrorMeters'] = max(clip['maximumGripErrorMeters'], error)
                     if error > 0.005:
@@ -199,7 +248,8 @@ def bake_rifle_grip(rig, clips):
                 if any(max(abs(v - 1) for v in clip['frames'][i][b.name].to_scale()) > 0.08
                        for b, _ in stretch):
                     raise ValueError(f'Excessive rifle-grip arm stretch: {clip["sourceAction"]}/{i}')
-            clip['frames'][-1] = {n: m.copy() for n, m in clip['frames'][0].items()}
+            if clip['loop']:
+                clip['frames'][-1] = {n: m.copy() for n, m in clip['frames'][0].items()}
     finally:
         for owner, constraint in constraints:
             owner.constraints.remove(constraint)
@@ -236,6 +286,17 @@ def evaluate_geometry(rig, clips):
     return proof
 
 
+def validate_grounding(proof):
+    for model, clips in proof.items():
+        for name, frames in clips.items():
+            if not (name.startswith(('prone_', 'crouch_')) or name == 'land'):
+                continue
+            for frame in frames:
+                # Equipment is included, not just the body or the bone tails.
+                if not -0.02 <= frame['minimum'][2] <= 0.12:
+                    raise ValueError(f'Ground contact failed: {model}/{name}/{frame["frame"]}')
+
+
 def render_proof(rig, clips, directory, model):
     scene = bpy.context.scene
     for ob in list(scene.objects):
@@ -258,7 +319,7 @@ def render_proof(rig, clips, directory, model):
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = 'PNG'
     directory.mkdir(exist_ok=True)
-    for name in ('walk_forward', 'jog_forward', 'strafe_left', 'sprint'):
+    for name in clips:
         for phase in (0, 0.25, 0.5, 0.75):
             frame = round(phase * (len(clips[name]['frames']) - 1))
             apply_frame(rig, clips[name]['frames'][frame])
@@ -288,18 +349,22 @@ def main():
     rest, source_leg, samples = sample_source(source)
     rig = load_target(args.reference.resolve())
     clips = retarget(rig, rest, source_leg, samples)
+    new_clips = {n: c for n, c in clips.items() if n not in STANDING}
+    # Solve lowered grips before grounding: unsolved prone arms inherit the
+    # rotated torso and can temporarily point through the floor.
+    bake_rifle_grip(rig, new_clips)
     initial = evaluate_geometry(rig, clips)
     hips = modern.bone(rig, 'Hips_01')
     for name, clip in clips.items():
         # A constant per-clip sole correction preserves authored flight phases.
         lift = -min(f['minimum'][2] for f in initial[name])
-        if abs(lift) > 0.15:
+        if abs(lift) > (0.15 if name in STANDING else 0.25):
             raise ValueError(f'Excessive ground correction for {name}: {lift}')
         local_lift = hips.bone.matrix_local.to_3x3().inverted() @ Vector((0, 0, lift / rig.matrix_world.to_scale().x))
         for frame in clip['frames']:
             frame[hips.name].translation += local_lift
         clip['groundCorrection'] = lift
-    bake_rifle_grip(rig, clips)
+    bake_rifle_grip(rig, {n: c for n, c in clips.items() if n in STANDING})
     proof = {'officer': evaluate_geometry(rig, clips)}
     if args.render:
         render_proof(rig, clips, cache / 'previews', 'officer')
@@ -311,9 +376,22 @@ def main():
                          frame_callback=lambda f, c=clip: apply_frame(rig, c['frames'][f])).write()
     upper = modern.bone(rig, 'Spine_02')
     upper_tracks = [upper.name, *(b.name for b in upper.children_recursive)]
-    for name in ('fire', 'reload'):
-        count = modern.OPERATOR_CLIPS[name][0]
-        callback = modern.make_operator_pose_callback(rig, name, count)
+    for name in OVERLAYS:
+        action = name.rsplit('_', 1)[-1]
+        count = modern.OPERATOR_CLIPS[action][0]
+        callback = modern.make_operator_pose_callback(rig, action, count)
+        if '_' in name:
+            # Apply the existing local upper-body action to the new stance base.
+            # Its hips and legs are never exported into these overlays.
+            modern.make_operator_pose_callback(rig, 'aim_idle', 31)(0)
+            neutral = {b.name: b.matrix_basis.copy() for b in rig.pose.bones}
+            base = clips[name.split('_')[0] + '_idle']['frames'][0]
+            action_frames = []
+            for f in range(count):
+                callback(f)
+                action_frames.append({b.name: base[b.name] @ neutral[b.name].inverted()
+                    @ b.matrix_basis for b in rig.pose.bones})
+            callback = lambda f, frames=action_frames: apply_frame(rig, frames[f])
         with (stage / f'asrc_modern_operator_{name}.ksanim').open('wb') as stream:
             KSAnimWriter(stream, bpy.context, [rig], 0, count - 1,
                          frame_callback=callback, track_names=upper_tracks).write()
@@ -321,13 +399,14 @@ def main():
     proof['ghost'] = evaluate_geometry(rig, clips)
     if args.render:
         render_proof(rig, clips, cache / 'previews', 'ghost')
+    validate_grounding(proof)
     (cache / 'geometry-proof.json').write_text(json.dumps(proof, indent=2) + '\n')
     print('LOCOMOTION', json.dumps({n: {'frames': len(c['frames']), 'stride': c['stride']}
                                   for n, c in clips.items()}), flush=True)
     if args.proof_only:
         return
     output = args.output_dir.resolve()
-    generated = {f'asrc_modern_operator_{name}.ksanim' for name in (*clips, 'fire', 'reload')}
+    generated = {f'asrc_modern_operator_{name}.ksanim' for name in (*clips, *OVERLAYS)}
     for p in output.iterdir():
         if p.is_file() and p.name not in generated:
             shutil.copy2(p, stage / p.name)
@@ -340,20 +419,25 @@ def main():
         tracks = inspect_ksanim(p)
         count = len(next(iter(tracks.values())))
         catalog[name] = {'file': p.name, 'durationSeconds': (count - 1) / 30,
-                         'trackCoverage': 'upperBody' if name in ('fire', 'reload') else 'fullBody',
+                         'trackCoverage': 'upperBody' if name in OVERLAYS else 'fullBody',
                          'trackCount': len(tracks)}
         if name in clips:
-            catalog[name].update(strideMeters=round(clips[name]['stride'], 6), loop=True,
-                                 directionDegrees=round(clips[name]['direction'], 3),
+            catalog[name].update(loop=clips[name]['loop'],
                                  groundCorrectionMeters=round(clips[name]['groundCorrection'], 6),
                                  maximumGripErrorMeters=round(clips[name]['maximumGripErrorMeters'], 6),
                                  sourceAction=clips[name]['sourceAction'])
+            if clips[name]['moving']:
+                catalog[name].update(strideMeters=round(clips[name]['stride'], 6),
+                                     directionDegrees=round(clips[name]['direction'], 3))
+            if name in PLAYBACK_SECONDS:
+                catalog[name]['playbackSeconds'] = PLAYBACK_SECONDS[name]
     manifest['operatorAnimations'] = catalog
     manifest['operator']['clips'] = list(catalog)
     manifest['operators']['officer']['clips'] = list(catalog)
     manifest['files'] = {p.name: modern.sha256(p) for p in sorted(stage.iterdir())
                          if p.is_file() and p.name != manifest_path.name}
     manifest['validation']['quaterniusLocomotionValidated'] = True
+    manifest['validation']['quaterniusStancesValidated'] = True
     manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
     validate_modern_asset_set(stage)
     for name in sorted(generated | {manifest_path.name}):

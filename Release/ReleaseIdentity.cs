@@ -15,7 +15,7 @@ public static class ReleaseIdentity
     public static bool IsReleaseBuild => false;
 #endif
     public const int ControlProtocol = 1;
-    public const int FpsPackVersion = 52;
+    public const int FpsPackVersion = 53;
     public static string Version => typeof(ReleaseIdentity).Assembly
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
         .InformationalVersion.Split('+')[0];

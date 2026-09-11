@@ -34,7 +34,7 @@ def main():
       fpsVisual.modern=true
       fpsVisual.asset=function(name) return name end
       fpsVisual.actorStance=function(actor) return actor.stance or 0 end
-      fpsVisual.operatorForActor=function() return {stanceOffsets={[1]=-0.5,[2]=-0.5}} end
+      fpsVisual.operatorForActor=function() return fpsVisual.operatorModels[0] end
       fpsVisual.operatorFailed=function(_,err) error(err) end
       io.load=function() return 'manifest' end
       io.fileExists=function() return true end
@@ -123,13 +123,61 @@ def main():
       assert(a.calls[#a.calls][1]:find('_reload.ksanim'))
       a.reloadRemaining=0; a.animationFireUntil=effectClock+0.12; tick(a,0,6,1/60)
       assert(dominant(a)=='jog_forward' and a.calls[#a.calls][1]:find('_fire.ksanim'))
-      -- Crouch/prone, airborne and death retain their dedicated clips.
+      -- Crouch/prone use directional cycles and stance-specific action overlays.
       a.stance=1; travel(a,0,3.4,1,60); assert(dominant(a)=='crouch_move')
       a.stance=2; travel(a,0,1.8,1,60); assert(dominant(a)=='prone_crawl')
-      a.stance=0; a.flags=0; tick(a,0,6,1/60); assert(dominant(a)=='jump_start')
+      a.stance=0; a.flags=0; tick(a,0,6,1/60,5); assert(dominant(a)=='jump_start')
       travel(a,0,6,0.5,60); assert(dominant(a)=='airborne')
+      local airPhase=a.animationPosition; tick(a,0,6,1/60)
+      assert(a.animationPosition>airPhase) -- airborne is animated, never frozen at 0.5
       a.flags=16; tick(a,0,6,1/60); assert(dominant(a)=='land')
+      -- A second jump interrupts landing immediately.
+      a.flags=0; tick(a,0,6,1/60,5); assert(dominant(a)=='jump_start')
       a.flags=18; tick(a,0,0,1/60); assert(dominant(a)=='death')
+      for _,fps in ipairs({30,60,144}) do
+        for stance, directions in ipairs({fpsVisual.crouchDirections,fpsVisual.proneDirections}) do
+          local speed=stance==1 and 3.4 or 1.8
+          for i,clip in ipairs(directions) do
+            local actor=newActor(); actor.stance=stance
+            local angle=(i-1)*2*math.pi/#directions
+            local vx,vz=math.sin(angle)*speed,math.cos(angle)*speed
+            travel(actor,vx,vz,1,fps); assert(dominant(actor)==clip,clip)
+            actor.animationLocomotion.phase=0; travel(actor,vx,vz,1,fps)
+            assert(math.abs(actor.animationLocomotion.phase-(speed/catalog[clip].strideMeters)%1)<0.0001)
+            actor.reloadRemaining=.9; tick(actor,vx,vz,1/fps)
+            assert(dominant(actor)==clip)
+            assert(actor.calls[#actor.calls][1]:find(stance==1 and '_crouch_reload' or '_prone_reload'))
+            actor.reloadRemaining=0; actor.animationFireUntil=effectClock+.12; tick(actor,vx,vz,1/fps)
+            assert(actor.calls[#actor.calls][1]:find(stance==1 and '_crouch_fire' or '_prone_fire'))
+          end
+          local actor=newActor(); actor.stance=stance; tick(actor,0,0,1/fps)
+          local old=actor.animationPosition; tick(actor,0,0,1/fps)
+          assert(actor.animationPosition~=old) -- breathing loops advance while idle
+        end
+        local actor=newActor(); tick(actor,0,0,1/fps)
+        actor.stance=1; tick(actor,0,0,1/fps); assert(dominant(actor)=='crouch_enter')
+        travel(actor,0,0,.5,fps); assert(dominant(actor)=='crouch_idle')
+        actor.stance=0; tick(actor,0,0,1/fps); assert(dominant(actor)=='crouch_exit')
+        travel(actor,0,0,.5,fps); assert(dominant(actor)=='aim_idle')
+        actor.stance=2; tick(actor,0,0,1/fps); assert(dominant(actor)=='prone_enter')
+        travel(actor,0,0,.6,fps); assert(dominant(actor)=='prone_idle')
+        actor.stance=0; tick(actor,0,0,1/fps); assert(dominant(actor)=='prone_exit')
+        travel(actor,0,0,.6,fps); assert(dominant(actor)=='aim_idle')
+        -- Walking off a ledge does not show the jump push-off; tiny ground flag
+        -- flicker does not cause repeated landing squats.
+        actor.flags=0; tick(actor,0,0,1/fps,-1); assert(dominant(actor)=='airborne')
+        actor.flags=16; tick(actor,0,0,1/fps); assert(dominant(actor)=='aim_idle')
+        actor.flags=0; tick(actor,0,0,1/fps)
+        tick(actor,0,0,1/fps,5); assert(dominant(actor)=='jump_start')
+        actor.flags=16; travel(actor,0,0,.5,fps)
+        actor.flags=0; travel(actor,0,0,.5,fps)
+        actor.flags=16; tick(actor,0,0,1/fps); assert(dominant(actor)=='land')
+        travel(actor,0,0,.5,fps); assert(dominant(actor)=='aim_idle')
+        -- Joining an airborne actor starts the air loop and advances it.
+        actor=newActor(); actor.flags=0; tick(actor,0,0,1/fps)
+        local first=actor.animationPosition; tick(actor,0,0,1/fps)
+        assert(dominant(actor)=='airborne' and actor.animationPosition>first)
+      end
       -- Respawn/model reset, teleport and long frame gaps clear stale movement.
       a=newActor(); travel(a,0,9,2,60); a.animationLastPosition=nil
       tick(a,0,0,1/60); assert(dominant(a)=='aim_idle' and a.animationLocomotion.phase==0)
@@ -141,7 +189,7 @@ def main():
     # Confirm the actual shipped overlays cannot alter any locomotion leg/root track.
     legs = {n for n in inspect_ksanim(assets / 'asrc_modern_operator_jog_forward.ksanim')
             if any(word in n for word in ('Hips', 'Leg', 'Foot', 'Toe', '_rootJoint'))}
-    for name in ('fire', 'reload'):
+    for name in ('fire', 'reload', 'crouch_fire', 'crouch_reload', 'prone_fire', 'prone_reload'):
         tracks = inspect_ksanim(assets / f'asrc_modern_operator_{name}.ksanim')
         assert not legs.intersection(tracks), name
         assert len(tracks) == 56
@@ -150,7 +198,11 @@ def main():
             directions = {'jog_forward': 0, 'walk_forward': 0, 'sprint': 0,
                 'jog_forward_right': 45, 'strafe_right': 90, 'jog_backward_right': 135,
                 'walk_backward': 180, 'jog_backward_left': -135, 'strafe_left': -90,
-                'jog_forward_left': -45}
+                'jog_forward_left': -45,
+                'crouch_move': 0, 'crouch_forward_right': 45, 'crouch_right': 90,
+                'crouch_backward_right': 135, 'crouch_backward': 180,
+                'crouch_backward_left': -135, 'crouch_left': -90, 'crouch_forward_left': -45,
+                'prone_crawl': 0, 'prone_right': 90, 'prone_backward': 180, 'prone_left': -90}
             assert abs((entry['directionDegrees'] - directions[name] + 180) % 360 - 180) < 0.1
     print('PASS: catalog, 8 directions, 30/60/144 FPS, gaits, phase continuity, jitter, '
           'vertical motion, overlays, stances, traversal transitions and history resets')

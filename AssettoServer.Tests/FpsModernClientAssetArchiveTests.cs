@@ -16,8 +16,8 @@ public sealed class FpsModernClientAssetArchiveTests
         Assert.Multiple(() =>
         {
             Assert.That(FpsModernClientAssetArchive.Route,
-                Is.EqualTo("/fps/assets/asrc-fps-modern-v12.zip"));
-            Assert.That(FpsModernClientAssetArchive.AssetRevision, Is.EqualTo(12));
+                Is.EqualTo("/fps/assets/asrc-fps-modern-v13.zip"));
+            Assert.That(FpsModernClientAssetArchive.AssetRevision, Is.EqualTo(13));
             Assert.That(bytes.AsSpan(0, 2).SequenceEqual("PK"u8), Is.True);
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.OperatorFileName));
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.GhostFileName));
@@ -36,9 +36,12 @@ public sealed class FpsModernClientAssetArchiveTests
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.Team2GearFileName));
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.ManifestFileName));
             Assert.That(names.Count(name => name.EndsWith(".ksanim",
-                StringComparison.OrdinalIgnoreCase)), Is.EqualTo(31));
+                StringComparison.OrdinalIgnoreCase)), Is.EqualTo(49));
             Assert.That(names, Does.Contain("asrc_modern_operator_jog_forward.ksanim"));
             Assert.That(names, Does.Contain("asrc_modern_operator_jog_backward_right.ksanim"));
+            Assert.That(names, Does.Contain("asrc_modern_operator_crouch_backward_right.ksanim"));
+            Assert.That(names, Does.Contain("asrc_modern_operator_prone_left.ksanim"));
+            Assert.That(names, Does.Contain("asrc_modern_operator_prone_reload.ksanim"));
         });
 
         foreach (ZipArchiveEntry entry in archive.Entries)

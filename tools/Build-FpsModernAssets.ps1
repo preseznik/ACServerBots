@@ -80,6 +80,10 @@ $expected += @(
     "strafe_left", "strafe_right", "sprint", "crouch_idle", "crouch_move",
     "jog_forward", "jog_forward_left", "jog_forward_right", "jog_backward_left", "jog_backward_right",
     "prone_idle", "prone_crawl", "jump_start", "airborne", "land",
+    "crouch_forward_left", "crouch_forward_right", "crouch_left", "crouch_right",
+    "crouch_backward_left", "crouch_backward_right", "crouch_backward", "crouch_enter", "crouch_exit",
+    "prone_backward", "prone_left", "prone_right", "prone_enter", "prone_exit",
+    "crouch_fire", "crouch_reload", "prone_fire", "prone_reload",
     "mantle", "vault", "fire", "reload", "death"
 ) | ForEach-Object { "asrc_modern_operator_$_.ksanim" }
 $expected += @("idle", "fire", "reload", "reload_empty", "equip", "sprint") |
