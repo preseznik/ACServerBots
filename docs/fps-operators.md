@@ -23,7 +23,7 @@ remain shared. Blocks keeps its existing presentation and accepts only model ID 
   Each actor's materials become unique before recoloring. A failed Ghost model, skin, or animation load
   falls back to Officer for that actor; unchanged roster packets do not repeatedly retry the failure.
 
-Current versions: **FPS protocol 6, client pack 53, Modern archive 13, HUD app 1.14.0**.
+Current versions: **FPS protocol 6, client pack 54, Modern archive 14, HUD app 1.14.0**.
 Standing locomotion now uses shared Quaternius clips; see [fps-locomotion.md](fps-locomotion.md).
 HUD bridge **14** carries target identification for both hip aiming and ADS.
 The base weapon archive and shared KSANIM files are unchanged.
@@ -74,6 +74,16 @@ source metadata, and `ghost-pose-validation.json`. Shipping files and hashes are
 `AssettoServer.RaceControl.Core/Assets/Fps/Modern/asrc-modern-assets.json`.
 
 ## Validation and acceptance
+
+Modern revision 14 restores the Officer's original 504-triangle hair/scalp mesh.
+The source body has an open rear head which that mesh covers; removing the hair
+left the face visible through the back of the head. Its three texture maps now
+occupy an unused, UV-checked 760-square region of the existing 2K skin atlas with
+an eight-pixel gutter. Existing skin UVs, four materials, 68-bone bind matrices
+and all animation files are preserved. The Officer now has 36,826 triangles
+including the rifle. The builder checks outward-facing head coverage from the
+rear and both rear quarters. Local before/after renders and build evidence are
+in `.artifacts/officer-head`; in-game confirmation is still separate.
 
 - All 257 server tests and 97 Race Control tests passed for the team/skin update. Server tests target .NET 9 and are run
   with `DOTNET_ROLL_FORWARD=Major` on the installed .NET 10 runtime; the development package is

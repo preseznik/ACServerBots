@@ -31,7 +31,80 @@ OFFICER_KEEP = {
     "Hats_PackedMaterial1mat_0",
     "Bottoms_PackedMaterial2mat_0",
     "Gloves_PackedMaterial2mat_0",
+    "Hair_PackedMaterial3mat_0",
 }
+
+# Pixel coordinates in Blender's bottom-left texture convention. This region
+# is unused by every retained skin UV triangle in the supplied Officer source.
+OFFICER_HAIR_ATLAS_REGION = (1200, 1220, 760, 760)
+
+
+def pack_officer_hair(hair, skin_meshes, skin_material, texture_dir: Path, work_dir: Path):
+    """Restore the source scalp without adding a material or rescaling skin UVs."""
+    x, y, width, height = OFFICER_HAIR_ATLAS_REGION
+    rectangle = np.array(((x, y), (x + width, y), (x + width, y + height), (x, y + height))) / 2048
+    for obj in skin_meshes:
+        obj.data.calc_loop_triangles()
+        layer = obj.data.uv_layers.active.data
+        for triangle in obj.data.loop_triangles:
+            uv = np.array([layer[i].uv[:] for i in triangle.loops])
+            edges = np.roll(uv, -1, axis=0) - uv
+            axes = [np.array((1, 0)), np.array((0, 1)), *[np.array((-e[1], e[0])) for e in edges]]
+            if all(not ((uv @ axis).max() < (rectangle @ axis).min()
+                        or (rectangle @ axis).max() < (uv @ axis).min()) for axis in axes):
+                raise ValueError(f'Officer hair atlas overlaps existing skin UVs: {obj.name}')
+    # Hair occupies the lower-left 1024-square quarter of its original atlas.
+    # Preserve all other skin pixels and leave an eight-pixel gutter for mips.
+    padding = 8
+    size = width - 2 * padding
+    for slot, suffix in (('txDiffuse', 'diffuse'), ('txNormal', 'normal'), ('txMaps', 'specularGlossiness')):
+        source = bpy.data.images.load(str(texture_dir / f'PackedMaterial3mat_{suffix}.png'), check_existing=False)
+        if slot != 'txDiffuse':
+            source.colorspace_settings.name = 'Non-Color'
+        source.scale(size * 2, size * 2)
+        pixels = np.empty(size * size * 16, dtype=np.float32)
+        source.pixels.foreach_get(pixels)
+        patch = pixels.reshape(size * 2, size * 2, 4)[:size, :size]
+        patch = np.pad(patch, ((padding, padding), (padding, padding), (0, 0)), mode='edge')
+        image = skin_material.node_tree.nodes[f'ASRC_OFFICER_SKIN_{slot}'].image
+        if tuple(image.size) != (2048, 2048):
+            raise ValueError('Unexpected Officer skin atlas dimensions')
+        data = np.empty(2048 * 2048 * 4, dtype=np.float32)
+        image.pixels.foreach_get(data)
+        data.reshape(2048, 2048, 4)[y:y + height, x:x + width] = patch
+        image.pixels.foreach_set(data)
+        image.filepath_raw = str(work_dir / f'ASRC_OFFICER_SKIN_{slot}.png')
+        image.save()
+        # load_image() packed the original atlas. Refresh those packed bytes as
+        # well: both the KN5 exporter and saved reference blend consume them.
+        image.unpack(method='REMOVE')
+        image.reload()
+        image.pack()
+        bpy.data.images.remove(source)
+    for loop in hair.data.uv_layers.active.data:
+        if not 0 <= loop.uv.x <= 0.5 or not 0 <= loop.uv.y <= 0.5:
+            raise ValueError('Officer source hair no longer fits its atlas quarter')
+        loop.uv = ((x + padding + loop.uv.x * 2 * size) / 2048,
+                   (y + padding + loop.uv.y * 2 * size) / 2048)
+
+
+def validate_officer_head_coverage(meshes):
+    """Rear and rear-quarter rays must hit an outward-facing scalp, not the face inside the hole."""
+    from mathutils.bvhtree import BVHTree
+    points, faces = [], []
+    for obj in meshes:
+        start = len(points)
+        points.extend(obj.matrix_world @ v.co for v in obj.data.vertices)
+        faces.extend([start + i for i in p.vertices] for p in obj.data.polygons)
+    tree = BVHTree.FromPolygons(points, faces)
+    for height in (1.63, 1.65, 1.67, 1.69, 1.71):
+        for degrees in (-35, 0, 35):
+            angle = math.radians(degrees)
+            outward = Vector((math.sin(angle), math.cos(angle), 0))
+            origin = Vector((0, 0, height)) + outward * 0.3
+            point, normal, _, distance = tree.ray_cast(origin, -outward, 0.3)
+            if point is None or normal.dot(outward) < 0.25 or distance > 0.29:
+                raise ValueError(f'Officer rear head is open at {height} m / {degrees} degrees')
 
 OPERATOR_CLIPS = {
     "aim_idle": (31, "aim_idle"),
@@ -326,9 +399,12 @@ def build_officer(officer_zip: Path, carbine_fbx: Path, output: Path,
             "txMaps": (texture_dir / "PackedMaterial2mat_specularGlossiness.png", True),
         }, work_dir),
     }
+    pack_officer_hair(bpy.data.objects['Hair_PackedMaterial3mat_0'],
+                      [obj for obj in meshes if 'PackedMaterial0' in obj.name],
+                      officer_materials['skin'], texture_dir, work_dir)
     material_groups = {"skin": [], "uniform": [], "gear": []}
     for obj in meshes:
-        if "PackedMaterial0" in obj.name:
+        if "PackedMaterial0" in obj.name or obj.name == 'Hair_PackedMaterial3mat_0':
             group = "skin"
         elif "PackedMaterial1" in obj.name:
             group = "uniform"
@@ -341,6 +417,7 @@ def build_officer(officer_zip: Path, carbine_fbx: Path, output: Path,
         joined = join_objects(objects, f"ASRC_OFFICER_{group.upper()}")
         assign_single_material(joined, officer_materials[group])
         officer_meshes.append(joined)
+    validate_officer_head_coverage(officer_meshes)
 
     # Import the source carbine again, freeze it in its idle pose, reduce it for
     # replicated world actors and rigid-weight it to the officer's right hand.
@@ -443,6 +520,8 @@ def build_officer(officer_zip: Path, carbine_fbx: Path, output: Path,
         "file": actor_path.name,
         "triangles": triangles,
         "materials": 4,
+        "headCoverage": {"sourceMesh": "Hair_PackedMaterial3mat_0", "triangles": 504,
+                         "material": "ASRC_OFFICER_SKIN", "atlasRegion": list(OFFICER_HAIR_ATLAS_REGION)},
         "bones": len([bone for bone in armature.data.bones if bone.use_deform]),
         "clips": list(OPERATOR_CLIPS),
         "teamSkins": {

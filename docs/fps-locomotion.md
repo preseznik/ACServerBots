@@ -73,7 +73,7 @@ Fire and reload each have standing, crouched and prone versions with 56 upper-bo
 tracks, excluding hips, root and both legs. They preserve the current stance and
 leg cycle. Mantle, vault and death retain their existing clips.
 
-Modern archive revision is 13, client pack is 53, FPS protocol is 6 and HUD bridge
+Modern archive revision is 14, client pack is 54, FPS protocol is 6 and HUD bridge
 is 14. Publish development builds only to `out-race-control`.
 
 ## Validation and remaining live acceptance

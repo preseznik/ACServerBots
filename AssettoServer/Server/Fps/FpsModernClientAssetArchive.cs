@@ -14,9 +14,9 @@ internal static class FpsModernClientAssetArchive
 {
     // CSP caches web.loadRemoteAssets() payloads by URL. Advance this revision whenever
     // any embedded KN5 or KSANIM changes, otherwise clients keep the previous poses.
-    public const int AssetRevision = 13;
+    public const int AssetRevision = 14;
     public const string Route = "/fps/assets/" + FileName;
-    public const string FileName = "asrc-fps-modern-v13.zip";
+    public const string FileName = "asrc-fps-modern-v14.zip";
     public const string GhostFileName = "asrc_modern_ghost_carbine.kn5";
     public const string OperatorFileName = "asrc_modern_operator_carbine.kn5";
     public const string ViewmodelFileName = "asrc_modern_carbine_viewmodel.kn5";

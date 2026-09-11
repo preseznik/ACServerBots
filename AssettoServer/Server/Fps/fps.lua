@@ -20,7 +20,7 @@ local fpsVisual = {
   thirdPersonDistanceMin = 1.25,
   thirdPersonDistanceMax = 7.0,
   thirdPersonZoomStep = 0.4,
-  modernAssetRevision = 13,
+  modernAssetRevision = 14,
   operatorAnimations = {},
   standingClipOrder = { 'aim_idle', 'aim_up', 'aim_down', 'walk_forward',
     'jog_forward', 'jog_forward_right', 'strafe_right', 'jog_backward_right',
@@ -363,7 +363,7 @@ if fpsVisual.requested == 'Modern' then
   fpsVisual.active = 'Modern'
   -- CSP caches remote asset archives by URL. Every regenerated KN5/KSANIM payload
   -- must advance this revision or clients can keep rendering the previous poses.
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v13.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-modern-v14.zip'
   rifleViewmodelFileName = 'asrc_modern_carbine_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_modern_operator_carbine.kn5'
   fpsVisual.pickupFileName = 'asrc_modern_carbine_pickup.kn5'

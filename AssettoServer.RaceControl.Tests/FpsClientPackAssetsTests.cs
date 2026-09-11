@@ -326,13 +326,13 @@ public sealed class FpsClientPackAssetsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(53));
+            Assert.That(FpsClientPackBuilder.ClientPackVersion, Is.EqualTo(54));
             Assert.That(FpsClientPackBuilder.ClientPackVersion,
                 Is.EqualTo(AssettoServer.Release.ReleaseIdentity.FpsPackVersion),
                 "The exported pack must be accepted by the release loader.");
             Assert.That(FpsClientPackBuilder.BridgeProtocol, Is.EqualTo(14));
             Assert.That(FpsClientPackBuilder.DefaultFileName,
-                Is.EqualTo("asrc-fps-compatibility-client-v53.zip"));
+                Is.EqualTo("asrc-fps-compatibility-client-v54.zip"));
             Assert.That(entries.Keys, Does.Contain("asrc-fps-client.json"));
             Assert.That(entries.Keys, Does.Contain("README.txt"));
             Assert.That(entries.Keys, Does.Contain(FpsClientPackAssets.HudManifestPath));
@@ -407,7 +407,7 @@ public sealed class FpsClientPackAssetsTests
         Assert.Multiple(() =>
         {
             Assert.That(root.GetProperty("protocol").GetInt32(), Is.EqualTo(6));
-            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(53));
+            Assert.That(root.GetProperty("clientPackVersion").GetInt32(), Is.EqualTo(54));
             Assert.That(root.GetProperty("loadoutItems").GetArrayLength(), Is.EqualTo(5));
             Assert.That(root.GetProperty("carrierCar").GetString(), Is.EqualTo("asrc_fps_carrier"));
             Assert.That(root.GetProperty("visualThemes").GetProperty("defaultTheme").GetString(),

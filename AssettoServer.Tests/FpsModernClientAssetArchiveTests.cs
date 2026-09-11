@@ -16,8 +16,8 @@ public sealed class FpsModernClientAssetArchiveTests
         Assert.Multiple(() =>
         {
             Assert.That(FpsModernClientAssetArchive.Route,
-                Is.EqualTo("/fps/assets/asrc-fps-modern-v13.zip"));
-            Assert.That(FpsModernClientAssetArchive.AssetRevision, Is.EqualTo(13));
+                Is.EqualTo("/fps/assets/asrc-fps-modern-v14.zip"));
+            Assert.That(FpsModernClientAssetArchive.AssetRevision, Is.EqualTo(14));
             Assert.That(bytes.AsSpan(0, 2).SequenceEqual("PK"u8), Is.True);
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.OperatorFileName));
             Assert.That(names, Does.Contain(FpsModernClientAssetArchive.GhostFileName));

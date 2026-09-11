@@ -24,7 +24,7 @@
   },
   "operator": {
     "file": "asrc_modern_operator_carbine.kn5",
-    "triangles": 36322,
+    "triangles": 36826,
     "materials": 4,
     "bones": 68,
     "clips": [
@@ -76,6 +76,17 @@
       "team1": "embedded original uniform and gear",
       "team2Uniform": "asrc_modern_team2_uniform.png",
       "team2Gear": "asrc_modern_team2_gear.png"
+    },
+    "headCoverage": {
+      "sourceMesh": "Hair_PackedMaterial3mat_0",
+      "triangles": 504,
+      "material": "ASRC_OFFICER_SKIN",
+      "atlasRegion": [
+        1200,
+        1220,
+        760,
+        760
+      ]
     }
   },
   "viewmodel": {
@@ -117,7 +128,7 @@
     "asrc_modern_operator_aim_idle.ksanim": "7b1a5756840344f2b2385bbaf69f49dd0327782f5495c4dfd9dc31caeeac1f45",
     "asrc_modern_operator_aim_up.ksanim": "c7c30d00de2edd1bd3775edd7f07fe199935a7a66edb8deb0d6a13e6c83172e1",
     "asrc_modern_operator_airborne.ksanim": "1ad94f0f413d23ee3c0f00215b9fb076e85c9f43f0da1c8fde5f9b5ba1b4167f",
-    "asrc_modern_operator_carbine.kn5": "a04eeee46c2554e3910aeaa6fe91c2c61bdb5754072b18ab56cc4135138656b2",
+    "asrc_modern_operator_carbine.kn5": "203774e69ebd2dc9ba222a0035760ad5d150cc14866e50c8b45675a610fc5a94",
     "asrc_modern_operator_crouch_backward.ksanim": "6e0f4640d38a79c50e62a230136f98a71996683048a7b0767d673a191fbf80d3",
     "asrc_modern_operator_crouch_backward_left.ksanim": "20661bcf8b5d34672922f8a0b70d382b4b114c9844e71c4c8c4b4176157cfc1b",
     "asrc_modern_operator_crouch_backward_right.ksanim": "c6dfc08e01d8d99043c1e7a76a8a5497d7519b2429ddd8c39c0e4737a3dec520",
@@ -185,7 +196,7 @@
     "officer": {
       "id": 0,
       "file": "asrc_modern_operator_carbine.kn5",
-      "triangles": 36322,
+      "triangles": 36826,
       "materials": 4,
       "bones": 68,
       "clips": [
@@ -251,7 +262,18 @@
           "gear": "asrc_modern_team2_gear.png",
           "portrait": "asrc_operator_officer_bluegrey.png"
         }
-      ]
+      ],
+      "headCoverage": {
+        "sourceMesh": "Hair_PackedMaterial3mat_0",
+        "triangles": 504,
+        "material": "ASRC_OFFICER_SKIN",
+        "atlasRegion": [
+          1200,
+          1220,
+          760,
+          760
+        ]
+      }
     },
     "ghost": {
       "id": 1,

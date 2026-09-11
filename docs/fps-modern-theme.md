@@ -52,7 +52,7 @@ Current generated budgets:
 
 | Asset | Triangles | Materials | Bones | Animated meshes |
 |---|---:|---:|---:|---:|
-| Officer plus world carbine | 36,322 | 4 | 68 | 4 |
+| Officer plus world carbine | 36,826 | 4 | 68 | 4 |
 | Ghost plus world carbine | 39,684 | 4 | 68 | 4 |
 | First-person carbine and arms | 25,111 | 3 | 50 | 3 |
 | Dropped carbine pickup | 6,000 | 1 | 0 | 0 |
@@ -131,9 +131,9 @@ gameplay timing, hitboxes, shot origin, recoil, wall retraction, or damage.
 ## Runtime ownership and fallback
 
 The server injects the validated `Blocks` or `Modern` marker into its delivered online Lua. Modern
-downloads `/fps/assets/asrc-fps-modern-v13.zip` through the same `web.loadRemoteAssets()` path as the
+downloads `/fps/assets/asrc-fps-modern-v14.zip` through the same `web.loadRemoteAssets()` path as the
 existing rifle. CSP caches that payload by URL, so the archive revision must advance whenever any
-embedded KN5, KSANIM, or skin texture changes. Client pack version 53 also installs both themes under the project-owned
+embedded KN5, KSANIM, or skin texture changes. Client pack version 54 also installs both themes under the project-owned
 `content/objects3D/asrc_fps` tree.
 
 Team matches use Officer for Team 1 and Ghost for Team 2. Colors are selected separately in the Skin
