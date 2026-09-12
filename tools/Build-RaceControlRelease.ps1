@@ -1,13 +1,14 @@
 [CmdletBinding()]
 param(
     [string]$InnoCompiler = (Join-Path $env:LOCALAPPDATA 'Programs/Inno Setup 7/ISCC.exe'),
-    [string]$OutputRoot = 'dist'
+    [string]$OutputRoot = 'dist',
+    [switch]$LocalReview
 )
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $modernManifest = Get-Content -LiteralPath (Join-Path $repo 'AssettoServer.RaceControl.Core/Assets/Fps/Modern/asrc-modern-assets.json') -Raw | ConvertFrom-Json
-if ($modernManifest.operators.ghost -and -not $modernManifest.operators.ghost.redistributionRightsConfirmedByUser) {
-    throw 'Public release packaging requires a recorded Ghost-specific redistribution permission. Local development builds remain available with Publish-RaceControl.ps1.'
+if (-not $LocalReview -and $modernManifest.operators.ghost -and -not $modernManifest.operators.ghost.redistributionRightsConfirmedByUser) {
+    throw 'Public release packaging requires a recorded Ghost-specific redistribution permission. Use -LocalReview for a local review package; this does not confirm redistribution rights.'
 }
 [xml]$versions = Get-Content (Join-Path $repo 'Release\Release.props')
 $version = [string]$versions.Project.PropertyGroup[0].RaceControlReleaseVersion
@@ -90,12 +91,15 @@ Save-Json (Join-Path $server 'race-control-server.json') $capabilities
 $hasGit = Test-Path -LiteralPath (Join-Path $repo '.git')
 $commit = if ($hasGit) { (& git -C $repo rev-parse HEAD).Trim() } else { $null }
 $modified = if ($hasGit) { [bool](& git -C $repo status --porcelain) } else { $true }
-$release = [ordered]@{ product='preseznik/ACServerBots'; version=$version; runtime='win-x64'; sourceCommit=$commit; workingTreeModified=$modified; fpsPackVersion=$packVersion; mapsPackVersion=$mapPackVersion; maps=$mapManifest.maps; controlProtocol=1 }
+$release = [ordered]@{ product='preseznik/ACServerBots'; version=$version; runtime='win-x64'; sourceCommit=$commit; workingTreeModified=$modified; localReview=[bool]$LocalReview; fpsPackVersion=$packVersion; mapsPackVersion=$mapPackVersion; maps=$mapManifest.maps; controlProtocol=1 }
 Save-Json (Join-Path $launcher 'release-build.json') $release
+$buildModeArgument = if ($LocalReview) { ' -LocalReview' } else { '' }
+$reviewNotice = if ($LocalReview) { 'Local review package. This build does not confirm asset redistribution rights.' } else { '' }
 $readme = @"
 AssettoServer Race Control $version - Windows x64, LAN-focused preview
 ==================================================================
 This is the ACServerBots fork, not an upstream AssettoServer release.
+$reviewNotice
 
 Portable ZIPs: extract to a writable folder and run AssettoServer Race Control.exe.
 Keep portable.json. All launcher settings, servers, logs, caches, downloads,
@@ -135,13 +139,13 @@ runs; the local client ZIP supplies the HUD, audio, and shared visual assets.
 Racing works without the optional FPS pack.
 
 Download buttons fetch this exact compatible fork release, not upstream/latest.
-For this first local release use Import ZIP until the assets are published at:
+For this local release use Import ZIP until the assets are published at:
 https://github.com/preseznik/ACServerBots/releases/tag/race-control-v$version
 
 Source: RaceControl-$version-Source.zip accompanies this release and contains
 the matching modified source, assets and build scripts. Build with .NET 10 SDK
 (the server targets .NET 9), PowerShell 7 and Inno Setup 7:
-pwsh -NoProfile -File tools\Build-RaceControlRelease.ps1
+pwsh -NoProfile -File tools\Build-RaceControlRelease.ps1$buildModeArgument
 Retain LICENSE, THIRD_PARTY_NOTICES.md and individual asset attributions.
 Before public distribution, publish the matching source and binaries together.
 
@@ -206,6 +210,10 @@ $checksums = @(Get-ChildItem -LiteralPath $assets -File | Sort-Object Name | For
 [IO.File]::WriteAllLines((Join-Path $assets 'SHA256SUMS.txt'), $checksums)
 New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
 # Only promote a completed build. Never overwrite an earlier release.
+if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($assets)) -ne [IO.Path]::GetFullPath($work) -or
+    [IO.Path]::GetDirectoryName($destination) -ne [IO.Path]::GetFullPath((Join-Path $repo $OutputRoot))) {
+    throw 'Release promotion paths escaped their staging or output directories.'
+}
 Move-Item -LiteralPath $assets -Destination $destination
 Write-Host "Release ready: $destination"
 Write-Host "Staging retained for validation: $stage"

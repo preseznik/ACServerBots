@@ -1,16 +1,20 @@
 # Local release packaging
 
-Implemented release: **0.0.55-pre35**, retaining the existing server version.
-FPS content remains **client pack 45**. The launcher and server share version
+Current release: **0.1.1** (2026-09-11), starting major 0, minor 1, patch 1.
+FPS content uses **client pack 54**; the four-map snapshot remains **map pack 1**.
+The launcher and server share version
 metadata in `Release/Release.props`.
 
 Build all Windows x64 artifacts with:
 
 ```powershell
-pwsh -NoProfile -File tools/Build-RaceControlRelease.ps1
+pwsh -NoProfile -File tools/Build-RaceControlRelease.ps1 -LocalReview
 ```
 
-Output: `dist/v0.0.55-pre35/`. An existing version directory is never overwritten.
+Output: `dist/v0.1.1/`. An existing version directory is never overwritten.
+`-LocalReview` records the local-only intent in the release manifest and permits
+packaging the current Ghost assets without changing their redistribution record.
+The default public-package check still requires Ghost-specific permission.
 The builder retains isolated staging under .artifacts for inspection, packages
 the current working tree as Corresponding Source, and writes release.json plus
 SHA256SUMS.txt. ZIP entries have stable order and timestamps. Inno executables
@@ -39,14 +43,14 @@ Launcher-only users can import this release's Server ZIP and optional FPS ZIP in
 Settings > Local Installations. Server execution checks the release manifest,
 payload hashes and executable capability output. Downloads target the exact
 matching fork version, using HTTPS and SHA-256; they become available after the
-release assets are published under `race-control-v0.0.55-pre35`. Until then use
+release assets are published under `race-control-v0.1.1`. Until then use
 offline ZIP import. No GitHub tag or release is created by the local builder.
 Do not reuse the inherited upstream `v0.0.55-pre35` tag for the modified fork.
 
 Validate an artifact set with:
 
 ```powershell
-pwsh -NoProfile -File tools/Test-RaceControlRelease.ps1 -ReleaseDirectory dist/v0.0.55-pre35 -EvidenceDirectory .artifacts/release-verification-new
+pwsh -NoProfile -File tools/Test-RaceControlRelease.ps1 -ReleaseDirectory dist/v0.1.1 -EvidenceDirectory .artifacts/release-verification-new
 ```
 
 Use tools/Test-RaceControlLocal.ps1 against an extracted Full directory for
