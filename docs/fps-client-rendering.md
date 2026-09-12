@@ -1,5 +1,124 @@
 # FPS client rendering handoff
 
+## Compact ammo HUD and lethal-kill medal (2026-09-12)
+
+Client pack **57**, HUD **1.16.0**, bridge **v16** supersedes the ammo panel below.
+The backing panel is now 360 x 168 logical pixels (was 560 x 208). Its separate
+148 x 100 weapon cutout sits 12 pixels to the left, without a background or border;
+the complete group is 520 x 168. The rifle's transparent texture gutters are excluded
+with UV coordinates, preserving the approved mockup's visible weapon size without
+editing shared assets. Ammo arithmetic, warning colours, reload progress and hints
+are unchanged. Both online fallback and installed companion HUD use matching code.
+
+Confirmed local-player kills with item IDs 16 (frag) or 17 (sticky) now show an
+original gold/cyan medallion and **GRENADE KILL** banner below the match clock for
+three seconds, fading/sliding in and fading out. The matching existing grenade
+thumbnail is drawn inside it. Same-type kill events within 0.45 seconds coalesce
+into an elimination count, so a blast killing several players does not queue a
+long series of banners. This is a presentation burst window, not a new server-side
+multikill achievement. Other players' kills, firearms, assists, damage-only events,
+suicides and client-originated events do not trigger it. Posthumous enemy grenade
+kills still qualify. The existing kill-confirm sound and score awards are unchanged;
+the medal itself grants no extra points.
+
+Medal state expires, clears on round reset, and is hidden beneath menus/scoreboards.
+The companion consumes item/count/age from bridge v16 rather than guessing from score
+text; old bridge layouts are isolated. Update the bundled server and companion app
+together and restart AC. No models, poses, weapon balance or server packet layouts
+changed in this pass.
+
+Validation: 264 server and 97 Race Control tests; Lua harnesses for compact ammo,
+lethal medals, shared bridge/aim, camera clipping, loadout menu, match results and
+prediction. `tools/test_fps_lethal_medal.py` exercises the actual server-event callback,
+filtering, duplicate victim-life suppression, burst counting, expiry/reset, both HUD
+adapters, fade timing and missing-thumbnail fallback. Draw-call previews under
+`.artifacts/ammo-hud/` and `.artifacts/lethal-medal/` approximate DirectWrite and are
+not live CSP captures; final in-game appearance still needs the user's check.
+
+Delivery: rebuilt `out-race-control/AssettoServer Race Control.exe` and bundled server.
+The packaged Modern FPS gate passed with eight named moving actors, rifle fire,
+served asset archives and graceful shutdown. Installed HUD script SHA-256 matches
+source and the packaged Core resource:
+`7954AC559B5F32FF1EA1A1A1E946F1FA172F62F6BCAA4D48617FA1781C46D718`.
+Prior installed script/manifest are backed up in
+`.artifacts/ammo-hud/installed-backup-20260912-121536/`.
+
+## Readable ammunition panel (2026-09-12)
+
+Client pack **56**, HUD **1.15.0**, bridge **v15** implements the approved ammo mockup
+in the companion app and online fallback. The bottom-right panel is 560 x 208 logical
+pixels, scaled with the HUD: near-black background, cyan edge, large white loaded
+rounds, cyan reserve rounds, reserve-magazine icons/count, total rounds, and a compact
+reload/grenade strip. It uses system Bahnschrift for the large numerals and the existing
+weapon thumbnails; no new textures/models are required. Low loaded ammo is amber,
+empty is red, and reload progress uses the selected weapon's actual reload duration.
+
+`FpsWorld.ConfigureClientScript` injects capacity/reload data directly from `FpsItems`
+into the delivered Lua. The online bridge publishes the active weapon's capacity and
+reload duration alongside its current ammo/reserve count. Reserve rounds are full
+spare magazines times capacity; total includes loaded rounds, for the active weapon
+only. Current capacities are rifle 40, MP5 30, Desert Eagle 7, Colt 1911 8. Thus the
+mockup's 32 loaded and 3 spare rifle magazines is **32 / 120**, **152 total**, not 128.
+This does not rebalance ammo or change reload/discard behaviour. Until capacity data
+arrives, reserve/total rounds display `--` rather than an assumed value.
+
+Bridge v15 deliberately isolates the extended struct from older clients. Update both
+the staged server and installed companion HUD, then restart AC. The prior ADS clip
+fix remains in the HUD. Rendering parity, weapon switching, ammo math, reload/empty
+states and 720p/1080p/4K layout are covered by `tools/test_fps_ammo_hud.py`; previews
+in `.artifacts/ammo-hud/` execute the real draw code but approximate DirectWrite fonts
+and are not in-game acceptance captures. C# tests cover server-stat injection in both
+themes, including locale-independent float formatting.
+
+## ADS near-clip ownership (2026-09-12)
+
+The client log confirmed `requested=0.0001 observed=0.1000 method=car-0,...,car-5`:
+the old online script changed car-camera parameters, but `ac.grabCamera()` uses the
+free camera. The installed CSP online-script SDK does not expose
+`ac.overrideCameraClipPlanes`; its Lua-app SDK does. The companion HUD now owns
+that override and requests a 5 mm near plane, leaving the far plane unchanged.
+No weapon/hand transforms, sight offsets, FOV, shot origin or model assets changed.
+
+The override is gated on a fresh compatible FPS bridge and live gameplay. It is
+released on pause, menus, results, replay, stale/disconnected bridge, and app unload.
+After activation it logs the observed clip distance and warns if the request did
+not take effect. The online heartbeat still reports `nearClip` for client diagnosis.
+No racing car-camera parameters are modified.
+
+Client pack **55**, HUD **1.14.1** (bridge still v14), includes the app-side fix.
+Existing clients need the updated HUD app, not just a new server script. Restart AC
+after installing it. `tools/test_fps_camera_clip.py --lua-runtime .artifacts/lua-runtime`
+executes the real HUD controller and update entry point for activation, cleanup,
+failure recovery and readback diagnostics. A source-mesh render reproduced the
+reported receiver slices at 100 mm and removed them at 5 mm with unchanged ADS pose;
+this is diagnostic evidence, not an in-game acceptance capture. Check rifle/MP5/pistol
+ADS, reload, steep pitch and nearby walls in CSP, and verify `nearClip=0.005` in the log.
+
+## Nuketown stair support (2026-09-12)
+
+`FpsArenaSurface.TryResolveMove` reports whether a stopped sweep actually lost ground
+support. A shortened slide against a rail or wall no longer triggers the simulation's
+air-movement fallback. When a supported move genuinely reaches a drop, the fallback
+starts at the last resolved support height, including any steps already climbed that tick.
+This prevents retrying an obstructed stair move below its tread.
+
+The online client's grounded prediction also clamps upward to the authoritative tread
+before casting movement rays. The previous vertical interpolation left the local camera
+and collision probes about 63 cm below one logged Nuketown climb. Descending remains
+smoothed and locally predicted jumps awaiting acknowledgement are exempt from the clamp.
+
+Validation used the installed Nuketown prepared geometry (204,575 triangles), with 300
+approach/steering/speed/timestep combinations across both outside staircases: 37 combinations
+became airborne before the fix, zero afterwards. This measures support loss, not completion
+of every route; approaches into rail posts can legitimately be blocked. The evidence and
+replay source are retained in `.artifacts/nuketown-stairs/`. Permanent coverage is in
+`FpsStairMovementTests` and `tools/test_fps_prediction.py`; the partial-step regression fails
+with the original fallback. Existing ledge, jump, stair and wall tests remain required.
+
+No track, model, client-pack or packet format changed. The updated Lua script is delivered
+by the rebuilt server on reconnect; there is no client-pack reinstall or arena re-preparation.
+Build into `out-race-control`. In-game traversal acceptance remains a user check.
+
 ## Match results and automatic rounds
 
 The server retains `Finished` for 20 seconds, publishes `restartCountdownSeconds`, then resets the

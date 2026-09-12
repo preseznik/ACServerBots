@@ -166,9 +166,15 @@ internal sealed class FpsArenaSurface
     public bool TryResolveMove(Vector3 current, Vector3 desired, float currentGroundY,
         float actorHeight,
         out Vector3 resolved, out float groundY)
+        => TryResolveMove(current, desired, currentGroundY, actorHeight,
+            out resolved, out groundY, out _);
+
+    public bool TryResolveMove(Vector3 current, Vector3 desired, float currentGroundY,
+        float actorHeight, out Vector3 resolved, out float groundY, out bool lostSupport)
     {
         resolved = current;
         groundY = currentGroundY;
+        lostSupport = false;
         var planarDelta = new Vector2(desired.X - current.X, desired.Z - current.Z);
         int steps = Math.Max(1, (int)MathF.Ceiling(planarDelta.Length() / MaximumSweepStep));
         var increment = (desired - current) / steps;
@@ -177,7 +183,7 @@ internal sealed class FpsArenaSurface
         {
             var candidate = resolved + increment;
             if (TryCandidate(candidate, groundY, actorHeight, increment,
-                    out var next, out float nextGround, out _))
+                    out var next, out float nextGround, out _, out bool unsupported))
             {
                 resolved = next;
                 groundY = nextGround;
@@ -186,7 +192,11 @@ internal sealed class FpsArenaSurface
             }
 
             if (!TrySlideGround(resolved, increment, groundY, actorHeight,
-                    out next, out nextGround)) break;
+                    out next, out nextGround))
+            {
+                lostSupport = unsupported;
+                break;
+            }
             resolved = next;
             groundY = nextGround;
             moved = true;
@@ -485,7 +495,7 @@ internal sealed class FpsArenaSurface
         {
             var candidate = resolved + remaining;
             if (TryCandidate(candidate, groundY, actorHeight, remaining,
-                    out var next, out float nextGround, out var normal))
+                    out var next, out float nextGround, out var normal, out _))
             {
                 resolved = next;
                 groundY = nextGround;
@@ -533,10 +543,12 @@ internal sealed class FpsArenaSurface
     }
 
     private bool TryCandidate(Vector3 position, float currentGroundY, float actorHeight,
-        Vector3 movement, out Vector3 resolved, out float groundY, out Vector2 blockingNormal)
+        Vector3 movement, out Vector3 resolved, out float groundY, out Vector2 blockingNormal,
+        out bool unsupported)
     {
         blockingNormal = default;
-        if (!TryGetStepGroundHeight(position, movement, currentGroundY, out groundY))
+        unsupported = !TryGetStepGroundHeight(position, movement, currentGroundY, out groundY);
+        if (unsupported)
         {
             resolved = default;
             return false;

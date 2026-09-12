@@ -5,13 +5,13 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 14
+local bridgeProtocol = 16
 local actorCapacity = 32
 local grenadeCapacity = 8
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v14'),
+  ac.StructItem.key('asrc.fps.hud.v16'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -24,6 +24,8 @@ local bridge = ac.connect({
   localStamina = ac.StructItem.byte(),
   localAmmo = ac.StructItem.byte(),
   localReserveMagazines = ac.StructItem.byte(),
+  localMagazineCapacity = ac.StructItem.byte(),
+  localReloadDuration = ac.StructItem.float(),
   localReloadRemaining = ac.StructItem.float(),
   localMainWeapon = ac.StructItem.byte(),
   localLethal = ac.StructItem.byte(),
@@ -80,6 +82,9 @@ local bridge = ac.connect({
   awardPopupCount = ac.StructItem.byte(),
   awardPopupTexts = ac.StructItem.array(ac.StructItem.string(64), awardPopupCapacity),
   awardPopupAlphas = ac.StructItem.array(ac.StructItem.float(), awardPopupCapacity),
+  lethalMedalItem = ac.StructItem.byte(),
+  lethalMedalCount = ac.StructItem.byte(),
+  lethalMedalAge = ac.StructItem.float(),
 }, false, ac.SharedNamespace.Shared)
 
 local ranking = {}
@@ -89,6 +94,14 @@ local assettoRoot = ac.getFolder(ac.FolderID.Root)
 local weaponImagePath = (assettoRoot ~= nil and assettoRoot ~= '')
   and (assettoRoot .. '/apps/lua/asrc_fps_hud/asrc_carbine_hud.png')
   or 'asrc_carbine_hud.png'
+local weaponImages = {
+  [1] = weaponImagePath,
+  [2] = assettoRoot .. '/content/objects3D/asrc_fps/asrc_loadout_compact_smg.png',
+  [3] = assettoRoot .. '/content/objects3D/asrc_fps/asrc_loadout_desert_eagle.png',
+  [4] = assettoRoot .. '/content/objects3D/asrc_fps/asrc_loadout_colt_1911.png',
+  [16] = assettoRoot .. '/content/objects3D/asrc_fps/asrc_loadout_frag_grenade.png',
+  [17] = assettoRoot .. '/content/objects3D/asrc_fps/asrc_loadout_sticky_grenade.png',
+}
 local itemNames = {
   [1] = 'ASSAULT RIFLE', [2] = 'MP5 SMG',
   [3] = 'DESERT EAGLE', [4] = 'COLT 1911',
@@ -258,6 +271,45 @@ local function bridgeIsLive()
     and age >= -0.1 and age <= 0.5
 end
 
+-- The global override is available to Lua apps, not online scripts. Car-camera
+-- clipNear does not affect ac.grabCamera(), which switches to the free camera.
+local fpsCameraClip = { near = 0.005, applied = false, failureLogged = false }
+
+function fpsCameraClip.setActive(active)
+  if active == fpsCameraClip.applied then return end
+  local ok, err = pcall(function()
+    ac.overrideCameraClipPlanes(active and fpsCameraClip.near or nil, nil)
+  end)
+  if not ok then
+    if not fpsCameraClip.failureLogged then
+      fpsCameraClip.failureLogged = true
+      ac.warn('[ASRC FPS HUD] camera clip override failed: ' .. tostring(err))
+    end
+    return
+  end
+  fpsCameraClip.applied = active
+  fpsCameraClip.verifyAfter = active and ui.time() + 0.2 or nil
+  ac.log(active and '[ASRC FPS HUD] FPS camera near clip requested: 0.005 m'
+    or '[ASRC FPS HUD] FPS camera clip override released')
+end
+
+function fpsCameraClip.update()
+  local state = ac.getSim()
+  fpsCameraClip.setActive(bridgeIsLive() and state.isSessionStarted and state.isLive
+    and not state.isPaused and not state.isInMainMenu
+    and not state.isLookingAtSessionResults and not state.isReplayActive)
+  if fpsCameraClip.verifyAfter ~= nil and ui.time() >= fpsCameraClip.verifyAfter then
+    fpsCameraClip.verifyAfter = nil
+    local observed = state.cameraClipNear
+    ac.log(string.format('[ASRC FPS HUD] FPS camera near clip observed: %.4f m', observed))
+    if observed > fpsCameraClip.near + 0.001 then
+      ac.warn('[ASRC FPS HUD] FPS camera near clip did not take effect; check other camera apps')
+    end
+  end
+end
+
+ac.onRelease(function() fpsCameraClip.setActive(false) end)
+
 local function actorName(index)
   local value = bridgeString(bridge.actorNames[index])
   if value == '' then return 'Operative ' .. tostring(bridge.actorIDs[index]) end
@@ -409,11 +461,84 @@ local function drawCompactRanking(scale, margin)
   end
 end
 
+local function drawAmmoPanel(size, scale, margin, state)
+  local p = vec2(size.x - margin - 360 * scale, size.y - margin - 168 * scale)
+  local white, cyan = rgbm(0.96, 0.98, 1, 1), rgbm(0.10, 0.86, 0.94, 1)
+  local muted, border = rgbm(0.55, 0.72, 0.8, 1), rgbm(0.27, 0.49, 0.57, 1)
+  local ammo = math.max(0, math.floor(state.ammo or 0))
+  local mags = math.max(0, math.floor(state.reserveMagazines or 0))
+  local capacity = state.magazineCapacity or 0
+  local reserve = capacity > 0 and mags * capacity or nil
+  local reloading = (state.reloadRemaining or 0) > 0
+  local ammoColor = ammo == 0 and rgbm(1, 0.30, 0.25, 1)
+    or (capacity > 0 and ammo <= capacity * 0.25) and rgbm(1, 0.72, 0.25, 1) or white
+  local function point(x, y) return p + vec2(x, y) * scale end
+  local function text(value, x, y, w, h, fontSize, color)
+    ui.dwriteDrawTextClipped(tostring(value), fontSize * scale, point(x, y),
+      point(x + w, y + h), ui.Alignment.Start, ui.Alignment.Center, false, color)
+  end
+  -- Separate alpha cutout: no backing, border or panel underneath the weapon.
+  if state.imagePath ~= nil then
+    if string.find(state.imagePath, 'asrc_carbine_hud.png', 1, true) ~= nil then
+      -- The legacy rifle thumbnail has large transparent side gutters. Sample just
+      -- its silhouette so the visible rifle, not the empty texture, matches the mockup.
+      ui.drawImage(state.imagePath, point(-160, 30), point(-12, 130),
+        white, vec2(190 / 900, 0), vec2(716 / 900, 1))
+    else
+      ui.drawImage(state.imagePath, point(-160, 30), point(-12, 130),
+        white, nil, nil, ui.ImageFit.Fit)
+    end
+  end
+  ui.drawRectFilled(p, point(360, 168), rgbm(0.035, 0.053, 0.061, 0.96), 6 * scale)
+  ui.drawRect(p, point(360, 168), border, 6 * scale, nil, math.max(1, scale))
+  ui.drawRectFilled(point(357, 5), point(360, 163), cyan, 2 * scale)
+  ui.pushDWriteFont('Bahnschrift:@System;Weight=Bold')
+  text(state.weaponName or 'FIREARM', 14, 7, 330, 21, 16, white)
+  ui.popDWriteFont()
+  ui.pushDWriteFont('Segoe UI')
+  text('IN MAG', 18, 32, 108, 16, 10, muted)
+  text('RESERVE', 159, 32, 180, 16, 10, muted)
+  ui.pushDWriteFont('Bahnschrift:@System;Weight=Bold')
+  text(string.format('%02d', ammo), 14, 47, 108, 65, 62, ammoColor)
+  text('/', 118, 52, 30, 57, 50, border)
+  text(reserve ~= nil and string.format('%02d', reserve) or '--',
+    159, 54, 185, 58, 54, cyan)
+  ui.popDWriteFont()
+  -- The numerical count remains authoritative; up to five icons fit the compact rail.
+  for index = 1, math.min(mags, 5) do
+    local x = 15 + (index - 1) * 10
+    ui.drawRectFilled(point(x, 120), point(x + 6, 132), cyan, scale)
+    ui.drawRect(point(x, 120), point(x + 6, 132), border, scale, nil, scale)
+    ui.drawRectFilled(point(x - 1, 132), point(x + 7, 134), cyan)
+  end
+  text(string.format('%d RESERVE MAGS', mags), 72, 114, 126, 24, 10, white)
+  text(reserve ~= nil and string.format('%d ROUNDS TOTAL', ammo + reserve) or '-- ROUNDS TOTAL',
+    203, 114, 141, 24, 10, muted)
+  ui.drawLine(point(14, 142), point(344, 142), border, scale)
+  if reloading then
+    local duration = state.reloadDuration or 0
+    local progress = duration > 0 and math.clamp(1 - state.reloadRemaining / duration, 0, 1) or 0
+    ui.drawLine(point(14, 142), point(14 + 330 * progress, 142),
+      rgbm(1, 0.72, 0.25, 1), 2 * scale)
+  end
+  local function key(label, x, color)
+    ui.drawRect(point(x, 147), point(x + 16, 163), border, 3 * scale, nil, scale)
+    text(label, x + 4, 146, 12, 18, 11, color)
+  end
+  key('R', 14, white)
+  text(reloading and string.format('RELOADING  %.1fs', state.reloadRemaining) or 'RELOAD',
+    39, 145, 137, 20, 10, reloading and rgbm(1, 0.72, 0.25, 1) or white)
+  local lethalColor = (state.lethalsRemaining or 0) > 0 and white or muted
+  key('G', 184, lethalColor)
+  text(string.format('%s  x%d', state.lethalName or 'LETHAL', state.lethalsRemaining or 0),
+    207, 145, 137, 20, 10, lethalColor)
+  ui.popDWriteFont()
+end
+
 local function drawStatusWidgets(size, scale, margin)
   local bottom = size.y - margin
   local height = 148 * scale
   local leftWidth = 330 * scale
-  local rightWidth = 390 * scale
   local leftMin = vec2(margin, bottom - height)
   local leftMax = vec2(margin + leftWidth, bottom)
   panel(leftMin, leftMax, scale, 0.86)
@@ -455,42 +580,15 @@ local function drawStatusWidgets(size, scale, margin)
   ui.textColored(linkText, bridge.linkState == 1 and rgbm(0.35, 1, 0.45, 1)
     or rgbm(1, 0.55, 0.2, 1))
 
-  local right = size.x - margin
-  local rightMin = vec2(right - rightWidth, bottom - height)
-  local rightMax = vec2(right, bottom)
-  panel(rightMin, rightMax, scale, 0.86)
-  ui.drawRectFilled(vec2(rightMax.x - 4 * scale, rightMin.y), rightMax,
-    rgbm(0.22, 0.82, 0.98, 0.95), 2 * scale)
-  ui.drawImage(weaponImagePath, rightMin + vec2(8, 26) * scale,
-    rightMin + vec2(252, 124) * scale, rgbm(1, 1, 1, 0.98))
-  ui.setCursor(rightMin + vec2(16, 10) * scale)
-  if bridge.localReloadRemaining > 0 then
-    ui.text(string.format('RELOADING  %.1fs', bridge.localReloadRemaining))
-  else
-    local activeWeapon = bridge.localActiveSlot == 1
-      and bridge.localSecondaryWeapon or bridge.localMainWeapon
-    ui.text(itemNames[activeWeapon] or 'FIREARM')
-  end
-  ui.setCursor(rightMin + vec2(258, 32) * scale)
-  ui.pushFont(ui.Font.Title)
-  ui.text(string.format('%02d', bridge.localAmmo))
-  ui.popFont()
-  ui.setCursor(rightMin + vec2(258, 64) * scale)
-  ui.text(string.format('%d RESERVE MAGS', bridge.localReserveMagazines))
-  ui.setCursor(rightMin + vec2(258, 89) * scale)
-  ui.text('R  RELOAD')
-  ui.setCursor(rightMin + vec2(258, 108) * scale)
-  ui.text(string.format('G  %s  x%d', itemNames[bridge.localLethal] or 'LETHAL',
-    bridge.localLethalsRemaining))
-  if bridge.localReloadRemaining > 0 then
-    local reloadMin = rightMin + vec2(258, 115) * scale
-    local reloadMax = rightMin + vec2(374, 125) * scale
-    ui.drawRectFilled(reloadMin, reloadMax, rgbm(0.08, 0.12, 0.16, 0.94), 3 * scale)
-    ui.drawRectFilled(reloadMin, vec2(reloadMin.x
-      + (reloadMax.x - reloadMin.x) * math.clamp(1 - bridge.localReloadRemaining / 1.8, 0, 1),
-      reloadMax.y),
-      rgbm(1, 0.7, 0.2, 1), 3 * scale)
-  end
+  local activeWeapon = bridge.localActiveSlot == 1
+    and bridge.localSecondaryWeapon or bridge.localMainWeapon
+  drawAmmoPanel(size, scale, margin, {
+    weaponName = itemNames[activeWeapon], imagePath = weaponImages[activeWeapon],
+    ammo = bridge.localAmmo, reserveMagazines = bridge.localReserveMagazines,
+    magazineCapacity = bridge.localMagazineCapacity, reloadDuration = bridge.localReloadDuration,
+    reloadRemaining = bridge.localReloadRemaining, lethalName = itemNames[bridge.localLethal],
+    lethalsRemaining = bridge.localLethalsRemaining,
+  })
 end
 
 local function drawMatchAndFeed(size, scale, margin)
@@ -571,8 +669,55 @@ local function drawAim(size, scale)
   end
 end
 
+local function drawLethalMedal(size, scale, itemID, count, age, imagePath)
+  if count <= 0 or age < 0 or age >= 3 or (itemID ~= 16 and itemID ~= 17) then return end
+  local alpha = math.clamp(math.min(age / 0.16, (3 - age) / 0.5), 0, 1)
+  if alpha <= 0 then return end
+  local p = vec2(size.x * 0.5, (100 - 10 * (1 - math.min(1, age / 0.18))) * scale)
+  local gold = rgbm(1, 0.77, 0.31, alpha)
+  local dimGold = rgbm(0.54, 0.39, 0.17, alpha)
+  local function point(x, y) return p + vec2(x, y) * scale end
+  -- Original medal treatment: brass medallion, short wings, cyan team-HUD accent.
+  ui.drawCircleFilled(p, 36 * scale, rgbm(0.025, 0.038, 0.045, 0.94 * alpha), 48)
+  ui.drawCircle(p, 36 * scale, gold, 48, 2 * scale)
+  ui.drawCircle(p, 31 * scale, dimGold, 48, scale)
+  for side = -1, 1, 2 do
+    for index = 0, 2 do
+      ui.drawLine(point(side * 42, -12 + index * 12),
+        point(side * (76 - index * 9), -19 + index * 12), gold, 3 * scale)
+    end
+  end
+  if imagePath ~= nil then
+    -- Both grenade thumbnails share this alpha-safe crop (560 x 360 source).
+    ui.drawImage(imagePath, point(-16, -21), point(16, 21),
+      rgbm(1, 1, 1, alpha), vec2(155 / 560, 16 / 360), vec2(405 / 560, 344 / 360))
+  else
+    -- Remain legible while the thumbnail assets are still downloading.
+    ui.drawRectFilled(point(-9, -12), point(9, 15), gold, 7 * scale)
+    ui.drawRectFilled(point(-5, -19), point(5, -11), gold, scale)
+    ui.drawLine(point(4, -18), point(15, 4), gold, 2 * scale)
+  end
+  ui.drawRectFilled(point(-132, 44), point(132, 96),
+    rgbm(0.025, 0.038, 0.045, 0.88 * alpha), 4 * scale)
+  ui.drawLine(point(-45, 43), point(45, 43), rgbm(0.1, 0.86, 0.94, alpha), 2 * scale)
+  ui.pushDWriteFont('Bahnschrift:@System;Weight=Bold')
+  ui.dwriteDrawTextClipped('GRENADE KILL', 22 * scale, point(-125, 47), point(125, 74),
+    ui.Alignment.Center, ui.Alignment.Center, false, gold)
+  ui.popDWriteFont()
+  ui.pushDWriteFont('Segoe UI')
+  local subtitle = count > 1 and string.format('%d ELIMINATIONS', count)
+    or itemID == 16 and 'FRAG GRENADE' or 'STICKY GRENADE'
+  ui.dwriteDrawTextClipped(subtitle, 11 * scale, point(-125, 74), point(125, 92),
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.9, 0.95, 0.98, alpha))
+  ui.popDWriteFont()
+end
+
 local function drawAwards(size, scale)
   if bridge.cursorUnlocked ~= 0 then return end
+  if bridge.scoreboardHeld == 0 then
+    drawLethalMedal(size, scale, bridge.lethalMedalItem, bridge.lethalMedalCount,
+      bridge.lethalMedalAge, weaponImages[bridge.lethalMedalItem])
+  end
   local center = size * 0.5
   for index = 0, math.min(awardPopupCapacity, bridge.awardPopupCount) - 1 do
     local alpha = math.clamp(bridge.awardPopupAlphas[index], 0, 1)
@@ -959,6 +1104,7 @@ end
 local exclusiveSubscription = ui.onExclusiveHUD(exclusiveHud, true)
 
 function script.update(dt)
+  fpsCameraClip.update()
   local audioLive = bridgeIsLive()
   audioPlayer.update(dt)
   if audioPlayer.wasLive and not audioLive then audioPlayer.reset() end

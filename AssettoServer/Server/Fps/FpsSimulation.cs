@@ -1535,17 +1535,21 @@ internal sealed class FpsSimulation
         if (actor.IsGrounded)
         {
             resolvedMove = _surface.TryResolveMove(actor.Position, desired, actor.GroundY,
-                actorHeight, out resolved, out groundY);
+                actorHeight, out resolved, out groundY, out bool lostSupport);
             float supportedDistance = Vector2.Distance(new Vector2(previous.X, previous.Z),
                 new Vector2(resolved.X, resolved.Z));
             float requestedPlanarDistance = Vector2.Distance(new Vector2(previous.X, previous.Z),
                 new Vector2(desired.X, desired.Z));
-            if (requestedPlanarDistance > supportedDistance + 0.01f
-                && _surface.HasWalkableLandingAhead(resolved, desired, actor.GroundY,
+            // A rail or wall can shorten a grounded sweep without losing its tread.
+            // Only missing support permits a fall, starting at the last resolved height.
+            var supportedPosition = resolved with { Y = groundY };
+            var fallDesired = desired with { Y = groundY };
+            if (lostSupport && requestedPlanarDistance > supportedDistance + 0.01f
+                && _surface.HasWalkableLandingAhead(supportedPosition, fallDesired, groundY,
                     actorHeight)
-                && _surface.TryResolveAirMove(resolved, desired, actorHeight,
+                && _surface.TryResolveAirMove(supportedPosition, fallDesired, actorHeight,
                     out var airResolved, out float landingGroundY,
-                    allowUnsupportedGround: true, unsupportedGroundY: actor.GroundY)
+                    allowUnsupportedGround: true, unsupportedGroundY: groundY)
                 && Vector2.Distance(new Vector2(previous.X, previous.Z),
                     new Vector2(airResolved.X, airResolved.Z)) > supportedDistance + 0.001f)
             {

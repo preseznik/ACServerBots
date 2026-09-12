@@ -24,9 +24,9 @@ def main():
     app = (ROOT / 'AssettoServer.RaceControl.Core/Assets/Fps/Hud/asrc_fps_hud.lua').read_text(encoding='utf-8')
     for source in (client, app):
         SyntaxRuntime().compile(source)
-    online_schema = client[client.index("ac.StructItem.key('asrc.fps.hud.v14')"):
+    online_schema = client[client.index("ac.StructItem.key('asrc.fps.hud.v16')"):
                            client.index('}, false, ac.SharedNamespace.Shared)')]
-    app_schema = app[app.index("ac.StructItem.key('asrc.fps.hud.v14')"):
+    app_schema = app[app.index("ac.StructItem.key('asrc.fps.hud.v16')"):
                      app.index('}, false, ac.SharedNamespace.Shared)')]
     for old, new in [('hud.capacity', 'actorCapacity'), ('hud.grenadeCapacity', 'grenadeCapacity'),
                      ('hud.killFeedCapacity', 'killFeedCapacity'), ('hud.awardPopupCapacity', 'awardPopupCapacity')]:

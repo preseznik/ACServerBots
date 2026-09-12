@@ -6,6 +6,9 @@ This program is free software: you can redistribute it and/or modify it under th
 
 local capacity = 16
 local fpsVisual = {
+  weaponStats = {
+    -- __ASRC_FPS_WEAPON_STATS__
+  },
   requested = '__ASRC_FPS_THEME__',
   modern = false,
   active = 'Blocks',
@@ -694,13 +697,8 @@ local previewCamera = {
   position = vec3(),
   look = vec3(0, -0.2, 1),
 }
--- A perspective camera cannot use a literal zero near plane. Keep it effectively
--- on the camera surface so close viewmodel geometry exits behind the view instead
--- of exposing a visible receiver/stock cross-section.
-local fpsNearClip = 0.0001
-local fpsClipPlaneApplied = false
-local fpsClipPlaneMethod = 'not-applied'
-local fpsOriginalCarCameraClipNear = {}
+-- The companion HUD app owns the FPS near-clip override. Online scripts cannot
+-- override the grabbed/free camera's clipping planes via car-camera parameters.
 local firstPersonCameraRadius = 0.24
 local firstPersonCameraSkin = 0.025
 local firstPersonCameraOffset = vec3()
@@ -721,12 +719,14 @@ local requestRifleAssets
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 14,
+  protocol = 16,
   capacity = 32,
   grenadeCapacity = 8,
   killFeedCapacity = 6,
   awardPopupCapacity = 4,
   awardPopups = {},
+  lethalMedal = nil,
+  lethalMedalDeaths = {},
   bridge = nil,
   bridgeError = nil,
   bridgeMismatchLogged = false,
@@ -965,7 +965,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v14'),
+      ac.StructItem.key('asrc.fps.hud.v16'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -978,6 +978,8 @@ function hud.connect()
       localStamina = ac.StructItem.byte(),
       localAmmo = ac.StructItem.byte(),
       localReserveMagazines = ac.StructItem.byte(),
+      localMagazineCapacity = ac.StructItem.byte(),
+      localReloadDuration = ac.StructItem.float(),
       localReloadRemaining = ac.StructItem.float(),
       localMainWeapon = ac.StructItem.byte(),
       localLethal = ac.StructItem.byte(),
@@ -1034,11 +1036,14 @@ function hud.connect()
       awardPopupCount = ac.StructItem.byte(),
       awardPopupTexts = ac.StructItem.array(ac.StructItem.string(64), hud.awardPopupCapacity),
       awardPopupAlphas = ac.StructItem.array(ac.StructItem.float(), hud.awardPopupCapacity),
+      lethalMedalItem = ac.StructItem.byte(),
+      lethalMedalCount = ac.StructItem.byte(),
+      lethalMedalAge = ac.StructItem.float(),
     }, false, ac.SharedNamespace.Shared)
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v14')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v16')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -1191,6 +1196,11 @@ function hud.publish(dt)
   hud.bridge.localStamina = math.clamp(math.floor(fpsVisual.stamina.value + 0.5), 0, 100)
   hud.bridge.localAmmo = localActor ~= nil and localActor.ammo or 0
   hud.bridge.localReserveMagazines = localActor ~= nil and localActor.reserveMagazines or 0
+  local activeWeapon = localActor ~= nil and (localActor.activeSlot == 1
+    and localActor.secondaryWeapon or localActor.mainWeapon) or hud.loadout.mainWeapon
+  local weaponStats = fpsVisual.weaponStats[activeWeapon]
+  hud.bridge.localMagazineCapacity = weaponStats ~= nil and weaponStats.capacity or 0
+  hud.bridge.localReloadDuration = weaponStats ~= nil and weaponStats.reloadSeconds or 0
   hud.bridge.localReloadRemaining = localActor ~= nil and localActor.reloadRemaining or 0
   hud.bridge.localMainWeapon = localActor ~= nil and (localActor.mainWeapon or 1)
     or hud.loadout.mainWeapon
@@ -1276,6 +1286,7 @@ function hud.publish(dt)
   for index = 0, feedCount - 1 do
     hud.bridge.killFeed[index] = string.sub(killFeed[feedStart + index].text, 1, 72)
   end
+  hud.publishLethalMedal()
   local popupCount = math.min(hud.awardPopupCapacity, #hud.awardPopups)
   hud.bridge.awardPopupCount = popupCount
   for index = 0, popupCount - 1 do
@@ -1940,6 +1951,8 @@ hud.matchEvent = ac.OnlineEvent({
   if matchState == 2 and message.state ~= 2 then
     killFeed = {}
     hud.awardPopups = {}
+    hud.lethalMedal = nil
+    hud.lethalMedalDeaths = {}
     hitMarkerUntil = 0
     outOfBoundsRemaining = 0
     hud.loadout.activeSlot = 0
@@ -1976,6 +1989,33 @@ clearActorImpacts = function(actorID)
   end
 end
 
+function hud.onLethalKill(message)
+  if message.killerID ~= localSessionID or message.victimID == localSessionID
+      or message.victimID == 255 or (message.itemID ~= 16 and message.itemID ~= 17) then return end
+  -- A reliable kill can be replayed; never award the same victim life twice.
+  if hud.lethalMedalDeaths[message.victimID] == message.victimDeaths then return end
+  hud.lethalMedalDeaths[message.victimID] = message.victimDeaths
+  local previous = hud.lethalMedal
+  -- Coalesce the burst of confirmed kills from a detonation, without queuing a long animation.
+  local count = previous ~= nil and previous.age < 0.45
+    and previous.itemID == message.itemID and math.min(255, previous.count + 1) or 1
+  hud.lethalMedal = { itemID = message.itemID, count = count, age = 0 }
+end
+
+function hud.updateLethalMedal(dt)
+  if hud.lethalMedal == nil then return end
+  hud.lethalMedal.age = hud.lethalMedal.age + dt
+  if hud.lethalMedal.age >= 3 then hud.lethalMedal = nil end
+end
+
+function hud.publishLethalMedal()
+  if hud.bridge == nil then return end
+  local medal = hud.lethalMedal
+  hud.bridge.lethalMedalItem = medal and medal.itemID or 0
+  hud.bridge.lethalMedalCount = medal and medal.count or 0
+  hud.bridge.lethalMedalAge = medal and medal.age or 0
+end
+
 hud.killEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsKill'),
   killerID = ac.StructItem.byte(),
@@ -1985,6 +2025,7 @@ hud.killEvent = ac.OnlineEvent({
   itemID = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
+  hud.onLethalKill(message)
   local killerName = message.killerID == 255 and (message.itemID == 0 and 'ARENA' or 'SELF')
     or (names[message.killerID] or ('Player ' .. message.killerID))
   killFeed[#killFeed + 1] = {
@@ -3427,52 +3468,10 @@ local function fpsGameplayIsActive()
     and not state.isReplayActive
 end
 
-local function applyFpsClipPlane()
-  if fpsClipPlaneApplied then return end
-  local methods = {}
-  local overrideAvailable = type(ac.overrideCameraClipPlanes) == 'function'
-  if overrideAvailable then
-    local ok, err = pcall(function() ac.overrideCameraClipPlanes(fpsNearClip, nil) end)
-    if ok then
-      table.insert(methods, 'global-override')
-    else
-      ac.warn('[ASRC FPS] global camera clip override failed: ' .. tostring(err))
-    end
-  end
-  for cameraIndex = 0, car.carCamerasCount - 1 do
-    local params = ac.accessCarCamera(cameraIndex)
-    if params ~= nil then
-      fpsOriginalCarCameraClipNear[cameraIndex] = params.clipNear == nil
-        and false or params.clipNear
-      params.clipNear = fpsNearClip
-      table.insert(methods, 'car-' .. tostring(cameraIndex))
-    end
-  end
-  fpsClipPlaneApplied = true
-  fpsClipPlaneMethod = #methods > 0 and table.concat(methods, ',') or 'unavailable'
-  ac.log(string.format('[ASRC FPS] camera near-clip request: requested=%.4f observed=%.4f method=%s',
-    fpsNearClip, ac.getSim().cameraClipNear, fpsClipPlaneMethod))
-end
-
-local function restoreFpsClipPlane()
-  if not fpsClipPlaneApplied then return end
-  if type(ac.overrideCameraClipPlanes) == 'function' then
-    pcall(function() ac.overrideCameraClipPlanes(nil, nil) end)
-  end
-  for cameraIndex, original in pairs(fpsOriginalCarCameraClipNear) do
-    local params = ac.accessCarCamera(cameraIndex)
-    if params ~= nil then params.clipNear = original == false and nil or original end
-  end
-  fpsOriginalCarCameraClipNear = {}
-  fpsClipPlaneApplied = false
-  fpsClipPlaneMethod = 'released'
-end
-
 local function releaseFpsCamera()
   if camera ~= nil and camera:active() then camera:dispose() end
   camera = nil
   cameraError = nil
-  restoreFpsClipPlane()
   firstPersonCameraOffset:set(0, 0, 0)
   firstPersonCameraConstrained = false
   ac.log('[ASRC FPS] FPS camera released to AC menus')
@@ -3480,14 +3479,12 @@ end
 
 local function acquireFpsCamera()
   if camera ~= nil and camera:active() then
-    applyFpsClipPlane()
     return true
   end
   camera, cameraError = ac.grabCamera('AssettoServer FPS deathmatch')
   if camera == nil then return false end
   camera.ownShare = 1
   camera.cameraRestoreThreshold = 0.5
-  applyFpsClipPlane()
   ac.log('[ASRC FPS] FPS camera acquired with full ownership')
   return true
 end
@@ -4392,6 +4389,15 @@ local standingProbeHeights = {0.52, 0.9, 1.48}
 local crouchingProbeHeights = {0.52, 0.76, 0.98}
 local proneProbeHeights = {0.52, 0.55}
 
+function fpsVisual.correctGroundedPredictionHeight(actor)
+  -- Horizontal prediction and camera smoothing must start above the server's tread.
+  -- Otherwise climbing leaves the collision rays/camera inside the preceding steps.
+  -- A locally predicted jump can precede its first airborne snapshot, so preserve it.
+  if bit.band(actor.flags, 16) ~= 0 and not predictedAirborne then
+    actor.render.y = math.max(actor.render.y, actor.target.y)
+  end
+end
+
 local function localTrackProbeMovement(position, movement, stance)
   local distance = movement:length()
   if distance < 0.0001 then return false, vec2() end
@@ -4568,7 +4574,7 @@ function script.update(dt)
       viewmodelPipelineVersion, tostring(rifleAssetFolder ~= nil),
       tostring(viewmodelRoot ~= nil and viewmodelRoot ~= false), tostring(localActor ~= nil),
       tostring(camera ~= nil and camera:active()), ac.getSim().cameraClipNear,
-      fpsClipPlaneMethod, viewmodelUpdateCompletions,
+      'companion-hud', viewmodelUpdateCompletions,
       viewmodelUpdateAttempts, viewmodelFrameBeginCalls, viewmodelDraw3DCalls,
       viewmodelDrawUICalls, viewmodelDirectDrawCompletions, viewmodelDirectDrawAttempts,
       viewmodelDirectDrawPending, viewmodelDirectDrawFailures, remoteRender.actorsDrawn,
@@ -4929,6 +4935,7 @@ function script.update(dt)
       predictedHorizontalVelocity:set(math.lerp(predictedHorizontalVelocity,
         desiredVelocity, math.min(1, dt * 1.5)))
     end
+    fpsVisual.correctGroundedPredictionHeight(localActor)
     local predictedStep = predictedHorizontalVelocity * dt
     local resolvedStep, locallyConstrained = localTrackResolveMovement(localActor.render,
       predictedStep, localStance, localActor.collisionNormal)
@@ -5052,6 +5059,7 @@ function script.update(dt)
     if popup.ttl <= 0 then table.remove(hud.awardPopups, i) end
   end
   hud.updateAimTarget()
+  hud.updateLethalMedal(dt)
   hud.publish(dt)
 end
 
@@ -5083,6 +5091,49 @@ function hud.drawAimTarget(size, scale)
   hud.drawAimNameplate(size, scale, hud.aimTargetPosition,
     names[target.id] or ('Operative ' .. target.id), target.health, hud.maximumHealth,
     isTeamMatch() and own.team ~= 0 and own.team == target.team)
+end
+
+function hud.drawLethalMedal(size, scale, itemID, count, age, imagePath)
+  if count <= 0 or age < 0 or age >= 3 or (itemID ~= 16 and itemID ~= 17) then return end
+  local alpha = math.clamp(math.min(age / 0.16, (3 - age) / 0.5), 0, 1)
+  if alpha <= 0 then return end
+  local p = vec2(size.x * 0.5, (100 - 10 * (1 - math.min(1, age / 0.18))) * scale)
+  local gold = rgbm(1, 0.77, 0.31, alpha)
+  local dimGold = rgbm(0.54, 0.39, 0.17, alpha)
+  local function point(x, y) return p + vec2(x, y) * scale end
+  -- Original medal treatment: brass medallion, short wings, cyan team-HUD accent.
+  ui.drawCircleFilled(p, 36 * scale, rgbm(0.025, 0.038, 0.045, 0.94 * alpha), 48)
+  ui.drawCircle(p, 36 * scale, gold, 48, 2 * scale)
+  ui.drawCircle(p, 31 * scale, dimGold, 48, scale)
+  for side = -1, 1, 2 do
+    for index = 0, 2 do
+      ui.drawLine(point(side * 42, -12 + index * 12),
+        point(side * (76 - index * 9), -19 + index * 12), gold, 3 * scale)
+    end
+  end
+  if imagePath ~= nil then
+    -- Both grenade thumbnails share this alpha-safe crop (560 x 360 source).
+    ui.drawImage(imagePath, point(-16, -21), point(16, 21),
+      rgbm(1, 1, 1, alpha), vec2(155 / 560, 16 / 360), vec2(405 / 560, 344 / 360))
+  else
+    -- Remain legible while the thumbnail assets are still downloading.
+    ui.drawRectFilled(point(-9, -12), point(9, 15), gold, 7 * scale)
+    ui.drawRectFilled(point(-5, -19), point(5, -11), gold, scale)
+    ui.drawLine(point(4, -18), point(15, 4), gold, 2 * scale)
+  end
+  ui.drawRectFilled(point(-132, 44), point(132, 96),
+    rgbm(0.025, 0.038, 0.045, 0.88 * alpha), 4 * scale)
+  ui.drawLine(point(-45, 43), point(45, 43), rgbm(0.1, 0.86, 0.94, alpha), 2 * scale)
+  ui.pushDWriteFont('Bahnschrift:@System;Weight=Bold')
+  ui.dwriteDrawTextClipped('GRENADE KILL', 22 * scale, point(-125, 47), point(125, 74),
+    ui.Alignment.Center, ui.Alignment.Center, false, gold)
+  ui.popDWriteFont()
+  ui.pushDWriteFont('Segoe UI')
+  local subtitle = count > 1 and string.format('%d ELIMINATIONS', count)
+    or itemID == 16 and 'FRAG GRENADE' or 'STICKY GRENADE'
+  ui.dwriteDrawTextClipped(subtitle, 11 * scale, point(-125, 74), point(125, 92),
+    ui.Alignment.Center, ui.Alignment.Center, false, rgbm(0.9, 0.95, 0.98, alpha))
+  ui.popDWriteFont()
 end
 
 function hud.drawAwardPopups(center)
@@ -5432,13 +5483,86 @@ function hud.drawFallbackScoreboard(size, scale, ranking)
     end)
 end
 
+function hud.drawAmmoPanel(size, scale, margin, state)
+  local p = vec2(size.x - margin - 360 * scale, size.y - margin - 168 * scale)
+  local white, cyan = rgbm(0.96, 0.98, 1, 1), rgbm(0.10, 0.86, 0.94, 1)
+  local muted, border = rgbm(0.55, 0.72, 0.8, 1), rgbm(0.27, 0.49, 0.57, 1)
+  local ammo = math.max(0, math.floor(state.ammo or 0))
+  local mags = math.max(0, math.floor(state.reserveMagazines or 0))
+  local capacity = state.magazineCapacity or 0
+  local reserve = capacity > 0 and mags * capacity or nil
+  local reloading = (state.reloadRemaining or 0) > 0
+  local ammoColor = ammo == 0 and rgbm(1, 0.30, 0.25, 1)
+    or (capacity > 0 and ammo <= capacity * 0.25) and rgbm(1, 0.72, 0.25, 1) or white
+  local function point(x, y) return p + vec2(x, y) * scale end
+  local function text(value, x, y, w, h, fontSize, color)
+    ui.dwriteDrawTextClipped(tostring(value), fontSize * scale, point(x, y),
+      point(x + w, y + h), ui.Alignment.Start, ui.Alignment.Center, false, color)
+  end
+  -- Separate alpha cutout: no backing, border or panel underneath the weapon.
+  if state.imagePath ~= nil then
+    if string.find(state.imagePath, 'asrc_carbine_hud.png', 1, true) ~= nil then
+      -- The legacy rifle thumbnail has large transparent side gutters. Sample just
+      -- its silhouette so the visible rifle, not the empty texture, matches the mockup.
+      ui.drawImage(state.imagePath, point(-160, 30), point(-12, 130),
+        white, vec2(190 / 900, 0), vec2(716 / 900, 1))
+    else
+      ui.drawImage(state.imagePath, point(-160, 30), point(-12, 130),
+        white, nil, nil, ui.ImageFit.Fit)
+    end
+  end
+  ui.drawRectFilled(p, point(360, 168), rgbm(0.035, 0.053, 0.061, 0.96), 6 * scale)
+  ui.drawRect(p, point(360, 168), border, 6 * scale, nil, math.max(1, scale))
+  ui.drawRectFilled(point(357, 5), point(360, 163), cyan, 2 * scale)
+  ui.pushDWriteFont('Bahnschrift:@System;Weight=Bold')
+  text(state.weaponName or 'FIREARM', 14, 7, 330, 21, 16, white)
+  ui.popDWriteFont()
+  ui.pushDWriteFont('Segoe UI')
+  text('IN MAG', 18, 32, 108, 16, 10, muted)
+  text('RESERVE', 159, 32, 180, 16, 10, muted)
+  ui.pushDWriteFont('Bahnschrift:@System;Weight=Bold')
+  text(string.format('%02d', ammo), 14, 47, 108, 65, 62, ammoColor)
+  text('/', 118, 52, 30, 57, 50, border)
+  text(reserve ~= nil and string.format('%02d', reserve) or '--',
+    159, 54, 185, 58, 54, cyan)
+  ui.popDWriteFont()
+  -- The numerical count remains authoritative; up to five icons fit the compact rail.
+  for index = 1, math.min(mags, 5) do
+    local x = 15 + (index - 1) * 10
+    ui.drawRectFilled(point(x, 120), point(x + 6, 132), cyan, scale)
+    ui.drawRect(point(x, 120), point(x + 6, 132), border, scale, nil, scale)
+    ui.drawRectFilled(point(x - 1, 132), point(x + 7, 134), cyan)
+  end
+  text(string.format('%d RESERVE MAGS', mags), 72, 114, 126, 24, 10, white)
+  text(reserve ~= nil and string.format('%d ROUNDS TOTAL', ammo + reserve) or '-- ROUNDS TOTAL',
+    203, 114, 141, 24, 10, muted)
+  ui.drawLine(point(14, 142), point(344, 142), border, scale)
+  if reloading then
+    local duration = state.reloadDuration or 0
+    local progress = duration > 0 and math.clamp(1 - state.reloadRemaining / duration, 0, 1) or 0
+    ui.drawLine(point(14, 142), point(14 + 330 * progress, 142),
+      rgbm(1, 0.72, 0.25, 1), 2 * scale)
+  end
+  local function key(label, x, color)
+    ui.drawRect(point(x, 147), point(x + 16, 163), border, 3 * scale, nil, scale)
+    text(label, x + 4, 146, 12, 18, 11, color)
+  end
+  key('R', 14, white)
+  text(reloading and string.format('RELOADING  %.1fs', state.reloadRemaining) or 'RELOAD',
+    39, 145, 137, 20, 10, reloading and rgbm(1, 0.72, 0.25, 1) or white)
+  local lethalColor = (state.lethalsRemaining or 0) > 0 and white or muted
+  key('G', 184, lethalColor)
+  text(string.format('%s  x%d', state.lethalName or 'LETHAL', state.lethalsRemaining or 0),
+    207, 145, 137, 20, 10, lethalColor)
+  ui.popDWriteFont()
+end
+
 function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
   local activeWeapon = actor ~= nil and (actor.activeSlot == 1
       and actor.secondaryWeapon or actor.mainWeapon) or hud.loadout.mainWeapon
   local bottom = size.y - margin
   local height = 148 * scale
   local leftWidth = 330 * scale
-  local rightWidth = 390 * scale
   local leftMin = vec2(margin, bottom - height)
   local leftMax = vec2(margin + leftWidth, bottom)
   ui.drawRectFilled(leftMin, leftMax, rgbm(0.025, 0.035, 0.05, 0.9), 7 * scale)
@@ -5480,47 +5604,27 @@ function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
       or 'LINK: BLOCKED', actor ~= nil and inputSendOk and rgbm(0.35, 1, 0.45, 1)
       or rgbm(1, 0.55, 0.2, 1))
 
-  local right = size.x - margin
-  local rightMin = vec2(right - rightWidth, bottom - height)
-  local rightMax = vec2(right, bottom)
-  ui.drawRectFilled(rightMin, rightMax, rgbm(0.025, 0.035, 0.05, 0.9), 7 * scale)
-  ui.drawRect(rightMin, rightMax, rgbm(0.45, 0.62, 0.78, 0.52), 7 * scale,
-    nil, math.max(1, scale))
-  ui.drawRectFilled(vec2(rightMax.x - 4 * scale, rightMin.y), rightMax,
-    rgbm(0.22, 0.82, 0.98, 0.95), 2 * scale)
-  if fpsVisual.hudWeapon.imagePath ~= nil then
-    ui.drawImage(fpsVisual.hudWeapon.imagePath, rightMin + vec2(8, 26) * scale,
-      rightMin + vec2(252, 124) * scale, rgbm(1, 1, 1, 0.98))
-  else
-    ui.setCursor(rightMin + vec2(42, 72) * scale)
-    ui.textColored('LOADING CARBINE...', rgbm(0.55, 0.68, 0.76, 0.8))
+  local weaponStats = fpsVisual.weaponStats[activeWeapon]
+  local imagePath = activeWeapon == 1 and fpsVisual.hudWeapon.imagePath or nil
+  if imagePath == nil and fpsVisual.loadoutAssetFolder ~= nil then
+    for _, item in ipairs(hud.loadoutItems) do
+      if item.id == activeWeapon then imagePath = fpsVisual.loadoutAssetFolder .. '/' .. item.image; break end
+    end
   end
-  ui.setCursor(rightMin + vec2(16, 10) * scale)
-  ui.text(actor ~= nil and actor.reloadRemaining > 0
-    and string.format('RELOADING  %.1fs', actor.reloadRemaining)
-    or (hud.itemNames[activeWeapon] or 'FIREARM'))
-  ui.setCursor(rightMin + vec2(258, 32) * scale)
-  ui.pushFont(ui.Font.Title)
-  ui.text(string.format('%02d', actor and actor.ammo or 0))
-  ui.popFont()
-  ui.setCursor(rightMin + vec2(258, 64) * scale)
-  ui.text(string.format('%d RESERVE MAGS', actor and actor.reserveMagazines or 0))
-  ui.setCursor(rightMin + vec2(258, 89) * scale)
-  ui.text('R  RELOAD')
-  ui.setCursor(rightMin + vec2(258, 108) * scale)
-  ui.text(string.format('G  %s  x%d', hud.itemNames[actor and actor.lethal or hud.loadout.lethal]
-    or 'LETHAL', actor and actor.lethalsRemaining or 0))
-  ui.setCursor(rightMin + vec2(16, 126) * scale)
-  ui.text(thirdPersonEnabled and string.format('F6  3P  SHIFT + WHEEL %.1f m',
-    fpsVisual.thirdPersonDistanceTarget) or 'F6  FIRST PERSON')
-  if actor ~= nil and actor.reloadRemaining > 0 then
-    local reloadMin = rightMin + vec2(258, 133) * scale
-    local reloadMax = rightMin + vec2(374, 141) * scale
-    ui.drawRectFilled(reloadMin, reloadMax, rgbm(0.08, 0.12, 0.16, 0.94), 3 * scale)
-    ui.drawRectFilled(reloadMin, vec2(reloadMin.x
-        + (reloadMax.x - reloadMin.x) * math.clamp(1 - actor.reloadRemaining / 1.8, 0, 1),
-      reloadMax.y), rgbm(1, 0.7, 0.2, 1), 3 * scale)
-  end
+  hud.drawAmmoPanel(size, scale, margin, {
+    weaponName = hud.itemNames[activeWeapon], imagePath = imagePath,
+    ammo = actor and actor.ammo or 0, reserveMagazines = actor and actor.reserveMagazines or 0,
+    magazineCapacity = weaponStats and weaponStats.capacity or 0,
+    reloadRemaining = actor and actor.reloadRemaining or 0,
+    reloadDuration = weaponStats and weaponStats.reloadSeconds or 0,
+    lethalName = hud.itemNames[actor and actor.lethal or hud.loadout.lethal],
+    lethalsRemaining = actor and actor.lethalsRemaining or 0,
+  })
+  ui.dwriteDrawTextClipped(thirdPersonEnabled and string.format('F6  3P  SHIFT + WHEEL %.1f m',
+      fpsVisual.thirdPersonDistanceTarget) or 'F6  FIRST PERSON', 11 * scale,
+    vec2(size.x - margin - 360 * scale, bottom - 189 * scale),
+    vec2(size.x - margin, bottom - 171 * scale), ui.Alignment.Start, ui.Alignment.Center,
+    false, rgbm(0.7, 0.82, 0.9, 1))
 end
 
 function hud.cycleLoadoutItem(mask, current, items, direction)
@@ -6232,6 +6336,13 @@ function script.drawUI()
     ui.drawLine(center + vec2(8, 8), center + vec2(3, 3), c, 3)
     ui.drawLine(center + vec2(8, -8), center + vec2(3, -3), c, 3)
     ui.drawLine(center + vec2(-8, 8), center + vec2(-3, 3), c, 3)
+  end
+  if not cursorUnlocked and not scoreboardHeld and hud.lethalMedal ~= nil then
+    local medal = hud.lethalMedal
+    local imagePath = fpsVisual.loadoutAssetFolder ~= nil and fpsVisual.loadoutAssetFolder
+      .. (medal.itemID == 16 and '/asrc_loadout_frag_grenade.png'
+        or '/asrc_loadout_sticky_grenade.png') or nil
+    hud.drawLethalMedal(size, hudScale, medal.itemID, medal.count, medal.age, imagePath)
   end
   hud.drawAwardPopups(center)
   hud.drawAimTarget(size, hudScale)

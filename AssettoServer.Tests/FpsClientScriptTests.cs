@@ -89,11 +89,10 @@ public sealed class FpsClientScriptTests
             Assert.That(updateDefinition, Does.Contain("previewCamera.apply(localActor)"));
             Assert.That(frameBeginDefinition, Does.Contain("previewCamera.isEligible(localActor)"));
             Assert.That(frameBeginDefinition, Does.Contain("previewCamera.apply(localActor)"));
-            Assert.That(script, Does.Contain("fpsNearClip = 0.0001"));
-            Assert.That(script, Does.Contain("ac.overrideCameraClipPlanes(fpsNearClip, nil)"));
-            Assert.That(script, Does.Contain("params.clipNear = fpsNearClip"));
-            Assert.That(script, Does.Contain("restoreFpsClipPlane()"));
-            Assert.That(script, Does.Contain("camera near-clip request:"));
+            Assert.That(script, Does.Not.Contain("ac.overrideCameraClipPlanes("),
+                "Only the companion Lua app has access to the global camera override");
+            Assert.That(script, Does.Not.Contain("params.clipNear ="),
+                "Car-camera parameters do not control the grabbed FPS camera");
             Assert.That(script, Does.Contain("nearClip=%.3f clipMethod=%s"));
             Assert.That(script, Does.Contain("camera:dispose()"));
             Assert.That(script, Does.Contain("function script.frameBegin"));
@@ -379,7 +378,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain(
                 "actor.weaponMesh:setVisible(visible and not fpsVisual.isLoadoutAsset(actor.weaponAsset)"));
             Assert.That(script, Does.Contain("fileName = 'asrc_carbine_hud.png'"));
-            Assert.That(script, Does.Contain("ui.drawImage(fpsVisual.hudWeapon.imagePath"));
+            Assert.That(script, Does.Contain("imagePath = activeWeapon == 1 and fpsVisual.hudWeapon.imagePath"));
             Assert.That(script, Does.Contain("asrc_rifle_diffuse.png"));
             Assert.That(script, Does.Contain("asrc_operator_skin.png"));
             Assert.That(script, Does.Contain("__ASRC_FPS_THEME__"));
@@ -555,8 +554,8 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("extension/audio/asrc_fps/explosion.wav"));
             Assert.That(script, Does.Not.Contain("event == nil or not event:isValid()"));
             Assert.That(script, Does.Not.Contain("sound.ttl <= 0 or not sound.event:isValid()"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v14')"));
-            Assert.That(script, Does.Contain("protocol = 14"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v16')"));
+            Assert.That(script, Does.Contain("protocol = 16"));
             Assert.That(script, Does.Contain("grenadeThreatCount = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("grenadeThreatPositions = ac.StructItem.array"));
             Assert.That(script, Does.Contain("grenadeThreatVelocities = ac.StructItem.array"));
@@ -583,6 +582,12 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("if fpsVisual.ads <= 0.05 then"));
             Assert.That(script, Does.Contain("ac.StructItem.key('ASRC_FpsAward')"));
             Assert.That(script, Does.Contain("awardPopupTexts"));
+            Assert.That(script, Does.Contain("hud.onLethalKill(message)"));
+            Assert.That(script, Does.Contain("hud.updateLethalMedal(dt)"));
+            Assert.That(script, Does.Contain("hud.publishLethalMedal()"));
+            Assert.That(script, Does.Contain("lethalMedalDeaths[message.victimID]"));
+            Assert.That(script, Does.Contain("lethalMedalCount = ac.StructItem.byte()"));
+            Assert.That(script, Does.Contain("GRENADE KILL"));
             Assert.That(script, Does.Contain("HEADSHOT"));
             Assert.That(script, Does.Contain("ONE SHOT"));
             Assert.That(script, Does.Contain("capacity = 32"));
@@ -686,22 +691,47 @@ public sealed class FpsClientScriptTests
     [Test]
     public void ConfigureClientScript_InjectsOneValidatedThemeMarker()
     {
-        string source = $"local theme = '{FpsWorld.VisualThemeMarker}'";
+        string source = $"local theme = '{FpsWorld.VisualThemeMarker}'\nlocal stats = {{ {FpsWorld.WeaponStatsMarker}\n}}";
 
         Assert.Multiple(() =>
         {
             Assert.That(FpsWorld.ConfigureClientScript(source,
                 AssettoServer.Server.Configuration.Extra.FpsVisualTheme.Blocks),
-                Is.EqualTo("local theme = 'Blocks'"));
+                Does.StartWith("local theme = 'Blocks'"));
             Assert.That(FpsWorld.ConfigureClientScript(source,
                 AssettoServer.Server.Configuration.Extra.FpsVisualTheme.Modern),
-                Is.EqualTo("local theme = 'Modern'"));
+                Does.StartWith("local theme = 'Modern'"));
             Assert.Throws<InvalidDataException>(() => FpsWorld.ConfigureClientScript(
                 "local theme = 'Blocks'",
                 AssettoServer.Server.Configuration.Extra.FpsVisualTheme.Blocks));
             Assert.Throws<InvalidDataException>(() => FpsWorld.ConfigureClientScript(
                 source + source,
                 AssettoServer.Server.Configuration.Extra.FpsVisualTheme.Modern));
+            Assert.Throws<InvalidDataException>(() => FpsWorld.ConfigureClientScript(
+                source.Replace(FpsWorld.WeaponStatsMarker, ""),
+                AssettoServer.Server.Configuration.Extra.FpsVisualTheme.Modern));
+            Assert.Throws<InvalidDataException>(() => FpsWorld.ConfigureClientScript(
+                source + FpsWorld.WeaponStatsMarker,
+                AssettoServer.Server.Configuration.Extra.FpsVisualTheme.Modern));
         });
+    }
+
+    [TestCase(AssettoServer.Server.Configuration.Extra.FpsVisualTheme.Blocks)]
+    [TestCase(AssettoServer.Server.Configuration.Extra.FpsVisualTheme.Modern)]
+    [SetCulture("sl-SI")]
+    public void ConfigureClientScript_UsesAuthoritativeWeaponStatsForAmmoHud(
+        AssettoServer.Server.Configuration.Extra.FpsVisualTheme theme)
+    {
+        using Stream stream = typeof(FpsWorld).Assembly.GetManifestResourceStream(
+            "AssettoServer.Server.Fps.fps.lua")!;
+        using var reader = new StreamReader(stream);
+        string script = FpsWorld.ConfigureClientScript(reader.ReadToEnd(), theme);
+        Assert.That(script, Does.Not.Contain(FpsWorld.WeaponStatsMarker));
+        foreach (var weapon in Enum.GetValues<AssettoServer.Network.ClientMessages.FpsWeaponType>())
+        {
+            var stats = FpsItems.Firearm(weapon);
+            Assert.That(script, Does.Contain(FormattableString.Invariant(
+                $"[{(byte)weapon}] = {{ capacity = {stats.MagazineCapacity}, reloadSeconds = {stats.ReloadSeconds} }},")));
+        }
     }
 }

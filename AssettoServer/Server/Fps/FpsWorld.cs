@@ -89,6 +89,7 @@ public sealed class FpsWorld : IHostedService
     }
 
     internal const string VisualThemeMarker = "__ASRC_FPS_THEME__";
+    internal const string WeaponStatsMarker = "-- __ASRC_FPS_WEAPON_STATS__";
 
     internal static string ConfigureClientScript(string script, FpsVisualTheme theme)
     {
@@ -98,7 +99,18 @@ public sealed class FpsWorld : IHostedService
         if (marker < 0 || script.IndexOf(VisualThemeMarker, marker + 1,
                             StringComparison.Ordinal) >= 0)
             throw new InvalidDataException("FPS client visual-theme marker is missing or duplicated");
-        return script.Replace(VisualThemeMarker, theme.ToString(), StringComparison.Ordinal);
+        int statsMarker = script.IndexOf(WeaponStatsMarker, StringComparison.Ordinal);
+        if (statsMarker < 0 || script.IndexOf(WeaponStatsMarker, statsMarker + 1,
+                                 StringComparison.Ordinal) >= 0)
+            throw new InvalidDataException("FPS client weapon-stats marker is missing or duplicated");
+        string stats = string.Join("\n", Enum.GetValues<FpsWeaponType>().Select(weapon =>
+        {
+            FpsFirearmDefinition firearm = FpsItems.Firearm(weapon);
+            return FormattableString.Invariant(
+                $"[{(byte)weapon}] = {{ capacity = {firearm.MagazineCapacity}, reloadSeconds = {firearm.ReloadSeconds} }},");
+        }));
+        return script.Replace(VisualThemeMarker, theme.ToString(), StringComparison.Ordinal)
+            .Replace(WeaponStatsMarker, stats, StringComparison.Ordinal);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
