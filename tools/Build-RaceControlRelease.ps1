@@ -81,7 +81,7 @@ foreach ($item in @(
     @{ Project = 'AssettoServer\AssettoServer.csproj'; Output = $server },
     @{ Project = 'AssettoServer.RaceControl\AssettoServer.RaceControl.csproj'; Output = $launcher }
 )) {
-    & dotnet publish (Join-Path $repo $item.Project) -c Release -r win-x64 --self-contained true -o $item.Output -v quiet -p:PublishSingleFile=false -p:ExternalFpsAssets=true -p:DebugSymbols=false -p:DebugType=None
+    & dotnet publish (Join-Path $repo $item.Project) -c Release -r win-x64 --self-contained true -o $item.Output -v quiet -p:PublishSingleFile=false -p:ExternalFpsAssets=true -p:DebugSymbols=true -p:DebugType=embedded
     if ($LASTEXITCODE) { throw "Publish failed: $($item.Project)" }
 }
 Copy-Tree (Join-Path $content 'Defaults') (Join-Path $launcher 'Defaults')

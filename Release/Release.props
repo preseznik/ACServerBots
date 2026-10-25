@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <RaceControlReleaseVersion>0.1.1</RaceControlReleaseVersion>
+    <RaceControlReleaseVersion>0.1.2</RaceControlReleaseVersion>
     <Version>$(RaceControlReleaseVersion)</Version>
     <MinVerVersionOverride>$(RaceControlReleaseVersion)</MinVerVersionOverride>
   </PropertyGroup>

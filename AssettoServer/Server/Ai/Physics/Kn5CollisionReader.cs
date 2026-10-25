@@ -37,41 +37,91 @@ internal static class Kn5CollisionReader
 
     public static Kn5CollisionData Read(string path, Func<string, bool> includeMesh, bool includeTriangles = true)
     {
+        bool hasLeadingEmptyTexture = false;
+        try
+        {
+            return ReadFile(path, includeMesh, includeTriangles, false, out hasLeadingEmptyTexture);
+        }
+        catch (InvalidDataException) when (hasLeadingEmptyTexture)
+        {
+            // Some KN5 exporters count a leading four-byte zero placeholder as a texture.
+            // Try the full record first so ordinary inactive textures retain their layout.
+            try
+            {
+                return ReadFile(path, includeMesh, includeTriangles, true, out _);
+            }
+            catch (InvalidDataException)
+            {
+                // Preserve the original diagnostic if the placeholder layout is invalid too.
+            }
+            throw;
+        }
+    }
+
+    private static Kn5CollisionData ReadFile(string path, Func<string, bool> includeMesh,
+        bool includeTriangles, bool skipLeadingEmptyTexture, out bool hasLeadingEmptyTexture)
+    {
+        hasLeadingEmptyTexture = false;
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: false);
-        if (Encoding.ASCII.GetString(reader.ReadBytes(6)) != "sc6969")
-            throw new InvalidDataException($"Not a KN5 file: {path}");
-
-        int version = reader.ReadInt32();
-        if (version > 5)
-            reader.ReadInt32();
-
-        int textureCount = ReadCount(reader, "texture");
-        for (int i = 0; i < textureCount; i++)
+        string stage = "header";
+        try
         {
-            reader.ReadInt32();
-            ReadString(reader);
-            int length = checked((int)reader.ReadUInt32());
-            Skip(reader, length);
+            if (Encoding.ASCII.GetString(reader.ReadBytes(6)) != "sc6969")
+                throw new InvalidDataException($"Not a KN5 file: {path}");
+
+            int version = reader.ReadInt32();
+            if (version > 5)
+                reader.ReadInt32();
+
+            stage = "texture count";
+            int textureCount = ReadCount(reader, "texture");
+            for (int i = 0; i < textureCount; i++)
+            {
+                stage = $"texture {i} header";
+                int state = reader.ReadInt32();
+                if (i == 0 && state == 0)
+                {
+                    hasLeadingEmptyTexture = true;
+                    if (skipLeadingEmptyTexture)
+                        continue;
+                }
+                string name = ReadString(reader);
+                stage = $"texture {i} '{name}' data";
+                int length = checked((int)reader.ReadUInt32());
+                Skip(reader, length);
+            }
+
+            stage = "material count";
+            int materialCount = ReadCount(reader, "material");
+            for (int i = 0; i < materialCount; i++)
+            {
+                stage = $"material {i} header";
+                SkipMaterial(reader, ref stage);
+            }
+
+            var result = new Kn5CollisionData();
+            stage = "root node header";
+            ReadNode(reader, Matrix4x4.Identity, includeMesh, includeTriangles, result, ref stage);
+            return result;
         }
-
-        int materialCount = ReadCount(reader, "material");
-        for (int i = 0; i < materialCount; i++)
-            SkipMaterial(reader);
-
-        var result = new Kn5CollisionData();
-        ReadNode(reader, Matrix4x4.Identity, includeMesh, includeTriangles, result);
-        return result;
+        catch (Exception exception)
+        {
+            throw new InvalidDataException($"Failed to parse KN5 '{Path.GetFullPath(path)}' "
+                                           + $"during {stage} at byte {stream.Position} of {stream.Length}: "
+                                           + exception.Message, exception);
+        }
     }
 
     private static void ReadNode(BinaryReader reader, Matrix4x4 parentTransform,
-        Func<string, bool> includeMesh, bool includeTriangles, Kn5CollisionData result)
+        Func<string, bool> includeMesh, bool includeTriangles, Kn5CollisionData result, ref string stage)
     {
         var nodeClass = (Kn5NodeClass)reader.ReadInt32();
         if (nodeClass is < Kn5NodeClass.Base or > Kn5NodeClass.SkinnedMesh)
             throw new InvalidDataException($"Unsupported KN5 node class: {(int)nodeClass}");
 
         string name = ReadString(reader);
+        stage = $"node '{name}' header";
         int childCount = ReadCount(reader, "node child");
         bool active = reader.ReadBoolean();
         Matrix4x4 worldTransform = parentTransform;
@@ -80,6 +130,7 @@ internal static class Kn5CollisionReader
         {
             case Kn5NodeClass.Base:
             {
+                stage = $"node '{name}' transform";
                 var localTransform = ReadMatrix(reader);
                 worldTransform = localTransform * parentTransform;
                 if (active)
@@ -87,26 +138,32 @@ internal static class Kn5CollisionReader
                 break;
             }
             case Kn5NodeClass.Mesh:
-                ReadMesh(reader, name, active, worldTransform, includeMesh, includeTriangles, result, skinned: false);
+                ReadMesh(reader, name, active, worldTransform, includeMesh, includeTriangles, result, false, ref stage);
                 break;
             case Kn5NodeClass.SkinnedMesh:
-                ReadMesh(reader, name, active, worldTransform, includeMesh, includeTriangles, result, skinned: true);
+                ReadMesh(reader, name, active, worldTransform, includeMesh, includeTriangles, result, true, ref stage);
                 break;
         }
 
         for (int i = 0; i < childCount; i++)
-            ReadNode(reader, worldTransform, includeMesh, includeTriangles, result);
+        {
+            stage = $"child {i} header of node '{name}'";
+            ReadNode(reader, worldTransform, includeMesh, includeTriangles, result, ref stage);
+        }
     }
 
     private static void ReadMesh(BinaryReader reader, string name, bool active, Matrix4x4 worldTransform,
-        Func<string, bool> includeMesh, bool includeTriangles, Kn5CollisionData result, bool skinned)
+        Func<string, bool> includeMesh, bool includeTriangles, Kn5CollisionData result, bool skinned,
+        ref string stage)
     {
+        stage = $"mesh '{name}' flags";
         reader.ReadBoolean(); // Cast shadows
         reader.ReadBoolean(); // Visible
         reader.ReadBoolean(); // Transparent
 
         if (skinned)
         {
+            stage = $"mesh '{name}' bones";
             int boneCount = checked((int)reader.ReadUInt32());
             ValidateCount(boneCount, "bone");
             for (int i = 0; i < boneCount; i++)
@@ -116,6 +173,7 @@ internal static class Kn5CollisionReader
             }
         }
 
+        stage = $"mesh '{name}' vertices";
         int vertexCount = checked((int)reader.ReadUInt32());
         ValidateCount(vertexCount, "vertex");
         var vertices = new Vector3[vertexCount];
@@ -125,12 +183,14 @@ internal static class Kn5CollisionReader
             Skip(reader, skinned ? 64 : 32); // normal, UV, tangent, optional weights and bone indices
         }
 
+        stage = $"mesh '{name}' indices";
         int indexCount = checked((int)reader.ReadUInt32());
         ValidateCount(indexCount, "index");
         var indices = new ushort[indexCount];
         for (int i = 0; i < indexCount; i++)
             indices[i] = reader.ReadUInt16();
 
+        stage = $"mesh '{name}' properties";
         reader.ReadUInt32(); // Material id
         reader.ReadUInt32(); // Layer
         reader.ReadSingle(); // LOD in
@@ -148,6 +208,7 @@ internal static class Kn5CollisionReader
         result.Vertices.AddRange(vertices);
         if (!includeTriangles)
             return;
+        stage = $"mesh '{name}' triangles";
         int triangleStart = result.Triangles.Count;
         for (int i = 0; i + 2 < indices.Length; i += 3)
         {
@@ -174,17 +235,20 @@ internal static class Kn5CollisionReader
         }
     }
 
-    private static void SkipMaterial(BinaryReader reader)
+    private static void SkipMaterial(BinaryReader reader, ref string stage)
     {
-        ReadString(reader);
+        string name = ReadString(reader);
+        stage = $"material '{name}' header";
         ReadString(reader);
         Skip(reader, 6); // blend, alpha tested, depth mode
+        stage = $"material '{name}' properties";
         int propertyCount = ReadCount(reader, "material property");
         for (int i = 0; i < propertyCount; i++)
         {
             ReadString(reader);
             Skip(reader, 10 * sizeof(float));
         }
+        stage = $"material '{name}' texture mappings";
         int mappingCount = ReadCount(reader, "texture mapping");
         for (int i = 0; i < mappingCount; i++)
         {

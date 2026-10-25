@@ -1,6 +1,6 @@
 # Local release packaging
 
-Current release: **0.1.1** (2026-09-11), starting major 0, minor 1, patch 1.
+Local release: **0.1.2** (2026-10-25). The previous published installer is 0.1.1.
 FPS content uses **client pack 54**; the four-map snapshot remains **map pack 1**.
 The launcher and server share version
 metadata in `Release/Release.props`.
@@ -11,7 +11,7 @@ Build all Windows x64 artifacts with:
 pwsh -NoProfile -File tools/Build-RaceControlRelease.ps1 -LocalReview
 ```
 
-Output: `dist/v0.1.1/`. An existing version directory is never overwritten.
+Output: `dist/v0.1.2/`. An existing version directory is never overwritten.
 `-LocalReview` records the local-only intent in the release manifest and permits
 packaging the current Ghost assets without changing their redistribution record.
 The default public-package check still requires Ghost-specific permission.
@@ -19,6 +19,21 @@ The builder retains isolated staging under .artifacts for inspection, packages
 the current working tree as Corresponding Source, and writes release.json plus
 SHA256SUMS.txt. ZIP entries have stable order and timestamps. Inno executables
 are unsigned; compiler metadata prevents claiming identical installer bytes.
+
+The 0.1.2 package is based on the 0.1.1 release source with the VRC KN5 reader fix,
+physics-preparation diagnostics, and GitHub updater. Unreleased FPS work is excluded.
+The application ID stays unchanged, so Setup reuses an existing installation's
+directory, installation mode, and selected setup type. It replaces selected program
+components while keeping settings and presets in the existing data folder.
+
+Help > Check for updates opens the updater. Startup checks are enabled by default;
+preview releases are optional. Only this fork's `race-control-v<version>` releases
+are considered. Downloads require the matching Setup EXE, its declared size, and
+GitHub's SHA-256 asset digest. The installer is checked again before launch. The
+server must be stopped before installing. Checks do not install anything automatically.
+Portable users can download the installer for the installed edition, or obtain a new
+portable ZIP from GitHub and extract it into a separate folder. Component ZIP downloads
+continue to target the launcher's exact matching release.
 
 Artifacts: selectable Setup.exe; Full, Launcher, Server, FPS client and FPS maps ZIPs; and
 a matching Source ZIP. Both host ZIPs include self-contained .NET runtime files.

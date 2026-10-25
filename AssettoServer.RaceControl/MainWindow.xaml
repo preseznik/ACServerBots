@@ -53,6 +53,7 @@
             </MenuItem>
             <MenuItem Header="_Help">
                 <MenuItem Header="Open _documentation" Click="Documentation_Click" />
+                <MenuItem Header="Check for _updates…" Click="Updates_Click" />
                 <MenuItem Header="_About Race Control" Click="About_Click" />
             </MenuItem>
         </Menu>

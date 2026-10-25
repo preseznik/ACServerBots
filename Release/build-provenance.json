@@ -1,0 +1,80 @@
+{
+  "version": "0.1.2",
+  "baselineSourceArchive": "RaceControl-0.1.1-Source.zip",
+  "baselineSourceSha256": "289fa9b988190acafc7dd68205a0b426a01ba4168d750e1d6b3131e3a84edeb8",
+  "overlayFiles": [
+    {
+      "path": "AssettoServer.RaceControl.Core/Staging/ServerInstanceStager.cs",
+      "sha256": "fddef08e12c65edb167bdafe3c3989651d85a5ee87243ba96f54786174b2e785"
+    },
+    {
+      "path": "AssettoServer.RaceControl.Core/Storage/ApplicationSettings.cs",
+      "sha256": "5e7a157a597155b44f072a35ddf953001b14ac16665c229af7bf38b6d870f673"
+    },
+    {
+      "path": "AssettoServer.RaceControl.Core/Updates/ReleaseUpdateService.cs",
+      "sha256": "edb28ecde491a2cad3d1f010127e78cb6becbda28e8cf5ec75f9d26af9f612cd"
+    },
+    {
+      "path": "AssettoServer.RaceControl.Core/Updates/ReleaseVersion.cs",
+      "sha256": "fcd0c910e3968caa707de889c93fbd313abea7fd1d7329820f6219f320c9f9d3"
+    },
+    {
+      "path": "AssettoServer.RaceControl.Tests/ApplicationSettingsStoreTests.cs",
+      "sha256": "2a87af4ee7ce588122acf76bbf104b4a34bf6875bf5658d24832e2952530bc2c"
+    },
+    {
+      "path": "AssettoServer.RaceControl.Tests/ReleaseUpdateServiceTests.cs",
+      "sha256": "0ddc324fa84af5f17fd151047ff4a4d7b4ca685a19e84b861e181e25865825f6"
+    },
+    {
+      "path": "AssettoServer.RaceControl/MainWindow.xaml",
+      "sha256": "d2e5e85482b5f753c5cdb68518aab8837587137c37115b355485d0c6a4d5c2a0"
+    },
+    {
+      "path": "AssettoServer.RaceControl/MainWindow.xaml.cs",
+      "sha256": "5a80406f092c83afeb9acead2e3d35b6952e71785f5a5452915779de3c9acb66"
+    },
+    {
+      "path": "AssettoServer.RaceControl/UpdatesWindow.xaml",
+      "sha256": "df1e8e7bff7ee9b6e1f2b7712a2b0b676b4836c1c26d45b51f1f8b70e6c81793"
+    },
+    {
+      "path": "AssettoServer.RaceControl/UpdatesWindow.xaml.cs",
+      "sha256": "0d1a32fd41897c53d46ea99bdb46e2a6b8b50269001b74ce15fc606fa3dfeb12"
+    },
+    {
+      "path": "AssettoServer.Tests/Kn5CollisionReaderTests.cs",
+      "sha256": "87b84eca47b45c0a05dcf82ea3fea4646900abf4f7d300df075134aabeb4e22e"
+    },
+    {
+      "path": "AssettoServer.Tests/PhysicsPreparationDiagnosticsTests.cs",
+      "sha256": "5523c36bde446136e3f8dd77f00eb8c74a63deadb5199890666d64d7a01f6f90"
+    },
+    {
+      "path": "AssettoServer/Program.cs",
+      "sha256": "5039718053201943c863699e0be3a3090023a5794b7f08ff0d44b952ea896b06"
+    },
+    {
+      "path": "AssettoServer/Server/Ai/Physics/Kn5CollisionReader.cs",
+      "sha256": "16ab7aa87ccee44ead0e9fcd184b96bdb6679195d5fe652515bd208ae6a380aa"
+    },
+    {
+      "path": "docs/release-packaging.md",
+      "sha256": "a23a922ecf8ad0f795b59ca0b5b9b138efa16b8eaee41b5fadebe507335a55d6"
+    },
+    {
+      "path": "Release/RaceControl.iss",
+      "sha256": "af365e74ed78ebdb651ddf443e26853934ec046ff3a9852e5ca3995af7c37e96"
+    },
+    {
+      "path": "Release/Release.props",
+      "sha256": "d66232cacc5f0a781158ccfd3cd499d63b71e655fe6882fc8f1b8540a9b4f5bd"
+    },
+    {
+      "path": "tools/Build-RaceControlRelease.ps1",
+      "sha256": "be9eaa58818e5daf566f63170994a1d019fcc3f9aa98dc33f907803a222b1e4e"
+    }
+  ],
+  "excludesUnreleasedFpsWork": true
+}

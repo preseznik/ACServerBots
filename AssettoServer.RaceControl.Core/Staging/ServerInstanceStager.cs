@@ -280,6 +280,7 @@ public sealed class ServerInstanceStager
         startInfo.ArgumentList.Add(output);
 
         using var process = new Process { StartInfo = startInfo };
+        var errorOutput = new System.Text.StringBuilder();
         process.OutputDataReceived += (_, args) =>
         {
             if (!string.IsNullOrWhiteSpace(args.Data))
@@ -289,6 +290,8 @@ public sealed class ServerInstanceStager
         };
         process.ErrorDataReceived += (_, args) =>
         {
+            if (args.Data is not null)
+                errorOutput.AppendLine(args.Data);
             if (!string.IsNullOrWhiteSpace(args.Data))
             {
                 progress?.Report(new("Physics", args.Data, 0.85));
@@ -304,7 +307,9 @@ public sealed class ServerInstanceStager
         await process.WaitForExitAsync(cancellationToken);
         if (process.ExitCode != 0 || !File.Exists(output))
         {
-            throw new InvalidOperationException($"Rigid-body physics preparation failed with exit code {process.ExitCode}.");
+            throw new InvalidOperationException($"Rigid-body physics preparation failed with exit code {process.ExitCode}."
+                                                + (errorOutput.Length == 0 ? string.Empty
+                                                    : Environment.NewLine + errorOutput));
         }
     }
 

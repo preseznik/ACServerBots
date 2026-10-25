@@ -20,6 +20,8 @@ public sealed class ApplicationSettings
     public int LastPageIndex { get; set; }
     public bool ConfirmBeforeStoppingServerOnExit { get; set; } = true;
     public bool CompactGridRows { get; set; }
+    public bool CheckForUpdatesOnStartup { get; set; } = true;
+    public bool IncludePreviewUpdates { get; set; }
     public string AssettoCorsaRoot { get; set; } = string.Empty;
     public string ServerPayloadPath { get; set; } = string.Empty;
     public string LastFpsTrackId { get; set; } = string.Empty;
@@ -37,6 +39,8 @@ public sealed class ApplicationSettings
         LastPageIndex = LastPageIndex,
         ConfirmBeforeStoppingServerOnExit = ConfirmBeforeStoppingServerOnExit,
         CompactGridRows = CompactGridRows,
+        CheckForUpdatesOnStartup = CheckForUpdatesOnStartup,
+        IncludePreviewUpdates = IncludePreviewUpdates,
         AssettoCorsaRoot = AssettoCorsaRoot,
         ServerPayloadPath = ServerPayloadPath,
         LastFpsTrackId = LastFpsTrackId,

@@ -25,6 +25,10 @@ UninstallDisplayIcon={app}\AssettoServer Race Control.exe
 SetupIconFile={#RepoRoot}\AssettoServer\Assets\assettoserver.ico
 CloseApplications=yes
 RestartApplications=no
+UsePreviousAppDir=yes
+UsePreviousPrivileges=yes
+UsePreviousSetupType=yes
+UsePreviousTasks=yes
 [Types]
 Name: "racing"; Description: "Racing host (launcher + server)"
 Name: "full"; Description: "Full host (launcher + server + FPS assets and maps)"
