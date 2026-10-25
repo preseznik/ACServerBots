@@ -265,12 +265,20 @@ public sealed class RaceControlValidator
         ErrorIf(messages, loadouts.AllowedSecondaryWeapons.Any(value => !Enum.IsDefined(value)), "Fps.Loadouts", "The secondary-weapon allow-list contains an unknown item.");
         ValidateDefault("HumanDefault", loadouts.HumanDefault);
         ValidateDefault("BotDefault", loadouts.BotDefault);
+        ErrorIf(messages, loadouts.AllowedFieldUpgrades.Count == 0 || loadouts.AllowedFieldUpgrades.Any(value => !Enum.IsDefined(value)),
+            "Fps.Loadouts", "Allow at least one valid field upgrade.");
+        ErrorIf(messages, loadouts.AllowedPerks.Any(value => value == FpsPerk.None || !Enum.IsDefined(value)),
+            "Fps.Loadouts", "The perk allow-list contains an unknown or empty perk.");
 
         void ValidateDefault(string name, FpsLoadoutPreset loadout)
         {
             ErrorIf(messages, !loadouts.AllowedMainWeapons.Contains(loadout.MainWeapon), $"Fps.Loadouts.{name}", "The default main weapon must be allowed.");
             ErrorIf(messages, !loadouts.AllowedLethals.Contains(loadout.Lethal), $"Fps.Loadouts.{name}", "The default lethal must be allowed.");
             ErrorIf(messages, !loadouts.AllowedSecondaryWeapons.Contains(loadout.SecondaryWeapon), $"Fps.Loadouts.{name}", "The default secondary weapon must be allowed.");
+            ErrorIf(messages, !loadouts.AllowedFieldUpgrades.Contains(loadout.FieldUpgrade), $"Fps.Loadouts.{name}", "The default field upgrade must be allowed.");
+            var perks = loadout.Perks.Where(perk => perk != FpsPerk.None).ToArray();
+            ErrorIf(messages, loadout.Perks.Count > 3 || perks.Distinct().Count() != perks.Length
+                || perks.Any(perk => !loadouts.AllowedPerks.Contains(perk)), $"Fps.Loadouts.{name}", "Select up to three distinct allowed perks.");
         }
     }
 

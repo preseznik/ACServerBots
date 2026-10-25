@@ -31,6 +31,7 @@ def main():
       hud={lethalMedalDeaths={},bridge={},itemNames={}}
       clearActorImpacts=function() end
       fpsAudio={playDeath=function() end}
+      fpsVisual={resetAbilities=function() end}
       ac={OnlineEvent=function(_,callback) return callback end,
         StructItem=setmetatable({}, {__index=function() return function() end end})}
       math.clamp=function(v,a,b) return math.max(a,math.min(b,v)) end

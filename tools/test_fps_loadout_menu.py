@@ -46,6 +46,11 @@ def main():
         mouse = vec2(-100,-100)
         click = false
         wheel = 0
+        now = 0; pad = {}
+        ac = {GamepadButton={DPadUp=1,DPadDown=2,DPadLeft=4,DPadRight=8,A=4096,B=8192,X=16384},
+          isGamepadButtonPressed=function(_,key) return pad[key]==true end,
+          tryToPause=function(value) paused=value end}
+        ui.time = function() return now end
         sent = 0
         ui.windowSize = function() return window end
         ui.mousePos = function() return mouse end
@@ -73,6 +78,7 @@ def main():
     lua.globals().fpsVisual.modernAssetFolder = str(ROOT / "AssettoServer.RaceControl.Core/Assets/Fps/Modern")
     lua.globals().io.fileExists = lambda path: Path(path).is_file()
     lua.execute(source[source.index("hud.itemNames = {"):source.index("function hud.aimSensitivity(")])
+    lua.execute(source[source.index("function hud.beginMenuNavigation("):source.index("pcall(function()\n  impactSparks")])
     lua.execute(source[source.index("function hud.submitLoadout()"):source.index("local function drawMatchStartOverlay(")])
     lua.globals().fpsVisual.loadoutAssetFolder = str(ROOT / "AssettoServer.RaceControl.Core/Assets/Fps")
 
@@ -186,8 +192,37 @@ def main():
     frame(x=1300, y=829, clicked=True)
     assert lua.globals().submitted.operatorModel == 1
     lua.execute("sent=0; hud.loadout.operatorModel=0")
-    frame(x=1100, y=74, clicked=True)
+    frame(x=980, y=74, clicked=True)
     assert lua.globals().hud.loadoutTab == "gear"
+    frame(x=1125, y=74, clicked=True)
+    assert lua.globals().hud.loadoutTab == "perks"
+    frame(x=700, y=280, clicked=True)
+    assert lua.globals().hud.loadout.fieldUpgrade == 2
+    frame(x=180, y=620, clicked=True)
+    assert lua.globals().hud.loadout.perk1 == 1
+    frame(x=700, y=500, clicked=True)
+    frame(x=550, y=620, clicked=True)
+    assert lua.globals().hud.loadout.perk2 == 2
+    frame(x=1200, y=500, clicked=True)
+    frame(x=940, y=720, clicked=True)
+    assert lua.globals().hud.loadout.perk3 == 7
+    frame()
+    render('perks-desktop.png')
+    frame(width=1280, height=720)
+    render('perks-1280.png')
+    frame(x=180, y=620, clicked=True)
+    assert lua.globals().hud.loadout.perk3 == 1
+    assert lua.globals().hud.loadout.perk1 == 0, 'Moving a perk must not duplicate it'
+    lua.execute('hud.loadout.allowedPerks=0; hud.loadout.allowedFieldUpgrades=2')
+    frame(x=550, y=620, clicked=True)
+    frame(x=1300, y=280, clicked=True)
+    assert lua.globals().hud.loadout.fieldUpgrade == 2, 'Server-locked field is inert'
+    assert lua.globals().hud.loadout.perk3 == 1, 'Server-locked perk is inert'
+    previous = lua.globals().sent
+    frame(x=1300, y=829, clicked=True)
+    assert lua.globals().sent == previous, 'Invalid abilities block submit'
+    lua.execute('hud.loadout.allowedPerks=254; hud.loadout.allowedFieldUpgrades=14')
+    frame(x=980, y=74, clicked=True)
     frame(x=1130, y=300, clicked=True)
     assert lua.globals().hud.loadout.mainWeapon == 2, "MP5 card must select primary only"
     assert lua.globals().hud.loadout.secondaryWeapon == 3
@@ -209,6 +244,53 @@ def main():
     assert lua.globals().hud.loadout.lethal == 16
     frame(x=100, y=829, clicked=True, initial=False)
     assert lua.globals().hud.pausePage == "main"
+
+    # Drive the real loadout with only raw D-pad/A/B state, including locked cards.
+    lua.execute('''
+        function padFrame()
+          now=now+.016; click=false; wheel=0; mouse=vec2(-100,-100)
+          hud.drawLoadoutMenu(false)
+        end
+        function padPress(button)
+          pad={}; padFrame(); pad[button]=true; padFrame()
+        end
+        function freshLoadout()
+          hud.menuNavigation=nil; hud.loadoutTab='gear'; pad={}; padFrame()
+        end
+        hud.loadout.allowedOperatorModels=1; hud.loadout.operatorModel=0
+        hud.loadout.allowedGhostSkins=7; hud.loadout.allowedOfficerSkins=3
+        hud.loadout.allowedPerks=254; hud.loadout.allowedFieldUpgrades=14
+        freshLoadout(); padPress(8); padPress(8); padPress(4096)
+        assert(hud.loadoutTab=='operator'); padFrame()
+        padPress(2); assert(hud.menuNavigation.focus~='operator:1')
+        for _,item in ipairs(hud.menuNavigation.items) do assert(item.id~='operator:1') end
+        padPress(8); padPress(4096); assert(hud.loadout.operatorModel==0) -- Ghost is server locked.
+        padPress(8192); assert(hud.pausePage=='main')
+        hud.loadout.allowedOperatorModels=3; hud.loadout.operatorModel=1
+        freshLoadout(); padPress(8); padPress(8); padPress(8); padPress(4096)
+        assert(hud.loadoutTab=='skin'); padFrame(); padPress(2)
+        assert(hud.menuNavigation.focus=='skin:2')
+        padPress(4096); assert(hud.loadout.operatorSkin==2)
+        padPress(4); padPress(4096); assert(hud.loadout.operatorSkin==1)
+        freshLoadout(); padPress(8); padPress(4096)
+        assert(hud.loadoutTab=='perks'); padFrame(); padPress(2)
+        assert(hud.menuNavigation.focus=='upgrade:3')
+        padPress(4096); assert(hud.loadout.fieldUpgrade==3)
+        padPress(2); padPress(4096); assert(hud.activePerkSlot==3)
+        padPress(2); padPress(4096); assert(hud.loadout.perk3~=0)
+        local before=sent
+        for i=1,10 do padFrame() end
+        assert(sent==before) -- Held A cannot submit or activate another widget.
+        freshLoadout(); padPress(8192); assert(hud.pausePage=='main')
+        hud.loadout.operatorModel=0; hud.loadout.operatorSkin=0; hud.loadoutTab='gear'; pad={}
+    ''')
+    commands.clear()
+    lua.execute("freshLoadout(); padPress(8); padPress(4096); padFrame(); padPress(2)")
+    # Keep only the final frame's draw calls for a controller-focus preview.
+    commands.clear()
+    lua.execute("padFrame()")
+    render('perks-controller-focus.png')
+    lua.execute("hud.loadoutTab='gear'; pad={}")
 
     # Inject extra options only in the test runtime; no fictitious items ship.
     lua.execute('''
@@ -256,7 +338,8 @@ def main():
     frame(x=1300, y=829, clicked=True)
     assert lua.globals().sent == previous, "Catalog confirmation gates spawning"
     print("PASS: LuaJIT syntax, six images, card selection, disabled filters, server allow-lists, "
-          "confirmation, pause return, arrow/wheel scrolling, last-card selection and filter clamping.")
+          "confirmation, pause return, arrow/wheel scrolling, last-card selection, filter clamping, "
+          "D-pad/A/B tabs, skins, upgrades, perk slots and locked-card navigation.")
     print(f"Draw-call previews: {args.output.resolve()}")
 
 

@@ -1,0 +1,343 @@
+{
+  "schemaVersion": 1,
+  "provider": "Poly Haven",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "licenseDeedUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "apiTermsUrl": "https://github.com/Poly-Haven/Public-API/blob/master/ToS.md",
+  "credit": "Powered by Poly Haven",
+  "sourceBytesUnmodified": true,
+  "assets": [
+    {
+      "id": "worn_asphalt",
+      "name": "Worn Asphalt",
+      "sourceUrl": "https://polyhaven.com/a/worn_asphalt",
+      "infoUrl": "https://api.polyhaven.com/info/worn_asphalt",
+      "filesUrl": "https://api.polyhaven.com/files/worn_asphalt",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "authors": {
+        "Amal Kumar": "All"
+      },
+      "tileSizeMeters": [
+        2.0,
+        2.0
+      ],
+      "usage": "Depot yard and service lanes",
+      "files": {
+        "diffuse": {
+          "path": "worn_asphalt/worn_asphalt_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/worn_asphalt/worn_asphalt_diff_2k.jpg",
+          "sizeBytes": 3573942,
+          "md5": "7bd15211eea2137bfcc6af510e17cd3d",
+          "sha256": "8313d3f8d25515d6ef0be59d461cdeb0feb484694eae385711ecf688c0afa4de",
+          "resolution": "2k",
+          "colorSpace": "sRGB"
+        },
+        "normalGL": {
+          "path": "worn_asphalt/worn_asphalt_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/worn_asphalt/worn_asphalt_nor_gl_1k.png",
+          "sizeBytes": 7112860,
+          "md5": "a9c610757917f067e01d50ea52ed16d1",
+          "sha256": "24352b64f5a6cce1ea8075be2b7ce5161b9ce6c69305fd0e3111693280c17ec4",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "normalDX": {
+          "path": "worn_asphalt/worn_asphalt_nor_dx_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/worn_asphalt/worn_asphalt_nor_dx_1k.png",
+          "sizeBytes": 7112288,
+          "md5": "979cdbd660fa0f643e8dd553308b576e",
+          "sha256": "e1bc4beada70c42f447344eeed8d21cd3a8d2a4cdc625f684fed5bbebea9695f",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "roughness": {
+          "path": "worn_asphalt/worn_asphalt_rough_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/worn_asphalt/worn_asphalt_rough_1k.jpg",
+          "sizeBytes": 480395,
+          "md5": "7a1258305d51852b6378508d57dcbe2e",
+          "sha256": "ad63ece01a94cb43f57a9d628fa9d28a560bffc8878749998ad3601831ab843f",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        }
+      }
+    },
+    {
+      "id": "concrete_floor_worn_02",
+      "name": "Concrete Floor Worn 02",
+      "sourceUrl": "https://polyhaven.com/a/concrete_floor_worn_02",
+      "infoUrl": "https://api.polyhaven.com/info/concrete_floor_worn_02",
+      "filesUrl": "https://api.polyhaven.com/files/concrete_floor_worn_02",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "authors": {
+        "Dimitrios Savva": "All"
+      },
+      "tileSizeMeters": [
+        2.0,
+        2.0
+      ],
+      "usage": "Worn concrete floors, plinths and barriers",
+      "files": {
+        "diffuse": {
+          "path": "concrete_floor_worn_02/concrete_floor_worn_02_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_floor_worn_02/concrete_floor_worn_02_diff_2k.jpg",
+          "sizeBytes": 2832505,
+          "md5": "2515d5685369b361640419892032647a",
+          "sha256": "78b3a3431d2803508cbcb683195c31d74af26d895cc17f708007f6b46c52b740",
+          "resolution": "2k",
+          "colorSpace": "sRGB"
+        },
+        "normalGL": {
+          "path": "concrete_floor_worn_02/concrete_floor_worn_02_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_floor_worn_02/concrete_floor_worn_02_nor_gl_1k.png",
+          "sizeBytes": 5833516,
+          "md5": "745e45aa7ce8f3a7bb2c9bf878e3d57a",
+          "sha256": "5cc7206904ab81f819e55d121e7e564c960dd6d239866bfa233c5f1d42e145c9",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "normalDX": {
+          "path": "concrete_floor_worn_02/concrete_floor_worn_02_nor_dx_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_floor_worn_02/concrete_floor_worn_02_nor_dx_1k.png",
+          "sizeBytes": 5833256,
+          "md5": "f05e58c6b4400db69f1350c53bbb7399",
+          "sha256": "36cc2b95437fb4d8ee80c2a9517ebe91af7abb8eed797859320eb44f7550fb30",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "roughness": {
+          "path": "concrete_floor_worn_02/concrete_floor_worn_02_rough_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor_worn_02/concrete_floor_worn_02_rough_1k.jpg",
+          "sizeBytes": 253558,
+          "md5": "579be67d20f4362704ff7f575462214b",
+          "sha256": "3035395368dc4e1e23424f566bac0cb21326fa42a4a9af7031e5467d4ba42150",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        }
+      }
+    },
+    {
+      "id": "brick_wall_02",
+      "name": "Brick Wall 02",
+      "sourceUrl": "https://polyhaven.com/a/brick_wall_02",
+      "infoUrl": "https://api.polyhaven.com/info/brick_wall_02",
+      "filesUrl": "https://api.polyhaven.com/files/brick_wall_02",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "authors": {
+        "Dimitrios Savva": "All"
+      },
+      "tileSizeMeters": [
+        2.0,
+        2.0
+      ],
+      "usage": "Weathered red brick workshop and dispatch walls",
+      "files": {
+        "diffuse": {
+          "path": "brick_wall_02/brick_wall_02_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/brick_wall_02/brick_wall_02_diff_2k.jpg",
+          "sizeBytes": 4009824,
+          "md5": "f1d0eaf49c00c02b65fe04536708d4be",
+          "sha256": "58c268fc076af4f8a6f645db037141ae12b6a8e045320ad4526e02e9840753ac",
+          "resolution": "2k",
+          "colorSpace": "sRGB"
+        },
+        "normalGL": {
+          "path": "brick_wall_02/brick_wall_02_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_02/brick_wall_02_nor_gl_1k.png",
+          "sizeBytes": 5792106,
+          "md5": "1002150f44064dd5f0c0848fc554ad08",
+          "sha256": "65ecc1a77cb52d24947f4e93adf6e28b5c29597e760bb25b540e2d68f458c37a",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "normalDX": {
+          "path": "brick_wall_02/brick_wall_02_nor_dx_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_02/brick_wall_02_nor_dx_1k.png",
+          "sizeBytes": 5791871,
+          "md5": "1b8d7abb124a79d0802cfb10f0579603",
+          "sha256": "8cdd8c8efd059e723da784845b8e43dbd1b467af299f91a5065e0cc7a3c8cc37",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "roughness": {
+          "path": "brick_wall_02/brick_wall_02_rough_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_02/brick_wall_02_rough_1k.jpg",
+          "sizeBytes": 391526,
+          "md5": "d1a41d2cf18ac9c8562ebac2706dee77",
+          "sha256": "0567ea80ad98578f7160ed7880352b3b84d877afe8abbb538c1bb02586aa6e64",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        }
+      }
+    },
+    {
+      "id": "corrugated_iron_03",
+      "name": "Corrugated Iron 03",
+      "sourceUrl": "https://polyhaven.com/a/corrugated_iron_03",
+      "infoUrl": "https://api.polyhaven.com/info/corrugated_iron_03",
+      "filesUrl": "https://api.polyhaven.com/files/corrugated_iron_03",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "authors": {
+        "Charlotte Baglioni": "All"
+      },
+      "tileSizeMeters": [
+        2.0,
+        2.0
+      ],
+      "usage": "Galvanized corrugated roofs and utility cladding",
+      "files": {
+        "diffuse": {
+          "path": "corrugated_iron_03/corrugated_iron_03_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/corrugated_iron_03/corrugated_iron_03_diff_2k.jpg",
+          "sizeBytes": 1908641,
+          "md5": "5eb86304eada29624fc1e3c3a1fa2ff7",
+          "sha256": "7b3f4f849dd634f54548b3b552ebeae723266f782163341185c94094e2eb7991",
+          "resolution": "2k",
+          "colorSpace": "sRGB"
+        },
+        "normalGL": {
+          "path": "corrugated_iron_03/corrugated_iron_03_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/corrugated_iron_03/corrugated_iron_03_nor_gl_1k.png",
+          "sizeBytes": 4933789,
+          "md5": "7f85defe682483a489f2d6e511db0460",
+          "sha256": "8ea1425db15c830012a237d68bb76e2d3cccbdb54abecc0e5f0f5032ea52b6b8",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "normalDX": {
+          "path": "corrugated_iron_03/corrugated_iron_03_nor_dx_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/corrugated_iron_03/corrugated_iron_03_nor_dx_1k.png",
+          "sizeBytes": 4933853,
+          "md5": "a590e6c6ca8a739c2534c2fb8082e66f",
+          "sha256": "e8c22f632935d5605fb4055fff492e8f98387f3731137251e372a1307d7e0a90",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "roughness": {
+          "path": "corrugated_iron_03/corrugated_iron_03_rough_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/corrugated_iron_03/corrugated_iron_03_rough_1k.jpg",
+          "sizeBytes": 175319,
+          "md5": "0cb4f4bf7150b8c3de6e67cb3ce78978",
+          "sha256": "d708d5756decc80bf48abc2de2ced089053ee0d3f1ebff31202e284c2eeaed39",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        }
+      }
+    },
+    {
+      "id": "green_metal_rust",
+      "name": "Green Metal Rust",
+      "sourceUrl": "https://polyhaven.com/a/green_metal_rust",
+      "infoUrl": "https://api.polyhaven.com/info/green_metal_rust",
+      "filesUrl": "https://api.polyhaven.com/files/green_metal_rust",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "tileSizeMeters": [
+        1.0,
+        1.0
+      ],
+      "usage": "Worn painted fleet panels, doors and equipment",
+      "files": {
+        "diffuse": {
+          "path": "green_metal_rust/green_metal_rust_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/green_metal_rust/green_metal_rust_diff_2k.jpg",
+          "sizeBytes": 787402,
+          "md5": "fed1afb0e3b6f5a5710cee229fd54897",
+          "sha256": "727515554ffb6410be82d3625a2837fe46612cb186ec391f77c50bd52c4d7ab2",
+          "resolution": "2k",
+          "colorSpace": "sRGB"
+        },
+        "normalGL": {
+          "path": "green_metal_rust/green_metal_rust_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/green_metal_rust/green_metal_rust_nor_gl_1k.png",
+          "sizeBytes": 3138439,
+          "md5": "53b6f7c4b33c41d65fac42f71f26ac80",
+          "sha256": "7d6cdd15a058eda5992643696a9d422191239364de4ab33f945bba0e6e1e2cc4",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "normalDX": {
+          "path": "green_metal_rust/green_metal_rust_nor_dx_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/green_metal_rust/green_metal_rust_nor_dx_1k.png",
+          "sizeBytes": 3138123,
+          "md5": "e7ebc9731e182fea8b485c3584e70f83",
+          "sha256": "19842df661d7dd1b6bd37fb4c8d514c1941278aa50bf704b0ef9bc2e0b844f3e",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "roughness": {
+          "path": "green_metal_rust/green_metal_rust_rough_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/green_metal_rust/green_metal_rust_rough_1k.jpg",
+          "sizeBytes": 124360,
+          "md5": "22cb8ebbd84cd90667a2734114fc4732",
+          "sha256": "f214f22608dd75aa3e7b4da8bffac97c344cbacbc50f49ba0beb0236701a622c",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        }
+      }
+    },
+    {
+      "id": "rusty_metal_02",
+      "name": "Rusty Metal 02",
+      "sourceUrl": "https://polyhaven.com/a/rusty_metal_02",
+      "infoUrl": "https://api.polyhaven.com/info/rusty_metal_02",
+      "filesUrl": "https://api.polyhaven.com/files/rusty_metal_02",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://polyhaven.com/license",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "tileSizeMeters": [
+        1.0,
+        1.0
+      ],
+      "usage": "Weathered steel equipment and trims",
+      "files": {
+        "diffuse": {
+          "path": "rusty_metal_02/rusty_metal_02_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rusty_metal_02/rusty_metal_02_diff_2k.jpg",
+          "sizeBytes": 1952454,
+          "md5": "385195f8de0117418d99dc1d06b7ff38",
+          "sha256": "4c887dd400ed8a5964377c65e20654262307d6888443eae85feb80cc6e72287a",
+          "resolution": "2k",
+          "colorSpace": "sRGB"
+        },
+        "normalGL": {
+          "path": "rusty_metal_02/rusty_metal_02_nor_gl_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/rusty_metal_02/rusty_metal_02_nor_gl_1k.png",
+          "sizeBytes": 1336485,
+          "md5": "7f53ebc2a335631f8168a28867d0aa8e",
+          "sha256": "0503ded4da44c20015d0a7db69260bfa19ff978dc59c2949b6de83e3af662ad8",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "normalDX": {
+          "path": "rusty_metal_02/rusty_metal_02_nor_dx_1k.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/rusty_metal_02/rusty_metal_02_nor_dx_1k.png",
+          "sizeBytes": 1336620,
+          "md5": "7ddadacd31346c1dad0385dad29141b4",
+          "sha256": "5580bcfa529c3f97aa90ea7828bc822c1b7e88bb8ade6ca6d1ee1973a5dfd8df",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        },
+        "roughness": {
+          "path": "rusty_metal_02/rusty_metal_02_rough_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rusty_metal_02/rusty_metal_02_rough_1k.jpg",
+          "sizeBytes": 135023,
+          "md5": "75551ad404e29489f9b75876da95a13a",
+          "sha256": "178deb5896232f0498555676e55a3be1d6d197e2211d8d17cb8386a868bfd54a",
+          "resolution": "1k",
+          "colorSpace": "Non-Color"
+        }
+      }
+    }
+  ],
+  "totalSizeBytes": 72918155
+}

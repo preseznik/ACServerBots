@@ -18,6 +18,7 @@ public enum FpsInputButtons : ushort
     CrouchToggleMode = 64,
     ThrowLethal = 128,
     Interact = 256,
+    FieldUpgrade = 512,
 }
 
 [OnlineEvent(Key = "ASRC_FpsInput", Udp = true)]
@@ -34,7 +35,7 @@ public sealed class FpsInputPacket : OnlineEvent<FpsInputPacket>
 [OnlineEvent(Key = "ASRC_FpsReady")]
 public sealed class FpsReadyPacket : OnlineEvent<FpsReadyPacket>
 {
-    [OnlineEventField(Name = "protocol")] public ushort Protocol = 6;
+    [OnlineEventField(Name = "protocol")] public ushort Protocol = 7;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutSelect")]
@@ -45,6 +46,10 @@ public sealed class FpsLoadoutSelectPacket : OnlineEvent<FpsLoadoutSelectPacket>
     [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
     [OnlineEventField(Name = "operatorModel")] public byte OperatorModel;
     [OnlineEventField(Name = "operatorSkin")] public byte OperatorSkin;
+    [OnlineEventField(Name = "fieldUpgrade")] public byte FieldUpgrade = 1;
+    [OnlineEventField(Name = "perk1")] public byte Perk1;
+    [OnlineEventField(Name = "perk2")] public byte Perk2;
+    [OnlineEventField(Name = "perk3")] public byte Perk3;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutCatalog")]
@@ -61,6 +66,12 @@ public sealed class FpsLoadoutCatalogPacket : OnlineEvent<FpsLoadoutCatalogPacke
     [OnlineEventField(Name = "allowedOfficerSkins")] public uint AllowedOfficerSkins;
     [OnlineEventField(Name = "allowedGhostSkins")] public uint AllowedGhostSkins;
     [OnlineEventField(Name = "defaultOperatorSkin")] public byte DefaultOperatorSkin;
+    [OnlineEventField(Name = "allowedFieldUpgrades")] public uint AllowedFieldUpgrades;
+    [OnlineEventField(Name = "allowedPerks")] public uint AllowedPerks;
+    [OnlineEventField(Name = "defaultFieldUpgrade")] public byte DefaultFieldUpgrade = 1;
+    [OnlineEventField(Name = "defaultPerk1")] public byte DefaultPerk1;
+    [OnlineEventField(Name = "defaultPerk2")] public byte DefaultPerk2;
+    [OnlineEventField(Name = "defaultPerk3")] public byte DefaultPerk3;
 }
 
 public enum FpsLoadoutResultCode : byte
@@ -80,6 +91,10 @@ public sealed class FpsLoadoutResultPacket : OnlineEvent<FpsLoadoutResultPacket>
     [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
     [OnlineEventField(Name = "operatorModel")] public byte OperatorModel;
     [OnlineEventField(Name = "operatorSkin")] public byte OperatorSkin;
+    [OnlineEventField(Name = "fieldUpgrade")] public byte FieldUpgrade = 1;
+    [OnlineEventField(Name = "perk1")] public byte Perk1;
+    [OnlineEventField(Name = "perk2")] public byte Perk2;
+    [OnlineEventField(Name = "perk3")] public byte Perk3;
 }
 
 [OnlineEvent(Key = "ASRC_FpsLoadoutState")]
@@ -91,6 +106,38 @@ public sealed class FpsLoadoutStatePacket : OnlineEvent<FpsLoadoutStatePacket>
     [OnlineEventField(Name = "secondaryWeapon")] public byte SecondaryWeapon;
     [OnlineEventField(Name = "activeSlot")] public byte ActiveSlot;
     [OnlineEventField(Name = "lethalsRemaining")] public byte LethalsRemaining;
+    [OnlineEventField(Name = "fieldUpgrade")] public byte FieldUpgrade = 1;
+    [OnlineEventField(Name = "perk1")] public byte Perk1;
+    [OnlineEventField(Name = "perk2")] public byte Perk2;
+    [OnlineEventField(Name = "perk3")] public byte Perk3;
+}
+
+[OnlineEvent(Key = "ASRC_FpsAbilities", Udp = true)]
+public sealed class FpsAbilitiesPacket : OnlineEvent<FpsAbilitiesPacket>
+{
+    public const int Capacity = 16;
+    [OnlineEventField(Name = "sequence")] public uint Sequence;
+    [OnlineEventField(Name = "count")] public byte Count;
+    [OnlineEventField(Name = "actorIDs", Size = Capacity)] public byte[] ActorIds = new byte[Capacity];
+    [OnlineEventField(Name = "cooldowns", Size = Capacity)] public float[] Cooldowns = new float[Capacity];
+    [OnlineEventField(Name = "silence", Size = Capacity)] public float[] Silence = new float[Capacity];
+    [OnlineEventField(Name = "vision", Size = Capacity)] public float[] Vision = new float[Capacity];
+}
+
+[OnlineEvent(Key = "ASRC_FpsFieldDevice")]
+public sealed class FpsFieldDevicePacket : OnlineEvent<FpsFieldDevicePacket>
+{
+    [OnlineEventField(Name = "deviceID")] public uint DeviceId;
+    [OnlineEventField(Name = "ownerID")] public byte OwnerId;
+    [OnlineEventField(Name = "type")] public byte Type;
+    [OnlineEventField(Name = "state")] public byte State;
+    [OnlineEventField(Name = "position")] public Vector3 Position;
+    [OnlineEventField(Name = "health")] public byte Health;
+    [OnlineEventField(Name = "uses")] public byte Uses;
+    [OnlineEventField(Name = "remaining")] public float Remaining;
+    [OnlineEventField(Name = "actorID")] public byte ActorId = byte.MaxValue;
+    [OnlineEventField(Name = "grenadeID")] public uint GrenadeId;
+    [OnlineEventField(Name = "target")] public Vector3 Target;
 }
 
 [OnlineEvent(Key = "ASRC_FpsEnvironmentRequest")]
@@ -286,6 +333,7 @@ public sealed class FpsShotPacket : OnlineEvent<FpsShotPacket>
     [OnlineEventField(Name = "impact")] public byte Impact;
     [OnlineEventField(Name = "targetID")] public byte TargetId = byte.MaxValue;
     [OnlineEventField(Name = "weaponType")] public FpsWeaponType WeaponType;
+    [OnlineEventField(Name = "suppressed")] public byte Suppressed;
 }
 
 [OnlineEvent(Key = "ASRC_FpsGrenadeSnapshot", Udp = true)]

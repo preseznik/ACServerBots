@@ -1,5 +1,64 @@
 # FPS client rendering handoff
 
+## Xbox menu navigation (2026-09-12)
+
+The custom FPS deployment, match, loadout, controls and time/weather menus now register
+their visible buttons/cards with a shared controller focus layer. D-pad directions move
+the gold focus outline between enabled controls; A activates the focused item and B
+returns to the parent (or resumes from the main match menu). Left/right changes a focused
+sensitivity slider in 5% steps. D-pad repeats after a short hold; A/B require fresh presses.
+Loadout tabs, category filters, scroll arrows, weapon/operator/skin cards, upgrades and
+perk slots all use the same hit boxes and actions as mouse input. Disabled choices are skipped.
+
+Binding capture owns controller input until assigned or cancelled: B can still be bound,
+and Escape/Start cancels capture. A held across a page transition cannot activate the child
+menu, and menu buttons are suppressed in gameplay until released. Mouse movement/clicks
+restore mouse interaction without a stationary pointer stealing controller focus.
+Deployment retains X for loadout and B for the native AC menu; Start/F2 restores the FPS
+deployment screen from native AC. Native Assetto Corsa widgets remain owned by AC.
+
+Validation: the Lua controls and loadout harnesses now exercise actual D-pad/A/B inputs,
+page transitions, hold/repeat, back/leave confirmation, slider changes, binding capture,
+locked choices, skins, perk slots, mouse coexistence and suppression of gameplay actions.
+Draw-call previews in `.artifacts/controller-menus/` verify focus/layout at three sizes;
+they approximate CSP fonts and are not a physical-controller playtest. Rebuild the bundled
+server and reconnect; this only changes online Lua, with no asset or packet version change.
+
+## Separate keyboard and Xbox bindings (2026-09-12)
+
+FPS Controls in deployment and the pause menu now has separate editable keyboard/mouse
+and Xbox columns. Each column saves independently using the existing keyboard store and
+`asrc.fps.gamepad.bindings.` respectively. Button and trigger assignments feed the gameplay
+input path, including aim, fire, jump, crouch/prone, reload, sprint, weapon switching,
+grenades, interaction, field upgrades and scoreboard. Existing keyboard bindings survive.
+Reset Defaults resets both columns. Melee remains unavailable.
+
+Escape and Xbox Start/Options are fixed menu controls. Start opens/closes the same native
+pause state that Escape uses, showing the FPS match menu, and cancels binding capture
+without changing its assignment. Input edges are shared between update and HUD callbacks
+so a held Start cannot repeatedly toggle. Buttons held when capture starts must be
+released and pressed again; capturing B in deployment does not also navigate back.
+
+Xbox defaults retain the LB+RB field-upgrade chord and delayed RB grenade handling.
+Reload and interaction intentionally share X. Controller sprint remains a toggle with
+the assigned sprint button (L3 by default); keyboard sprint remains held.
+
+`tools/test_fps_controls.py` executes the real Lua binding/capture/menu and gameplay
+input functions, checks storage reopen/reset and draws the actual controls layout at
+1920x1080, 1280x720 and 831x619. Its Pillow previews approximate CSP fonts and are not
+live controller/gameplay acceptance. This online-script change requires a rebuilt
+bundled server and reconnect, without changing the asset pack or packet layouts.
+
+## Controller sprint
+
+The assigned controller button (default L3) toggles sprint; keyboard bindings remain hold-to-sprint. Releasing the
+stick, aiming, crouching/prone, depleted stamina, menus, death and match transitions clear
+the toggle. Jumping pauses sprint until landing. Respawn clears the latch without turning
+a held L3 into a new press. The online Lua client still sends the ordinary Sprint input bit;
+movement speed and stamina remain server-authoritative. `tools/test_fps_controller_sprint.py`
+executes the real input block with LuaJIT. Updating the bundled server and reconnecting is
+sufficient; this change does not alter client-pack assets or packet layouts.
+
 ## Compact ammo HUD and lethal-kill medal (2026-09-12)
 
 Client pack **57**, HUD **1.16.0**, bridge **v16** supersedes the ammo panel below.

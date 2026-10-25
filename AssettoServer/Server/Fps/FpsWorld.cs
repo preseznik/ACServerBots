@@ -42,6 +42,7 @@ public sealed class FpsWorld : IHostedService
     private FpsSimulation? _simulation;
     private FpsLiveArenaSnapshot? _liveArena;
     private uint _snapshotSequence;
+    private uint _abilitySequence;
     private uint _grenadeSnapshotSequence;
     private int _snapshotTicks;
     private int _matchTicks;
@@ -132,7 +133,7 @@ public sealed class FpsWorld : IHostedService
             throw new ConfigurationException($"FPS arena navigation was not found: {navigationPath}");
         var geometry = FpsArenaGeometryAsset.Load(geometryPath);
         var navigation = FpsArenaNavigationAsset.Load(navigationPath);
-        var surface = new FpsArenaSurface(geometry.Triangles);
+        var surface = new FpsArenaSurface(geometry.Triangles, geometry.MovementBoxes);
         var slots = _configuration.EntryList.Cars.Take(_configuration.Server.MaxClients)
             .Select((entry, index) => new FpsSimulationSlot((byte)index,
                 entry.DriverName ?? $"Player {index + 1}", entry.FpsRole,
@@ -257,7 +258,13 @@ public sealed class FpsWorld : IHostedService
                     "FPS human actor disconnecting: actor={ActorId}, position={Position}, inputSequence={Sequence}, inputMove={Move}, active={Active}, dead={Dead}",
                     actor.Id, actor.Position, actor.LastInputSequence, actor.Input.Move,
                     actor.Active, actor.Dead);
-            _simulation?.ReleaseHuman(client.SessionId);
+            if (_simulation is not null)
+            {
+                foreach (var device in _simulation.FieldDevices.Where(d => d.OwnerId == client.SessionId))
+                    Broadcast(CreateFieldDevicePacket(new FpsFieldDeviceEvent(device.Id, device.OwnerId,
+                        device.Type, 2, device.Position, 0, 0, 0)));
+                _simulation.ReleaseHuman(client.SessionId);
+            }
             releasedActor = actor;
             _clientsWithAcceptedInput.Remove(client.SessionId);
             _clientsWithActiveInput.Remove(client.SessionId);
@@ -351,7 +358,7 @@ public sealed class FpsWorld : IHostedService
 
     private void OnReady(ACTcpClient client, FpsReadyPacket packet)
     {
-        if (packet.Protocol != 6)
+        if (packet.Protocol != 7)
         {
             client.Logger.Warning("FPS client protocol {Protocol} is not supported", packet.Protocol);
             _ = client.DisconnectAsync();
@@ -369,6 +376,10 @@ public sealed class FpsWorld : IHostedService
             SendMatch(client);
             SendSnapshots(client);
             SendGrenadeSnapshots(client);
+            SendAbilityStates(client);
+            foreach (var device in _simulation.FieldDevices)
+                client.SendPacket(CreateFieldDevicePacket(new(device.Id, device.OwnerId, device.Type, 1,
+                    device.Position, device.Health, device.UsesRemaining, device.RemainingSeconds)));
             foreach (var actor in _simulation.Actors.OrderBy(actor => actor.Id))
             {
                 client.SendPacket(new FpsAwardPacket
@@ -396,7 +407,9 @@ public sealed class FpsWorld : IHostedService
     {
         if (client.EntryCar.FpsRole == FpsSlotRole.Spectator) return;
         var loadout = new FpsLoadout((FpsWeaponType)packet.MainWeapon,
-            (FpsLethalType)packet.Lethal, (FpsWeaponType)packet.SecondaryWeapon);
+            (FpsLethalType)packet.Lethal, (FpsWeaponType)packet.SecondaryWeapon,
+            (FpsFieldUpgrade)packet.FieldUpgrade, (FpsPerk)packet.Perk1,
+            (FpsPerk)packet.Perk2, (FpsPerk)packet.Perk3);
         lock (_sync)
         {
             if (_simulation is null) return;
@@ -410,6 +423,8 @@ public sealed class FpsWorld : IHostedService
                 SecondaryWeapon = packet.SecondaryWeapon,
                 OperatorModel = packet.OperatorModel,
                 OperatorSkin = packet.OperatorSkin,
+                FieldUpgrade = packet.FieldUpgrade,
+                Perk1 = packet.Perk1, Perk2 = packet.Perk2, Perk3 = packet.Perk3,
             });
             if (result == FpsLoadoutResultCode.Applied)
             {
@@ -544,6 +559,7 @@ public sealed class FpsWorld : IHostedService
                     Impact = (byte)shot.Impact,
                     TargetId = shot.TargetId,
                     WeaponType = shot.WeaponType,
+                    Suppressed = shooter.DeadSilenceRemaining > 0 ? (byte)1 : (byte)0,
                 });
             }
             foreach (var kill in _simulation.KillEvents)
@@ -601,12 +617,16 @@ public sealed class FpsWorld : IHostedService
                 });
             }
 
+            foreach (var deviceEvent in _simulation.FieldDeviceEvents)
+                Broadcast(CreateFieldDevicePacket(deviceEvent));
+
             int snapshotInterval = Math.Max(1, _configuration.Server.RefreshRateHz / 20);
             if (++_snapshotTicks >= snapshotInterval)
             {
                 _snapshotTicks = 0;
                 SendSnapshots();
                 SendGrenadeSnapshots();
+                SendAbilityStates();
             }
 
             if (++_matchTicks >= _configuration.Server.RefreshRateHz)
@@ -817,6 +837,34 @@ public sealed class FpsWorld : IHostedService
             client.SendPacket(packet);
     }
 
+    private void SendAbilityStates(ACTcpClient? only = null)
+    {
+        if (_simulation is null) return;
+        var actors = _simulation.Actors.OrderBy(a => a.Id).ToArray();
+        for (int offset = 0; offset < actors.Length; offset += FpsAbilitiesPacket.Capacity)
+        {
+            var packet = new FpsAbilitiesPacket { Sequence = ++_abilitySequence,
+                Count = (byte)Math.Min(FpsAbilitiesPacket.Capacity, actors.Length - offset) };
+            for (int index = 0; index < packet.Count; index++)
+            {
+                var actor = actors[offset + index];
+                packet.ActorIds[index] = actor.Id;
+                packet.Cooldowns[index] = actor.FieldUpgradeCooldown;
+                packet.Silence[index] = actor.Dead ? 0 : actor.DeadSilenceRemaining;
+                packet.Vision[index] = actor.Dead ? 0 : actor.VisionRemaining;
+            }
+            if (only is not null) only.SendPacketUdp(in packet); else Broadcast(packet);
+        }
+    }
+
+    private static FpsFieldDevicePacket CreateFieldDevicePacket(FpsFieldDeviceEvent state) => new()
+    {
+        DeviceId = state.Id, OwnerId = state.OwnerId, Type = (byte)state.Type, State = state.State,
+        Position = state.Position, Health = (byte)Math.Clamp(state.Health, 0, 255),
+        Uses = (byte)state.UsesRemaining, Remaining = state.RemainingSeconds,
+        ActorId = state.ActorId, GrenadeId = state.GrenadeId, Target = state.Target,
+    };
+
     private void SendGrenadeSnapshots(ACTcpClient? only = null)
     {
         if (_simulation is null) return;
@@ -901,6 +949,12 @@ public sealed class FpsWorld : IHostedService
             AllowedOfficerSkins = FpsOperatorModels.AllowedSkins(theme, FpsOperatorModel.Officer),
             AllowedGhostSkins = FpsOperatorModels.AllowedSkins(theme, FpsOperatorModel.Ghost),
             DefaultOperatorSkin = (byte)FpsOperatorSkin.Standard,
+            AllowedFieldUpgrades = ItemMask(loadouts.AllowedFieldUpgrades.Select(value => (byte)value)),
+            AllowedPerks = ItemMask(loadouts.AllowedPerks.Select(value => (byte)value)),
+            DefaultFieldUpgrade = (byte)loadouts.HumanDefault.FieldUpgrade,
+            DefaultPerk1 = (byte)loadouts.HumanDefault.Perks.ElementAtOrDefault(0),
+            DefaultPerk2 = (byte)loadouts.HumanDefault.Perks.ElementAtOrDefault(1),
+            DefaultPerk3 = (byte)loadouts.HumanDefault.Perks.ElementAtOrDefault(2),
         });
     }
 
@@ -918,6 +972,8 @@ public sealed class FpsWorld : IHostedService
         SecondaryWeapon = (byte)actor.Loadout.SecondaryWeapon,
         ActiveSlot = actor.ActiveWeaponSlot,
         LethalsRemaining = (byte)Math.Clamp(actor.LethalsRemaining, 0, byte.MaxValue),
+        FieldUpgrade = (byte)actor.Loadout.FieldUpgrade,
+        Perk1 = (byte)actor.Loadout.Perk1, Perk2 = (byte)actor.Loadout.Perk2, Perk3 = (byte)actor.Loadout.Perk3,
     };
 
     private static ulong LoadoutSignature(FpsActorState actor) =>
@@ -925,7 +981,8 @@ public sealed class FpsWorld : IHostedService
         | (ulong)(byte)actor.Loadout.Lethal << 8
         | (ulong)(byte)actor.Loadout.SecondaryWeapon << 16
         | (ulong)actor.ActiveWeaponSlot << 24
-        | (ulong)(byte)Math.Clamp(actor.LethalsRemaining, 0, byte.MaxValue) << 32;
+        | (ulong)(byte)Math.Clamp(actor.LethalsRemaining, 0, byte.MaxValue) << 32
+        | (ulong)(byte)actor.Loadout.FieldUpgrade << 40 | (ulong)actor.Loadout.PerkMask << 48;
 
     private static uint ItemMask(IEnumerable<byte> values) =>
         values.Aggregate(0u, (mask, value) => value < 32 ? mask | 1u << value : mask);
@@ -938,6 +995,10 @@ public sealed class FpsWorld : IHostedService
                        || loadouts.AllowedMainWeapons.Any(value => !Enum.IsDefined(value))
                        || loadouts.AllowedLethals.Any(value => !Enum.IsDefined(value))
                        || loadouts.AllowedSecondaryWeapons.Any(value => !Enum.IsDefined(value))
+                       || loadouts.AllowedFieldUpgrades.Count == 0
+                       || loadouts.AllowedFieldUpgrades.Any(value => !Enum.IsDefined(value))
+                       || loadouts.AllowedPerks.Any(value => value == FpsPerk.None || !Enum.IsDefined(value))
+                       || loadouts.HumanDefault.Perks.Count > 3 || loadouts.BotDefault.Perks.Count > 3
                        || !FpsItems.IsAllowed(loadouts,
                            FpsItems.FromConfiguration(loadouts.HumanDefault))
                        || !FpsItems.IsAllowed(loadouts,

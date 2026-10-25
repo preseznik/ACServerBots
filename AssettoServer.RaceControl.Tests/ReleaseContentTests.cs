@@ -173,7 +173,9 @@ public sealed class ReleaseContentTests
         foreach (string name in new[] { "models.ini", "track.kn5", "ui/ui_track.json" })
             File.Copy(Path.Combine(source, name), Path.Combine(track, name));
         File.WriteAllText(Path.Combine(pack, "asrc-fps-maps.json"),
-            """{"schemaVersion":1,"packVersion":1,"preparationVersion":4,"maps":[{"trackId":"test_track"}]}""");
+            JsonSerializer.Serialize(new { schemaVersion = 1, packVersion = 1,
+                preparationVersion = FpsArenaDefinition.CurrentPreparationVersion,
+                maps = new[] { new { trackId = "test_track" } } }));
         string prepared = Path.Combine(track, "race-control");
         Directory.CreateDirectory(prepared);
         var arena = new FpsArenaDefinition

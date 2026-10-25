@@ -1,0 +1,421 @@
+{
+  "description": "Independent standing-capsule checks through both bus-door shoulders. AC metres, Y up; floor=.4m and ramp ends at local X=1.2/2.25m.",
+  "walkRoutes": [
+    {
+      "name": "yard_01 front bus entrance rear shoulder",
+      "points": [
+        [
+          3.8,
+          0,
+          -4.48
+        ],
+        [
+          3.25,
+          0,
+          -4.48
+        ],
+        [
+          2.2,
+          0.4,
+          -4.48
+        ],
+        [
+          1.0,
+          0.4,
+          -4.48
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_01 front bus entrance front shoulder",
+      "points": [
+        [
+          3.8,
+          0,
+          -4.08
+        ],
+        [
+          3.25,
+          0,
+          -4.08
+        ],
+        [
+          2.2,
+          0.4,
+          -4.08
+        ],
+        [
+          1.0,
+          0.4,
+          -4.08
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_01 middle bus entrance rear shoulder",
+      "points": [
+        [
+          3.8,
+          0,
+          -9.4
+        ],
+        [
+          3.25,
+          0,
+          -9.4
+        ],
+        [
+          2.2,
+          0.4,
+          -9.4
+        ],
+        [
+          1.0,
+          0.4,
+          -9.4
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_01 middle bus entrance front shoulder",
+      "points": [
+        [
+          3.8,
+          0,
+          -9.0
+        ],
+        [
+          3.25,
+          0,
+          -9.0
+        ],
+        [
+          2.2,
+          0.4,
+          -9.0
+        ],
+        [
+          1.0,
+          0.4,
+          -9.0
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_02 front bus entrance rear shoulder",
+      "points": [
+        [
+          20.059715,
+          0,
+          3.433528
+        ],
+        [
+          19.536634,
+          0,
+          3.603487
+        ],
+        [
+          18.538025,
+          0.4,
+          3.927955
+        ],
+        [
+          17.396757,
+          0.4,
+          4.298775
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_02 front bus entrance front shoulder",
+      "points": [
+        [
+          20.183322,
+          0,
+          3.81395
+        ],
+        [
+          19.660241,
+          0,
+          3.98391
+        ],
+        [
+          18.661631,
+          0.4,
+          4.308378
+        ],
+        [
+          17.520364,
+          0.4,
+          4.679198
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_02 middle bus entrance rear shoulder",
+      "points": [
+        [
+          18.539351,
+          0,
+          -1.24567
+        ],
+        [
+          18.01627,
+          0,
+          -1.075711
+        ],
+        [
+          17.017661,
+          0.4,
+          -0.751243
+        ],
+        [
+          15.876393,
+          0.4,
+          -0.380423
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_02 middle bus entrance front shoulder",
+      "points": [
+        [
+          18.662958,
+          0,
+          -0.865248
+        ],
+        [
+          18.139877,
+          0,
+          -0.695288
+        ],
+        [
+          17.141268,
+          0.4,
+          -0.37082
+        ],
+        [
+          16.0,
+          0.4,
+          0.0
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_03 front bus entrance rear shoulder",
+      "points": [
+        [
+          18.799052,
+          0,
+          -13.99662
+        ],
+        [
+          18.261071,
+          0,
+          -14.110972
+        ],
+        [
+          17.234016,
+          0.4,
+          -14.329279
+        ],
+        [
+          16.060239,
+          0.4,
+          -14.578773
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_03 front bus entrance front shoulder",
+      "points": [
+        [
+          18.715888,
+          0,
+          -13.605361
+        ],
+        [
+          18.177907,
+          0,
+          -13.719713
+        ],
+        [
+          17.150852,
+          0.4,
+          -13.93802
+        ],
+        [
+          15.977074,
+          0.4,
+          -14.187514
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_03 middle bus entrance rear shoulder",
+      "points": [
+        [
+          19.821978,
+          0,
+          -18.809106
+        ],
+        [
+          19.283997,
+          0,
+          -18.923458
+        ],
+        [
+          18.256942,
+          0.4,
+          -19.141765
+        ],
+        [
+          17.083165,
+          0.4,
+          -19.391259
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "yard_03 middle bus entrance front shoulder",
+      "points": [
+        [
+          19.738813,
+          0,
+          -18.417847
+        ],
+        [
+          19.200832,
+          0,
+          -18.532199
+        ],
+        [
+          18.173777,
+          0.4,
+          -18.750506
+        ],
+        [
+          17.0,
+          0.4,
+          -19.0
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "reserve front bus entrance rear shoulder",
+      "points": [
+        [
+          -32.48,
+          0,
+          21.2
+        ],
+        [
+          -32.48,
+          0,
+          21.75
+        ],
+        [
+          -32.48,
+          0.4,
+          22.8
+        ],
+        [
+          -32.48,
+          0.4,
+          24.0
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "reserve front bus entrance front shoulder",
+      "points": [
+        [
+          -32.08,
+          0,
+          21.2
+        ],
+        [
+          -32.08,
+          0,
+          21.75
+        ],
+        [
+          -32.08,
+          0.4,
+          22.8
+        ],
+        [
+          -32.08,
+          0.4,
+          24.0
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "reserve middle bus entrance rear shoulder",
+      "points": [
+        [
+          -37.4,
+          0,
+          21.2
+        ],
+        [
+          -37.4,
+          0,
+          21.75
+        ],
+        [
+          -37.4,
+          0.4,
+          22.8
+        ],
+        [
+          -37.4,
+          0.4,
+          24.0
+        ]
+      ],
+      "bidirectional": true
+    },
+    {
+      "name": "reserve middle bus entrance front shoulder",
+      "points": [
+        [
+          -37.0,
+          0,
+          21.2
+        ],
+        [
+          -37.0,
+          0,
+          21.75
+        ],
+        [
+          -37.0,
+          0.4,
+          22.8
+        ],
+        [
+          -37.0,
+          0.4,
+          24.0
+        ]
+      ],
+      "bidirectional": true
+    }
+  ]
+}

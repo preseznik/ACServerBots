@@ -40,11 +40,32 @@ public enum FpsSecondaryWeapon : byte
     Colt1911 = 4,
 }
 
+public enum FpsFieldUpgrade : byte
+{
+    MunitionsBox = 1,
+    DeadSilence = 2,
+    TrophySystem = 3,
+}
+
+public enum FpsPerk : byte
+{
+    None = 0,
+    Slipstream = 1,
+    Ninja = 2,
+    Vision = 3,
+    Engineer = 4,
+    FlackJacket = 5,
+    FastHands = 6,
+    GearHead = 7,
+}
+
 public sealed class FpsLoadoutSelectionConfiguration
 {
     public FpsMainWeapon MainWeapon { get; init; } = FpsMainWeapon.AssaultRifle;
     public FpsLethalEquipment Lethal { get; init; } = FpsLethalEquipment.FragGrenade;
     public FpsSecondaryWeapon SecondaryWeapon { get; init; } = FpsSecondaryWeapon.Colt1911;
+    public FpsFieldUpgrade FieldUpgrade { get; init; } = FpsFieldUpgrade.MunitionsBox;
+    public List<FpsPerk> Perks { get; init; } = [];
 }
 
 public sealed class FpsLoadoutConfiguration
@@ -55,6 +76,11 @@ public sealed class FpsLoadoutConfiguration
         [FpsLethalEquipment.FragGrenade, FpsLethalEquipment.StickyGrenade];
     public List<FpsSecondaryWeapon> AllowedSecondaryWeapons { get; init; } =
         [FpsSecondaryWeapon.DesertEagle, FpsSecondaryWeapon.Colt1911];
+    public List<FpsFieldUpgrade> AllowedFieldUpgrades { get; init; } =
+        [FpsFieldUpgrade.MunitionsBox, FpsFieldUpgrade.DeadSilence, FpsFieldUpgrade.TrophySystem];
+    public List<FpsPerk> AllowedPerks { get; init; } =
+        [FpsPerk.Slipstream, FpsPerk.Ninja, FpsPerk.Vision, FpsPerk.Engineer,
+            FpsPerk.FlackJacket, FpsPerk.FastHands, FpsPerk.GearHead];
     public FpsLoadoutSelectionConfiguration HumanDefault { get; init; } = new();
     public FpsLoadoutSelectionConfiguration BotDefault { get; init; } = new();
 }

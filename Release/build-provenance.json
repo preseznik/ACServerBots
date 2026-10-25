@@ -1,0 +1,11 @@
+{
+  "version": "0.1.3",
+  "baselineCommit": "ad61cf3a1fe575de0156851dc191774cd7c45473",
+  "fpsClientPackVersion": 60,
+  "fpsMapPackVersion": 2,
+  "includesCurrentFpsSourceAndAssets": true,
+  "maps": ["bo2_nuketown_2020", "fire_pit", "krvava_rotunda", "shipment_1519", "css_dust2", "last_shift"],
+  "mapPreparationVersion": 5,
+  "mapSourceOverrides": {"bo2_nuketown_2020": "authoring snapshot 0.1.16 with bus movement volume"},
+  "sourceSelection": "Current tracked source and FPS modules, assets, map sources and tools. Generated build backups and internal Dust II research are excluded."
+}

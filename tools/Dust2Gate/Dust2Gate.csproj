@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ServerRoot>$(MSBuildThisFileDirectory)..\..\AssettoServer\Server</ServerRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(ServerRoot)\Fps\FpsArenaAsset.cs" Link="Server\FpsArenaAsset.cs" />
+    <Compile Include="$(ServerRoot)\Fps\FpsArenaSurface.cs" Link="Server\FpsArenaSurface.cs" />
+    <Compile Include="$(ServerRoot)\Fps\FpsArenaNavigation.cs" Link="Server\FpsArenaNavigation.cs" />
+    <Compile Include="$(ServerRoot)\Fps\FpsMovementBox.cs" Link="Server\FpsMovementBox.cs" />
+    <Compile Include="$(ServerRoot)\Fps\FpsTriangleBvh.cs" Link="Server\FpsTriangleBvh.cs" />
+    <Compile Include="$(ServerRoot)\Fps\FpsPlayableArea.cs" Link="Server\FpsPlayableArea.cs" />
+    <Compile Include="$(ServerRoot)\Ai\Physics\Kn5CollisionReader.cs" Link="Server\Kn5CollisionReader.cs" />
+    <Compile Include="$(ServerRoot)\Ai\Physics\RacePhysicsAsset.cs" Link="Server\RacePhysicsAsset.cs" />
+    <Compile Include="$(ServerRoot)\Ai\Physics\RaceRouteSurfaceBuilder.cs" Link="Server\RaceRouteSurfaceBuilder.cs" />
+    <Compile Include="$(ServerRoot)\Ai\Physics\AcCarPhysicsReader.cs" Link="Server\AcCarPhysicsReader.cs" />
+  </ItemGroup>
+</Project>

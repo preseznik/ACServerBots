@@ -193,6 +193,15 @@ public sealed class FpsLoadoutPreset
     public FpsMainWeapon MainWeapon { get; set; } = FpsMainWeapon.AssaultRifle;
     public FpsLethalEquipment Lethal { get; set; } = FpsLethalEquipment.FragGrenade;
     public FpsSecondaryWeapon SecondaryWeapon { get; set; } = FpsSecondaryWeapon.Colt1911;
+    public FpsFieldUpgrade FieldUpgrade { get; set; } = FpsFieldUpgrade.MunitionsBox;
+    public List<FpsPerk> Perks { get; set; } = [];
+}
+
+public enum FpsFieldUpgrade : byte { MunitionsBox = 1, DeadSilence = 2, TrophySystem = 3 }
+public enum FpsPerk : byte
+{
+    None = 0, Slipstream = 1, Ninja = 2, Vision = 3, Engineer = 4,
+    FlackJacket = 5, FastHands = 6, GearHead = 7,
 }
 
 public sealed class FpsLoadoutOptions
@@ -205,6 +214,8 @@ public sealed class FpsLoadoutOptions
         [FpsSecondaryWeapon.DesertEagle, FpsSecondaryWeapon.Colt1911];
     public FpsLoadoutPreset HumanDefault { get; set; } = new();
     public FpsLoadoutPreset BotDefault { get; set; } = new();
+    public List<FpsFieldUpgrade> AllowedFieldUpgrades { get; set; } = [FpsFieldUpgrade.MunitionsBox, FpsFieldUpgrade.DeadSilence, FpsFieldUpgrade.TrophySystem];
+    public List<FpsPerk> AllowedPerks { get; set; } = [FpsPerk.Slipstream, FpsPerk.Ninja, FpsPerk.Vision, FpsPerk.Engineer, FpsPerk.FlackJacket, FpsPerk.FastHands, FpsPerk.GearHead];
 }
 
 public enum FpsVisualTheme
@@ -239,7 +250,7 @@ public sealed class FpsBotOptions
 
 public sealed class FpsArenaDefinition
 {
-    public const int CurrentPreparationVersion = 4;
+    public const int CurrentPreparationVersion = 5;
 
     public int PreparationVersion { get; set; } = CurrentPreparationVersion;
     public string TrackId { get; set; } = string.Empty;

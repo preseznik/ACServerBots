@@ -1,0 +1,526 @@
+{
+  "trackId": "css_dust2",
+  "version": "0.1.0",
+  "coordinateSystem": "Assetto Corsa metres, X east / Y up / Z south",
+  "spawns": [
+    [
+      -22.2,
+      3.37376,
+      22.8,
+      -90
+    ],
+    [
+      15.0,
+      0.10113,
+      6.0,
+      -90
+    ],
+    [
+      27.9,
+      0.04319,
+      -24.0,
+      90
+    ],
+    [
+      38.4,
+      -3.58064,
+      -9.6,
+      -90
+    ],
+    [
+      39.0,
+      0.3225,
+      -43.2,
+      90
+    ],
+    [
+      31.8,
+      3.34357,
+      -75.0,
+      -90
+    ],
+    [
+      27.9,
+      2.4384,
+      -63.9,
+      -90
+    ],
+    [
+      -3.6,
+      0.0,
+      -32.4,
+      90
+    ],
+    [
+      -7.8,
+      -3.2064,
+      -51.0,
+      90
+    ],
+    [
+      7.2,
+      -3.22182,
+      -58.8,
+      -90
+    ],
+    [
+      -25.8,
+      -1.10437,
+      -57.0,
+      90
+    ],
+    [
+      -45.0,
+      0.8128,
+      -64.2,
+      -90
+    ],
+    [
+      -43.8,
+      0.8128,
+      -28.8,
+      90
+    ],
+    [
+      -23.1,
+      -2.8448,
+      -36.9,
+      -90
+    ],
+    [
+      -45.0,
+      0.03422,
+      -7.8,
+      90
+    ],
+    [
+      12.6,
+      2.4384,
+      -45.6,
+      -90
+    ]
+  ],
+  "landmarks": {
+    "T spawn": [
+      -22.2,
+      3.37376,
+      22.8
+    ],
+    "T ramp": [
+      -6.0,
+      1.57492,
+      18.0
+    ],
+    "Outside long": [
+      15.0,
+      0.10113,
+      6.0
+    ],
+    "Long doors": [
+      27.9,
+      0.04319,
+      -24.0
+    ],
+    "Long pit": [
+      38.4,
+      -3.58064,
+      -9.6
+    ],
+    "Long A": [
+      39.0,
+      0.3225,
+      -43.2
+    ],
+    "A site": [
+      31.8,
+      3.34357,
+      -75.0
+    ],
+    "A ramp": [
+      39.0,
+      1.8853,
+      -66.0
+    ],
+    "Short A": [
+      27.9,
+      2.4384,
+      -63.9
+    ],
+    "Catwalk": [
+      -3.6,
+      0.0,
+      -32.4
+    ],
+    "Top mid": [
+      -4.2,
+      0.01709,
+      -18.0
+    ],
+    "Mid doors": [
+      -7.8,
+      -3.2064,
+      -51.0
+    ],
+    "CT spawn": [
+      7.2,
+      -3.22182,
+      -58.8
+    ],
+    "B doors": [
+      -25.8,
+      -1.10437,
+      -57.0
+    ],
+    "B site": [
+      -45.0,
+      0.8128,
+      -64.2
+    ],
+    "Upper tunnels": [
+      -43.8,
+      0.8128,
+      -28.8
+    ],
+    "Lower tunnels": [
+      -23.1,
+      -2.8448,
+      -36.9
+    ],
+    "Tunnel approach": [
+      -45.0,
+      0.03422,
+      -7.8
+    ],
+    "Short stairs": [
+      12.6,
+      2.4384,
+      -45.6
+    ]
+  },
+  "routes": [
+    [
+      "T spawn",
+      "Tunnel approach"
+    ],
+    [
+      "Tunnel approach",
+      "Upper tunnels"
+    ],
+    [
+      "Upper tunnels",
+      "B site"
+    ],
+    [
+      "Upper tunnels",
+      "Lower tunnels"
+    ],
+    [
+      "Lower tunnels",
+      "Mid doors"
+    ],
+    [
+      "B site",
+      "B doors"
+    ],
+    [
+      "B doors",
+      "CT spawn"
+    ],
+    [
+      "CT spawn",
+      "A ramp"
+    ],
+    [
+      "T spawn",
+      "Top mid"
+    ],
+    [
+      "Top mid",
+      "Mid doors"
+    ],
+    [
+      "Top mid",
+      "Catwalk"
+    ],
+    [
+      "Catwalk",
+      "Short stairs"
+    ],
+    [
+      "Short stairs",
+      "Short A"
+    ],
+    [
+      "Short A",
+      "A site"
+    ],
+    [
+      "T spawn",
+      "Outside long"
+    ],
+    [
+      "Outside long",
+      "Long doors"
+    ],
+    [
+      "Long doors",
+      "Long pit"
+    ],
+    [
+      "Long pit",
+      "Long A"
+    ],
+    [
+      "Long A",
+      "A ramp"
+    ],
+    [
+      "A ramp",
+      "A site"
+    ]
+  ],
+  "shots": [
+    {
+      "name": "long A sightline",
+      "from": [
+        39,
+        2,
+        -34
+      ],
+      "to": [
+        39,
+        2,
+        -47
+      ],
+      "blocked": false
+    },
+    {
+      "name": "mid sightline",
+      "from": [
+        -9,
+        -1.4,
+        -32
+      ],
+      "to": [
+        -9,
+        -1.4,
+        -39
+      ],
+      "blocked": false
+    },
+    {
+      "name": "CT passage sightline",
+      "from": [
+        0,
+        -1.5,
+        -56
+      ],
+      "to": [
+        14,
+        -1.5,
+        -56
+      ],
+      "blocked": false
+    },
+    {
+      "name": "upper tunnel sightline",
+      "from": [
+        -43,
+        2.4,
+        -27
+      ],
+      "to": [
+        -43,
+        2.4,
+        -34
+      ],
+      "blocked": false
+    },
+    {
+      "name": "long outer wall",
+      "from": [
+        39,
+        2,
+        -40
+      ],
+      "to": [
+        48,
+        2,
+        -40
+      ],
+      "blocked": true
+    },
+    {
+      "name": "upper tunnel outer wall",
+      "from": [
+        -43,
+        2.4,
+        -29
+      ],
+      "to": [
+        -62,
+        2.4,
+        -29
+      ],
+      "blocked": true
+    },
+    {
+      "name": "mid west wall",
+      "from": [
+        -9,
+        -1.5,
+        -44
+      ],
+      "to": [
+        -23,
+        -1.5,
+        -44
+      ],
+      "blocked": true
+    },
+    {
+      "name": "B west wall",
+      "from": [
+        -48,
+        2.4,
+        -58
+      ],
+      "to": [
+        -63,
+        2.4,
+        -58
+      ],
+      "blocked": true
+    }
+  ],
+  "collisionRamps": [
+    {
+      "name": "T tunnel entry",
+      "x": [
+        -45.5168,
+        -39.0144
+      ],
+      "y": [
+        12.59,
+        13.8176
+      ],
+      "axis": "y",
+      "height": [
+        0,
+        0.8128
+      ]
+    },
+    {
+      "name": "B tunnel exit",
+      "x": [
+        -52.0192,
+        -48.768
+      ],
+      "y": [
+        45.1104,
+        46.3296
+      ],
+      "axis": "y",
+      "height": [
+        0.8128,
+        0
+      ]
+    },
+    {
+      "name": "B platform steps",
+      "x": [
+        -50.3936,
+        -47.1424
+      ],
+      "y": [
+        60.7568,
+        61.976
+      ],
+      "axis": "y",
+      "height": [
+        0,
+        0.8128
+      ]
+    },
+    {
+      "name": "Short A stairs",
+      "x": [
+        6.5024,
+        9.7536
+      ],
+      "y": [
+        41.5544,
+        45.212
+      ],
+      "axis": "y",
+      "height": [
+        0,
+        2.4384
+      ]
+    },
+    {
+      "name": "A platform steps",
+      "x": [
+        26.924,
+        30.7848
+      ],
+      "y": [
+        69.9008,
+        71.12
+      ],
+      "axis": "y",
+      "height": [
+        2.4384,
+        3.2512
+      ]
+    },
+    {
+      "name": "Upper tunnel stairs",
+      "x": [
+        -32.512,
+        -29.2608
+      ],
+      "y": [
+        26.0096,
+        29.2608
+      ],
+      "axis": "x",
+      "height": [
+        0.8128,
+        -0.4064
+      ]
+    },
+    {
+      "name": "Lower tunnel stairs",
+      "x": [
+        -29.2608,
+        -26.0096
+      ],
+      "y": [
+        29.2608,
+        31.6992
+      ],
+      "axis": "y",
+      "height": [
+        -1.8288,
+        -2.8448
+      ]
+    },
+    {
+      "name": "Tunnel stair turn",
+      "x": [
+        -29.2608,
+        -26.0096
+      ],
+      "y": [
+        26.0096,
+        29.2608
+      ],
+      "axis": "turn",
+      "height": [
+        -0.4064,
+        -1.8288
+      ]
+    }
+  ]
+}

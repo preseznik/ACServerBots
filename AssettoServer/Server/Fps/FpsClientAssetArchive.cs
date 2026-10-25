@@ -9,8 +9,8 @@ namespace AssettoServer.Server.Fps;
 
 internal static class FpsClientAssetArchive
 {
-    public const string Route = "/fps/assets/asrc-fps-assets-v22.zip";
-    public const string FileName = "asrc-fps-assets-v22.zip";
+    public const string Route = "/fps/assets/asrc-fps-assets-v23.zip";
+    public const string FileName = "asrc-fps-assets-v23.zip";
     public const string ViewmodelFileName = "asrc_assault_rifle_viewmodel.kn5";
     public const string WorldModelFileName = "asrc_assault_rifle_world.kn5";
     public const string RifleDiffuseFileName = "asrc_rifle_diffuse.png";
@@ -73,6 +73,13 @@ internal static class FpsClientAssetArchive
     ];
 
     private static readonly Lazy<byte[]> Archive = new(CreateArchive);
+    public static readonly string[] AbilityImageFileNames =
+    [
+        "asrc_upgrade_munitions_box.png", "asrc_upgrade_dead_silence.png", "asrc_upgrade_trophy_system.png",
+        "asrc_perk_slipstream.png", "asrc_perk_ninja.png", "asrc_perk_vision.png", "asrc_perk_engineer.png",
+        "asrc_perk_flack_jacket.png", "asrc_perk_fast_hands.png", "asrc_perk_gear_head.png",
+    ];
+    public static readonly string[] FieldModelFileNames = ["asrc_munitions_box.kn5", "asrc_trophy_system.kn5"];
 
     public static byte[] GetArchive() => Archive.Value;
 
@@ -120,6 +127,12 @@ internal static class FpsClientAssetArchive
                 "AssettoServer.Server.Fps.Assets.asrc_carbine_hud.png");
             foreach (string fileName in LoadoutImageFileNames)
                 AddPng(archive, fileName, $"AssettoServer.Server.Fps.Assets.{fileName}");
+            foreach (string fileName in AbilityImageFileNames)
+                AddPng(archive, fileName, $"AssettoServer.Server.Fps.Assets.{fileName}");
+            foreach (string fileName in FieldModelFileNames)
+                AddKn5(archive, fileName, $"AssettoServer.Server.Fps.Assets.{fileName}");
+            AddText(archive, "asrc_perks_provenance.txt",
+                "AssettoServer.Server.Fps.Assets.asrc_perks_provenance.txt", "Tripo", requireCreativeCommons: false);
             AddText(archive, DesertEagleAttributionFileName,
                 "AssettoServer.Server.Fps.Assets.asrc_desert_eagle_attribution.txt", "ELIZION");
             AddText(archive, Colt1911AttributionFileName,
@@ -189,14 +202,14 @@ internal static class FpsClientAssetArchive
     }
 
     private static void AddText(ZipArchive archive, string fileName, string resourceName,
-        string expectedAuthor)
+        string expectedAuthor, bool requireCreativeCommons = true)
     {
         using Stream resource = FpsAssetResources.Open(Assembly.GetExecutingAssembly(), resourceName)
                                 ?? throw new InvalidOperationException(
                                     $"Embedded FPS client asset was not found: {resourceName}");
         using var reader = new StreamReader(resource, leaveOpen: true);
         string text = reader.ReadToEnd();
-        if (!text.Contains("CC BY 4.0", StringComparison.Ordinal)
+        if ((requireCreativeCommons && !text.Contains("CC BY 4.0", StringComparison.Ordinal))
             || !text.Contains(expectedAuthor, StringComparison.Ordinal))
             throw new InvalidDataException($"Embedded FPS attribution is invalid: {resourceName}");
         ZipArchiveEntry entry = archive.CreateEntry(fileName, CompressionLevel.Optimal);

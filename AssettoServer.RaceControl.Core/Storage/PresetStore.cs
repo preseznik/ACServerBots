@@ -60,6 +60,10 @@ public sealed class PresetStore
             [FpsSecondaryWeapon.DesertEagle, FpsSecondaryWeapon.Colt1911];
         preset.Fps.Loadouts.HumanDefault ??= new FpsLoadoutPreset();
         preset.Fps.Loadouts.BotDefault ??= new FpsLoadoutPreset();
+        preset.Fps.Loadouts.AllowedFieldUpgrades ??= new FpsLoadoutOptions().AllowedFieldUpgrades;
+        preset.Fps.Loadouts.AllowedPerks ??= new FpsLoadoutOptions().AllowedPerks;
+        preset.Fps.Loadouts.HumanDefault.Perks ??= [];
+        preset.Fps.Loadouts.BotDefault.Perks ??= [];
         preset.SchemaVersion = RaceControlPreset.CurrentSchemaVersion;
         preset.ServerPayloadPath = _paths.ResolveComponentPath(preset.ServerPayloadPath);
         return preset;

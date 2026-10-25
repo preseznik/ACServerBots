@@ -201,6 +201,8 @@ public sealed class ServerConfigurationRendererTests
         preset.Fps.InfiniteSprint = true;
         preset.Fps.DisableHealthRegeneration = true;
         preset.Fps.StartWithBotsOnly = true;
+        preset.Fps.Loadouts.HumanDefault.FieldUpgrade = FpsFieldUpgrade.DeadSilence;
+        preset.Fps.Loadouts.HumanDefault.Perks = [FpsPerk.Ninja, FpsPerk.Vision, FpsPerk.GearHead];
         preset.Fps.Arena = Arena();
         preset.Grid[0].Mode = SlotMode.Auto;
         preset.Grid[1].Mode = SlotMode.Fixed;
@@ -239,6 +241,9 @@ public sealed class ServerConfigurationRendererTests
             Assert.That(rendered.ExtraConfiguration, Does.Contain("  KillLimit: 20"));
             Assert.That(rendered.ExtraConfiguration,
                 Does.Contain("    AllowedMainWeapons: [AssaultRifle, CompactSmg]"));
+            Assert.That(rendered.ExtraConfiguration, Does.Contain("AllowedFieldUpgrades: [MunitionsBox, DeadSilence, TrophySystem]"));
+            Assert.That(rendered.ExtraConfiguration, Does.Contain("FieldUpgrade: DeadSilence"));
+            Assert.That(rendered.ExtraConfiguration, Does.Contain("Perks: [Ninja, Vision, GearHead]"));
             Assert.That(rendered.ExtraConfiguration,
                 Does.Contain("      SecondaryWeapon: Colt1911"));
             Assert.That(rendered.ExtraConfiguration, Does.Contain("    GeometryPath: fps-arena-geometry.bin"));

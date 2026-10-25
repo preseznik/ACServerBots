@@ -15,6 +15,13 @@ $appStaging = Join-Path $publishRoot 'app'
 $serverStaging = Join-Path $publishRoot 'server'
 $packageRoot = Join-Path $publishRoot 'package'
 
+# Both recursively replaced directories must remain below this checkout.
+foreach ($target in @($appOutput, $publishRoot)) {
+    if (-not $target.StartsWith($repositoryRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Publish target is outside the repository: $target"
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $appStaging, $serverStaging, $packageRoot -Force | Out-Null
 
@@ -77,6 +84,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\fps-modern-theme.md') -Destination $documentationRoot -Force
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\fps-operators.md') -Destination $documentationRoot -Force
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\fps-locomotion.md') -Destination $documentationRoot -Force
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\FPS_PERKS.md') -Destination $documentationRoot -Force
 
     $runningFromOutput = @(Get-Process -Name 'AssettoServer Race Control' -ErrorAction SilentlyContinue | Where-Object {
         try { $_.Path -and [IO.Path]::GetFullPath($_.Path).StartsWith($appOutput, [StringComparison]::OrdinalIgnoreCase) }

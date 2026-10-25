@@ -367,6 +367,7 @@ out-win-*
 out-race-control-*
 out-race-control/
 .artifacts/
+.tripo/
 /dist/
 
 # Jetbrains IDEs

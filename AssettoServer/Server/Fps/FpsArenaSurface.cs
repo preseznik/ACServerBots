@@ -10,8 +10,9 @@ namespace AssettoServer.Server.Fps;
 internal sealed class FpsArenaGeometryAsset
 {
     private const uint Magic = 0x47535046; // FPSG
-    private const int Version = 1;
+    private const int Version = 2;
     public required IReadOnlyList<Kn5Triangle> Triangles { get; init; }
+    public IReadOnlyList<FpsMovementBox> MovementBoxes { get; init; } = [];
 
     public void Save(string path)
     {
@@ -27,6 +28,12 @@ internal sealed class FpsArenaGeometryAsset
             Write(writer, triangle.B);
             Write(writer, triangle.C);
         }
+        writer.Write(MovementBoxes.Count);
+        foreach (var box in MovementBoxes)
+        {
+            Write(writer, box.Center); Write(writer, box.HalfX);
+            Write(writer, box.HalfY); Write(writer, box.HalfZ);
+        }
     }
 
     public static FpsArenaGeometryAsset Load(string path)
@@ -34,7 +41,8 @@ internal sealed class FpsArenaGeometryAsset
         using var reader = new BinaryReader(File.OpenRead(Path.GetFullPath(path)));
         if (reader.ReadUInt32() != Magic)
             throw new InvalidDataException("FPS arena geometry has an invalid header");
-        if (reader.ReadInt32() != Version)
+        int version = reader.ReadInt32();
+        if (version is not (1 or Version))
             throw new InvalidDataException("FPS arena geometry uses an unsupported version");
         int count = reader.ReadInt32();
         if (count is <= 0 or > 5_000_000)
@@ -42,9 +50,18 @@ internal sealed class FpsArenaGeometryAsset
         var triangles = new Kn5Triangle[count];
         for (int index = 0; index < count; index++)
             triangles[index] = new Kn5Triangle(Read(reader), Read(reader), Read(reader));
+        var boxes = new List<FpsMovementBox>();
+        if (version >= 2)
+        {
+            int boxCount = reader.ReadInt32();
+            if (boxCount is < 0 or > 256)
+                throw new InvalidDataException("FPS geometry has an invalid movement-volume count");
+            for (int index = 0; index < boxCount; index++)
+                boxes.Add(new(Read(reader), Read(reader), Read(reader), Read(reader)));
+        }
         if (reader.BaseStream.Position != reader.BaseStream.Length)
             throw new InvalidDataException("FPS arena geometry has unexpected trailing data");
-        return new FpsArenaGeometryAsset { Triangles = triangles };
+        return new FpsArenaGeometryAsset { Triangles = triangles, MovementBoxes = boxes };
     }
 
     private static void Write(BinaryWriter writer, Vector3 value)
@@ -111,6 +128,7 @@ internal sealed class FpsArenaSurface
     // climbable general-purpose slope; the height cap below keeps tall 45+ degree faces solid.
     private const float MinimumTerrainSeamSupportNormalY = 0.25f;
     private readonly SurfaceTriangle[] _triangles;
+    private readonly IReadOnlyList<FpsMovementBox> _movementBoxes;
     private readonly FpsTriangleBvh _bvh;
     private readonly Stack<List<int>> _candidatePool = [];
     private int _broadphaseQueries;
@@ -125,8 +143,10 @@ internal sealed class FpsArenaSurface
     internal FpsSurfaceDiagnostics TickDiagnostics => new(_broadphaseQueries,
         _broadphaseCandidates, _broadphaseMaximumCandidates, _depenetrationProbes);
 
-    public FpsArenaSurface(IReadOnlyList<Kn5Triangle> triangles)
+    public FpsArenaSurface(IReadOnlyList<Kn5Triangle> triangles,
+        IReadOnlyList<FpsMovementBox>? movementBoxes = null)
     {
+        _movementBoxes = movementBoxes ?? [];
         _triangles = new SurfaceTriangle[triangles.Count];
         var primitives = new FpsBvhPrimitive[triangles.Count];
         for (int index = 0; index < triangles.Count; index++)
@@ -211,12 +231,13 @@ internal sealed class FpsArenaSurface
         resolved = current;
         groundY = current.Y;
         var planarDelta = new Vector2(desired.X - current.X, desired.Z - current.Z);
-        int steps = Math.Max(1, (int)MathF.Ceiling(planarDelta.Length() / MaximumSweepStep));
+        int steps = Math.Max(1, (int)MathF.Ceiling(Vector3.Distance(current, desired) / MaximumSweepStep));
         var increment = (desired - current) / steps;
         bool moved = false;
         for (int step = 0; step < steps; step++)
         {
             var candidate = resolved + increment;
+            if (IsMovementSegmentBlocked(resolved, candidate, actorHeight)) break;
             if (TryAirCandidate(candidate, actorHeight, increment, allowUnsupportedGround,
                     unsupportedGroundY,
                     out float nextGround, out _))
@@ -380,6 +401,13 @@ internal sealed class FpsArenaSurface
             ReturnCandidates(candidates);
         }
         return hit;
+    }
+
+    public bool IsMovementSegmentBlocked(Vector3 from, Vector3 to, float actorHeight)
+    {
+        foreach (var box in _movementBoxes)
+            if (box.IntersectsSegment(from, to, actorHeight, ActorRadius)) return true;
+        return false;
     }
 
     public bool TryFindMantle(Vector3 current, Vector2 direction, float currentGroundY,
@@ -750,6 +778,12 @@ internal sealed class FpsArenaSurface
         float height = Math.Clamp(actorHeight, ProneHeight, StandingHeight);
         bool blocked = false;
         float bestScore = float.NegativeInfinity;
+        foreach (var box in _movementBoxes)
+        {
+            if (!box.ContainsCapsule(position with { Y = baseY }, height, ActorRadius)) continue;
+            blocked = true;
+            blockingNormal = box.BlockingNormal(position);
+        }
         var candidates = RentCandidates(
             new Vector3(position.X - ActorRadius, baseY, position.Z - ActorRadius),
             new Vector3(position.X + ActorRadius, baseY + height,

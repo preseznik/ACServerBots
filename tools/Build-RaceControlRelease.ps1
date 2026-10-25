@@ -81,7 +81,7 @@ foreach ($item in @(
     @{ Project = 'AssettoServer\AssettoServer.csproj'; Output = $server },
     @{ Project = 'AssettoServer.RaceControl\AssettoServer.RaceControl.csproj'; Output = $launcher }
 )) {
-    & dotnet publish (Join-Path $repo $item.Project) -c Release -r win-x64 --self-contained true -o $item.Output -v quiet -p:PublishSingleFile=false -p:ExternalFpsAssets=true -p:DebugSymbols=false -p:DebugType=None
+    & dotnet publish (Join-Path $repo $item.Project) -c Release -r win-x64 --self-contained true -o $item.Output -v quiet -p:PublishSingleFile=false -p:ExternalFpsAssets=true -p:DebugSymbols=true -p:DebugType=embedded
     if ($LASTEXITCODE) { throw "Publish failed: $($item.Project)" }
 }
 Copy-Tree (Join-Path $content 'Defaults') (Join-Path $launcher 'Defaults')
@@ -108,7 +108,7 @@ folder to relocate it. Assetto Corsa is read as an external content source; choo
 its new location if moving to another PC. No automatic game installation occurs.
 Do not extract over an installed edition or merge different release versions.
 
-Full ZIP: launcher + matching server + FPS hosting assets + all four FPS maps.
+Full ZIP: launcher + matching server + FPS hosting assets + all six FPS maps.
 Launcher ZIP: launcher only. Settings > Local Installations > Import server ZIP
 adds this release's server. Import FPS ZIP adds optional hosting assets.
 Import maps ZIP adds optional FPS maps, arena definitions and prepared navigation.
@@ -116,7 +116,7 @@ Server ZIP: matching standalone server; portable.json keeps relative writes loca
 FPS client ZIP: extract into your Assetto Corsa folder. It is a game-content
 overlay, with no executable or AppData storage. It includes both visual themes.
 For a standalone server, extract the same FPS ZIP into Packs\Fps below the server.
-FPS maps ZIP: Nuketown, Fire Pit, Krvava Rotunda and Shipment, with arena definitions
+FPS maps ZIP: Nuketown, Fire Pit, Krvava Rotunda, Shipment, Dust II and Last Shift, with arena definitions
 and prepared collision/navigation. Clients extract content into Assetto Corsa.
 Hosts import the ZIP or extract it into Packs\FpsMaps below the launcher.
 Bundled maps are read directly from the package; hosting never installs game files.
@@ -186,7 +186,7 @@ $sourceNames = if ($hasGit) {
     # excluding outputs produced during this build.
     @(Get-ChildItem -LiteralPath $repo -Recurse -File | ForEach-Object {
         [IO.Path]::GetRelativePath($repo, $_.FullName).Replace('\','/')
-    } | Where-Object { $_ -notmatch '(^|/)(bin|obj|dist|\.artifacts|\.git|\.vs|node_modules)/' })
+    } | Where-Object { $_ -notmatch '(^|/)(bin|obj|dist|\.artifacts|\.git|\.vs|node_modules|__pycache__)/|\.py[co]$' })
 }
 # Map binaries are local release inputs, deliberately excluded from normal Git adds.
 $sourceNames = @($sourceNames + @(Get-ChildItem -LiteralPath (Join-Path $content 'FpsMaps') -File -Recurse | ForEach-Object {

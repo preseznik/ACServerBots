@@ -194,6 +194,8 @@
                           LogicalName="AssettoServer.Server.Fps.Assets.asrc_carbine_hud.png" />
         <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_loadout_*.png"
                           LogicalName="AssettoServer.Server.Fps.Assets.%(Filename)%(Extension)" />
+        <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_upgrade_*.png;..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_perk_*.png;..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_munitions_box.kn5;..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_trophy_system.kn5;..\AssettoServer.RaceControl.Core\Assets\Fps\asrc_perks_provenance.txt"
+                          LogicalName="AssettoServer.Server.Fps.Assets.%(Filename)%(Extension)" />
         <EmbeddedResource Include="..\AssettoServer.RaceControl.Core\Assets\Fps\Modern\*.*"
                           LogicalName="AssettoServer.Server.Fps.ModernAssets.%(Filename)%(Extension)" />
         <None Remove="Assets\logo_42.png" />

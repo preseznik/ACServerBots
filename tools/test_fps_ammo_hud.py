@@ -53,6 +53,9 @@ def main():
     records, fonts = [], []
     for name, kind in [('drawRectFilled', 'fill'), ('drawRect', 'rect'), ('drawLine', 'line'), ('drawImage', 'image')]:
         g.ui[name] = lambda *values, kind=kind: records.append((kind, values))
+    for name, kind in [('setShadingOffset','shade'),('resetShadingOffset','unshade'),
+                       ('pushClipRect','clip'),('popClipRect','unclip')]:
+        g.ui[name] = lambda *values, kind=kind: records.append((kind, values))
     g.ui.pushDWriteFont = lambda name: fonts.append(name)
     g.ui.popDWriteFont = lambda: fonts.pop()
     g.ui.dwriteDrawTextClipped = lambda *values: records.append(('text', (*values, fonts[-1] if fonts else 'Segoe UI')))
@@ -68,34 +71,44 @@ def main():
     for weapon, capacity, duration in [(1, 40, 1.8), (2, 30, 1.55), (3, 7, 1.65), (4, 8, 1.35)]:
         actor = lua.table_from(dict(mainWeapon=weapon if weapon < 3 else 1, secondaryWeapon=weapon if weapon >= 3 else 3,
                                     activeSlot=int(weapon >= 3), ammo=capacity-2, reserveMagazines=3,
-                                    health=100, reloadRemaining=duration/2, lethal=17, lethalsRemaining=0))
+                                    health=100, reloadRemaining=duration/2, lethal=17, lethalsRemaining=0,
+                                    fieldUpgrade=(weapon % 3)+1, fieldUpgradeCooldown=57.5, deadSilenceRemaining=8.5))
         g.bridge = lua.table_from(dict(localMainWeapon=actor.mainWeapon, localSecondaryWeapon=actor.secondaryWeapon,
                                       localActiveSlot=actor.activeSlot, localAmmo=actor.ammo, localReserveMagazines=3,
                                       localMagazineCapacity=capacity, localReloadDuration=duration,
                                       localReloadRemaining=duration/2, localLethal=17, localLethalsRemaining=0,
                                       localHealth=100, localMaximumHealth=100, localStamina=100,
-                                      localKills=0, localDeaths=0, localScore=0, linkState=1))
+                                      localKills=0, localDeaths=0, localScore=0, linkState=1,
+                                      localFieldUpgrade=actor.fieldUpgrade, localFieldCooldown=57.5, localDeadSilence=8.5))
         g.hud.drawFallbackStatusWidgets(g.vec2(1920, 1080), 1, 20, actor)
         fallback = dict(g.captured.items())
         g.appStatus(g.vec2(1920, 1080), 1, 20)
         companion = dict(g.captured.items())
         for field in ['weaponName','ammo','reserveMagazines','magazineCapacity','reloadRemaining',
-                      'reloadDuration','lethalName','lethalsRemaining']:
+                      'reloadDuration','lethalName','lethalsRemaining','fieldUpgradeName','fieldCooldown','deadSilence']:
             assert companion[field] == fallback[field], (weapon, field)
         assert Path(companion['imagePath']).name == Path(fallback['imagePath']).name
+        assert Path(companion['fieldImagePath']).name == Path(fallback['fieldImagePath']).name
     g.hud.drawAmmoPanel = draw_panel
 
-    def frame(ammo=32, mags=3, capacity=40, weapon=1, reload=0, scale=1, width=1920, height=1080):
+    def frame(ammo=32, mags=3, capacity=40, weapon=1, reload=0, scale=1, width=1920, height=1080,
+              field=None, cooldown=0, silence=0):
         records.clear()
         state = lua.table_from(dict(weaponName=g.hud.itemNames[weapon], imagePath=g.weaponImages[weapon],
                                    ammo=ammo, reserveMagazines=mags, magazineCapacity=capacity,
                                    reloadRemaining=reload, reloadDuration=g.fpsVisual.weaponStats[weapon].reloadSeconds,
                                    lethalName='STICKY GRENADE', lethalsRemaining=0))
+        if field:
+            state.fieldUpgradeName = g.hud.fieldUpgrades[field].name
+            state.fieldImagePath = g.hud.fieldUpgrades[field].image
+            state.fieldCooldown, state.deadSilence = cooldown, silence
         draw_panel(g.vec2(width, height), scale, 20*scale, state)
         assert not fonts, 'Font stack leaked'
         # The alpha cutout is entirely outside the smaller 360 x 168 backing panel.
-        panel_min, panel_max = next(v[:2] for kind, v in records if kind == 'fill')
-        image_min, image_max = next(v[1:3] for kind, v in records if kind == 'image')
+        panel_min, panel_max = next(v[:2] for kind, v in records if kind == 'fill'
+                                   and abs(v[1].y-v[0].y-168*scale)<.01)
+        image_min, image_max = next(v[1:3] for kind, v in records if kind == 'image'
+                                   and v[0] == state.imagePath)
         assert round(panel_max.x-panel_min.x) == round(360*scale)
         assert round(panel_max.y-panel_min.y) == round(168*scale)
         assert abs(panel_min.x-image_max.x-12*scale) < 0.01
@@ -106,6 +119,18 @@ def main():
         assert (f'{mags*capacity:02d}' if capacity else '--') in labels
         assert f'{mags} RESERVE MAGS' in labels
         assert (f'{ammo+mags*capacity} ROUNDS TOTAL' if capacity else '-- ROUNDS TOTAL') in labels
+        if field:
+            assert state.fieldUpgradeName in labels and 'X / LB + RB' in labels
+            assert (f'ACTIVE {silence:.0f}s' if silence else f'{__import__("math").ceil(cooldown)}s'
+                    if cooldown else 'READY') in labels
+            charge = max(0,min(1,1-cooldown/120))
+            assert next(v for k,v in records if k=='shade') == (0,.35,1,0)
+            assert sum(k=='shade' for k,v in records)==sum(k=='unshade' for k,v in records)==1
+            clips = [v for k,v in records if k=='clip']
+            assert len(clips)==sum(k=='unclip' for k,v in records)==int(charge>0)
+            if clips:
+                assert abs(clips[0][1].y-clips[0][0].y-36*scale*charge)<.01
+                assert abs(clips[0][1].y-(panel_min.y-9*scale))<.01, 'Fill stays anchored at the bottom'
         return labels
 
     def color(c):
@@ -115,9 +140,15 @@ def main():
         # Include the separate cutout and empty 12 px gutter; no invented backing behind it.
         panel_min = next(v[0] for k,v in records if k=='fill')
         base = g.vec2(panel_min.x-160*scale, panel_min.y)
-        canvas = Image.new('RGBA', (round(520*scale), round(168*scale)), (0,0,0,0))
+        bottom = max(v[1].y for k,v in records if k == 'fill')
+        canvas = Image.new('RGBA', (round(520*scale), round(bottom-base.y)), (0,0,0,0))
         ink = ImageDraw.Draw(canvas)
+        shading, clip = None, None
         for kind, v in records:
+            if kind=='shade': shading=v; continue
+            if kind=='unshade': shading=None; continue
+            if kind=='clip': clip=v[:2]; continue
+            if kind=='unclip': clip=None; continue
             if kind in ('fill','rect','line'):
                 p,q,c = v[:3]
                 box = (round(p.x-base.x),round(p.y-base.y),round(q.x-base.x),round(q.y-base.y))
@@ -139,7 +170,17 @@ def main():
                     thumb=thumb.resize((round(q.x-p.x),round(q.y-p.y)),Image.Resampling.LANCZOS)
                 else:
                     thumb.thumbnail((round(q.x-p.x),round(q.y-p.y)),Image.Resampling.LANCZOS)
-                canvas.alpha_composite(thumb,(round((p.x+q.x-thumb.width)/2-base.x),round((p.y+q.y-thumb.height)/2-base.y)))
+                if shading:
+                    alpha=thumb.getchannel('A')
+                    thumb=Image.new('RGBA',thumb.size,(round(shading[1]*255),)*3+(255,))
+                    thumb.putalpha(alpha)
+                layer=Image.new('RGBA',canvas.size)
+                layer.alpha_composite(thumb,(round((p.x+q.x-thumb.width)/2-base.x),round((p.y+q.y-thumb.height)/2-base.y)))
+                if clip:
+                    p1,p2=clip
+                    box=(round(p1.x-base.x),round(p1.y-base.y),round(p2.x-base.x),round(p2.y-base.y))
+                    canvas.alpha_composite(layer.crop(box),(box[0],box[1]))
+                else: canvas.alpha_composite(layer)
             else:
                 label,size,p,q,_,_,_,c,font_name=v
                 font=ImageFont.truetype('C:/Windows/Fonts/bahnschrift.ttf' if 'Bahnschrift' in font_name else
@@ -161,6 +202,10 @@ def main():
             frame(ammo,reserves,capacity,weapon,reload)
             render(f'weapon-{weapon}-ammo-{ammo}-mags-{reserves}.png',1)
     frame(capacity=0)  # No inferred reserves while waiting for authoritative stats.
+    for field,cooldown,silence in [(1,120,0),(1,90,0),(1,60,0),(1,30,0),(1,0,0),(2,83,8),(3,57.5,0)]:
+        for scale,width,height in [(1,1920,1080),(.75,1280,720)]:
+            frame(field=field,cooldown=cooldown,silence=silence,scale=scale,width=width,height=height)
+            render(f'field-{field}-charge-{cooldown}-{height}.png',scale)
     print('PASS: matching HUD layouts/adapters; all four weapons, reserve and total arithmetic;')
     print('reload, empty, low ammo, switching, font/text fit, compact panel and external alpha cutout.')
     print(f'Draw-call previews (not in-game): {args.output}')

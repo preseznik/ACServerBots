@@ -1,7 +1,7 @@
 # Local release packaging
 
-Current release: **0.1.1** (2026-09-11), starting major 0, minor 1, patch 1.
-FPS content uses **client pack 54**; the four-map snapshot remains **map pack 1**.
+Current release: **0.1.3** (2026-10-26). The previous published installer is 0.1.2.
+FPS content uses **client pack 60** and **map pack 2**, including six maps.
 The launcher and server share version
 metadata in `Release/Release.props`.
 
@@ -11,7 +11,7 @@ Build all Windows x64 artifacts with:
 pwsh -NoProfile -File tools/Build-RaceControlRelease.ps1 -LocalReview
 ```
 
-Output: `dist/v0.1.1/`. An existing version directory is never overwritten.
+Output: `dist/v0.1.3/`. An existing version directory is never overwritten.
 `-LocalReview` records the local-only intent in the release manifest and permits
 packaging the current Ghost assets without changing their redistribution record.
 The default public-package check still requires Ghost-specific permission.
@@ -19,6 +19,22 @@ The builder retains isolated staging under .artifacts for inspection, packages
 the current working tree as Corresponding Source, and writes release.json plus
 SHA256SUMS.txt. ZIP entries have stable order and timestamps. Inno executables
 are unsigned; compiler metadata prevents claiming identical installer bytes.
+
+The 0.1.3 package includes the current FPS code and assets: perks and field upgrades,
+HUD and control updates, movement volumes, Dust II, and Last Shift. It retains the
+VRC KN5 reader fix, physics-preparation diagnostics, and GitHub updater from 0.1.2.
+The application ID stays unchanged, so Setup reuses an existing installation's
+directory, installation mode, and selected setup type. It replaces selected program
+components while keeping settings and presets in the existing data folder.
+
+Help > Check for updates opens the updater. Startup checks are enabled by default;
+preview releases are optional. Only this fork's `race-control-v<version>` releases
+are considered. Downloads require the matching Setup EXE, its declared size, and
+GitHub's SHA-256 asset digest. The installer is checked again before launch. The
+server must be stopped before installing. Checks do not install anything automatically.
+Portable users can download the installer for the installed edition, or obtain a new
+portable ZIP from GitHub and extract it into a separate folder. Component ZIP downloads
+continue to target the launcher's exact matching release.
 
 Artifacts: selectable Setup.exe; Full, Launcher, Server, FPS client and FPS maps ZIPs; and
 a matching Source ZIP. Both host ZIPs include self-contained .NET runtime files.
@@ -60,17 +76,19 @@ the Windows launcher release pipeline; public publishing/CI is a separate step.
 
 ## FPS maps and sanitized defaults
 
-Map pack 1 contains only these captured maps:
+Map pack 2 contains these captured maps, prepared with format version 5:
 
 | Map | Track ID | Version | Spawn points |
 | --- | --- | --- | --- |
-| Nuketown 2020 | bo2_nuketown_2020 | 0.1.10 | 32 |
+| Nuketown 2020 | bo2_nuketown_2020 | 0.1.16 | 32 |
 | Fire Pit | fire_pit | 0.1.0 | 12 |
 | Krvava Rotunda | krvava_rotunda | 0.1.0 | 16 |
 | Shipment 1519 | shipment_1519 | 0.1.0 | 4 |
+| Dust II (CS:S FPS) | css_dust2 | 0.1.1 | 16 |
+| Last Shift | last_shift | 0.3.1-surface-roof-fixes | 12 |
 
 The Full ZIP and Full host installer selection include them in Packs/FpsMaps.
-FPS-maps-v1.zip is optional and independent of FPS-client-v45.zip. Settings can
+FPS-maps-v2.zip is optional and independent of FPS-client-v60.zip. Settings can
 import/download maps into Data/Packs/FpsMaps. The scanner prefers bundled versions
 over installed copies so prepared data and server content agree. Client maps and
 hosting maps are separate installer choices. Players explicitly extract the map
@@ -87,12 +105,17 @@ using the selected map's content root, including for bundled maps.
 Release/Content is an explicit snapshot. Capture it once with
 tools/Capture-RaceControlReleaseContent.ps1, providing a built Core assembly and
 server payload. It reads the specified Race Control profile and installed maps,
-exports only four selected arenas/cache pairs, and sanitizes the latest saved
+exports the six selected arenas/cache pairs, and sanitizes the latest saved
 Racing/FPS presets. Shipment's old preparation format was regenerated in isolated
 workspace staging; the original profile was not modified. Conversion reports,
 arena backups, catalog caches, logs, instance history and unrelated maps are
 omitted. Large map inputs are Git-ignored and explicitly included in the matching
 Source ZIP, so that ZIP builds without the original PC's profile.
+
+The 0.1.3 snapshot uses Nuketown 0.1.16 from its authoring workspace via
+`-MapSourceRoots @{bo2_nuketown_2020='<authoring root>'}`; its bus movement volume
+is retained. Other maps use their installed content. Source archives already
+include the completed map snapshot and do not require recapturing it to build.
 
 Defaults/settings.json captures UI preferences. Defaults/fps.json and racing.json
 capture gameplay/grid/weather settings; startup.json captures the default mode.

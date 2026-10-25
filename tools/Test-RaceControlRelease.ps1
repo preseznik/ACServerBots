@@ -74,7 +74,7 @@ try {
 $mapsZip = Join-Path $releaseRoot ($manifest.assets | Where-Object kind -EQ 'maps').name
 $maps = $installer.ImportAsync($mapsZip,'maps',$null,[Threading.CancellationToken]::None).GetAwaiter().GetResult()
 $mapManifest = Get-Content (Join-Path $maps 'asrc-fps-maps.json') -Raw | ConvertFrom-Json
-Require ($mapManifest.maps.Count -eq 4 -and $mapManifest.packVersion -eq $manifest.mapsPackVersion) 'Map pack metadata mismatch.'
+Require ($mapManifest.maps.Count -eq $manifest.maps.Count -and $mapManifest.packVersion -eq $manifest.mapsPackVersion) 'Map pack metadata mismatch.'
 $emptyAc = Join-Path $evidence 'Game Without Maps'
 New-Item -ItemType Directory -Path (Join-Path $emptyAc 'content') | Out-Null
 $defaults = [AssettoServer.RaceControl.Core.Storage.ReleaseDefaults]::new($paths)
@@ -85,14 +85,14 @@ $cacheType = $paths.GetType().Assembly.GetType('AssettoServer.RaceControl.Core.S
 $getCache = $cacheType.GetMethod('GetFpsPaths',[Reflection.BindingFlags]'Public,Static')
 function Check-Maps($CurrentPaths) {
     $catalog = [AssettoServer.RaceControl.Core.Content.AcContentScanner]::new($CurrentPaths.PackageRoot).Scan($emptyAc)
-    Require ($catalog.Tracks.Count -eq 4) 'Bundled maps are not visible without installed game maps.'
+    Require ($catalog.Tracks.Count -eq $manifest.maps.Count) 'Bundled maps are not visible without installed game maps.'
     $arenas = [AssettoServer.RaceControl.Core.Storage.FpsArenaStore]::new($CurrentPaths)
     foreach ($track in $catalog.Tracks) {
         $preset = [AssettoServer.RaceControl.Core.Models.RaceControlPreset]::CreateDefault($emptyAc, '')
         $preset.Mode = [AssettoServer.RaceControl.Core.Models.EventMode]::Fps
         $preset.TrackId = $track.TrackId
         $preset.Fps.Arena = $arenas.Load($track.TrackId, $track.LayoutId)
-        Require ($preset.Fps.Arena.PreparationVersion -eq 4 -and $preset.Fps.Arena.SpawnPoints.Count -ge 4) "Arena missing or outdated: $($track.TrackId)"
+        Require ($preset.Fps.Arena.PreparationVersion -eq 5 -and $preset.Fps.Arena.SpawnPoints.Count -ge 4) "Arena missing or outdated: $($track.TrackId)"
         $preset.Fps.ArenaBoundsPaddingMeters = $preset.Fps.Arena.BoundsPaddingMeters
         $cache = $getCache.Invoke($null,@($CurrentPaths.PSObject.BaseObject,$preset.PSObject.BaseObject,$track.PSObject.BaseObject))
         Require ($cache.IsComplete) "Prepared map cache did not rebind: $($track.TrackId)"
@@ -106,14 +106,14 @@ function Check-Maps($CurrentPaths) {
 Check-Maps $paths
 foreach ($file in Get-ChildItem -LiteralPath (Join-Path $launcher 'Defaults'),$maps -Recurse -File | Where-Object Extension -in '.json','.txt','.ini','.lua') {
     $text = [IO.File]::ReadAllText($file.FullName)
-    Require (-not ($text -match '[A-Za-z]:[\\/] |7656119\d{10}'.Replace(' ',''))) "Private path or Steam identifier in release content: $($file.Name)"
+    Require (-not ($text -match '(?<![A-Za-z0-9])[A-Za-z]:[\\/]|7656119\d{10}')) "Private path or Steam identifier in release content: $($file.Name)"
     foreach ($token in @($env:USERNAME,$env:COMPUTERNAME)) {
         if ($token.Length -ge 4) { Require (-not ($text -match ('\b'+[Regex]::Escape($token)+'\b'))) "Machine identifier in release content: $($file.Name)" }
     }
     Require ($file.Name -ne 'conversion-report.json') 'Diagnostic source paths were packaged.'
 }
 $passed.Add('Offline server, FPS and map ZIP imports passed checksums and local installation.')
-$passed.Add('All four maps are discoverable without installed tracks; their prepared geometry/navigation seeds match exactly.')
+$passed.Add("All $($manifest.maps.Count) maps are discoverable without installed tracks; their prepared geometry/navigation seeds match exactly.")
 $passed.Add('Sanitized UI/FPS startup defaults load successfully; captured text contains no source PC paths or identifiers.')
 # Move only after releasing file streams. Core remains loaded from its old name; Windows permits directory relocation.
 $relocated = Join-Path $evidence 'Launcher Relocated'
@@ -125,7 +125,7 @@ $relocatedPaths.ConfigureProcessStorage()
 [AppContext]::SetData('ASRC.FpsAssetRoot',$relocatedPaths.FpsAssetsDirectory)
 [AppContext]::SetData('ASRC.FpsMapsRoot',$relocatedPaths.FpsMapsDirectory)
 Check-Maps $relocatedPaths
-$passed.Add('All four imported maps and prepared cache seeds resolve after moving the entire package.')
+$passed.Add("All $($manifest.maps.Count) imported maps and prepared cache seeds resolve after moving the entire package.")
 $reloaded = [AssettoServer.RaceControl.Core.Storage.ApplicationSettingsStore]::new($relocatedPaths).Load()
 Require ($reloaded.ServerPayloadPath.StartsWith($relocated,[StringComparison]::OrdinalIgnoreCase)) 'Saved server path did not relocate.'
 [AssettoServer.RaceControl.Core.Staging.ComponentInstaller]::ValidateServerBinaryAsync($reloaded.ServerPayloadPath,[Threading.CancellationToken]::None).GetAwaiter().GetResult() | Out-Null

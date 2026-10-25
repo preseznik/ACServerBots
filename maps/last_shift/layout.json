@@ -1,0 +1,19 @@
+{
+  "trackId": "last_shift",
+  "name": "Last Shift",
+  "version": "0.3.1-surface-roof-fixes",
+  "description": "Original municipal bus depot with enterable buses, single-face textured signs, non-overlapping floor finishes, protected stair landings and equipped service roofs.",
+  "playableBounds": [-45, -35, 45, 35],
+  "buses": [
+    {"name": "yard_01", "x": 1, "z": -9, "yaw": 0},
+    {"name": "yard_02", "x": 16, "z": 0, "yaw": 18},
+    {"name": "yard_03", "x": 17, "z": -19, "yaw": -12},
+    {"name": "reserve", "x": -37, "z": 24, "yaw": 90}
+  ],
+  "spawns": [
+    [-39, 0.15, -29, 45], [-34, 0.15, -29, 35], [-28, 0.15, -29, 0],
+    [-39, 0.15, -23, 80], [-33, 0.15, -22, 75], [-24, 0.15, -24, 0],
+    [35, 0.15, 29, -135], [29, 0.15, 29, -150], [26, 0.15, 24, -90],
+    [39, 0.15, 23, -140], [33, 0.15, 23, 180], [28, 0.15, 18, -90]
+  ]
+}

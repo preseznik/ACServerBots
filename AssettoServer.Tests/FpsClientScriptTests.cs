@@ -33,7 +33,7 @@ public sealed class FpsClientScriptTests
         string updateDefinition = script[updateStart..frameBeginStart];
         int nativeSceneServiceStart = updateDefinition.IndexOf("ensureLocalViewmodel()",
             StringComparison.Ordinal);
-        int inputCaptureStart = updateDefinition.IndexOf("scoreboardHeld = ac.isKeyDown",
+        int inputCaptureStart = updateDefinition.IndexOf("scoreboardHeld = hud.bindingDown",
             StringComparison.Ordinal);
         int predictionStart = updateDefinition.IndexOf("local forward = vec2",
             StringComparison.Ordinal);
@@ -195,8 +195,11 @@ public sealed class FpsClientScriptTests
                 "gamepadWeaponSwitch and not weaponSwitchWasHeld"));
             Assert.That(script, Does.Contain(
                 "hud.loadout.activeSlot = hud.loadout.activeSlot == 0 and 1 or 0"));
-            Assert.That(script, Does.Contain(
-                "XBOX:  Y  SWITCH WEAPON    •    RB  GRENADE"));
+            Assert.That(script, Does.Contain("KEYBOARD / MOUSE"));
+            Assert.That(script, Does.Contain("XBOX CONTROLLER"));
+            Assert.That(script, Does.Contain("asrc.fps.gamepad.bindings."));
+            Assert.That(script, Does.Contain("START / OPTIONS (FIXED)"));
+            Assert.That(updateDefinition, Does.Contain("hud.updateGamepadMenu()"));
             Assert.That(script, Does.Contain("ac.KeyIndex.RightButton"));
             Assert.That(script, Does.Contain("ui.mouseDown(ui.MouseButton.Right)"));
             Assert.That(script, Does.Contain("math.lerp(72, 56, fpsVisual.ads)"));
@@ -252,7 +255,8 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("[ASRC FPS] fire input captured:"));
             Assert.That(script, Does.Contain("ac.KeyIndex.R"));
             Assert.That(script, Does.Contain("(reload and 16 or 0)"));
-            Assert.That(script, Does.Contain("scoreboardHeld = ac.isKeyDown(ac.KeyIndex.Tab)"));
+            Assert.That(script, Does.Contain("scoreboardHeld = hud.bindingDown('scoreboard'"));
+            Assert.That(script, Does.Contain("hud.gamepadBindingDown('scoreboard')"));
             Assert.That(script, Does.Contain("cursorUnlocked = matchState == 2 or scoreboardHeld or persistentCursor"));
             Assert.That(script, Does.Contain("if not cursorUnlocked then"));
             Assert.That(script, Does.Contain("ui.captureMouse(true)"));
@@ -325,7 +329,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("web.loadRemoteAssets"));
             Assert.That(script, Does.Contain("ac.getServerIP()"));
             Assert.That(script, Does.Contain("ac.getServerPortHTTP()"));
-            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v22.zip"));
+            Assert.That(script, Does.Contain("/fps/assets/asrc-fps-assets-v23.zip"));
             Assert.That(script, Does.Contain("asrc_compact_smg_viewmodel.kn5"));
             Assert.That(script, Does.Contain("asrc_compact_smg_world.kn5"));
             Assert.That(script, Does.Contain("asrc_compact_smg_reload_empty.ksanim"));
@@ -554,8 +558,8 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Not.Contain("extension/audio/asrc_fps/explosion.wav"));
             Assert.That(script, Does.Not.Contain("event == nil or not event:isValid()"));
             Assert.That(script, Does.Not.Contain("sound.ttl <= 0 or not sound.event:isValid()"));
-            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v16')"));
-            Assert.That(script, Does.Contain("protocol = 16"));
+            Assert.That(script, Does.Contain("ac.StructItem.key('asrc.fps.hud.v17')"));
+            Assert.That(script, Does.Contain("protocol = 17"));
             Assert.That(script, Does.Contain("grenadeThreatCount = ac.StructItem.byte()"));
             Assert.That(script, Does.Contain("grenadeThreatPositions = ac.StructItem.array"));
             Assert.That(script, Does.Contain("grenadeThreatVelocities = ac.StructItem.array"));
@@ -627,7 +631,7 @@ public sealed class FpsClientScriptTests
             Assert.That(script, Does.Contain("mode == 'menu' and not previewCamera.everEnteredGameplay"));
             Assert.That(script, Does.Contain("if hud.nativePreDriveMenu then"));
             Assert.That(script, Does.Contain("hud.drawLoadoutMenu(true, true)"));
-            Assert.That(script, Does.Contain("DEPLOY   [ENTER / A]"));
+            Assert.That(script, Does.Contain("DEPLOY   [ENTER]"));
             Assert.That(script, Does.Contain("CUSTOMIZE LOADOUT   [L / X]"));
             Assert.That(script, Does.Contain("NATIVE AC MENU   [B]"));
             Assert.That(script, Does.Contain("FPS DEPLOYMENT RESTORED"));

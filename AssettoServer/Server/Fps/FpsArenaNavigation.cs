@@ -428,7 +428,7 @@ internal static class FpsArenaNavigationBuilder
                         cellZ + directionCell.Z, cellSize))
                     continue;
                 var direction = Vector2.Normalize(new Vector2(directionCell.X, directionCell.Z));
-                if (TryAddProbedLink(nodes, from, direction, FpsNavigationLinkKind.Mantle,
+                if (TryAddProbedLink(surface, nodes, from, direction, FpsNavigationLinkKind.Mantle,
                         (Vector3 current, Vector2 move, float ground, out Vector3 target,
                             out float targetGround) => surface.TryFindMantle(current, move, ground,
                             out target, out targetGround)))
@@ -436,7 +436,7 @@ internal static class FpsArenaNavigationBuilder
                     links++;
                     continue;
                 }
-                if (TryAddProbedLink(nodes, from, direction, FpsNavigationLinkKind.Vault,
+                if (TryAddProbedLink(surface, nodes, from, direction, FpsNavigationLinkKind.Vault,
                         (Vector3 current, Vector2 move, float ground, out Vector3 target,
                             out float targetGround) => surface.TryFindVault(current, move, ground,
                             out target, out targetGround)))
@@ -465,6 +465,7 @@ internal static class FpsArenaNavigationBuilder
                              && rise <= MaximumJumpRise)
                         kind = FpsNavigationLinkKind.Jump;
                     else continue;
+                    if (surface.IsMovementSegmentBlocked(from.Position, target.Position, 1.8f)) continue;
                     var rayOrigin = from.Position + Vector3.UnitY * 1.1f;
                     var delta = target.Position + Vector3.UnitY * 1.1f - rayOrigin;
                     if (surface.TryRaycast(rayOrigin, Vector3.Normalize(delta), delta.Length(),
@@ -489,13 +490,14 @@ internal static class FpsArenaNavigationBuilder
     private delegate bool TraversalProbe(Vector3 current, Vector2 direction, float groundY,
         out Vector3 target, out float targetGroundY);
 
-    private static bool TryAddProbedLink(IReadOnlyList<FpsNavigationNode> nodes,
+    private static bool TryAddProbedLink(FpsArenaSurface surface, IReadOnlyList<FpsNavigationNode> nodes,
         FpsNavigationNode from, Vector2 direction,
         FpsNavigationLinkKind kind, TraversalProbe probe)
     {
         if (!probe(from.Position, direction, from.Position.Y, out var target, out _)) return false;
         int targetIndex = FindClosest(nodes, target, 1);
         if (targetIndex < 0 || ReferenceEquals(from, nodes[targetIndex])) return false;
+        if (surface.IsMovementSegmentBlocked(from.Position, nodes[targetIndex].Position, 1.8f)) return false;
         return AddEdge(from, targetIndex, kind,
             Vector3.Distance(from.Position, nodes[targetIndex].Position) + 0.75f);
     }

@@ -289,7 +289,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 {
                     _lastFpsTrackId = value.TrackId;
                     _lastFpsTrackLayoutId = value.LayoutId;
-                    Preset.Fps.Arena = _fpsArenaStore.Load(value.TrackId, value.LayoutId);
+                    LoadFpsArena(Preset);
                 }
                 OnPropertyChanged(nameof(SelectedTrackDetails));
                 OnPropertyChanged(nameof(FpsArenaStatus));
@@ -1250,7 +1250,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         preset.Conditions.WeatherId = selectedWeather?.Id ?? "3_clear";
         Preset = preset;
         if (preset.Mode == EventMode.Fps)
-            preset.Fps.Arena = _fpsArenaStore.Load(preset.TrackId, preset.TrackLayoutId);
+            LoadFpsArena(preset);
         _selectedWeather = selectedWeather;
         OnPropertyChanged(nameof(SelectedWeather));
         var matchingTrack = Tracks.FirstOrDefault(track =>
@@ -1382,7 +1382,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         preset.TrackId = selected.TrackId;
         preset.TrackLayoutId = selected.LayoutId;
-        preset.Fps.Arena = _fpsArenaStore.Load(selected.TrackId, selected.LayoutId);
+        LoadFpsArena(preset);
+    }
+
+    private void LoadFpsArena(RaceControlPreset preset)
+    {
+        var arena = _fpsArenaStore.Load(preset.TrackId, preset.TrackLayoutId);
+        preset.Fps.Arena = arena;
+        if (arena is not null)
+            preset.Fps.ArenaBoundsPaddingMeters = arena.BoundsPaddingMeters;
+        if (ReferenceEquals(preset, Preset))
+            OnPropertyChanged(nameof(Preset));
     }
 
     private AcTrackLayout? FindTrack(string trackId, string layoutId) =>
@@ -2110,7 +2120,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (!result.IsValid)
         {
             SelectedPageIndex = 5;
-            throw new InvalidOperationException($"Fix {result.ErrorCount} validation error(s) first.");
+            var errors = string.Join(Environment.NewLine, result.Messages
+                .Where(message => message.Severity == ValidationSeverity.Error)
+                .Select(message => $"{message.Field}: {message.Message}"));
+            throw new InvalidOperationException($"Fix {result.ErrorCount} validation error(s) first.{Environment.NewLine}{errors}");
         }
 
         SavePreset();

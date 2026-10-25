@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "asset": "wheel-sidewall.png",
+  "source": "Generated original image",
+  "tool": "Built-in image_gen",
+  "generatedDate": "2026-10-05",
+  "dimensions": [1254, 1254],
+  "sha256": "082f9a91d0ab5a01392a327ddc14f74e24e8284ab8036fc9575ff4d2d3d7503f",
+  "prompt": "Create one production game texture, square 1024 by 1024 pixels: the perfectly front-on orthographic side face of a real worn municipal city-bus wheel. One centered perfectly circular wheel only, tire outer circle precisely centered in the square and filling about 92 percent of its width and height. Thick realistic dark charcoal-black rubber sidewall with subtle molded concentric ridges, small scuffs, rubbed edges, road dust and restrained realistic aging. In the middle a plain old gray painted pressed-steel bus wheel rim with round ventilation holes and a small central steel hub; ten small lug bolts in an accurate circular pattern. Restrained gray painted steel, faint rust around bolt recesses; no chrome, no decorative hubcap, no bright metallic shine. Diffuse neutral even frontal lighting suitable as a diffuse/albedo image. Strict orthographic flat front elevation, circular concentric alignment, no perspective angle, no tire tread projecting sideways, no vehicle body, no ground, no shadow cast onto the background. Dark opaque nearly black background outside the tire. No lettering, numbers, logos, watermark or frame. Photorealistic photographic material quality, not a drawing or a 3D wireframe. This will be sampled onto a circular bus-wheel cap mesh so exact symmetry and a centered wheel are essential.",
+  "pixelEdits": "None; generated PNG bytes copied unchanged into project",
+  "generationOutput": "C:/Users/iztok/.codex/generated_images/01a100c8-bb4a-7260-886b-64e7ef52d3e7/exec-bde5b32a-c5cb-4293-80f1-a2e49d64820c.png",
+  "usage": "Photographic-style frontal tire sidewall and painted steel bus-wheel face"
+}

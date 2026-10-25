@@ -60,6 +60,7 @@ local fpsVisual = {
   },
   crouchSuppressedUntilRelease = false,
   crouchToggleReleaseStands = false,
+  controllerSprint = { latched = false, wasHeld = false },
   carrierControlsOverride = nil,
   carrierControlsOverrideErrorLogged = false,
   viewmodelFireUntil = 0,
@@ -96,13 +97,13 @@ local fpsVisual = {
     exhaustionRelease = 25,
   },
   hudWeapon = {
-    archivePath = '/fps/assets/asrc-fps-assets-v22.zip',
+    archivePath = '/fps/assets/asrc-fps-assets-v23.zip',
     fileName = 'asrc_carbine_hud.png',
     imagePath = nil,
     loading = false,
     failed = false,
   },
-  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v22.zip',
+  loadoutAssetArchivePath = '/fps/assets/asrc-fps-assets-v23.zip',
   loadoutAssetFolder = nil,
   loadoutAssetsLoading = false,
   loadoutAssetsFailed = false,
@@ -346,7 +347,7 @@ local function clientAssetPath(relativePath)
   if assettoRoot == nil or assettoRoot == '' then return relativePath end
   return assettoRoot .. '/' .. relativePath
 end
-local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v22.zip'
+local rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v23.zip'
 local rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
 local rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
 local rifleDiffuseFileName = 'asrc_rifle_diffuse.png'
@@ -640,7 +641,7 @@ function fpsAudio.update(dt)
       local delta = position - actor.audioLastPosition
       local speed = math.sqrt(delta.x * delta.x + delta.z * delta.z) / math.max(dt, 0.001)
       local moving = bit.band(actor.flags, 1) ~= 0 and bit.band(actor.flags, 2) == 0
-        and bit.band(actor.flags, 16) ~= 0 and speed > 0.35
+        and bit.band(actor.flags, 16) ~= 0 and speed > 0.35 and (actor.deadSilenceRemaining or 0) <= 0
       local prone = bit.band(actor.flags, 128) ~= 0
       if moving and not prone then
         local crouching = bit.band(actor.flags, 32) ~= 0
@@ -653,6 +654,7 @@ function fpsAudio.update(dt)
           local baseVolume = actor.id == localSessionID and 0.16 or 0.45
           local volume = crouching and baseVolume * 0.5
             or sprinting and baseVolume * 1.2 or baseVolume
+          if fpsVisual.hasPerk(actor, 2) then volume = volume * 0.15 end
           fpsAudio.play(fpsAudio.next(fpsAudio.footsteps, 'footstep'), position,
             actor.id == localSessionID, volume, 14, 0.75)
         end
@@ -719,7 +721,7 @@ local requestRifleAssets
 local impactSparks = nil
 local impactSmoke = nil
 local hud = {
-  protocol = 16,
+  protocol = 17,
   capacity = 32,
   grenadeCapacity = 8,
   killFeedCapacity = 6,
@@ -745,16 +747,17 @@ local hud = {
   preDriveDeployPending = false,
   preDriveReturnAfterLoadout = false,
   preDriveStatus = '',
-  preDriveGamepadAWasDown = false,
-  preDriveGamepadBWasDown = false,
-  preDriveGamepadXWasDown = false,
   leaveServerArmed = false,
   pauseInputLogged = false,
   pausePage = 'main',
   controlsErrorLogged = false,
   controlsContentLogged = false,
   bindingCapture = nil,
+  bindingCaptureDevice = 'keyboard',
+  bindingCapturePrevious = {},
+  bindingCaptureConsumed = false,
   bindingCaptureAfter = 0,
+  gamepadMenuWasDown = false,
   environmentWeather = 15,
   environmentTimeSeconds = 13 * 60 * 60,
   environmentDraftWeather = 15,
@@ -786,6 +789,7 @@ local hud = {
 
 hud.bindingDefaults = {
   fire = ac.KeyIndex.LeftButton,
+  aim = ac.KeyIndex.RightButton,
   sprint = ac.KeyIndex.LeftShift,
   crouch = ac.KeyIndex.C,
   reload = ac.KeyIndex.R,
@@ -793,9 +797,13 @@ hud.bindingDefaults = {
   grenade = ac.KeyIndex.G,
   interact = ac.KeyIndex.F,
   melee = ac.KeyIndex.V,
+  switchWeapon = ac.KeyIndex.Q,
+  fieldUpgrade = ac.KeyIndex.X,
+  scoreboard = ac.KeyIndex.Tab,
 }
 hud.bindings = ac.storage({
   fire = hud.bindingDefaults.fire,
+  aim = hud.bindingDefaults.aim,
   sprint = hud.bindingDefaults.sprint,
   crouch = hud.bindingDefaults.crouch,
   reload = hud.bindingDefaults.reload,
@@ -803,7 +811,38 @@ hud.bindings = ac.storage({
   grenade = hud.bindingDefaults.grenade,
   interact = hud.bindingDefaults.interact,
   melee = hud.bindingDefaults.melee,
+  switchWeapon = hud.bindingDefaults.switchWeapon,
+  fieldUpgrade = hud.bindingDefaults.fieldUpgrade,
+  scoreboard = hud.bindingDefaults.scoreboard,
 }, 'asrc.fps.bindings.')
+hud.gamepadDefaults = {
+  fire = 'RT', aim = 'LT', sprint = 'L3', crouch = 'B', reload = 'X', jump = 'A',
+  grenade = 'RB', interact = 'X', switchWeapon = 'Y', fieldUpgrade = 'LB+RB',
+  scoreboard = 'View', melee = 'R3',
+}
+hud.gamepadBindings = ac.storage({
+  fire = 'RT', aim = 'LT', sprint = 'L3', crouch = 'B', reload = 'X', jump = 'A',
+  grenade = 'RB', interact = 'X', switchWeapon = 'Y', fieldUpgrade = 'LB+RB',
+  scoreboard = 'View', melee = 'R3',
+}, 'asrc.fps.gamepad.bindings.')
+hud.gamepadCandidates = {
+  { id = 'LB+RB', name = 'LB + RB', buttons = {ac.GamepadButton.LeftShoulder, ac.GamepadButton.RightShoulder} },
+  { id = 'A', name = 'A', button = ac.GamepadButton.A },
+  { id = 'B', name = 'B', button = ac.GamepadButton.B },
+  { id = 'X', name = 'X', button = ac.GamepadButton.X },
+  { id = 'Y', name = 'Y', button = ac.GamepadButton.Y },
+  { id = 'LB', name = 'LB', button = ac.GamepadButton.LeftShoulder },
+  { id = 'RB', name = 'RB', button = ac.GamepadButton.RightShoulder },
+  { id = 'L3', name = 'L3 / LEFT STICK', button = ac.GamepadButton.LeftThumb },
+  { id = 'R3', name = 'R3 / RIGHT STICK', button = ac.GamepadButton.RightThumb },
+  { id = 'View', name = 'VIEW / BACK', button = ac.GamepadButton.Back },
+  { id = 'Up', name = 'D-PAD UP', button = ac.GamepadButton.DPadUp },
+  { id = 'Down', name = 'D-PAD DOWN', button = ac.GamepadButton.DPadDown },
+  { id = 'Left', name = 'D-PAD LEFT', button = ac.GamepadButton.DPadLeft },
+  { id = 'Right', name = 'D-PAD RIGHT', button = ac.GamepadButton.DPadRight },
+  { id = 'LT', name = 'LT', axis = ac.GamepadAxis.LeftTrigger },
+  { id = 'RT', name = 'RT', axis = ac.GamepadAxis.RightTrigger },
+}
 hud.aimSettings = ac.storage({
   hipSensitivity = 1.0,
   adsSensitivity = 0.8,
@@ -817,6 +856,7 @@ hud.loadoutStorage = ac.storage({
   secondaryWeapon = 4,
   operatorModel = 0,
   operatorSkin = 0,
+  fieldUpgrade = 1, perk1 = 0, perk2 = 0, perk3 = 0,
 }, 'asrc.fps.loadout.')
 hud.itemNames = {
   [0] = 'OUT OF BOUNDS',
@@ -835,6 +875,38 @@ hud.loadoutItems = {
   { id = 16, slot = 'lethal', category = 'grenade', subtitle = 'M67', image = 'asrc_loadout_frag_grenade.png' },
   { id = 17, slot = 'lethal', category = 'grenade', subtitle = 'Semtex', image = 'asrc_loadout_sticky_grenade.png' },
 }
+hud.fieldUpgrades = {
+  {id=1, name='MUNITIONS BOX', image='asrc_upgrade_munitions_box.png',
+    description='Drop a supply box. F / controller X refills ammo and grenades.'},
+  {id=2, name='DEAD SILENCE', image='asrc_upgrade_dead_silence.png',
+    description='Silent footsteps and gunfire. Hidden from radar for 15 seconds.'},
+  {id=3, name='TROPHY SYSTEM', image='asrc_upgrade_trophy_system.png',
+    description='Deploy protection. Intercepts 3 hostile grenades within 6 m.'},
+}
+hud.perks = {
+  {id=1, name='SLIPSTREAM', image='asrc_perk_slipstream.png', description='+15% movement speed'},
+  {id=2, name='NINJA', image='asrc_perk_ninja.png', description='Footsteps 85% quieter'},
+  {id=3, name='VISION', image='asrc_perk_vision.png', description='Enemy rectangles for 2s after spawning'},
+  {id=4, name='ENGINEER', image='asrc_perk_engineer.png', description='Red outlines reveal enemy gadgets'},
+  {id=5, name='FLACK JACKET', image='asrc_perk_flack_jacket.png', description='Heavy blast protection; survive each blast'},
+  {id=6, name='FAST HANDS', image='asrc_perk_fast_hands.png', description='Weapon switching 65% faster'},
+  {id=7, name='GEAR HEAD', image='asrc_perk_gear_head.png', description='Carry two of your chosen grenade'},
+}
+
+function hud.validAbilitySelection()
+  local selection = hud.loadout
+  if not hud.itemAllowed(selection.allowedFieldUpgrades or 14, selection.fieldUpgrade or 1) then return false end
+  local used = {}
+  for index = 1, 3 do
+    local value = selection['perk' .. index] or 0
+    if value ~= 0 then
+      if used[value] or not hud.itemAllowed(selection.allowedPerks or 254, value) then return false end
+      used[value] = true
+    end
+  end
+  return true
+end
+
 hud.loadoutRows = {
   mainWeapon = { filter = 'all', first = 1, mask = 'allowedMainWeapons', categories = {
     { 'all', 'All', 62 }, { 'rifle', 'Assault Rifles', 154 }, { 'smg', 'SMGs', 94 },
@@ -937,6 +1009,209 @@ function hud.bindingDown(action, fallback)
   return down
 end
 
+function hud.gamepadInputValue(candidate)
+  if candidate.axis ~= nil then
+    return math.clamp(ac.getGamepadAxisValue(0, candidate.axis), 0, 1)
+  end
+  if candidate.buttons ~= nil then
+    for _, button in ipairs(candidate.buttons) do
+      if not ac.isGamepadButtonPressed(0, button) then return 0 end
+    end
+    return 1
+  end
+  return ac.isGamepadButtonPressed(0, candidate.button) and 1 or 0
+end
+
+function hud.gamepadBindingValue(action)
+  local id = hud.gamepadBindings[action] or hud.gamepadDefaults[action]
+  local suppressed = hud.menuNavigation and hud.menuNavigation.suppressed or {}
+  for button in pairs(suppressed) do
+    if not ac.isGamepadButtonPressed(0, button) then suppressed[button] = nil end
+  end
+  for _, candidate in ipairs(hud.gamepadCandidates) do
+    if candidate.id == id then
+      if suppressed[candidate.button] then return 0 end
+      for _, button in ipairs(candidate.buttons or {}) do
+        if suppressed[button] then return 0 end
+      end
+      return hud.gamepadInputValue(candidate)
+    end
+  end
+  return 0
+end
+
+function hud.gamepadBindingDown(action)
+  return hud.gamepadBindingValue(action) > 0.35
+end
+
+function hud.gamepadBindingName(action)
+  local id = hud.gamepadBindings[action] or hud.gamepadDefaults[action]
+  for _, candidate in ipairs(hud.gamepadCandidates) do
+    if candidate.id == id then return candidate.name end
+  end
+  return 'UNBOUND'
+end
+
+function hud.beginBindingCapture(action, device)
+  hud.bindingCapture = action
+  hud.bindingCaptureDevice = device
+  hud.bindingCaptureAfter = ui.time() + 0.25
+  hud.bindingCapturePrevious = {}
+  for _, candidate in ipairs(hud.gamepadCandidates) do
+    hud.bindingCapturePrevious[candidate.id] = hud.gamepadInputValue(candidate) > 0.35
+  end
+end
+
+function hud.updateBindingCapture()
+  hud.bindingCaptureConsumed = false
+  if hud.bindingCapture == nil then return end
+  if ac.isKeyPressed(ac.KeyIndex.Escape) then
+    hud.bindingCapture = nil
+    hud.bindingCaptureConsumed = true
+    return
+  end
+  if hud.bindingCaptureDevice == 'xbox' then
+    for _, candidate in ipairs(hud.gamepadCandidates) do
+      local down = hud.gamepadInputValue(candidate) > 0.35
+      local pressed = down and not hud.bindingCapturePrevious[candidate.id]
+      hud.bindingCapturePrevious[candidate.id] = down
+      if pressed and ui.time() >= hud.bindingCaptureAfter then
+        hud.gamepadBindings[hud.bindingCapture] = candidate.id
+        hud.bindingCapture = nil
+        hud.bindingCaptureConsumed = true
+        fpsVisual.controllerSprint.latched = false
+        break
+      end
+    end
+  elseif ui.time() >= hud.bindingCaptureAfter then
+    for _, candidate in ipairs(hud.bindingCandidates) do
+      if ac.isKeyPressed(candidate.key) then
+        hud.bindings[hud.bindingCapture] = candidate.key
+        hud.bindingCapture = nil
+        hud.bindingCaptureConsumed = true
+        break
+      end
+    end
+  end
+end
+
+function hud.updateGamepadMenu()
+  local down = ac.isGamepadButtonPressed(0, ac.GamepadButton.Start)
+  local pressed = down and not hud.gamepadMenuWasDown
+  hud.gamepadMenuWasDown = down
+  if not pressed then return end
+  if hud.bindingCapture ~= nil then
+    hud.bindingCapture = nil
+    hud.bindingCaptureConsumed = true
+    return
+  end
+  if not previewCamera.everEnteredGameplay then
+    hud.nativePreDriveMenu = false
+    return
+  end
+  local state = ac.getSim()
+  if state.isPaused then
+    ac.tryToPause(false)
+  elseif state.isLive and not state.isInMainMenu and not state.isReplayActive then
+    hud.nativePauseMenu = false
+    hud.pausePage = 'main'
+    hud.leaveServerArmed = false
+    ac.tryToPause(true)
+  end
+end
+
+-- FPS menus draw their own widgets, so CSP cannot navigate them automatically.
+-- Register the same visible hit boxes used by the mouse, then navigate those boxes.
+function hud.beginMenuNavigation(page)
+  hud.menuNavigation = hud.menuNavigation or { items = {}, held = {}, suppressed = {}, active = true }
+  local nav = hud.menuNavigation
+  local now, mouse = ui.time(), ui.mousePos()
+  local changed = nav.page ~= page
+  if changed then nav.items, nav.focus, nav.page = {}, nil, page end
+  if nav.mouseX ~= nil and (math.abs(mouse.x - nav.mouseX) > 2
+      or math.abs(mouse.y - nav.mouseY) > 2) or ui.mouseClicked(ui.MouseButton.Left) then
+    nav.active = false
+  end
+  nav.mouseX, nav.mouseY = mouse.x, mouse.y
+  nav.blocked = hud.bindingCapture ~= nil
+  nav.confirm, nav.back, nav.horizontal, nav.shortcutX = false, false, 0, false
+  local directionX, directionY = 0, 0
+  for _, entry in ipairs({
+      {'up', ac.GamepadButton.DPadUp, 0, -1}, {'down', ac.GamepadButton.DPadDown, 0, 1},
+      {'left', ac.GamepadButton.DPadLeft, -1, 0}, {'right', ac.GamepadButton.DPadRight, 1, 0},
+      {'confirm', ac.GamepadButton.A}, {'back', ac.GamepadButton.B}, {'shortcutX', ac.GamepadButton.X},
+    }) do
+    local key, down = entry[1], ac.isGamepadButtonPressed(0, entry[2])
+    local pressed = down and not nav.held[key]
+    if entry[3] ~= nil then
+      if pressed then nav[key .. 'Repeat'] = now + 0.35
+      elseif down and now >= (nav[key .. 'Repeat'] or now) then
+        pressed = true
+        nav[key .. 'Repeat'] = now + 0.10
+      end
+    end
+    nav.held[key] = down
+    if pressed and not nav.blocked and not changed then
+      nav.active = true
+      nav.suppressed[entry[2]] = true
+      if entry[3] ~= nil then directionX, directionY = entry[3], entry[4]
+      else nav[key] = true end
+    end
+  end
+  local focused
+  for _, item in ipairs(nav.items) do if item.id == nav.focus then focused = item; break end end
+  if focused ~= nil and (directionX ~= 0 or directionY ~= 0) then
+    if focused.adjustable and directionX ~= 0 then
+      nav.horizontal = directionX
+    else
+      local best, bestScore
+      for _, item in ipairs(nav.items) do
+        local x, y = item.x - focused.x, item.y - focused.y
+        local forward = x * directionX + y * directionY
+        local offset = math.abs(x * directionY - y * directionX)
+        local side = math.max(0, offset
+          - (directionX == 0 and (item.dimensions.x + focused.dimensions.x)
+            or (item.dimensions.y + focused.dimensions.y)) * 0.5)
+        -- Prefer widgets intersecting the current row/column before diagonal ones.
+        local score = forward + offset * 0.01 + side * 3 + (side > 1 and 100000 or 0)
+        if forward > 1 and (bestScore == nil or score < bestScore) then
+          best, bestScore = item, score
+        end
+      end
+      if best ~= nil then nav.focus = best.id end
+    end
+  end
+  nav.items = {}
+  return nav.back
+end
+
+function hud.menuItem(id, position, dimensions, enabled, adjustable)
+  local nav = hud.menuNavigation
+  if not enabled then return false, false, 0 end
+  nav.items[#nav.items + 1] = { id = id, position = position, dimensions = dimensions,
+    x = position.x + dimensions.x * 0.5, y = position.y + dimensions.y * 0.5,
+    adjustable = adjustable }
+  if nav.focus == nil then nav.focus = id end
+  local focused = nav.active and nav.focus == id
+  local selected = focused and nav.confirm and not nav.blocked
+  if selected then nav.confirm = false end -- One A press can activate only one widget.
+  return focused, selected, focused and nav.horizontal or 0
+end
+
+function hud.endMenuNavigation(scale)
+  local nav, focused = hud.menuNavigation, nil
+  for _, item in ipairs(nav.items) do if item.id == nav.focus then focused = item; break end end
+  if focused == nil then
+    focused = nav.items[1]
+    nav.focus = focused and focused.id or nil
+  end
+  if focused ~= nil and nav.active then
+    local inset = vec2(2, 2) * scale
+    ui.drawRect(focused.position + inset, focused.position + focused.dimensions - inset,
+      rgbm(1, 0.82, 0.28, 1), 4 * scale, nil, math.max(2, 2 * scale))
+  end
+end
+
 pcall(function()
   impactSparks = ac.Particles.Sparks({
     color = rgbm(1, 0.72, 0.28, 1), life = 0.35, size = 0.025,
@@ -965,7 +1240,7 @@ end)
 function hud.connect()
   local ok, result = pcall(function()
     return ac.connect({
-      ac.StructItem.key('asrc.fps.hud.v16'),
+      ac.StructItem.key('asrc.fps.hud.v17'),
       protocol = ac.StructItem.uint16(),
       onlineSequence = ac.StructItem.uint32(),
       onlineHeartbeat = ac.StructItem.float(),
@@ -986,6 +1261,9 @@ function hud.connect()
       localSecondaryWeapon = ac.StructItem.byte(),
       localActiveSlot = ac.StructItem.byte(),
       localLethalsRemaining = ac.StructItem.byte(),
+      localFieldUpgrade = ac.StructItem.byte(),
+      localFieldCooldown = ac.StructItem.float(),
+      localDeadSilence = ac.StructItem.float(),
       localKills = ac.StructItem.uint16(),
       localDeaths = ac.StructItem.uint16(),
       localScore = ac.StructItem.uint32(),
@@ -1043,7 +1321,7 @@ function hud.connect()
   end)
   if ok then
     hud.bridge = result
-    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v16')
+    ac.log('[ASRC FPS] HUD bridge ready: asrc.fps.hud.v17')
   else
     hud.bridgeError = tostring(result)
     ac.warn('[ASRC FPS] HUD bridge unavailable; online fallback remains active: '
@@ -1088,7 +1366,7 @@ function hud.updateRadar(localActor)
         -- Friendlies are persistent navigation information and clamp to the radar rim
         -- when they are beyond its 40 m scale. Enemies retain the existing reveal rules.
         hud.radarVisible[id] = 3
-      elseif bit.band(actor.flags, 8) == 0
+      elseif bit.band(actor.flags, 8) == 0 and (actor.deadSilenceRemaining or 0) <= 0
           and (actor.target - localActor.target):lengthSquared() <= 40 * 40 then
         local shotReveal = (hud.radarReveal[id] or 0) > effectClock
         if shotReveal or hud.hasRadarLineOfSight(localActor, actor) then
@@ -1213,6 +1491,9 @@ function hud.publish(dt)
   hud.bridge.localLethalsRemaining = localActor ~= nil
     and (localActor.lethalsRemaining or 0) or 0
   hud.bridge.localKills = localActor ~= nil and localActor.kills or 0
+  hud.bridge.localFieldUpgrade = localActor ~= nil and (localActor.fieldUpgrade or 1) or 1
+  hud.bridge.localFieldCooldown = localActor ~= nil and (localActor.fieldUpgradeCooldown or 120) or 120
+  hud.bridge.localDeadSilence = localActor ~= nil and (localActor.deadSilenceRemaining or 0) or 0
   hud.bridge.localDeaths = localActor ~= nil and localActor.deaths or 0
   hud.bridge.localScore = localActor ~= nil and localActor.score or 0
   hud.bridge.viewYaw = yaw
@@ -1521,6 +1802,8 @@ hud.loadoutSelectEvent = ac.OnlineEvent({
   secondaryWeapon = ac.StructItem.byte(),
   operatorModel = ac.StructItem.byte(),
   operatorSkin = ac.StructItem.byte(),
+  fieldUpgrade = ac.StructItem.byte(),
+  perk1 = ac.StructItem.byte(), perk2 = ac.StructItem.byte(), perk3 = ac.StructItem.byte(),
 }, function() end)
 
 hud.loadoutCatalogEvent = ac.OnlineEvent({
@@ -1536,6 +1819,9 @@ hud.loadoutCatalogEvent = ac.OnlineEvent({
   allowedOfficerSkins = ac.StructItem.uint32(),
   allowedGhostSkins = ac.StructItem.uint32(),
   defaultOperatorSkin = ac.StructItem.byte(),
+  allowedFieldUpgrades = ac.StructItem.uint32(), allowedPerks = ac.StructItem.uint32(),
+  defaultFieldUpgrade = ac.StructItem.byte(),
+  defaultPerk1 = ac.StructItem.byte(), defaultPerk2 = ac.StructItem.byte(), defaultPerk3 = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   local selection = hud.loadout
@@ -1543,6 +1829,20 @@ hud.loadoutCatalogEvent = ac.OnlineEvent({
   selection.allowedMainWeapons = message.allowedMainWeapons
   selection.allowedLethals = message.allowedLethals
   selection.allowedSecondaryWeapons = message.allowedSecondaryWeapons
+  selection.allowedFieldUpgrades = message.allowedFieldUpgrades
+  selection.allowedPerks = message.allowedPerks
+  selection.fieldUpgrade = hud.itemAllowed(message.allowedFieldUpgrades, hud.loadoutStorage.fieldUpgrade)
+    and hud.loadoutStorage.fieldUpgrade or message.defaultFieldUpgrade
+  local usedPerks = {}
+  for index = 1, 3 do
+    local key = 'perk' .. index
+    local saved = hud.loadoutStorage[key] or 0
+    local value = saved > 0 and hud.itemAllowed(message.allowedPerks, saved)
+      and saved or (message['defaultPerk' .. index] or 0)
+    if usedPerks[value] then value = 0 end
+    selection[key] = value
+    if value ~= 0 then usedPerks[value] = true end
+  end
   selection.allowedOperatorModels = message.allowedOperatorModels
   selection.allowedOfficerSkins = message.allowedOfficerSkins
   selection.allowedGhostSkins = message.allowedGhostSkins
@@ -1572,8 +1872,16 @@ hud.loadoutResultEvent = ac.OnlineEvent({
   secondaryWeapon = ac.StructItem.byte(),
   operatorModel = ac.StructItem.byte(),
   operatorSkin = ac.StructItem.byte(),
+  fieldUpgrade = ac.StructItem.byte(),
+  perk1 = ac.StructItem.byte(), perk2 = ac.StructItem.byte(), perk3 = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
+  if message.result == 1 or message.result == 2 then
+    hud.loadout.queued = message.result == 2
+    for _, key in ipairs({'fieldUpgrade', 'perk1', 'perk2', 'perk3'}) do
+      hud.loadoutStorage[key] = message[key]
+    end
+  end
   if message.result == 1 then
     hud.loadout.confirmed = true
     hud.loadout.dirty = false
@@ -1626,6 +1934,8 @@ hud.loadoutStateEvent = ac.OnlineEvent({
   secondaryWeapon = ac.StructItem.byte(),
   activeSlot = ac.StructItem.byte(),
   lethalsRemaining = ac.StructItem.byte(),
+  fieldUpgrade = ac.StructItem.byte(),
+  perk1 = ac.StructItem.byte(), perk2 = ac.StructItem.byte(), perk3 = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   local actor = actors[message.actorID]
@@ -1645,18 +1955,211 @@ hud.loadoutStateEvent = ac.OnlineEvent({
   actor.secondaryWeapon = message.secondaryWeapon
   actor.activeSlot = message.activeSlot
   actor.lethalsRemaining = message.lethalsRemaining
+  actor.fieldUpgrade = message.fieldUpgrade
+  actor.perk1, actor.perk2, actor.perk3 = message.perk1, message.perk2, message.perk3
+  actor.perkMask = 0
+  for _, key in ipairs({'perk1', 'perk2', 'perk3'}) do
+    if message[key] > 0 then actor.perkMask = bit.bor(actor.perkMask, bit.lshift(1, message[key])) end
+  end
   if previousActiveSlot ~= nil and previousActiveSlot ~= actor.activeSlot
       and actor.audioInitialized then
     fpsAudio.playEquip(actor)
   end
   if message.actorID == localSessionID then
-    hud.loadout.mainWeapon = message.mainWeapon
-    hud.loadout.lethal = message.lethal
-    hud.loadout.secondaryWeapon = message.secondaryWeapon
     hud.loadout.activeSlot = message.activeSlot
     hud.loadout.lethalsRemaining = message.lethalsRemaining
+    local fields = {'mainWeapon', 'lethal', 'secondaryWeapon', 'fieldUpgrade', 'perk1', 'perk2', 'perk3'}
+    local queuedApplied = true
+    for _, key in ipairs(fields) do
+      if hud.loadoutStorage[key] ~= message[key] then queuedApplied = false end
+    end
+    if queuedApplied then hud.loadout.queued = false end
+    if not hud.loadout.dirty and not hud.loadout.queued then
+      for _, key in ipairs(fields) do
+        hud.loadout[key] = message[key]
+      end
+    end
   end
 end)
+
+fpsVisual.abilities = { actors = {}, devices = {}, effects = {}, input = {}, intercepted = {} }
+
+function fpsVisual.hasPerk(actor, id)
+  return actor ~= nil and bit.band(actor.perkMask or 0, bit.lshift(1, id)) ~= 0
+end
+
+function fpsVisual.fieldInput(dt, rb, lb, keyField, keyGrenade, allowed, cooking)
+  local state = fpsVisual.abilities.input
+  if not allowed then
+    fpsVisual.abilities.input = {}
+    return false, false
+  end
+  state.tap = math.max(0, (state.tap or 0) - dt)
+  if rb and lb and not cooking then state.chord = true; state.tap = 0 end
+  if rb and not state.wasRB then state.rbAge = 0 end
+  if rb then state.rbAge = (state.rbAge or 0) + dt end
+  if not rb and state.wasRB and not state.chord and (state.rbAge or 0) < 0.12 then
+    state.tap = 0.10
+  end
+  state.wasRB = rb
+  local field = keyField or (state.chord and rb and lb)
+  local grenade = keyGrenade or (not state.chord and (state.tap > 0 or rb and (state.rbAge or 0) >= 0.12))
+  if not rb and not lb then state.chord = false end
+  return field == true, grenade == true
+end
+
+hud.abilitiesEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsAbilities'),
+  sequence = ac.StructItem.uint32(), count = ac.StructItem.byte(),
+  actorIDs = ac.StructItem.array(ac.StructItem.byte(), 16),
+  cooldowns = ac.StructItem.array(ac.StructItem.float(), 16),
+  silence = ac.StructItem.array(ac.StructItem.float(), 16),
+  vision = ac.StructItem.array(ac.StructItem.float(), 16),
+}, function(sender, message)
+  if sender ~= nil then return end
+  for index = 0, math.min(16, message.count) - 1 do
+    local id = message.actorIDs[index]
+    local previous = fpsVisual.abilities.actors[id]
+    if previous == nil or message.sequence > previous.sequence then
+      fpsVisual.abilities.actors[id] = { sequence = message.sequence, seenAt = effectClock,
+        readyAt = effectClock + message.cooldowns[index],
+        silenceUntil = effectClock + message.silence[index],
+        visionUntil = effectClock + message.vision[index] }
+      if message.silence[index] > 0 then hud.radarReveal[id] = nil end
+    end
+  end
+end, nil, true)
+
+hud.fieldDeviceEvent = ac.OnlineEvent({
+  ac.StructItem.key('ASRC_FpsFieldDevice'),
+  deviceID = ac.StructItem.uint32(), ownerID = ac.StructItem.byte(),
+  type = ac.StructItem.byte(), state = ac.StructItem.byte(), position = ac.StructItem.vec3(),
+  health = ac.StructItem.byte(), uses = ac.StructItem.byte(), remaining = ac.StructItem.float(),
+  actorID = ac.StructItem.byte(), grenadeID = ac.StructItem.uint32(), target = ac.StructItem.vec3(),
+}, function(sender, message)
+  if sender ~= nil then return end
+  local devices = fpsVisual.abilities.devices
+  local device = devices[message.deviceID]
+  if message.state == 2 then
+    if device ~= nil and device.root then device.root:dispose() end
+    devices[message.deviceID] = nil
+    return
+  end
+  if message.type ~= 1 and message.type ~= 3 then return end
+  device = device or { id = message.deviceID }
+  device.ownerID, device.type = message.ownerID, message.type
+  device.position = message.position:clone()
+  device.health, device.uses = message.health, message.uses
+  device.expiresAt = effectClock + message.remaining
+  devices[message.deviceID] = device
+  if message.state == 3 then
+    local grenade = fpsVisual.grenades[message.grenadeID]
+    if grenade ~= nil and grenade.root then grenade.root:dispose() end
+    fpsVisual.grenades[message.grenadeID] = nil
+    fpsVisual.abilities.intercepted[message.grenadeID] = effectClock + 2
+    fpsVisual.abilities.effects[#fpsVisual.abilities.effects + 1] = {
+      from = device.position + vec3(0, 0.4, 0), to = message.target:clone(), ttl = 0.25 }
+  elseif message.state == 4 and message.actorID == localSessionID then
+    device.resuppliedLife = actors[localSessionID] and actors[localSessionID].spawnCount
+    hud.awardPopups[#hud.awardPopups + 1] = {text='AMMO + GRENADES REPLENISHED', age=0, ttl=2.6}
+    while #hud.awardPopups > hud.awardPopupCapacity do table.remove(hud.awardPopups, 1) end
+    fpsAudio.play('pickup_magazine.wav', nil, true, 0.35, 1, 0.6)
+  end
+end)
+
+function fpsVisual.updateAbilities(dt)
+  for id, deadline in pairs(fpsVisual.abilities.intercepted) do
+    if deadline < effectClock then fpsVisual.abilities.intercepted[id] = nil end
+  end
+  for id, state in pairs(fpsVisual.abilities.actors) do
+    local actor = actors[id]
+    if actor ~= nil then
+      local live = gameplayActive and bit.band(actor.flags or 0, 2) == 0 and effectClock - state.seenAt < 0.75
+      actor.fieldUpgradeCooldown = math.max(0, state.readyAt - effectClock)
+      actor.deadSilenceRemaining = live and math.max(0, state.silenceUntil - effectClock) or 0
+      actor.visionRemaining = live and math.max(0, state.visionUntil - effectClock) or 0
+    end
+  end
+  for index = #fpsVisual.abilities.effects, 1, -1 do
+    local effect = fpsVisual.abilities.effects[index]
+    effect.ttl = effect.ttl - dt
+    if effect.ttl <= 0 then table.remove(fpsVisual.abilities.effects, index) end
+  end
+end
+
+function fpsVisual.clearAbilityVisuals()
+  for _, ref in pairs(fpsVisual.abilities.outlines or {}) do pcall(function() ref:setOutline(nil) end) end
+  fpsVisual.abilities.outlines = {}
+  for _, device in pairs(fpsVisual.abilities.devices) do
+    if device.root then device.root:setVisible(false, false) end
+  end
+end
+
+function fpsVisual.resetAbilities()
+  fpsVisual.clearAbilityVisuals()
+  for _, device in pairs(fpsVisual.abilities.devices) do
+    if device.root then device.root:dispose() end
+  end
+  fpsVisual.abilities.actors, fpsVisual.abilities.devices = {}, {}
+  fpsVisual.abilities.effects, fpsVisual.abilities.input = {}, {}
+  fpsVisual.abilities.intercepted = {}
+end
+
+function fpsVisual.friendlyDevice(device, actor)
+  local owner = actors[device.ownerID]
+  return actor ~= nil and (actor.id == device.ownerID or isTeamMatch()
+    and owner ~= nil and (actor.team or 0) ~= 0 and actor.team == owner.team)
+end
+
+function fpsVisual.updateFieldVisuals()
+  -- Engineer uses one combined gadget group; Vision is drawn as screen-space boxes.
+  local state = fpsVisual.abilities
+  for _, ref in pairs(state.outlines or {}) do ref:setOutline(nil) end
+  state.outlines = {}
+  -- Retain the owning references: releasing a temporary reference can disable its outline.
+  state.outlineGroups = state.outlineGroups or {}
+  local function outlineGroup(key)
+    local group = state.outlineGroups[key]
+    if group == nil then group = ac.emptySceneReference(); state.outlineGroups[key] = group end
+    group:clear()
+    return group
+  end
+  local own = actors[localSessionID]
+  local alive = gameplayActive and matchState == 1 and own ~= nil and own.health > 0 and bit.band(own.flags or 0, 3) == 1
+  local engineer = alive and fpsVisual.hasPerk(own, 4)
+  local gadgets = engineer and outlineGroup('engineer') or nil
+  for id, device in pairs(state.devices) do
+    if device.expiresAt <= effectClock then
+      if device.root then device.root:dispose() end
+      state.devices[id] = nil
+    else
+      if device.root == nil and fpsVisual.loadoutAssetFolder ~= nil then
+        local ok, result = pcall(function()
+          local root = carsRoot:createBoundingSphereNode('ASRC_FIELD_' .. id, 0.9)
+          local name = device.type == 1 and 'asrc_munitions_box.kn5' or 'asrc_trophy_system.kn5'
+          local model = root:loadKN5({filename = fpsVisual.loadoutAssetFolder .. '/' .. name, forceRenderableOn = true})
+          if model == nil then root:dispose(); error('Failed to load ' .. name) end
+          model:setShadows(true)
+          model:setCullMode(render.CullMode.Back)
+          model:setDepthMode(render.DepthMode.Normal)
+          root:setVirtualCarFlag(true)
+          device.model = model
+          return root
+        end)
+        device.root = ok and result or false
+        if not ok then ac.warn('[ASRC FPS] field upgrade model failed: ' .. tostring(result)) end
+      end
+      if device.root then
+        device.root:setPosition(device.position + ac.getSim().originShift)
+        device.root:setVisible(gameplayActive, false)
+        if gadgets ~= nil and not fpsVisual.friendlyDevice(device, own) then
+          gadgets:append(device.root:findMeshes('?'))
+        end
+      end
+    end
+  end
+  if gadgets ~= nil then gadgets:setOutline(rgbm(1, 0.06, 0.03, 1)); state.outlines.engineer = gadgets end
+end
 
 hud.readyEvent = ac.OnlineEvent({
   ac.StructItem.key('ASRC_FpsReady'),
@@ -1872,6 +2375,7 @@ hud.snapshotEvent = ac.OnlineEvent({
         fpsVisual.stamina.value = actor.stamina
         fpsVisual.stamina.exhausted = false
         fpsVisual.stamina.recoveryDelay = 0
+        fpsVisual.controllerSprint.latched = false
         predictionCollisionConstrained = geometryBlocked
         predictionClearSnapshots = 0
         jumpWasHeld = false
@@ -1951,6 +2455,7 @@ hud.matchEvent = ac.OnlineEvent({
   if matchState == 2 and message.state ~= 2 then
     killFeed = {}
     hud.awardPopups = {}
+    fpsVisual.resetAbilities()
     hud.lethalMedal = nil
     hud.lethalMedalDeaths = {}
     hitMarkerUntil = 0
@@ -2233,10 +2738,11 @@ hud.shotEvent = ac.OnlineEvent({
   impact = ac.StructItem.byte(),
   targetID = ac.StructItem.byte(),
   weaponType = ac.StructItem.byte(),
+  suppressed = ac.StructItem.byte(),
 }, function(sender, message)
   if sender ~= nil then return end
   shotRender.eventsReceived = shotRender.eventsReceived + 1
-  if message.shooterID ~= localSessionID then
+  if message.shooterID ~= localSessionID and message.suppressed ~= 1 then
     hud.radarReveal[message.shooterID] = effectClock + 2
   end
   local actor = actors[message.shooterID]
@@ -2334,8 +2840,10 @@ hud.shotEvent = ac.OnlineEvent({
     fpsAudio.playImpact(message.impact, point)
   end
   if actor ~= nil then actor.weaponKick = 1 end
-  fpsAudio.playWeaponFire(message.weaponType, message.origin,
-    message.shooterID == localSessionID)
+  if message.suppressed ~= 1 then
+    fpsAudio.playWeaponFire(message.weaponType, message.origin,
+      message.shooterID == localSessionID)
+  end
 end, nil, true)
 
 fpsVisual.grenades = {}
@@ -2376,6 +2884,7 @@ fpsVisual.grenadeSnapshotEvent = ac.OnlineEvent({
   if sender ~= nil then return end
   for i = 0, message.count - 1 do
     local id = message.grenadeIDs[i]
+    if fpsVisual.abilities.intercepted[id] == nil then
     local firstObservation = fpsVisual.grenades[id] == nil
     local grenade = fpsVisual.grenades[id] or { id = id }
     grenade.ownerID = message.ownerIDs[i]
@@ -2388,6 +2897,7 @@ fpsVisual.grenadeSnapshotEvent = ac.OnlineEvent({
     fpsVisual.grenades[id] = grenade
     if firstObservation and grenade.ownerID ~= localSessionID then
       fpsAudio.play('grenade_throw.wav', grenade.position, false, 0.55, 20, 0.7)
+    end
     end
   end
   for id, grenade in pairs(fpsVisual.grenades) do
@@ -2722,7 +3232,7 @@ function fpsVisual.fallback(reason)
   rifleAssetsLoading = false
   rifleAssetsFailed = false
   rifleAssetWaitLogged = false
-  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v22.zip'
+  rifleAssetArchivePath = '/fps/assets/asrc-fps-assets-v23.zip'
   rifleViewmodelFileName = 'asrc_assault_rifle_viewmodel.kn5'
   rifleWorldModelFileName = 'asrc_assault_rifle_world.kn5'
   fpsVisual.pickupFileName = rifleWorldModelFileName
@@ -3038,6 +3548,7 @@ end
 
 local function ensureLocalViewmodel()
   local actor = actors[localSessionID]
+  fpsVisual.viewmodelEquipDuration = fpsVisual.hasPerk(actor, 6) and 0.19 or 0.55
   local assetKey = fpsVisual.desiredViewmodelAsset(actor)
   if viewmodelRoot ~= nil and fpsVisual.loadedViewmodelAsset ~= assetKey then
     if viewmodelHolder ~= nil then pcall(function() viewmodelHolder:dispose() end) end
@@ -3101,16 +3612,16 @@ local function ensureLocalViewmodel()
       model:setAnimation(fpsVisual.loadoutAssetFolder .. '/'
         .. fpsVisual.pistolClips(assetKey).reload, 0, true)
       fpsVisual.viewmodelPistolPoseSeedPending = true
-      fpsVisual.viewmodelEquipUntil = effectClock + 0.55
+      fpsVisual.viewmodelEquipUntil = effectClock + fpsVisual.viewmodelEquipDuration
     elseif fpsVisual.isLoadoutAsset(assetKey) then
       fpsVisual.viewmodelPistolPoseSeedPending = false
       model:setAnimation(fpsVisual.loadoutAssetFolder .. '/'
         .. fpsVisual.loadoutClips(assetKey).equip, 0, true)
-      fpsVisual.viewmodelEquipUntil = effectClock + 0.55
+      fpsVisual.viewmodelEquipUntil = effectClock + fpsVisual.viewmodelEquipDuration
     elseif fpsVisual.modern then
       fpsVisual.viewmodelPistolPoseSeedPending = false
       model:setAnimation(fpsVisual.asset(fpsVisual.viewmodelClips.equip), 0, true)
-      fpsVisual.viewmodelEquipUntil = effectClock + 0.55
+      fpsVisual.viewmodelEquipUntil = effectClock + fpsVisual.viewmodelEquipDuration
     end
     markViewmodelStage('model-configure:complete')
     return model
@@ -3358,6 +3869,21 @@ function fpsVisual.updatePickupInteraction(dt, held)
 
   local nearest, nearestDistance = nil, math.huge
   local activeWeapon = fpsVisual.activeWeapon(actor)
+  for _, device in pairs(fpsVisual.abilities.devices) do
+    if device.type == 1 and device.uses > 0 and device.expiresAt > effectClock
+        and device.resuppliedLife ~= actor.spawnCount and fpsVisual.friendlyDevice(device, actor)
+        and (actor.target - device.position):lengthSquared() <= 4 then
+      local origin = actor.target + vec3(0, 1.3, 0)
+      local delta = device.position + vec3(0, 0.25, 0) - origin
+      local length = delta:length()
+      local ok, distance = pcall(physics.raycastTrack, origin, delta / math.max(length, 0.001), length, nil, nil, false, false)
+      if ok and (distance == nil or distance < 0 or distance >= length - 0.05) then
+        hud.pickupPromptText = string.format('%s / X  REPLENISH AMMO + GRENADES', hud.bindingName(hud.bindings.interact))
+        fpsVisual.pickupInteractionTarget, fpsVisual.pickupInteractionProgress = nil, 0
+        return
+      end
+    end
+  end
   for _, pickup in pairs(fpsVisual.pickups) do
     local slotWeapon = pickup.weaponType <= 2 and (actor.mainWeapon or hud.loadout.mainWeapon)
       or (actor.secondaryWeapon or hud.loadout.secondaryWeapon)
@@ -3982,7 +4508,7 @@ function fpsVisual.updateViewmodelAnimation(actor, dt, moving, sprint)
     position = math.clamp(1 - (fpsVisual.viewmodelFireUntil - effectClock) / 0.12, 0, 1)
   elseif fpsVisual.viewmodelEquipUntil > effectClock then
     clip = 'equip'
-    position = math.clamp(1 - (fpsVisual.viewmodelEquipUntil - effectClock) / 0.55, 0, 1)
+    position = math.clamp(1 - (fpsVisual.viewmodelEquipUntil - effectClock) / (fpsVisual.viewmodelEquipDuration or 0.55), 0, 1)
   elseif sprint and moving then
     clip = 'sprint'
   end
@@ -4468,7 +4994,20 @@ local function localTrackResolveMovement(position, movement, stance, blockedDire
   return resolved, true
 end
 
+function fpsVisual.updateControllerSprint(buttonDown, allowed)
+  local state = fpsVisual.controllerSprint
+  if not allowed then
+    state.latched = false
+  elseif buttonDown and not state.wasHeld then
+    state.latched = not state.latched
+  end
+  -- Consume held buttons even when input is blocked; resuming requires a new press.
+  state.wasHeld = buttonDown
+  return state.latched
+end
+
 function script.update(dt)
+  hud.updateGamepadMenu()
   hideCarrierCars()
 
   local localActor = actors[localSessionID]
@@ -4476,6 +5015,9 @@ function script.update(dt)
   local sprint = false
   local jumpStarted = false
   gameplayActive = fpsGameplayIsActive()
+  if gameplayActive and hud.loadout.confirmed and hud.menuNavigation ~= nil then
+    hud.menuNavigation.page = nil
+  end
   if fpsVisual.activeGrenadeType ~= nil
       and fpsVisual.grenadeReleasedAt ~= nil
       and effectClock - fpsVisual.grenadeReleasedAt >= fpsVisual.grenadeReleaseDuration then
@@ -4486,6 +5028,7 @@ function script.update(dt)
     fpsVisual.activeGrenadeType = nil
     fpsVisual.grenadeReleasedAt = nil
     fpsVisual.grenadeInputHeld = false
+    fpsVisual.abilities.input = {}
   end
   if gameplayActive then hud.requestWeaponImage() end
   fpsVisual.updatePickups()
@@ -4624,7 +5167,8 @@ function script.update(dt)
 
     -- Main/pits/results UI was excluded above. Once gameplay is active, FPS
     -- owns the pointer even if a third-party app incorrectly asks for it.
-    scoreboardHeld = ac.isKeyDown(ac.KeyIndex.Tab)
+    scoreboardHeld = hud.bindingDown('scoreboard', ac.isKeyDown(ac.KeyIndex.Tab))
+      or hud.gamepadBindingDown('scoreboard')
     cursorUnlocked = matchState == 2 or scoreboardHeld or persistentCursor or not hud.loadout.confirmed
     local thirdPersonToggle = ac.isKeyDown(ac.KeyIndex.F6)
     if thirdPersonToggle and not thirdPersonToggleWasHeld then
@@ -4650,11 +5194,11 @@ function script.update(dt)
     end
     local rawMouseAds = ac.isKeyDown(ac.KeyIndex.RightButton)
     local uiMouseAds = ac.getUI().isMouseRightKeyDown or ui.mouseDown(ui.MouseButton.Right)
-    local gamepadAds = math.clamp(
-      ac.getGamepadAxisValue(0, ac.GamepadAxis.LeftTrigger), 0, 1)
+    local boundAds = hud.bindingDown('aim', rawMouseAds or uiMouseAds)
+    local gamepadAds = hud.gamepadBindingValue('aim')
     local matchInputLocked = matchState ~= 1
     fpsVisual.adsInput = not matchInputLocked and not cursorUnlocked and not thirdPersonEnabled
-      and math.max((rawMouseAds or uiMouseAds) and 1 or 0, gamepadAds) or 0
+      and math.max(boundAds and 1 or 0, gamepadAds) or 0
     local aimSensitivity = hud.aimSensitivity(fpsVisual.adsInput)
     local rightX = -clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.RightThumbX))
     local rightY = clampStick(ac.getGamepadAxisValue(0, ac.GamepadAxis.RightThumbY))
@@ -4676,7 +5220,7 @@ function script.update(dt)
       selectInput(keyboardY, rawY, 0))
     if move:lengthSquared() > 1 then move:normalize() end
     if matchInputLocked then move:set(0, 0) end
-    local gamepadFire = ac.getGamepadAxisValue(0, ac.GamepadAxis.RightTrigger) > 0.35
+    local gamepadFire = hud.gamepadBindingDown('fire')
     -- Raw VK input remains available while mouse-delta capture owns the pointer. CSP UI
     -- state alone reports false in that state on some builds, which previously meant the
     -- server received movement but never a Fire bit.
@@ -4691,8 +5235,15 @@ function script.update(dt)
         tostring(boundFire), tostring(rawMouseFire), tostring(uiMouseFire),
         tostring(gamepadFire)))
     end
+    local controllerSprint = fpsVisual.updateControllerSprint(
+      hud.gamepadBindingDown('sprint'),
+      not matchInputLocked and not cursorUnlocked and localActor ~= nil
+        and bit.band(localActor.flags, 3) == 1
+        and move:lengthSquared() > 0.0001 and localStance == 0
+        and fpsVisual.adsInput <= 0.05 and not fpsVisual.stamina.exhausted
+        and fpsVisual.stamina.value > 0)
     sprint = not matchInputLocked and (hud.bindingDown('sprint', ac.isKeyDown(ac.KeyIndex.LeftShift))
-      or ac.isGamepadButtonPressed(0, ac.GamepadButton.LeftThumb)
+      or controllerSprint
     )
     if fpsVisual.adsInput > 0.05 then sprint = false end
     local sprintRequested = sprint and move:lengthSquared() > 0.0001
@@ -4706,6 +5257,7 @@ function script.update(dt)
       if fpsVisual.stamina.value <= 0 then
         fpsVisual.stamina.value = 0
         fpsVisual.stamina.exhausted = true
+        fpsVisual.controllerSprint.latched = false
         sprint = false
       end
     else
@@ -4723,20 +5275,29 @@ function script.update(dt)
     viewmodelMove:set(move)
     viewmodelSprint = sprint
     local jump = not matchInputLocked
-      and hud.bindingDown('jump', ac.isKeyDown(ac.KeyIndex.Space))
+      and (hud.bindingDown('jump', ac.isKeyDown(ac.KeyIndex.Space)) or hud.gamepadBindingDown('jump'))
     local crouch = not matchInputLocked
-      and hud.bindingDown('crouch', ac.isKeyDown(ac.KeyIndex.C))
+      and (hud.bindingDown('crouch', ac.isKeyDown(ac.KeyIndex.C)) or hud.gamepadBindingDown('crouch'))
     local crouchToggleMode = hud.controlSettings.crouchToggle == true
     local reload = not matchInputLocked
-      and hud.bindingDown('reload', ac.isKeyDown(ac.KeyIndex.R))
-    local gamepadWeaponSwitch = ac.isGamepadButtonPressed(0, ac.GamepadButton.Y)
-    local gamepadGrenade = ac.isGamepadButtonPressed(0, ac.GamepadButton.RightShoulder)
-    local gamepadInteract = ac.isGamepadButtonPressed(0, ac.GamepadButton.X)
+      and (hud.bindingDown('reload', ac.isKeyDown(ac.KeyIndex.R)) or hud.gamepadBindingDown('reload'))
+    local gamepadWeaponSwitch = hud.gamepadBindingDown('switchWeapon')
+      or hud.bindingDown('switchWeapon', ac.isKeyDown(ac.KeyIndex.Q))
+    local defaultShoulderChord = hud.gamepadBindings.fieldUpgrade == 'LB+RB'
+      and hud.gamepadBindings.grenade == 'RB'
+    local gamepadGrenade = hud.gamepadBindingDown('grenade')
+    local gamepadField = hud.gamepadBindingDown('fieldUpgrade')
+    local fieldUpgrade, grenade = fpsVisual.fieldInput(dt,
+      defaultShoulderChord and gamepadGrenade,
+      defaultShoulderChord and ac.isGamepadButtonPressed(0, ac.GamepadButton.LeftShoulder),
+      hud.bindingDown('fieldUpgrade', ac.isKeyDown(ac.KeyIndex.X)) or (not defaultShoulderChord and gamepadField),
+      hud.bindingDown('grenade', ac.isKeyDown(ac.KeyIndex.G))
+        or (not defaultShoulderChord and gamepadGrenade and not gamepadField),
+      not matchInputLocked and not cursorUnlocked, fpsVisual.activeGrenadeType ~= nil)
+    local gamepadInteract = hud.gamepadBindingDown('interact')
     local interact = not matchInputLocked and not cursorUnlocked and (hud.bindingDown('interact',
       ac.isKeyDown(ac.KeyIndex.F)) or gamepadInteract)
     fpsVisual.updatePickupInteraction(dt, interact)
-    local grenade = not matchInputLocked and (hud.bindingDown('grenade',
-      ac.isKeyDown(ac.KeyIndex.G)) or gamepadGrenade)
     if grenade and not fpsVisual.grenadeInputHeld and not cursorUnlocked
         and localActor ~= nil and (localActor.lethalsRemaining or 0) > 0
         and fpsVisual.activeGrenadeType == nil then
@@ -4764,7 +5325,7 @@ function script.update(dt)
     elseif not matchInputLocked and not cursorUnlocked
         and gamepadWeaponSwitch and not weaponSwitchWasHeld then
       hud.loadout.activeSlot = hud.loadout.activeSlot == 0 and 1 or 0
-      ac.log('[ASRC FPS] Xbox Y switched weapon slot to '
+      ac.log('[ASRC FPS] weapon binding switched slot to '
         .. tostring(hud.loadout.activeSlot + 1))
     end
     weaponSwitchWasHeld = gamepadWeaponSwitch
@@ -4847,6 +5408,7 @@ function script.update(dt)
       + (crouchToggleMode and 64 or 0)
       + (grenade and not cursorUnlocked and 128 or 0)
       + (interact and 256 or 0)
+      + (fieldUpgrade and 512 or 0)
 
     sendAccumulator = sendAccumulator + dt
     if sendAccumulator >= 0.05 then
@@ -4895,6 +5457,7 @@ function script.update(dt)
     inputWasActive = false
     viewmodelMove:set(0, 0)
     viewmodelSprint = false
+    fpsVisual.updateControllerSprint(hud.gamepadBindingDown('sprint'), false)
     fpsVisual.adsInput = 0
     fpsVisual.ads = 0
     thirdPersonToggleWasHeld = false
@@ -4923,6 +5486,7 @@ function script.update(dt)
     local aimingMovementScale = fpsVisual.adsInput > 0.5 and 0.4 or 1
     local desiredVelocity = predicted * (localStance == 2 and 1.8
       or localStance == 1 and 3.4 or sprint and 9 or 6) * aimingMovementScale
+      * (fpsVisual.hasPerk(localActor, 1) and 1.15 or 1)
     if predictedGroundY == nil then predictedGroundY = localActor.target.y end
     local grounded = bit.band(localActor.flags, 16) ~= 0
     if jumpStarted and (grounded or localActor.render.y <= predictedGroundY + 0.05) then
@@ -5047,6 +5611,8 @@ function script.update(dt)
     spark.velocity.y = spark.velocity.y - 9.81 * dt
     if spark.ttl <= 0 then table.remove(sparks, i) end
   end
+  fpsVisual.updateAbilities(dt)
+  fpsVisual.updateFieldVisuals()
   fpsAudio.update(dt)
   for i = #killFeed, 1, -1 do
     killFeed[i].ttl = killFeed[i].ttl - dt
@@ -5061,6 +5627,50 @@ function script.update(dt)
   hud.updateAimTarget()
   hud.updateLethalMedal(dt)
   hud.publish(dt)
+end
+
+function hud.drawVision(size, scale)
+  local own = actors[localSessionID]
+  if not gameplayActive or matchState ~= 1 or cursorUnlocked or scoreboardHeld
+      or own == nil or own.health <= 0 or bit.band(own.flags or 0, 3) ~= 1
+      or not fpsVisual.hasPerk(own, 3) or (own.visionRemaining or 0) <= 0 then return end
+  local cameraPosition, forward = ac.getCameraPosition(), ac.getCameraForward()
+  for id, actor in pairs(actors) do
+    local position = actor.render or actor.target
+    if id ~= localSessionID and position ~= nil and actor.health > 0
+        and bit.band(actor.flags or 0, 3) == 1
+        and not (isTeamMatch() and (own.team or 0) ~= 0 and own.team == actor.team) then
+      local height = bit.band(actor.flags, 128) ~= 0 and 0.55
+        or bit.band(actor.flags, 32) ~= 0 and 1.15 or 1.82
+      local radius = bit.band(actor.flags, 128) ~= 0 and 0.8 or 0.38
+      local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+      for _, x in ipairs({-radius, radius}) do
+        for _, y in ipairs({0, height}) do
+          for _, z in ipairs({-radius, radius}) do
+            local point = position + vec3(x, y, z)
+            local offset = point - cameraPosition
+            if offset.x * forward.x + offset.y * forward.y + offset.z * forward.z > 0.05 then
+              local ok, projected = pcall(render.projectPoint, point, render.ProjectFace.Center)
+              if ok and projected ~= nil and projected.x == projected.x and projected.y == projected.y
+                  and math.abs(projected.x) < 1e4 and math.abs(projected.y) < 1e4 then
+                minX, minY = math.min(minX, projected.x * size.x), math.min(minY, projected.y * size.y)
+                maxX, maxY = math.max(maxX, projected.x * size.x), math.max(maxY, projected.y * size.y)
+              end
+            end
+          end
+        end
+      end
+      if maxX > 0 and maxY > 0 and minX < size.x and minY < size.y then
+        local p = vec2(math.max(0, minX), math.max(0, minY))
+        local q = vec2(math.min(size.x, maxX), math.min(size.y, maxY))
+        if q.x - p.x > 1 and q.y - p.y > 1 then
+          local alpha = math.clamp(own.visionRemaining * 5, 0, 1)
+          ui.drawRect(p, q, rgbm(0, 0, 0, alpha), 0, nil, 4 * scale)
+          ui.drawRect(p, q, rgbm(1, 0.22, 0.08, alpha), 0, nil, 2 * scale)
+        end
+      end
+    end
+  end
 end
 
 function hud.drawAimNameplate(size, scale, position, name, health, maximumHealth, friendly)
@@ -5256,6 +5866,10 @@ function script.draw3D()
   viewmodelDraw3DCalls = viewmodelDraw3DCalls + 1
   if not gameplayActive then return end
   drawDirectShotEffects()
+  for _, effect in ipairs(fpsVisual.abilities.effects) do
+    local shift = ac.getSim().originShift
+    render.debugLine(effect.from + shift, effect.to + shift, rgbm(0.1, 0.9, 1, effect.ttl * 4))
+  end
 end
 
 function hud.drawFallbackRadar(size, scale, margin)
@@ -5499,6 +6113,30 @@ function hud.drawAmmoPanel(size, scale, margin, state)
     ui.dwriteDrawTextClipped(tostring(value), fontSize * scale, point(x, y),
       point(x + w, y + h), ui.Alignment.Start, ui.Alignment.Center, false, color)
   end
+  if state.fieldUpgradeName ~= nil then
+    local active = (state.deadSilence or 0) > 0
+    local cooldown = math.max(0, state.fieldCooldown or 120)
+    local charge = math.clamp(1 - cooldown / 120, 0, 1)
+    local color = active and rgbm(0.5, 1, 0.8, 1) or cooldown > 0 and muted or cyan
+    ui.drawRectFilled(point(0, -47), point(360, -7), rgbm(0.035, 0.053, 0.061, 0.96), 5 * scale)
+    ui.drawRect(point(0, -47), point(360, -7), border, 5 * scale, nil, scale)
+    if state.fieldImagePath ~= nil then
+      -- Preserve alpha while making the uncharged silhouette genuinely gray.
+      ui.setShadingOffset(0, 0.35, 1, 0)
+      ui.drawImage(state.fieldImagePath, point(3, -45), point(39, -9), white, nil, nil, ui.ImageFit.Fit)
+      ui.resetShadingOffset()
+      if charge > 0 then
+        ui.pushClipRect(point(3, -9 - 36 * charge), point(39, -9), true)
+        ui.drawImage(state.fieldImagePath, point(3, -45), point(39, -9), white, nil, nil, ui.ImageFit.Fit)
+        ui.popClipRect()
+      end
+    end
+    text(state.fieldUpgradeName, 47, -44, 202, 19, 12, color)
+    text('X / LB + RB', 47, -25, 156, 16, 10, muted)
+    text(active and string.format('ACTIVE %.0fs', state.deadSilence)
+      or cooldown > 0 and string.format('%.0fs', math.ceil(cooldown)) or 'READY', 251, -41, 105, 28, 14, color)
+    ui.drawLine(point(5, -8), point(5 + 350 * charge, -8), color, scale)
+  end
   -- Separate alpha cutout: no backing, border or panel underneath the weapon.
   if state.imagePath ~= nil then
     if string.find(state.imagePath, 'asrc_carbine_hud.png', 1, true) ~= nil then
@@ -5611,7 +6249,12 @@ function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
       if item.id == activeWeapon then imagePath = fpsVisual.loadoutAssetFolder .. '/' .. item.image; break end
     end
   end
+  local field = hud.fieldUpgrades[actor and actor.fieldUpgrade or 1]
   hud.drawAmmoPanel(size, scale, margin, {
+    fieldUpgradeName = field and field.name,
+    fieldImagePath = field and fpsVisual.loadoutAssetFolder and (fpsVisual.loadoutAssetFolder .. '/' .. field.image),
+    fieldCooldown = actor and actor.fieldUpgradeCooldown or 120,
+    deadSilence = actor and actor.deadSilenceRemaining or 0,
     weaponName = hud.itemNames[activeWeapon], imagePath = imagePath,
     ammo = actor and actor.ammo or 0, reserveMagazines = actor and actor.reserveMagazines or 0,
     magazineCapacity = weaponStats and weaponStats.capacity or 0,
@@ -5622,8 +6265,8 @@ function hud.drawFallbackStatusWidgets(size, scale, margin, actor)
   })
   ui.dwriteDrawTextClipped(thirdPersonEnabled and string.format('F6  3P  SHIFT + WHEEL %.1f m',
       fpsVisual.thirdPersonDistanceTarget) or 'F6  FIRST PERSON', 11 * scale,
-    vec2(size.x - margin - 360 * scale, bottom - 189 * scale),
-    vec2(size.x - margin, bottom - 171 * scale), ui.Alignment.Start, ui.Alignment.Center,
+    vec2(size.x - margin - 360 * scale, bottom - 237 * scale),
+    vec2(size.x - margin, bottom - 219 * scale), ui.Alignment.Start, ui.Alignment.Center,
     false, rgbm(0.7, 0.82, 0.9, 1))
 end
 
@@ -5641,6 +6284,7 @@ end
 
 function hud.submitLoadout()
   if not hud.loadout.catalogReceived then return false end
+  if not hud.validAbilitySelection() then return false end
   for field, row in pairs(hud.loadoutRows) do
     if not hud.itemAllowed(hud.loadout[row.mask], hud.loadout[field]) then return false end
   end
@@ -5654,11 +6298,22 @@ function hud.submitLoadout()
     secondaryWeapon = hud.loadout.secondaryWeapon,
     operatorModel = hud.loadout.operatorModel,
     operatorSkin = hud.loadout.operatorSkin,
+    fieldUpgrade = hud.loadout.fieldUpgrade or 1,
+    perk1 = hud.loadout.perk1 or 0, perk2 = hud.loadout.perk2 or 0, perk3 = hud.loadout.perk3 or 0,
   })
   return true
 end
 
 function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
+  if hud.beginMenuNavigation(fromPreDrive and 'deployment-loadout'
+      or initialSelection and 'initial-loadout' or 'pause-loadout') then
+    if fromPreDrive then
+      hud.preDriveReturnAfterLoadout = false
+      hud.preDrivePage = 'briefing'
+    elseif initialSelection then ac.tryToPause(true)
+    else hud.pausePage = 'main' end
+    return
+  end
   local size = ui.windowSize()
   local scale = math.min((size.x - 32) / 1600, (size.y - 32) / 880, 1.5)
   local panelSize = vec2(1600, 880) * scale
@@ -5682,6 +6337,11 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
   local function hovered(x, y, w, h)
     return mouse.x >= x and mouse.x < x + w and mouse.y >= y and mouse.y < y + h
   end
+  local function input(id, x, y, w, h, enabled)
+    local focused, selected = hud.menuItem(id, point(x, y), vec2(w, h) * scale, enabled)
+    local hot = enabled and hovered(x, y, w, h)
+    return hot or focused, selected or (hot and clicked)
+  end
   local function text(label, x, y, w, h, fontSize, color, centered)
     ui.dwriteDrawTextClipped(label, fontSize * scale, point(x, y), point(x + w, y + h),
       centered and ui.Alignment.Center or ui.Alignment.Start, ui.Alignment.Center, false, color)
@@ -5703,24 +6363,24 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
     ui.drawRect(point(x + 2, y + 1), point(x + 7, y + 10), disabled, 3 * scale)
   end
   local function button(label, x, y, w, h, enabled, primary)
-    local hot = enabled and hovered(x, y, w, h)
+    local hot, selected = input('button:' .. x .. ':' .. y, x, y, w, h, enabled)
     rect(x, y, w, h, hot and rgbm(0.08, 0.40, 0.52, 1)
       or primary and enabled and rgbm(0.03, 0.37, 0.52, 1) or rgbm(0.045, 0.075, 0.09, 1),
       enabled and (primary and accent or border) or border)
     text(label, x + 8, y, w - 16, h, 18, enabled and white or disabled, true)
-    return hot and clicked
+    return selected
   end
   local function filters(field, x, y)
     local row = hud.loadoutRows[field]
     for _, category in ipairs(row.categories) do
       local enabled = #hud.loadoutRowItems(field, category[1]) > 0
       local selected = category[1] == row.filter
-      local hot = enabled and hovered(x, y, category[3], 32)
+      local hot, activated = input('filter:' .. field .. ':' .. category[1], x, y, category[3], 32, enabled)
       text(category[2], x + 10, y, category[3] - (enabled and 20 or 32), 30, 17,
         enabled and (selected and white or hot and accent or muted) or disabled)
       if not enabled then lock(x + category[3] - 22, y + 7) end
       if selected then line(x + 6, y + 32, x + category[3] - 6, y + 32, accent, 2) end
-      if hot and clicked then hud.setLoadoutFilter(field, category[1]) end
+      if activated then hud.setLoadoutFilter(field, category[1]) end
       x = x + category[3]
     end
   end
@@ -5747,8 +6407,8 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
       local item = items[index]
       local cx = x + (index - row.first) * (cardWidth + 16)
       local allowed = hud.loadout.catalogReceived and hud.itemAllowed(hud.loadout[row.mask], item.id)
-      local hot = allowed and hovered(cx, y, cardWidth, height)
-      if hot and clicked then
+      local hot, activated = input('card:' .. field .. ':' .. item.id, cx, y, cardWidth, height, allowed)
+      if activated then
         hud.loadout[field] = item.id
         hud.loadout.dirty = true
         hud.loadout.result = fromPreDrive and 'SAVE THIS LOADOUT BEFORE DEPLOYING'
@@ -5787,13 +6447,15 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
   text('L O A D O U T', 42, 24, 500, 24, 15, muted)
   text(fpsVisual.modern and hud.loadoutTab == 'skin' and 'SELECT YOUR SKIN'
     or fpsVisual.modern and hud.loadoutTab == 'operator' and 'SELECT YOUR OPERATOR'
+    or hud.loadoutTab == 'perks' and 'SELECT YOUR PERKS'
     or fromPreDrive and 'PREPARE TO DEPLOY'
-    or initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 980, 52, 46, white)
+    or initialSelection and 'SELECT YOUR GEAR' or 'CHANGE YOUR GEAR', 42, 49, 864, 52, 40, white)
+  if button('GEAR', 930, 53, 124, 42, true, hud.loadoutTab == nil or hud.loadoutTab == 'gear') then hud.loadoutTab = 'gear' end
+  if button('PERKS', 1068, 53, 136, 42, true, hud.loadoutTab == 'perks') then hud.loadoutTab = 'perks' end
   if fpsVisual.modern then
     requestRifleAssets()
-    if button('GEAR', 1040, 53, 134, 42, true, hud.loadoutTab == nil or hud.loadoutTab == 'gear') then hud.loadoutTab = 'gear' end
-    if button('OPERATOR', 1190, 53, 188, 42, true, hud.loadoutTab == 'operator') then hud.loadoutTab = 'operator' end
-    if button('SKIN', 1394, 53, 164, 42, true, hud.loadoutTab == 'skin') then hud.loadoutTab = 'skin' end
+    if button('OPERATOR', 1218, 53, 186, 42, true, hud.loadoutTab == 'operator') then hud.loadoutTab = 'operator' end
+    if button('SKIN', 1418, 53, 140, 42, true, hud.loadoutTab == 'skin') then hud.loadoutTab = 'skin' end
   end
   text(fpsVisual.modern and hud.loadoutTab == 'skin' and 'Choose colors for your operator. Changes apply on your next spawn.'
     or fpsVisual.modern and hud.loadoutTab == 'operator' and (hud.loadout.allowedOperatorModels ~= 3
@@ -5803,7 +6465,75 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
     or initialSelection and 'Choose one item per slot. Confirm to spawn.'
     or 'Choose one item per slot. Changes apply on your next respawn.', 42, 105, 1300, 26, 18, muted)
   line(42, 145, 1558, 145, border)
-  if fpsVisual.modern and hud.loadoutTab == 'skin' then
+  if hud.loadoutTab == 'perks' then
+    local function icon(item, x, y, extent, allowed)
+      if item ~= nil and fpsVisual.loadoutAssetFolder ~= nil then
+        ui.drawImage(fpsVisual.loadoutAssetFolder .. '/' .. item.image, point(x, y),
+          point(x + extent, y + extent), allowed and white or disabled, nil, nil, ui.ImageFit.Fit)
+      end
+    end
+    local function changed()
+      hud.loadout.dirty = true
+      hud.loadout.result = fromPreDrive and 'SAVE YOUR LOADOUT BEFORE DEPLOYING'
+        or initialSelection and 'CONFIRM TO SPAWN' or 'CHANGES APPLY ON NEXT RESPAWN'
+    end
+    text('FIELD UPGRADE', 42, 163, 400, 32, 23, white)
+    text('X / LB + RB  |  1-2 MIN CHARGE + SCORE BOOST', 905, 163, 653, 32, 17, muted)
+    for index, item in ipairs(hud.fieldUpgrades) do
+      local x, w = 42 + (index - 1) * 512, 492
+      local allowed = hud.loadout.catalogReceived and hud.itemAllowed(hud.loadout.allowedFieldUpgrades or 14, item.id)
+      local selected = (hud.loadout.fieldUpgrade or 1) == item.id
+      local hot, activated = input('upgrade:' .. item.id, x, 206, w, 193, allowed)
+      if activated then hud.loadout.fieldUpgrade = item.id; changed() end
+      rect(x, 206, w, 193, selected and rgbm(0.035, 0.085, 0.11, 1)
+        or rgbm(0.033, 0.047, 0.057, 1), selected and accent or hot and muted or border)
+      icon(item, x + 14, 219, 112, allowed)
+      text(item.name, x + 144, 226, w - 160, 34, 24, allowed and white or disabled)
+      text(not allowed and 'SERVER LOCKED' or selected and 'SELECTED' or 'SELECT UPGRADE',
+        x + 144, 272, w - 160, 28, 16, selected and accent or muted)
+      -- Two explicit lines keep every description legible at the minimum menu size.
+      local descriptions = {
+        {'F / controller X near the box to resupply.', 'Refills both weapons and your grenades.'},
+        {'Silent footsteps and gunfire for 15 seconds.', 'Hidden from enemy radar while active.'},
+        {'Intercepts 3 hostile grenades within 6 m.', 'Deployable gadgets can be shot and destroyed.'},
+      }
+      text(descriptions[index][1], x + 20, 337, w - 40, 24, 17, muted)
+      text(descriptions[index][2], x + 20, 364, w - 40, 24, 17, muted)
+    end
+    line(42, 419, 1558, 419, border)
+    text('PERKS', 42, 430, 360, 32, 23, white)
+    text('Choose a slot, then select a perk. No duplicates.', 816, 430, 742, 32, 18, muted)
+    hud.activePerkSlot = hud.activePerkSlot or 1
+    for index = 1, 3 do
+      local x, item = 42 + (index - 1) * 512, hud.perks[hud.loadout['perk' .. index] or 0]
+      local active = hud.activePerkSlot == index
+      local _, activated = input('perk-slot:' .. index, x, 475, 492, 77, true)
+      if activated then hud.activePerkSlot = index; active = true end
+      rect(x, 475, 492, 77, rgbm(0.035, 0.07, 0.09, 1), active and accent or border)
+      icon(item, x + 12, 479, 68, true)
+      text('SLOT 0' .. index, x + 96, 482, 380, 21, 14, active and accent or muted)
+      text(item ~= nil and item.name or 'SELECT A PERK', x + 96, 509, 380, 31, 22, white)
+    end
+    for index, item in ipairs(hud.perks) do
+      local x, y, w = 42 + ((index - 1) % 4) * 384, 572 + math.floor((index - 1) / 4) * 106, 364
+      local equipped = nil
+      for slot = 1, 3 do if hud.loadout['perk' .. slot] == item.id then equipped = slot end end
+      local allowed = hud.loadout.catalogReceived and hud.itemAllowed(hud.loadout.allowedPerks or 254, item.id)
+      local hot, activated = input('perk:' .. item.id, x, y, w, 96, allowed)
+      if activated then
+        if equipped == hud.activePerkSlot then hud.loadout['perk' .. equipped] = 0
+        else
+          if equipped ~= nil then hud.loadout['perk' .. equipped] = 0 end
+          hud.loadout['perk' .. hud.activePerkSlot] = item.id
+        end
+        changed()
+      end
+      rect(x, y, w, 96, rgbm(0.033, 0.047, 0.057, 1), equipped and accent or hot and muted or border)
+      icon(item, x + 5, y + 4, 70, allowed)
+      text(item.name .. (equipped and ('  /  0' .. equipped) or ''), x + 82, y + 8, w - 90, 29, 19, allowed and white or disabled)
+      text(not allowed and 'SERVER LOCKED' or item.description, x + 12, y + 65, w - 24, 23, 14, muted)
+    end
+  elseif fpsVisual.modern and hud.loadoutTab == 'skin' then
     local model = fpsVisual.operatorModels[hud.loadout.operatorModel] or fpsVisual.operatorModels[0]
     local count = hud.loadout.operatorModel == 1 and 3 or 2
     local width = (1516 - (count - 1) * 24) / count
@@ -5812,8 +6542,8 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
       local x = 42 + id * (width + 24)
       local allowed = hud.loadout.catalogReceived and hud.skinAllowed(hud.loadout.operatorModel, id)
       local selected = hud.loadout.operatorSkin == id
-      local hot = allowed and hovered(x, 166, width, 610)
-      if hot and clicked then
+      local hot, activated = input('skin:' .. id, x, 166, width, 610, allowed)
+      if activated then
         hud.loadout.operatorSkin = id
         hud.loadout.dirty = true
         hud.loadout.result = fromPreDrive and 'SAVE YOUR SKIN BEFORE DEPLOYING'
@@ -5836,8 +6566,8 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
       local x = 42 + id * 774
       local allowed = hud.loadout.catalogReceived and hud.itemAllowed(hud.loadout.allowedOperatorModels, id)
       local selected = hud.loadout.operatorModel == id
-      local hot = allowed and hovered(x, 166, 742, 610)
-      if hot and clicked then
+      local hot, activated = input('operator:' .. id, x, 166, 742, 610, allowed)
+      if activated then
         hud.loadout.operatorModel = id
         if not hud.skinAllowed(id, hud.loadout.operatorSkin) then hud.loadout.operatorSkin = 0 end
         hud.loadout.dirty = true
@@ -5871,7 +6601,8 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
   text('03', 816, 487, 45, 30, 25, accent)
   text('LETHAL EQUIPMENT', 870, 487, 670, 30, 23, white)
   filters('secondaryWeapon', 42, 523)
-  text('One grenade per life', 816, 523, 700, 30, 17, muted)
+  text((hud.loadout.perk1 == 7 or hud.loadout.perk2 == 7 or hud.loadout.perk3 == 7)
+    and 'Two grenades per life / GEAR HEAD' or 'One grenade per life', 816, 523, 700, 30, 17, muted)
   line(800, 492, 800, 784, border)
   cards('secondaryWeapon', 42, 568, 742, 184)
   cards('lethal', 816, 568, 742, 184)
@@ -5899,7 +6630,7 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
     summaryX, 834, 810, 24, 14, muted)
   if button(fromPreDrive and 'SAVE LOADOUT  >'
       or initialSelection and 'CONFIRM & SPAWN  >' or 'QUEUE FOR RESPAWN  >',
-      1126, 809, 432, 53, selectedCount == 3 and operatorValid, true) then
+      1126, 809, 432, 53, selectedCount == 3 and operatorValid and hud.validAbilitySelection(), true) then
     if fromPreDrive then
       hud.preDriveReturnAfterLoadout = true
       hud.preDriveDeployPending = false
@@ -5916,6 +6647,7 @@ function hud.drawLoadoutMenu(initialSelection, fromPreDrive)
       hud.pausePage = 'main'
     end
   end
+  hud.endMenuNavigation(scale)
 end
 
 function hud.tryStartFromDeployment()
@@ -5951,8 +6683,9 @@ end
 
 function hud.drawPreDriveMenu()
   local size = ui.windowSize()
-  local scale = math.clamp(math.min((size.x - 32) / 1200, (size.y - 32) / 720), 0.70, 1.55)
-  local panelSize = vec2(1200, 720) * scale
+  local panelWidth = hud.preDrivePage == 'controls' and 900 or 1200
+  local scale = math.min((size.x - 32) / panelWidth, (size.y - 32) / 720, 1.55)
+  local panelSize = vec2(panelWidth, 720) * scale
   local panelMin = (size - panelSize) * 0.5
   local panelMax = panelMin + panelSize
   local mouse = ui.mousePos()
@@ -5963,21 +6696,11 @@ function hud.drawPreDriveMenu()
   local border = rgbm(0.22, 0.38, 0.49, 0.78)
   local teamBlue = rgbm(0.18, 0.58, 1, 1)
   local teamRed = rgbm(0.95, 0.20, 0.17, 1)
-  local aDown = ac.isGamepadButtonPressed(0, ac.GamepadButton.A)
-  local bDown = ac.isGamepadButtonPressed(0, ac.GamepadButton.B)
-  local xDown = ac.isGamepadButtonPressed(0, ac.GamepadButton.X)
-  local aPressed = aDown and not hud.preDriveGamepadAWasDown
-  local bPressed = bDown and not hud.preDriveGamepadBWasDown
-  local xPressed = xDown and not hud.preDriveGamepadXWasDown
-  hud.preDriveGamepadAWasDown = aDown
-  hud.preDriveGamepadBWasDown = bDown
-  hud.preDriveGamepadXWasDown = xDown
-
   ui.captureMouse(true)
   ui.setMouseCursor(ui.MouseCursor.Arrow)
 
   if hud.preDrivePage == 'loadout' then
-    if bPressed or ac.isKeyPressed(ac.KeyIndex.Escape) then
+    if ac.isKeyPressed(ac.KeyIndex.Escape) then
       hud.preDriveReturnAfterLoadout = false
       hud.preDrivePage = 'briefing'
     else
@@ -6005,10 +6728,12 @@ function hud.drawPreDriveMenu()
       math.max(1, (width or 1) * scale))
   end
   local function button(label, x, y, w, h, enabled, primary, danger)
+    local focused, selected = hud.menuItem('button:' .. x .. ':' .. y,
+      point(x, y), vec2(w, h) * scale, enabled)
     local hot = enabled and hovered(x, y, w, h)
     local fill = danger and rgbm(0.42, 0.08, 0.07, 0.96)
       or primary and rgbm(0.03, 0.34, 0.49, 0.98) or rgbm(0.05, 0.10, 0.14, 0.96)
-    if hot then
+    if hot or focused then
       fill = danger and rgbm(0.72, 0.16, 0.11, 1) or rgbm(0.09, 0.42, 0.56, 1)
     elseif not enabled then
       fill = rgbm(0.035, 0.055, 0.065, 0.92)
@@ -6018,39 +6743,47 @@ function hud.drawPreDriveMenu()
       or rgbm(0.16, 0.21, 0.24, 0.75), 5 * scale, nil, math.max(1, 1.2 * scale))
     text(label, x + 8, y, w - 16, h, primary and 20 or 16,
       enabled and white or rgbm(0.30, 0.36, 0.40, 1), ui.Alignment.Center)
-    return hot and clicked
+    return selected or (hot and clicked)
   end
 
   local function controlsButton(label, position, dimensions, danger)
+    local focused, selected = hud.menuItem(tostring(position.x) .. ':' .. tostring(position.y),
+      position, dimensions, true)
     local p2 = position + dimensions
     local hot = mouse.x >= position.x and mouse.x <= p2.x
       and mouse.y >= position.y and mouse.y <= p2.y
     local fill = danger and rgbm(0.42, 0.08, 0.07, 0.96) or rgbm(0.05, 0.10, 0.14, 0.96)
-    if hot then fill = danger and rgbm(0.72, 0.16, 0.11, 1) or rgbm(0.09, 0.42, 0.56, 1) end
+    if hot or focused then fill = danger and rgbm(0.72, 0.16, 0.11, 1) or rgbm(0.09, 0.42, 0.56, 1) end
     ui.drawRectFilled(position, p2, fill, 5 * scale)
     ui.drawRect(position, p2, hot and accent or border, 5 * scale, nil,
       math.max(1, 1.2 * scale))
-    ui.setCursor(position + vec2(14, 11) * scale)
-    ui.text(label)
-    return hot and clicked
+    ui.dwriteDrawTextClipped(label, 16 * scale, position + vec2(12, 0) * scale,
+      p2 - vec2(8, 0) * scale, ui.Alignment.Start, ui.Alignment.Center, false, white)
+    return selected or (hot and clicked)
   end
 
   if hud.preDrivePage == 'controls' then
+    local capturing = hud.bindingCapture ~= nil
     hud.drawControlsMenu(panelMin, panelSize, scale, controlsButton, 'deployment')
-    if bPressed or ac.isKeyPressed(ac.KeyIndex.Escape) then
+    if not capturing and hud.bindingCapture == nil and not hud.bindingCaptureConsumed
+        and ac.isKeyPressed(ac.KeyIndex.Escape) then
       hud.bindingCapture = nil
       hud.preDrivePage = 'briefing'
     end
     return
   end
 
-  if ac.isKeyPressed(ac.KeyIndex.Return) or aPressed then hud.requestDeployment() end
-  if ac.isKeyPressed(ac.KeyIndex.L) or xPressed then
+  if hud.beginMenuNavigation('deployment') then
+    if hud.preDriveLeaveArmed then hud.preDriveLeaveArmed = false
+    else hud.nativePreDriveMenu = true end
+    return
+  end
+  if ac.isKeyPressed(ac.KeyIndex.Return) then hud.requestDeployment() end
+  if ac.isKeyPressed(ac.KeyIndex.L) or hud.menuNavigation.shortcutX then
     hud.preDrivePage = 'loadout'
     hud.preDriveLeaveArmed = false
     hud.loadout.result = hud.loadout.confirmed and 'CURRENT LOADOUT' or 'CONFIRM A LOADOUT TO JOIN'
   end
-  if bPressed then hud.nativePreDriveMenu = true end
 
   local ok, trackName = pcall(ac.getTrackName)
   if not ok or trackName == nil or trackName == '' then trackName = ac.getTrackID() end
@@ -6148,7 +6881,7 @@ function hud.drawPreDriveMenu()
   end
 
   line(38, 623, 1162, 623, border)
-  if button(hud.preDriveDeployPending and 'CONFIRMING...' or 'DEPLOY   [ENTER / A]',
+  if button(hud.preDriveDeployPending and 'CONFIRMING...' or 'DEPLOY   [ENTER]',
       750, 642, 412, 52, hud.loadout.catalogReceived and not hud.preDriveDeployPending,
       true, false) then hud.requestDeployment() end
   if button('FPS CONTROLS', 38, 642, 180, 52, true, false, false) then
@@ -6173,8 +6906,9 @@ function hud.drawPreDriveMenu()
       hud.preDriveLeaveArmed = false
     end
   end
-  text('F2 restores this FPS deployment screen from the native AC menu.',
+  text('D-PAD: navigate  |  A: select  |  B: back  |  START / F2: restore FPS menu',
     478, 603, 684, 18, 12, muted, ui.Alignment.End)
+  hud.endMenuNavigation(scale)
 end
 
 local function drawMatchStartOverlay(size, scale)
@@ -6345,6 +7079,7 @@ function script.drawUI()
     hud.drawLethalMedal(size, hudScale, medal.itemID, medal.count, medal.age, imagePath)
   end
   hud.drawAwardPopups(center)
+  hud.drawVision(size, hudScale)
   hud.drawAimTarget(size, hudScale)
   hud.drawGrenadeIndicators(size, hudScale)
   hud.drawPickupPrompt(size, hudScale)
@@ -6413,86 +7148,87 @@ function script.drawUI()
 end
 
 function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton, returnPage)
+  if hud.beginMenuNavigation(returnPage == 'deployment' and 'deployment-controls' or 'pause-controls') then
+    if returnPage == 'deployment' then hud.preDrivePage = 'briefing'
+    else hud.pausePage = 'main' end
+    return
+  end
   local controls = {
     { label = 'FIRE', action = 'fire' },
+    { label = 'AIM DOWN SIGHTS', action = 'aim' },
     { label = 'SPRINT', action = 'sprint' },
-    { label = 'CROUCH / PRONE', action = 'crouch', crouchMode = true },
+    { label = 'CROUCH / PRONE', action = 'crouch' },
     { label = 'RELOAD', action = 'reload' },
     { label = 'JUMP', action = 'jump' },
     { label = 'GRENADE', action = 'grenade' },
     { label = 'INTERACT / PICK UP', action = 'interact' },
+    { label = 'SWITCH WEAPON', action = 'switchWeapon' },
+    { label = 'FIELD UPGRADE', action = 'fieldUpgrade' },
+    { label = 'SCOREBOARD', action = 'scoreboard' },
     { label = 'MELEE', action = 'melee', reserved = true },
+    { label = 'MENU', action = 'menu', fixed = true },
   }
-  local left = panelMin + vec2(42, 34) * scale
+  local left = panelMin + vec2(42, 24) * scale
+  local function text(label, x, y, width, height, color)
+    ui.dwriteDrawTextClipped(label, 16 * scale, left + vec2(x, y) * scale,
+      left + vec2(x + width, y + height) * scale,
+      ui.Alignment.Start, ui.Alignment.Center, false, color or rgbm(0.92, 0.96, 1, 1))
+  end
+  hud.updateBindingCapture()
 
-  if hud.bindingCapture ~= nil and ui.time() >= hud.bindingCaptureAfter then
-    if ac.isKeyPressed(ac.KeyIndex.Escape) then
-      hud.bindingCapture = nil
-    else
-      for i = 1, #hud.bindingCandidates do
-        local candidate = hud.bindingCandidates[i]
-        if ac.isKeyPressed(candidate.key) then
-          hud.bindings[hud.bindingCapture] = candidate.key
-          ac.log(string.format('[ASRC FPS] binding changed: action=%s key=%s',
-            hud.bindingCapture, candidate.name))
-          hud.bindingCapture = nil
-          break
+  ui.dwriteDrawTextClipped('FPS CONTROLS', 32 * scale, left, left + vec2(816, 36) * scale,
+    ui.Alignment.Start, ui.Alignment.Center, false, rgbm(0.92, 0.96, 1, 1))
+  text('D-PAD: navigate / adjust   A: select   B: back   ESC / START: cancel binding', 0, 38, 816, 24,
+    rgbm(0.55, 0.76, 0.9, 1))
+  text('ACTION', 0, 65, 260, 22)
+  text('KEYBOARD / MOUSE', 278, 65, 250, 22)
+  text('XBOX CONTROLLER', 554, 65, 248, 22)
+
+  for index = 1, #controls do
+    local item = controls[index]
+    local rowY = 89 + (index - 1) * 30
+    text(item.label, 0, rowY, 260, 28)
+    for _, device in ipairs({'keyboard', 'xbox'}) do
+      local x = device == 'keyboard' and 278 or 554
+      if item.fixed or item.reserved then
+        local value = item.reserved and 'NOT AVAILABLE'
+          or device == 'keyboard' and 'ESC (FIXED)' or 'START / OPTIONS (FIXED)'
+        text(value, x + 10, rowY, 238, 28, rgbm(0.55, 0.67, 0.76, 1))
+      else
+        local capturing = hud.bindingCapture == item.action and hud.bindingCaptureDevice == device
+        local value = capturing and (device == 'keyboard' and 'PRESS A KEY...' or 'PRESS A BUTTON...')
+          or device == 'keyboard' and hud.bindingName(hud.bindings[item.action])
+          or hud.gamepadBindingName(item.action)
+        if pauseButton(value, left + vec2(x, rowY) * scale, vec2(248, 28) * scale, false) then
+          hud.beginBindingCapture(item.action, device)
         end
       end
     end
   end
 
-  ui.setCursor(left)
-  ui.pushFont(ui.Font.Huge)
-  ui.text('FPS CONTROLS')
-  ui.popFont()
-  ui.setCursor(left + vec2(0, 49) * scale)
-  ui.textColored('Select an action, then press a keyboard or mouse button.',
-    rgbm(0.55, 0.76, 0.9, 1))
-  ui.setCursor(left + vec2(0, 68) * scale)
-  ui.textColored('XBOX:  Y  SWITCH WEAPON    •    RB  GRENADE    •    X  PICK UP',
-    rgbm(0.72, 0.8, 0.86, 1))
-
-  for index = 1, #controls do
-    local item = controls[index]
-    local rowY = 82 + (index - 1) * 42
-    ui.setCursor(left + vec2(0, rowY + 12) * scale)
-    ui.text(item.label)
-    if item.reserved then
-      ui.setCursor(left + vec2(175, rowY + 12) * scale)
-      ui.textColored('FUTURE ACTION', rgbm(1, 0.62, 0.25, 1))
-    end
-    local value = hud.bindingCapture == item.action and 'PRESS A KEY…'
-      or hud.bindingName(hud.bindings[item.action])
-    local bindingWidth = item.crouchMode and 180 or 300
-    if pauseButton(value, left + vec2(430, rowY) * scale,
-        vec2(bindingWidth, 40) * scale, false) then
-      hud.bindingCapture = item.action
-      hud.bindingCaptureAfter = ui.time() + 0.25
-    end
-    if item.crouchMode then
-      local modeLabel = hud.controlSettings.crouchToggle and 'TOGGLE' or 'HOLD'
-      if pauseButton(modeLabel, left + vec2(618, rowY) * scale,
-          vec2(112, 40) * scale, false) then
-        hud.controlSettings.crouchToggle = not hud.controlSettings.crouchToggle
-        fpsVisual.crouchToggleReleaseStands = false
-        ac.log('[ASRC FPS] crouch input mode changed: '
-          .. (hud.controlSettings.crouchToggle and 'toggle' or 'hold'))
-      end
-    end
+  text('CROUCH MODE', 0, 488, 260, 30)
+  local modeLabel = hud.controlSettings.crouchToggle and 'TOGGLE' or 'HOLD'
+  if pauseButton(modeLabel, left + vec2(278, 488) * scale, vec2(130, 30) * scale, false) then
+    hud.controlSettings.crouchToggle = not hud.controlSettings.crouchToggle
+    fpsVisual.crouchToggleReleaseStands = false
   end
+  text('Sprint: keyboard HOLD / Xbox TOGGLE', 430, 488, 372, 30, rgbm(0.55, 0.76, 0.9, 1))
 
   local mouse = ui.mousePos()
   local function sensitivitySlider(label, field, rowY)
     local minimum, maximum = 0.2, 3.0
     local value = math.clamp(tonumber(hud.aimSettings[field]) or
       (field == 'adsSensitivity' and 0.8 or 1.0), minimum, maximum)
-    ui.setCursor(left + vec2(0, rowY + 5) * scale)
-    ui.text(label)
-    ui.setCursor(left + vec2(344, rowY + 5) * scale)
-    ui.text(string.format('%d%%', math.floor(value * 100 + 0.5)))
+    text(label, 0, rowY, 330, 34)
+    text(string.format('%d%%', math.floor(value * 100 + 0.5)), 344, rowY, 76, 34)
     local trackMin = left + vec2(430, rowY + 13) * scale
     local trackMax = trackMin + vec2(300, 8) * scale
+    local focused, _, adjustment = hud.menuItem('slider:' .. field,
+      left + vec2(278, rowY) * scale, vec2(460, 34) * scale, true, true)
+    if adjustment ~= 0 then
+      value = math.clamp(math.floor(value * 20 + 0.5) / 20 + adjustment * 0.05, minimum, maximum)
+      hud.aimSettings[field] = value
+    end
     local hovered = mouse.x >= trackMin.x - 8 * scale
       and mouse.x <= trackMax.x + 8 * scale
       and mouse.y >= trackMin.y - 12 * scale
@@ -6509,15 +7245,17 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton, returnPag
     ui.drawRectFilled(trackMin, vec2(knob.x, trackMax.y),
       rgbm(0.22, 0.58, 0.82, 1), 4 * scale)
     ui.drawRectFilled(knob - vec2(6, 10) * scale, knob + vec2(6, 10) * scale,
-      hovered and rgbm(0.65, 0.88, 1, 1) or rgbm(0.42, 0.72, 0.92, 1), 3 * scale)
+      (hovered or focused) and rgbm(0.65, 0.88, 1, 1) or rgbm(0.42, 0.72, 0.92, 1), 3 * scale)
   end
 
-  sensitivitySlider('HIP-FIRE AIM SENSITIVITY', 'hipSensitivity', 425)
-  sensitivitySlider('ADS AIM SENSITIVITY', 'adsSensitivity', 471)
+  sensitivitySlider('HIP-FIRE AIM SENSITIVITY', 'hipSensitivity', 534)
+  sensitivitySlider('ADS AIM SENSITIVITY', 'adsSensitivity', 574)
 
-  if pauseButton('RESET DEFAULTS', left + vec2(300, 530) * scale,
+  if pauseButton('RESET DEFAULTS', left + vec2(300, 620) * scale,
       vec2(190, 42) * scale, false) then
     for action, key in pairs(hud.bindingDefaults) do hud.bindings[action] = key end
+    for action, button in pairs(hud.gamepadDefaults) do hud.gamepadBindings[action] = button end
+    fpsVisual.controllerSprint.latched = false
     hud.aimSettings.hipSensitivity = 1.0
     hud.aimSettings.adsSensitivity = 0.8
     hud.controlSettings.crouchToggle = false
@@ -6526,7 +7264,7 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton, returnPag
     ac.log('[ASRC FPS] FPS controls reset to defaults')
   end
   if pauseButton(returnPage == 'deployment' and 'BACK TO DEPLOYMENT' or 'BACK TO MATCH MENU',
-      left + vec2(0, 530) * scale,
+      left + vec2(0, 620) * scale,
       vec2(260, 42) * scale, false) then
     hud.bindingCapture = nil
     if returnPage == 'deployment' then
@@ -6535,9 +7273,15 @@ function hud.drawControlsMenu(panelMin, panelSize, scale, pauseButton, returnPag
       hud.pausePage = 'main'
     end
   end
+  hud.endMenuNavigation(scale)
 end
 
 function hud.drawEnvironmentMenu(panelMin, panelSize, scale, pauseButton)
+  if hud.beginMenuNavigation('pause-environment') then
+    hud.pausePage = 'main'
+    hud.environmentDraftReady = false
+    return
+  end
   local weather = {
     { type = 15, label = 'CLEAR' }, { type = 16, label = 'FEW CLOUDS' },
     { type = 17, label = 'SCATTERED' }, { type = 18, label = 'BROKEN CLOUDS' },
@@ -6598,12 +7342,16 @@ function hud.drawEnvironmentMenu(panelMin, panelSize, scale, pauseButton)
     hud.pausePage = 'main'
     hud.environmentDraftReady = false
   end
+  hud.endMenuNavigation(scale)
 end
 
 function hud.drawPauseMenu()
   local size = ui.windowSize()
-  local scale = math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.5)
-  local panelSize = vec2(900, 620) * scale
+  local controlsPage = hud.pausePage == 'controls'
+  local panelHeight = controlsPage and 720 or 620
+  local scale = math.min(math.clamp(math.min(size.x / 1920, size.y / 1080), 0.75, 1.5),
+    (size.x - 24) / 900, (size.y - 24) / panelHeight)
+  local panelSize = vec2(900, panelHeight) * scale
   local panelMin = (size - panelSize) * 0.5
   local panelMax = panelMin + panelSize
   local left = panelMin + vec2(42, 38) * scale
@@ -6614,9 +7362,11 @@ function hud.drawPauseMenu()
   ui.drawRectFilled(panelMin, panelMax, rgbm(0.025, 0.035, 0.05, 0.97), 10 * scale)
   ui.drawRect(panelMin, panelMax, rgbm(0.42, 0.62, 0.78, 0.7), 10 * scale, nil,
     math.max(1, 1.5 * scale))
-  ui.drawLine(vec2(dividerX, panelMin.y + 28 * scale),
-    vec2(dividerX, panelMax.y - 28 * scale), rgbm(0.35, 0.5, 0.62, 0.38),
-    math.max(1, scale))
+  if not controlsPage then
+    ui.drawLine(vec2(dividerX, panelMin.y + 28 * scale),
+      vec2(dividerX, panelMax.y - 28 * scale), rgbm(0.35, 0.5, 0.62, 0.38),
+      math.max(1, scale))
+  end
 
   local mouse = ui.mousePos()
   if not hud.pauseInputLogged then
@@ -6625,21 +7375,24 @@ function hud.drawPauseMenu()
     hud.pauseInputLogged = true
   end
   local function pauseButton(label, position, dimensions, danger)
+    local focused, selected = hud.menuItem(tostring(position.x) .. ':' .. tostring(position.y),
+      position, dimensions, true)
     local p2 = position + dimensions
     local hovered = mouse.x >= position.x and mouse.x <= p2.x
       and mouse.y >= position.y and mouse.y <= p2.y
     local held = hovered and ui.mouseDown(ui.MouseButton.Left)
     local base = danger and rgbm(0.42, 0.10, 0.08, 0.96) or rgbm(0.10, 0.18, 0.25, 0.96)
     local hot = danger and rgbm(0.72, 0.18, 0.12, 1) or rgbm(0.18, 0.38, 0.52, 1)
-    ui.drawRectFilled(position, p2, hovered and hot or base, 5 * scale)
+    ui.drawRectFilled(position, p2, (hovered or focused) and hot or base, 5 * scale)
     ui.drawRect(position, p2, hovered and rgbm(0.58, 0.84, 1, 1)
       or rgbm(0.34, 0.52, 0.66, 0.75), 5 * scale, nil, math.max(1, 1.2 * scale))
     if held then
       ui.drawRectFilled(position, p2, rgbm(0, 0, 0, 0.18), 5 * scale)
     end
-    ui.setCursor(position + vec2(16, 13) * scale)
-    ui.text(label)
-    return hovered and ui.mouseClicked(ui.MouseButton.Left)
+    ui.dwriteDrawTextClipped(label, 16 * scale, position + vec2(12, 0) * scale,
+      p2 - vec2(8, 0) * scale, ui.Alignment.Start, ui.Alignment.Center, false,
+      rgbm(0.92, 0.96, 1, 1))
+    return selected or (hovered and ui.mouseClicked(ui.MouseButton.Left))
   end
 
   if hud.pausePage == 'controls' then
@@ -6660,6 +7413,11 @@ function hud.drawPauseMenu()
     return
   end
 
+  if hud.beginMenuNavigation('pause-main') then
+    if hud.leaveServerArmed then hud.leaveServerArmed = false
+    else ac.tryToPause(false) end
+    return
+  end
   ui.setCursor(left)
   ui.pushFont(ui.Font.Huge)
   ui.text('MATCH MENU')
@@ -6719,7 +7477,7 @@ function hud.drawPauseMenu()
     end
   end
   ui.setCursor(left + vec2(0, 518) * scale)
-  ui.textColored('Match environment changes are synchronized by the server.',
+  ui.textColored('D-PAD: navigate   A: select   B: back',
     rgbm(0.62, 0.7, 0.78, 1))
 
   local ranking = {}
@@ -6749,9 +7507,11 @@ function hud.drawPauseMenu()
     ui.text(string.format('%s%2d   %-22s %3d   %3d   %3d', marker, place,
       names[actor.id] or ('Operative ' .. actor.id), actor.kills, actor.deaths, actor.health))
   end
+  hud.endMenuNavigation(scale)
 end
 
 function hud.exclusiveCallback(mode)
+  hud.updateGamepadMenu()
   if mode ~= 'pause' and mode ~= 'menu' then
     hud.nativePauseMenu = false
     hud.leaveServerArmed = false
@@ -6797,5 +7557,5 @@ else
   ac.log('[ASRC FPS] exclusive online HUD fallback registered')
 end
 
-hud.readySent = hud.readyEvent({ protocol = 6 })
-ac.log(string.format('[ASRC FPS] ready sent: protocol=6 result=%s', tostring(hud.readySent)))
+hud.readySent = hud.readyEvent({ protocol = 7 })
+ac.log(string.format('[ASRC FPS] ready sent: protocol=7 result=%s', tostring(hud.readySent)))

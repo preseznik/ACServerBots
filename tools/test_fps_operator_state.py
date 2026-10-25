@@ -112,13 +112,16 @@ def main():
         hud.loadoutStorage.mainWeapon=1; hud.loadoutStorage.lethal=16
         hud.loadoutStorage.secondaryWeapon=4
         local result=callbacks.ASRC_FpsLoadoutResult
-        result(nil,{result=2,mainWeapon=1,lethal=16,secondaryWeapon=4,operatorModel=1,operatorSkin=2})
+        result(nil,{result=2,mainWeapon=1,lethal=16,secondaryWeapon=4,operatorModel=1,operatorSkin=2,
+            fieldUpgrade=1,perk1=0,perk2=0,perk3=0})
         assert(hud.loadoutStorage.operatorModel==1 and hud.loadoutStorage.operatorSkin==2)
         local catalog=callbacks.ASRC_FpsLoadoutCatalog
         local message={allowedMainWeapons=6,allowedLethals=196608,allowedSecondaryWeapons=24,
             defaultMainWeapon=1,defaultLethal=16,defaultSecondaryWeapon=4,
             allowedOperatorModels=3,defaultOperatorModel=0,
-            allowedOfficerSkins=3,allowedGhostSkins=7,defaultOperatorSkin=0}
+            allowedOfficerSkins=3,allowedGhostSkins=7,defaultOperatorSkin=0,
+            allowedFieldUpgrades=14,allowedPerks=254,defaultFieldUpgrade=1,
+            defaultPerk1=0,defaultPerk2=0,defaultPerk3=0}
         catalog(nil,message)
         assert(hud.loadout.operatorModel==1 and hud.loadout.operatorSkin==2)
         message.allowedOperatorModels=1

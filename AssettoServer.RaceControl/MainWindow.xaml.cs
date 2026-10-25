@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using AssettoServer.RaceControl.Infrastructure;
 using AssettoServer.RaceControl.Core.Storage;
+using AssettoServer.RaceControl.Core.Updates;
 using AssettoServer.RaceControl.Theming;
 using AssettoServer.RaceControl.ViewModels;
 using AssettoServer.RaceControl.Web;
@@ -19,6 +20,7 @@ public partial class MainWindow : Window
     private bool _initialized;
     private bool _allowClose;
     private bool _closeInProgress;
+    private readonly CancellationTokenSource _updateCancellation = new();
     private readonly DispatcherTimer _takeoverInputTimer;
     private bool _leftPressed;
     private bool _rightPressed;
@@ -33,7 +35,7 @@ public partial class MainWindow : Window
         _takeoverInputTimer = new DispatcherTimer(TimeSpan.FromSeconds(1d / 60d),
             DispatcherPriority.Input, TakeoverInputTimer_Tick, Dispatcher);
         _takeoverInputTimer.Start();
-        Closed += (_, _) => _takeoverInputTimer.Stop();
+        Closed += (_, _) => { _takeoverInputTimer.Stop(); _updateCancellation.Cancel(); };
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -47,6 +49,38 @@ public partial class MainWindow : Window
         UpdateThemeMenuChecks();
         await _viewModel.InitializeAsync(RaceControlApp.Settings);
         await RaceControlApp.RestartWebDashboardAsync();
+        if (AssettoServer.Release.ReleaseIdentity.IsReleaseBuild && RaceControlApp.Settings.CheckForUpdatesOnStartup)
+            _ = CheckForUpdatesAtStartupAsync();
+    }
+
+    internal bool CanInstallUpdate => !_closeInProgress && !_viewModel.IsBusy && !_viewModel.StopCommand.CanExecute(null);
+
+    private void Updates_Click(object sender, RoutedEventArgs e) => new UpdatesWindow { Owner = this }.ShowDialog();
+
+    private async Task CheckForUpdatesAtStartupAsync()
+    {
+        try
+        {
+            using var client = ReleaseUpdateService.CreateClient();
+            var release = await new ReleaseUpdateService(client).CheckAsync(AssettoServer.Release.ReleaseIdentity.Version,
+                RaceControlApp.Settings.IncludePreviewUpdates, _updateCancellation.Token);
+            if (release is null || _updateCancellation.IsCancellationRequested || _closeInProgress) return;
+            if (MessageBox.Show(this, $"Race Control {release.Version} is available. Open updates?",
+                    "Race Control update", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                new UpdatesWindow(release) { Owner = this }.ShowDialog();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            // Startup remains usable offline and when GitHub is rate limited.
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(RaceControlApp.DataRoot, "Logs"));
+                File.AppendAllText(Path.Combine(RaceControlApp.DataRoot, "Logs", "updates.log"),
+                    $"[{DateTimeOffset.Now:O}] {exception.Message}{Environment.NewLine}");
+            }
+            catch (Exception logException) when (logException is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e) => ThemeManager.ApplyWindowChrome(this);

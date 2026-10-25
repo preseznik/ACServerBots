@@ -279,6 +279,8 @@ public sealed class ServerConfigurationRenderer
             Values("AllowedMainWeapons", fps.Loadouts.AllowedMainWeapons, 4);
             Values("AllowedLethals", fps.Loadouts.AllowedLethals, 4);
             Values("AllowedSecondaryWeapons", fps.Loadouts.AllowedSecondaryWeapons, 4);
+            Values("AllowedFieldUpgrades", fps.Loadouts.AllowedFieldUpgrades, 4);
+            Values("AllowedPerks", fps.Loadouts.AllowedPerks, 4);
             Loadout("HumanDefault", fps.Loadouts.HumanDefault, 4);
             Loadout("BotDefault", fps.Loadouts.BotDefault, 4);
             Line("  Arena:");
@@ -329,6 +331,8 @@ public sealed class ServerConfigurationRenderer
                 Line($"{prefix}  MainWeapon: {loadout.MainWeapon}");
                 Line($"{prefix}  Lethal: {loadout.Lethal}");
                 Line($"{prefix}  SecondaryWeapon: {loadout.SecondaryWeapon}");
+                Line($"{prefix}  FieldUpgrade: {loadout.FieldUpgrade}");
+                Values("Perks", loadout.Perks, spaces + 2);
             }
         }
 

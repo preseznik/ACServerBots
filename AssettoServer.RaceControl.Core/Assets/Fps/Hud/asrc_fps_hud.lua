@@ -5,13 +5,13 @@ This program is free software: you can redistribute it and/or modify it under th
 GNU Affero General Public License as published by the Free Software Foundation, version 3.
 ]]
 
-local bridgeProtocol = 16
+local bridgeProtocol = 17
 local actorCapacity = 32
 local grenadeCapacity = 8
 local killFeedCapacity = 6
 local awardPopupCapacity = 4
 local bridge = ac.connect({
-  ac.StructItem.key('asrc.fps.hud.v16'),
+  ac.StructItem.key('asrc.fps.hud.v17'),
   protocol = ac.StructItem.uint16(),
   onlineSequence = ac.StructItem.uint32(),
   onlineHeartbeat = ac.StructItem.float(),
@@ -32,6 +32,9 @@ local bridge = ac.connect({
   localSecondaryWeapon = ac.StructItem.byte(),
   localActiveSlot = ac.StructItem.byte(),
   localLethalsRemaining = ac.StructItem.byte(),
+  localFieldUpgrade = ac.StructItem.byte(),
+  localFieldCooldown = ac.StructItem.float(),
+  localDeadSilence = ac.StructItem.float(),
   localKills = ac.StructItem.uint16(),
   localDeaths = ac.StructItem.uint16(),
   localScore = ac.StructItem.uint32(),
@@ -477,6 +480,30 @@ local function drawAmmoPanel(size, scale, margin, state)
     ui.dwriteDrawTextClipped(tostring(value), fontSize * scale, point(x, y),
       point(x + w, y + h), ui.Alignment.Start, ui.Alignment.Center, false, color)
   end
+  if state.fieldUpgradeName ~= nil then
+    local active = (state.deadSilence or 0) > 0
+    local cooldown = math.max(0, state.fieldCooldown or 120)
+    local charge = math.clamp(1 - cooldown / 120, 0, 1)
+    local color = active and rgbm(0.5, 1, 0.8, 1) or cooldown > 0 and muted or cyan
+    ui.drawRectFilled(point(0, -47), point(360, -7), rgbm(0.035, 0.053, 0.061, 0.96), 5 * scale)
+    ui.drawRect(point(0, -47), point(360, -7), border, 5 * scale, nil, scale)
+    if state.fieldImagePath ~= nil then
+      -- Preserve alpha while making the uncharged silhouette genuinely gray.
+      ui.setShadingOffset(0, 0.35, 1, 0)
+      ui.drawImage(state.fieldImagePath, point(3, -45), point(39, -9), white, nil, nil, ui.ImageFit.Fit)
+      ui.resetShadingOffset()
+      if charge > 0 then
+        ui.pushClipRect(point(3, -9 - 36 * charge), point(39, -9), true)
+        ui.drawImage(state.fieldImagePath, point(3, -45), point(39, -9), white, nil, nil, ui.ImageFit.Fit)
+        ui.popClipRect()
+      end
+    end
+    text(state.fieldUpgradeName, 47, -44, 202, 19, 12, color)
+    text('X / LB + RB', 47, -25, 156, 16, 10, muted)
+    text(active and string.format('ACTIVE %.0fs', state.deadSilence)
+      or cooldown > 0 and string.format('%.0fs', math.ceil(cooldown)) or 'READY', 251, -41, 105, 28, 14, color)
+    ui.drawLine(point(5, -8), point(5 + 350 * charge, -8), color, scale)
+  end
   -- Separate alpha cutout: no backing, border or panel underneath the weapon.
   if state.imagePath ~= nil then
     if string.find(state.imagePath, 'asrc_carbine_hud.png', 1, true) ~= nil then
@@ -582,7 +609,13 @@ local function drawStatusWidgets(size, scale, margin)
 
   local activeWeapon = bridge.localActiveSlot == 1
     and bridge.localSecondaryWeapon or bridge.localMainWeapon
+  local fields = {'MUNITIONS BOX', 'DEAD SILENCE', 'TROPHY SYSTEM'}
+  local images = {'munitions_box', 'dead_silence', 'trophy_system'}
+  local field = bridge.localFieldUpgrade
   drawAmmoPanel(size, scale, margin, {
+    fieldUpgradeName = fields[field],
+    fieldImagePath = images[field] and (assettoRoot .. '/content/objects3D/asrc_fps/asrc_upgrade_' .. images[field] .. '.png'),
+    fieldCooldown = bridge.localFieldCooldown, deadSilence = bridge.localDeadSilence,
     weaponName = itemNames[activeWeapon], imagePath = weaponImages[activeWeapon],
     ammo = bridge.localAmmo, reserveMagazines = bridge.localReserveMagazines,
     magazineCapacity = bridge.localMagazineCapacity, reloadDuration = bridge.localReloadDuration,

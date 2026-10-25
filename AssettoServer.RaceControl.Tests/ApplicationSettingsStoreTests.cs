@@ -19,6 +19,8 @@ public sealed class ApplicationSettingsStoreTests
             LastPageIndex = 4,
             ConfirmBeforeStoppingServerOnExit = false,
             CompactGridRows = true,
+            CheckForUpdatesOnStartup = false,
+            IncludePreviewUpdates = true,
             AssettoCorsaRoot = @"C:\Games\Assetto Corsa",
             ServerPayloadPath = @"C:\Servers\AssettoServer",
             LastFpsTrackId = "bo2_nuketown_2020",
@@ -38,6 +40,8 @@ public sealed class ApplicationSettingsStoreTests
             Assert.That(loaded.LastPageIndex, Is.EqualTo(4));
             Assert.That(loaded.ConfirmBeforeStoppingServerOnExit, Is.False);
             Assert.That(loaded.CompactGridRows, Is.True);
+            Assert.That(loaded.CheckForUpdatesOnStartup, Is.False);
+            Assert.That(loaded.IncludePreviewUpdates, Is.True);
             Assert.That(loaded.AssettoCorsaRoot, Is.EqualTo(@"C:\Games\Assetto Corsa"));
             Assert.That(loaded.ServerPayloadPath, Is.EqualTo(@"C:\Servers\AssettoServer"));
             Assert.That(loaded.LastFpsTrackId, Is.EqualTo("bo2_nuketown_2020"));

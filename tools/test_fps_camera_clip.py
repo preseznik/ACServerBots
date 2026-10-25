@@ -18,7 +18,7 @@ def main():
     lua = LuaRuntime()
     lua.execute('''
       now=10; calls={}; warnings={}; logs={}; releases={}; script={}
-      bridgeProtocol=16
+      bridgeProtocol=17
       bridge={protocol=0, gameplayActive=0, onlineHeartbeat=10, persistentCursor=0}
       sim={isSessionStarted=true, isLive=true, cameraClipNear=0.1}
       ui={time=function() return now end}
@@ -53,7 +53,7 @@ def main():
       -- Ordinary racing never acquires the global override.
       for i=1,10 do tick(0.1, true) end
       assert(#calls==0)
-      bridge.protocol=16; bridge.gameplayActive=1
+      bridge.protocol=17; bridge.gameplayActive=1
       tick(0.6, false); assert(#calls==0) -- stale FPS session
       tick(0.01, true); assert(#calls==1 and calls[1]>0 and calls[1]<0.01)
       local near=calls[1]
@@ -74,7 +74,7 @@ def main():
       tick(0.6, false); expectReleased() -- lost online script / disconnect
       tick(0.01, true); assert(calls[#calls]==near)
       bridge.protocol=13; tick(0.01, true); expectReleased()
-      bridge.protocol=16; tick(0.01, true); assert(calls[#calls]==near)
+      bridge.protocol=17; tick(0.01, true); assert(calls[#calls]==near)
       bridge.gameplayActive=0; tick(0.01, true); expectReleased()
       bridge.gameplayActive=1; tick(0.01, true); assert(calls[#calls]==near)
       bridge.onlineHeartbeat=now+2; tick(0.01, false); expectReleased()

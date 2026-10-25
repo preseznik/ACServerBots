@@ -94,6 +94,22 @@ public static class FpsClientPackAssets
         LoadoutImageFileNames.Select(fileName => ($"content/objects3D/asrc_fps/{fileName}",
             ReadEmbeddedPng($"AssettoServer.RaceControl.Core.Assets.Fps.{fileName}"))).ToArray();
 
+    public static readonly string[] AbilityImageFileNames =
+    [
+        "asrc_upgrade_munitions_box.png", "asrc_upgrade_dead_silence.png", "asrc_upgrade_trophy_system.png",
+        "asrc_perk_slipstream.png", "asrc_perk_ninja.png", "asrc_perk_vision.png", "asrc_perk_engineer.png",
+        "asrc_perk_flack_jacket.png", "asrc_perk_fast_hands.png", "asrc_perk_gear_head.png",
+    ];
+    public static readonly string[] FieldModelFileNames = ["asrc_munitions_box.kn5", "asrc_trophy_system.kn5"];
+
+    public static IReadOnlyList<(string Path, byte[] Data)> GetAbilityAssets() =>
+        AbilityImageFileNames.Select(name => ($"content/objects3D/asrc_fps/{name}",
+                ReadEmbeddedPng($"AssettoServer.RaceControl.Core.Assets.Fps.{name}")))
+            .Concat(FieldModelFileNames.Select(name => ($"content/objects3D/asrc_fps/{name}",
+                ReadEmbeddedKn5($"AssettoServer.RaceControl.Core.Assets.Fps.{name}"))))
+            .Append(("content/objects3D/asrc_fps/asrc_perks_provenance.txt",
+                ReadEmbeddedText("AssettoServer.RaceControl.Core.Assets.Fps.asrc_perks_provenance.txt"))).ToArray();
+
     public static byte[] GetRifleViewmodel() => ReadEmbeddedKn5(
         "AssettoServer.RaceControl.Core.Assets.Fps.asrc_assault_rifle_viewmodel.kn5");
 

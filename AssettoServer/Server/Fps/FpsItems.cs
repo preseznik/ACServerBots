@@ -1,11 +1,21 @@
 using System;
+using System.Linq;
 using AssettoServer.Network.ClientMessages;
 using AssettoServer.Server.Configuration.Extra;
 
 namespace AssettoServer.Server.Fps;
 
 internal readonly record struct FpsLoadout(FpsWeaponType MainWeapon,
-    FpsLethalType Lethal, FpsWeaponType SecondaryWeapon);
+    FpsLethalType Lethal, FpsWeaponType SecondaryWeapon,
+    FpsFieldUpgrade FieldUpgrade = FpsFieldUpgrade.MunitionsBox,
+    FpsPerk Perk1 = FpsPerk.None, FpsPerk Perk2 = FpsPerk.None, FpsPerk Perk3 = FpsPerk.None)
+{
+    public bool HasPerk(FpsPerk perk) => perk != FpsPerk.None
+        && (Perk1 == perk || Perk2 == perk || Perk3 == perk);
+    public byte PerkMask => (byte)((Perk1 == 0 ? 0 : 1 << (int)Perk1)
+        | (Perk2 == 0 ? 0 : 1 << (int)Perk2) | (Perk3 == 0 ? 0 : 1 << (int)Perk3));
+    public int LethalCapacity => HasPerk(FpsPerk.GearHead) ? 2 : 1;
+}
 
 internal readonly record struct FpsEffectiveRange(float MaximumDamageEndMeters,
     float MediumDamageEndMeters, float MediumDamageMultiplier,
@@ -66,7 +76,9 @@ internal static class FpsItems
 
     public static FpsLoadout FromConfiguration(FpsLoadoutSelectionConfiguration selection) =>
         new((FpsWeaponType)selection.MainWeapon, (FpsLethalType)selection.Lethal,
-            (FpsWeaponType)selection.SecondaryWeapon);
+            (FpsWeaponType)selection.SecondaryWeapon, selection.FieldUpgrade,
+            selection.Perks.ElementAtOrDefault(0), selection.Perks.ElementAtOrDefault(1),
+            selection.Perks.ElementAtOrDefault(2));
 
     public static bool IsAllowed(FpsLoadoutConfiguration configuration,
         in FpsLoadout loadout) =>
@@ -76,5 +88,13 @@ internal static class FpsItems
             (FpsSecondaryWeapon)loadout.SecondaryWeapon)
         && loadout.MainWeapon is FpsWeaponType.AssaultRifle or FpsWeaponType.CompactSmg
         && loadout.SecondaryWeapon is FpsWeaponType.DesertEagle or FpsWeaponType.Colt1911
-        && loadout.Lethal is FpsLethalType.FragGrenade or FpsLethalType.StickyGrenade;
+        && loadout.Lethal is FpsLethalType.FragGrenade or FpsLethalType.StickyGrenade
+        && Enum.IsDefined(loadout.FieldUpgrade) && configuration.AllowedFieldUpgrades.Contains(loadout.FieldUpgrade)
+        && PerkAllowed(configuration, loadout.Perk1) && PerkAllowed(configuration, loadout.Perk2)
+        && PerkAllowed(configuration, loadout.Perk3)
+        && (loadout.Perk1 == FpsPerk.None || (loadout.Perk1 != loadout.Perk2 && loadout.Perk1 != loadout.Perk3))
+        && (loadout.Perk2 == FpsPerk.None || loadout.Perk2 != loadout.Perk3);
+
+    private static bool PerkAllowed(FpsLoadoutConfiguration configuration, FpsPerk perk) =>
+        perk == FpsPerk.None || (Enum.IsDefined(perk) && configuration.AllowedPerks.Contains(perk));
 }

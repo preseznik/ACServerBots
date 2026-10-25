@@ -181,7 +181,7 @@ public static class Program
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine($"Race physics preparation failed: {exception.GetType().Name}: {exception.Message}");
+                Console.Error.WriteLine($"Race physics preparation failed: {exception}");
                 Environment.ExitCode = 2;
             }
             return;

@@ -45,6 +45,7 @@ def main():
         hud = {loadout={activeSlot=1,confirmed=true},awardPopups={'old award'}}
         fpsVisual = {grenades={[1]={}},pickups={[1]={root={dispose=function() disposed=disposed+1 end}}}}
         fpsVisual.removeGrenade = function(id) fpsVisual.grenades[id]=nil end
+        fpsVisual.resetAbilities = function() end
         message = {state=2,restartCountdownSeconds=10,startCountdownSeconds=0,
                    remainingSeconds=200,maximumHealth=100,killLimit=20,winnerID=0,
                    matchType=0,winnerTeam=0,team1Kills=0,team2Kills=0,weatherType=0,timeOfDaySeconds=0}

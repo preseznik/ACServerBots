@@ -59,7 +59,7 @@ FORWARD_AXIS_ROTATIONS = {
 class NodeWriter(KN5Writer):
     def __init__(self, file, context, settings, warnings, material_writer,
                  root_node_name="BlenderFile", even_split=False, forward_axis='-Y',
-                 separate_mesh_node_names=False):
+                 separate_mesh_node_names=False, transform_tangent_space=False):
         super().__init__(file)
 
         self.context = context
@@ -70,6 +70,7 @@ class NodeWriter(KN5Writer):
         self.even_split = even_split
         self.forward_axis = forward_axis
         self.separate_mesh_node_names = separate_mesh_node_names
+        self.transform_tangent_space = transform_tangent_space
         self.scene = self.context.scene
         self.node_settings = []
         self.ac_objects = []
@@ -313,6 +314,8 @@ class NodeWriter(KN5Writer):
         self.write_float(sphere_radius)
 
     def _split_object_by_materials(self, obj, armature=None):
+        if self.transform_tangent_space and armature is not None:
+            raise ValueError("World tangent-space export is only supported for rigid meshes")
         meshes = []
         mesh_copy = obj.to_mesh()
 
@@ -330,6 +333,11 @@ class NodeWriter(KN5Writer):
             mesh_triangles = mesh_copy.loop_triangles[:]
             uv_layer = mesh_copy.uv_layers.active
             matrix = obj.matrix_world
+            if self.transform_tangent_space:
+                direction_matrix = matrix.to_3x3()
+                if abs(direction_matrix.determinant()) < 1e-12:
+                    raise ValueError(f"Singular tangent-space transform for '{obj.name}'")
+                normal_matrix = direction_matrix.inverted().transposed()
             skin_binding = self._create_skin_binding(obj, armature) if armature else None
 
             if not mesh_copy.materials:
@@ -362,6 +370,16 @@ class NodeWriter(KN5Writer):
                         else:
                             uv = self._calculate_uvs(obj, mesh_copy, material_index, local_position)
                         tangent = loop.tangent
+                        if self.transform_tangent_space:
+                            # Opt-in for rigid map meshes: vertices are already in world
+                            # space, so both directions need the same object/AC transform.
+                            normal = (normal_matrix @ loop.normal).normalized()
+                            tangent = direction_matrix @ tangent
+                            tangent -= normal * normal.dot(tangent)
+                            if tangent.length_squared < 1e-12:
+                                raise ValueError(f"Degenerate UV tangent in '{obj.name}'")
+                            converted_normal = convert_vector3(normal)
+                            tangent = convert_vector3(tangent.normalized())
                         if skin_binding:
                             weights, bone_indices = self._get_vertex_weights(
                                 obj, mesh_vertices[loop.vertex_index], skin_binding)

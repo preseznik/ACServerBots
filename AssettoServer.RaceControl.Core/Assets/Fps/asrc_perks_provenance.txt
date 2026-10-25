@@ -1,0 +1,16 @@
+FPS field upgrades and perks - original generated assets, 2026-09-12
+
+Munitions Box: Tripo P1 text-to-model, task 6a78d140-0954-4f63-bdd0-dc371fb5a8d5 (40 credits).
+Trophy System: Tripo P1 text-to-model, task cbb0df44-88ba-40ef-a0d6-50b37ba3936d (40 credits).
+Original prompts requested olive military game props, no logos, low-poly, 6000-face limit, standard PBR textures.
+GLB sources and Tripo metadata retained in .artifacts/fps-field-upgrades/tripo-out/.
+Converted locally with tools/build_fps_field_upgrade_assets.py using Blender 5.1.2 and the existing KN5 exporter.
+Both models use 1024px diffuse textures and bottom-centred metre-scale pivots.
+
+The ten perk / field-upgrade icons were generated with the built-in imagegen skill.
+Style: original military videogame perk emblem, olive/steel object, navy silhouette,
+white edge accents and cyan highlights, no text, transparent background.
+Subjects: ammunition case, suppressed skull, defensive tripod, speed boot, ninja hood,
+infrared eye, engineer tools, blast vest, quick hands, pair of grenades.
+Generation prompts and asset workflow are documented in docs/FPS_PERKS.md.
+No Sketchfab assets were added for this feature.

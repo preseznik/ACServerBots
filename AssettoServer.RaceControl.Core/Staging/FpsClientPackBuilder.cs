@@ -5,9 +5,9 @@ namespace AssettoServer.RaceControl.Core.Staging;
 
 public static class FpsClientPackBuilder
 {
-    public const int ClientPackVersion = 57;
-    public const int BridgeProtocol = 16;
-    public const string DefaultFileName = "asrc-fps-compatibility-client-v57.zip";
+    public const int ClientPackVersion = 60;
+    public const int BridgeProtocol = 17;
+    public const string DefaultFileName = "asrc-fps-compatibility-client-v60.zip";
     public const string MinimumCspVersion = "0.3.0-preview520";
 
     public static async Task WriteAsync(Stream destination, string carrierCarId,
@@ -44,6 +44,7 @@ public static class FpsClientPackBuilder
         byte[] hudScript = FpsClientPackAssets.GetHudScript();
         byte[] hudWeaponImage = FpsClientPackAssets.GetHudWeaponImage();
         IReadOnlyList<(string Path, byte[] Data)> loadoutImages = FpsClientPackAssets.GetLoadoutImages();
+        var abilityAssets = FpsClientPackAssets.GetAbilityAssets();
         IReadOnlyList<(string Path, byte[] Data)> audioAssets =
             FpsClientPackAssets.GetAudioAssets();
         (string Path, byte[] Data) audioManifest = audioAssets.Single(asset =>
@@ -70,7 +71,8 @@ public static class FpsClientPackBuilder
         {
             await JsonSerializer.SerializeAsync(manifestStream, new
             {
-                protocol = 6,
+                protocol = 7,
+                abilityAssets = abilityAssets.Select(asset => new { path = asset.Path, sha256 = FpsClientPackAssets.Sha256(asset.Data) }),
                 clientPackVersion = ClientPackVersion,
                 compatibilityGate = true,
                 minimumCspVersion = MinimumCspVersion,
@@ -176,7 +178,7 @@ public static class FpsClientPackBuilder
                 hud = new
                 {
                     app = "ASRC FPS HUD",
-                    bridge = "asrc.fps.hud.v16",
+                    bridge = $"asrc.fps.hud.v{BridgeProtocol}",
                     bridgeProtocol = BridgeProtocol,
                     manifestPath = FpsClientPackAssets.HudManifestPath,
                     manifestSha256 = FpsClientPackAssets.Sha256(hudManifest),
@@ -293,7 +295,7 @@ public static class FpsClientPackBuilder
             cancellationToken);
         await WriteEntryAsync(archive, FpsClientPackAssets.HudWeaponImagePath, hudWeaponImage,
             cancellationToken);
-        foreach ((string path, byte[] data) in loadoutImages)
+        foreach ((string path, byte[] data) in loadoutImages.Concat(abilityAssets))
             await WriteEntryAsync(archive, path, data, cancellationToken);
         foreach ((string path, byte[] data) in audioAssets)
             await WriteEntryAsync(archive, path, data, cancellationToken);

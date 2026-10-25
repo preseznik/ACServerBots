@@ -44,7 +44,7 @@ public class OnlineEventGeneratorTests
         Assert.That(catalog.Structure, Does.Contain("uint32_t allowedOfficerSkins"));
         Assert.That(catalog.Structure, Does.Contain("uint32_t allowedGhostSkins"));
         Assert.That(catalog.Structure, Does.Contain("uint8_t defaultOperatorSkin"));
-        Assert.That(new FpsReadyPacket().Protocol, Is.EqualTo(6));
+        Assert.That(new FpsReadyPacket().Protocol, Is.EqualTo(7));
     }
 
     [Test]
@@ -61,6 +61,7 @@ public class OnlineEventGeneratorTests
             typeof(FpsAwardPacket), typeof(FpsPickupPacket), typeof(FpsShotPacket),
             typeof(FpsGrenadeSnapshotPacket), typeof(FpsGrenadeExplodedPacket),
             typeof(FpsClientDiagnosticPacket),
+            typeof(FpsAbilitiesPacket), typeof(FpsFieldDevicePacket),
         ];
         var definitions = packets.Select(OnlineEventGenerator.ParseClientMessage).ToArray();
         var snapshotDefinition = definitions.Single(definition => definition.Key == "ASRC_FpsSnapshot");
@@ -151,6 +152,8 @@ public class OnlineEventGeneratorTests
             Assert.That(FpsWorld.UsesUdpTransport<FpsShotPacket>(), Is.True);
             Assert.That(FpsWorld.UsesUdpTransport<FpsSnapshotPacket>(), Is.True);
             Assert.That(FpsWorld.UsesUdpTransport<FpsGrenadeSnapshotPacket>(), Is.True);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsAbilitiesPacket>(), Is.True);
+            Assert.That(FpsWorld.UsesUdpTransport<FpsFieldDevicePacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsBoundaryPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsHitPacket>(), Is.False);
             Assert.That(FpsWorld.UsesUdpTransport<FpsKillPacket>(), Is.False);

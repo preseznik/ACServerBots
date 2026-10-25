@@ -13,7 +13,7 @@ namespace AssettoServer.Server.Fps;
 
 internal sealed class FpsArenaAsset
 {
-    public const int CurrentPreparationVersion = 4;
+    public const int CurrentPreparationVersion = 5;
     public int PreparationVersion { get; init; } = CurrentPreparationVersion;
     public required string TrackId { get; init; }
     public required string LayoutId { get; init; }
@@ -24,6 +24,7 @@ internal sealed class FpsArenaAsset
     public required IReadOnlyList<FpsArenaSpawn> SpawnPoints { get; init; }
     public required FpsArenaNavigationSummary Navigation { get; init; }
     public FpsArenaCollisionSummary? Collision { get; init; }
+    public int MovementVolumeCount { get; init; }
     public float BoundsPaddingMeters { get; init; } = 45;
     public IReadOnlyList<string> CollisionIncludeMeshes { get; init; } = [];
     public IReadOnlyList<string> CollisionExcludeMeshes { get; init; } = [];
@@ -82,6 +83,7 @@ internal static class FpsArenaAssetBuilder
         var supplementalTriangles = new List<Kn5Triangle>();
         var grid = new SortedDictionary<int, RaceGridPose>();
         var boundary = new SortedDictionary<int, RaceGridPose>();
+        var movementNodes = new List<(string Name, Vector3 Position)>();
         string[] includePatterns = NormalizePatterns(collisionIncludeMeshes);
         string[] excludePatterns = NormalizePatterns(collisionExcludeMeshes);
         int collisionMeshes = 0;
@@ -103,6 +105,8 @@ internal static class FpsArenaAssetBuilder
             }
             foreach (var node in model.NamedTransforms)
             {
+                if (node.Name.StartsWith("FPS_MOVEBOX_", StringComparison.OrdinalIgnoreCase))
+                    movementNodes.Add((node.Name, node.Transform.Translation));
                 var match = GridNodeRegex.Match(node.Name);
                 if (match.Success)
                     grid.TryAdd(int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
@@ -162,7 +166,8 @@ internal static class FpsArenaAssetBuilder
 
         var boundsMin = new FpsArenaPoint(minX, minY, minZ);
         var boundsMax = new FpsArenaPoint(maxX, maxY, maxZ);
-        var surface = new FpsArenaSurface(arenaTriangles);
+        var movementBoxes = ParseMovementBoxes(movementNodes);
+        var surface = new FpsArenaSurface(arenaTriangles, movementBoxes);
         var navigation = FpsArenaNavigationBuilder.Build(surface, boundsMin, boundsMax, spawns,
             playableBoundary);
         var asset = new FpsArenaAsset
@@ -181,6 +186,7 @@ internal static class FpsArenaAssetBuilder
             Collision = new FpsArenaCollisionSummary(1, surface.TriangleCount,
                 surface.BvhNodeCount, surface.BvhLeafCount,
                 surface.BvhMaximumLeafTriangles),
+            MovementVolumeCount = movementBoxes.Count,
             BoundsPaddingMeters = boundsPaddingMeters,
             CollisionIncludeMeshes = includePatterns,
             CollisionExcludeMeshes = excludePatterns,
@@ -192,7 +198,7 @@ internal static class FpsArenaAssetBuilder
             WriteIndented = true,
         }));
         if (!string.IsNullOrWhiteSpace(geometryOutputPath))
-            new FpsArenaGeometryAsset { Triangles = arenaTriangles }.Save(geometryOutputPath);
+            new FpsArenaGeometryAsset { Triangles = arenaTriangles, MovementBoxes = movementBoxes }.Save(geometryOutputPath);
         if (!string.IsNullOrWhiteSpace(navigationOutputPath))
             navigation.Asset.Save(navigationOutputPath);
         return new FpsArenaBuildResult(spawns.Length, arenaTriangles.Length,
@@ -203,10 +209,40 @@ internal static class FpsArenaAssetBuilder
             surface.BvhMaximumLeafTriangles);
     }
 
+    internal static IReadOnlyList<FpsMovementBox> ParseMovementBoxes(
+        IEnumerable<(string Name, Vector3 Position)> nodes)
+    {
+        var groups = new SortedDictionary<int, Dictionary<string, Vector3>>();
+        foreach (var (name, position) in nodes)
+        {
+            var match = Regex.Match(name, "^FPS_MOVEBOX_([0-9]+)_(CENTER|X|Y|Z)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!match.Success || !int.TryParse(match.Groups[1].Value, out int index)
+                || index is < 0 or >= 256)
+                throw new InvalidDataException($"Invalid movement-volume node: {name}");
+            if (!groups.TryGetValue(index, out var parts)) groups[index] = parts = new();
+            if (!parts.TryAdd(match.Groups[2].Value.ToUpperInvariant(), position))
+                throw new InvalidDataException($"Duplicate movement-volume node: {name}");
+        }
+        if (!groups.Keys.SequenceEqual(Enumerable.Range(0, groups.Count)))
+            throw new InvalidDataException("FPS_MOVEBOX indices must be contiguous from zero");
+        var result = new List<FpsMovementBox>();
+        foreach (var parts in groups.Values)
+        {
+            if (parts.Count != 4)
+                throw new InvalidDataException("FPS_MOVEBOX requires CENTER, X, Y and Z nodes");
+            var center = parts["CENTER"];
+            result.Add(new(center, parts["X"] - center, parts["Y"] - center, parts["Z"] - center));
+        }
+        return result;
+    }
+
     internal static bool ShouldIncludeMesh(string name, bool collisionProxy,
         IReadOnlyList<string>? includePatterns = null,
         IReadOnlyList<string>? excludePatterns = null)
     {
+        // Reserved metadata must never become shot collision, even via a broad include rule.
+        if (name.StartsWith("FPS_MOVEBOX_", StringComparison.OrdinalIgnoreCase)) return false;
         if (MatchesAny(name, excludePatterns)) return false;
         if (RacePhysicsAssetBuilder.IsPhysicalTrackMesh(name)) return true;
         if (MatchesAny(name, includePatterns)) return true;

@@ -15,7 +15,7 @@ public sealed class FpsClientAssetArchiveTests
         Assert.That(bytes, Has.Length.GreaterThan(10_000));
         Assert.That(bytes.AsSpan(0, 2).SequenceEqual("PK"u8), Is.True);
         Assert.That(FpsClientAssetArchive.Route,
-            Is.EqualTo("/fps/assets/asrc-fps-assets-v22.zip"));
+            Is.EqualTo("/fps/assets/asrc-fps-assets-v23.zip"));
         Assert.That(archive.Entries.Select(entry => entry.FullName), Is.EquivalentTo(new[]
         {
             FpsClientAssetArchive.ViewmodelFileName,
@@ -40,7 +40,10 @@ public sealed class FpsClientAssetArchiveTests
             .Concat(FpsClientAssetArchive.DesertEagleAnimationFileNames)
             .Concat(FpsClientAssetArchive.Colt1911AnimationFileNames)
             .Concat(FpsClientAssetArchive.GrenadeModelFileNames)
-            .Concat(FpsClientAssetArchive.LoadoutImageFileNames)));
+            .Concat(FpsClientAssetArchive.LoadoutImageFileNames)
+            .Concat(FpsClientAssetArchive.AbilityImageFileNames)
+            .Concat(FpsClientAssetArchive.FieldModelFileNames)
+            .Append("asrc_perks_provenance.txt")));
 
         Assert.Multiple(() =>
         {
@@ -51,6 +54,11 @@ public sealed class FpsClientAssetArchiveTests
                 {
                     using var reader = new StreamReader(asset);
                     string attribution = reader.ReadToEnd();
+                    if (entry.FullName == "asrc_perks_provenance.txt")
+                    {
+                        Assert.That(attribution, Does.Contain("Tripo").And.Contain("imagegen"));
+                        continue;
+                    }
                     string expectedAuthor = entry.FullName switch
                     {
                         var name when name == FpsClientAssetArchive.CompactSmgAttributionFileName =>

@@ -4,7 +4,10 @@ param(
     [Parameter(Mandatory)][string]$ServerPayload,
     [string]$ProfileDirectory = (Join-Path $env:LOCALAPPDATA 'AssettoServer Race Control'),
     [string]$AssettoCorsaRoot,
-    [string]$OutputDirectory = 'Release/Content'
+    [string]$OutputDirectory = 'Release/Content',
+    [string[]]$TrackIds = @('bo2_nuketown_2020','fire_pit','krvava_rotunda','shipment_1519','css_dust2','last_shift'),
+    [ValidateRange(1, [int]::MaxValue)][int]$MapPackVersion = 2,
+    [hashtable]$MapSourceRoots = @{}
 )
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -54,8 +57,9 @@ $workPaths=[AssettoServer.RaceControl.Core.Infrastructure.RaceControlPaths]::new
 $workPaths.ConfigureProcessStorage()
 $preparer=[AssettoServer.RaceControl.Core.Staging.FpsArenaPreparationService]::new(
     [AssettoServer.RaceControl.Core.Storage.FpsArenaStore]::new($workPaths),$workPaths)
-$entries=@(foreach($id in @('bo2_nuketown_2020','fire_pit','krvava_rotunda','shipment_1519')) {
-    $source=Join-Path $AssettoCorsaRoot ('content/tracks/'+$id)
+$entries=@(foreach($id in $TrackIds) {
+    $sourceRoot=if ($MapSourceRoots.ContainsKey($id)) { $MapSourceRoots[$id] } else { $AssettoCorsaRoot }
+    $source=Join-Path $sourceRoot ('content/tracks/'+$id)
     $target=Join-Path $maps ('content/tracks/'+$id)
     New-Item -ItemType Directory -Path $target -Force | Out-Null
     foreach($file in Get-ChildItem -LiteralPath $source -Recurse -File) {
@@ -72,10 +76,11 @@ $entries=@(foreach($id in @('bo2_nuketown_2020','fire_pit','krvava_rotunda','shi
     $preset.TrackId=$id
     $preset.Fps.Arena=$arena
     $preset.Fps.ArenaBoundsPaddingMeters=$arena.BoundsPaddingMeters
-    $track=$catalog.Tracks | Where-Object { $_.TrackId -eq $id -and $_.LayoutId -eq '' } | Select-Object -First 1
+    $mapCatalog=if ($MapSourceRoots.ContainsKey($id)) { [AssettoServer.RaceControl.Core.Content.AcContentScanner]::new().Scan($sourceRoot) } else { $catalog }
+    $track=$mapCatalog.Tracks | Where-Object { $_.TrackId -eq $id -and $_.LayoutId -eq '' } | Select-Object -First 1
     $cache=$getCache.Invoke($null,@($profilePaths.PSObject.BaseObject,$preset.PSObject.BaseObject,$track.PSObject.BaseObject))
     $refreshed=$false
-    if ($arena.PreparationVersion -ne [AssettoServer.RaceControl.Core.Models.FpsArenaDefinition]::CurrentPreparationVersion -or -not $cache.IsComplete) {
+    if ($MapSourceRoots.ContainsKey($id) -or $arena.PreparationVersion -ne [AssettoServer.RaceControl.Core.Models.FpsArenaDefinition]::CurrentPreparationVersion -or -not $cache.IsComplete) {
         Write-Host "Refreshing obsolete/missing preparation for $id in isolated staging..."
         $arena=$preparer.PrepareAsync($preset,$track,$null,[Threading.CancellationToken]::None).GetAwaiter().GetResult()
         $preset.Fps.Arena=$arena
@@ -103,11 +108,11 @@ $entries=@(foreach($id in @('bo2_nuketown_2020','fire_pit','krvava_rotunda','shi
     Write-Host "Captured $id, version $($ui.version), $($arena.SpawnPoints.Count) spawn points."
     [ordered]@{trackId=$id;name=$ui.name;version=$ui.version;preparationRefreshed=$refreshed;spawnPoints=$arena.SpawnPoints.Count}
 })
-Save-Json (Join-Path $maps 'asrc-fps-maps.json') ([ordered]@{schemaVersion=1;packVersion=1;preparationVersion=4;maps=$entries})
+Save-Json (Join-Path $maps 'asrc-fps-maps.json') ([ordered]@{schemaVersion=1;packVersion=$MapPackVersion;preparationVersion=[AssettoServer.RaceControl.Core.Models.FpsArenaDefinition]::CurrentPreparationVersion;maps=$entries})
 $notice=@'
 FPS maps for AssettoServer Race Control
 ======================================
-Includes Nuketown, Fire Pit, Krvava Rotunda and Shipment 1519, plus their
+Includes Nuketown, Fire Pit, Krvava Rotunda, Shipment 1519, Dust II and Last Shift, plus their
 arena definitions and prepared geometry/navigation. All settings are portable;
 no installation paths, original preset IDs, history or local catalog is included.
 
@@ -123,7 +128,7 @@ Diagnostic conversion reports and historical preparation backups are omitted.
 [IO.File]::WriteAllText((Join-Path $maps 'README.txt'),$notice)
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE'),(Join-Path $repo 'THIRD_PARTY_NOTICES.md') -Destination $maps
 # Fail closed on source-PC paths/identities in the newly captured text defaults/content.
-$private=@('[A-Za-z]:[\\/]','\\\\[^\\\s]+\\','7656119\d{10}')
+$private=@('(?<![A-Za-z0-9])[A-Za-z]:[\\/]','\\\\[^\\\s]+\\','7656119\d{10}')
 foreach($token in @($env:USERNAME,$env:COMPUTERNAME)) {
     if($token.Length -ge 4) { $private += '\b'+[Regex]::Escape($token)+'\b' }
 }
