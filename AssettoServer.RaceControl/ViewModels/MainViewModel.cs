@@ -861,26 +861,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
 
             string detectedAcRoot = InstallationLocator.FindAssettoCorsaRoot() ?? Preset.AssettoCorsaRoot;
-            string detectedPayload = FindServerPayload() ?? string.Empty;
             string? configuredAcRoot = ExistingDirectory(settings?.AssettoCorsaRoot);
-            string? configuredPayload = ExistingServerPayload(settings?.ServerPayloadPath);
             if (settings?.LoadMostRecentPresetOnStartup == true && _presetStore.List().FirstOrDefault() is { } recent)
             {
                 Preset = _presetStore.Load(recent.Path);
                 Preset.AssettoCorsaRoot = configuredAcRoot
                     ?? ExistingDirectory(Preset.AssettoCorsaRoot)
                     ?? detectedAcRoot;
-                Preset.ServerPayloadPath = configuredPayload
-                    ?? ExistingServerPayload(Preset.ServerPayloadPath)
-                    ?? detectedPayload;
+                Preset.ServerPayloadPath = FindServerPayload(settings.ServerPayloadPath, Preset.ServerPayloadPath)
+                    ?? string.Empty;
                 SelectedSavedPreset = recent;
             }
             else
             {
+                string payload = FindServerPayload(settings?.ServerPayloadPath) ?? string.Empty;
                 Preset = new ReleaseDefaults(_paths).CreateStartupPreset(
-                    configuredAcRoot ?? detectedAcRoot, configuredPayload ?? detectedPayload)
+                    configuredAcRoot ?? detectedAcRoot, payload)
                     ?? RaceControlPreset.CreateDefault(configuredAcRoot ?? detectedAcRoot,
-                        configuredPayload ?? detectedPayload);
+                        payload);
                 Preset.Network.BindAddress = NetworkAddressService.GetPreferredPrivateIpv4();
             }
             RememberModeDraft(Preset);
@@ -1234,12 +1232,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private static string? ExistingDirectory(string? path) =>
         !string.IsNullOrWhiteSpace(path) && Directory.Exists(path) ? path : null;
-
-    private static string? ExistingServerPayload(string? path) =>
-        !string.IsNullOrWhiteSpace(path)
-        && File.Exists(Path.Combine(path, "AssettoServer.exe"))
-            ? path
-            : null;
 
     private void ApplyPresetToUi(RaceControlPreset preset)
     {
@@ -2687,37 +2679,26 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private static string? FindServerPayload()
+    private string? FindServerPayload(params string?[] preferredPaths)
     {
-        var bundled = Path.Combine(AppContext.BaseDirectory, "lib", "Server");
-        if (File.Exists(Path.Combine(bundled, "AssettoServer.exe")))
+        List<string?> candidates =
+        [
+            .. preferredPaths,
+            Path.Combine(_paths.PackageRoot, "lib", "Server"),
+            Path.Combine(_paths.ServersDirectory, AssettoServer.Release.ReleaseIdentity.Version)
+        ];
+        if (!_paths.IsPortable && !File.Exists(Path.Combine(_paths.PackageRoot, "release-build.json")))
         {
-            return bundled;
+            var directory = new DirectoryInfo(_paths.PackageRoot);
+            while (directory is not null)
+            {
+                candidates.Add(Path.Combine(directory.FullName, "out-race-control", "lib", "Server"));
+                candidates.Add(Path.Combine(directory.FullName, "out-win-x64"));
+                directory = directory.Parent;
+            }
         }
 
-        var releasePaths = new RaceControlPaths();
-        var downloaded = Path.Combine(releasePaths.ServersDirectory, AssettoServer.Release.ReleaseIdentity.Version);
-        if (File.Exists(Path.Combine(downloaded, "AssettoServer.exe"))) return downloaded;
-        if (releasePaths.IsPortable || File.Exists(Path.Combine(AppContext.BaseDirectory, "release-build.json")))
-            return null;
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            var packaged = Path.Combine(directory.FullName, "out-race-control", "lib", "Server");
-            if (File.Exists(Path.Combine(packaged, "AssettoServer.exe")))
-            {
-                return packaged;
-            }
-
-            var candidate = Path.Combine(directory.FullName, "out-win-x64");
-            if (File.Exists(Path.Combine(candidate, "AssettoServer.exe")))
-            {
-                return candidate;
-            }
-            directory = directory.Parent;
-        }
-
-        return null;
+        return ServerPayloadLocator.Find(AssettoServer.Release.ReleaseIdentity.IsReleaseBuild, candidates.ToArray());
     }
 
     private static void RunOnUi(Action action)
