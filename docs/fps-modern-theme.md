@@ -12,6 +12,14 @@ validation, and outstanding release requirements are documented in [fps-operator
 Standing locomotion uses Quaternius Source clips shared by both operators. See
 [fps-locomotion.md](fps-locomotion.md) for conversion, playback and validation.
 
+## Released component baseline
+
+Race Control 0.1.4 distributes both themes in client pack **60**, with Modern archive
+**v14** and base archive **v23** served by the host. Map pack **2** includes six arenas
+prepared with format **5**. See [Race Control installation guidance](race-control.md#fps-matches).
+Older pack and protocol numbers below describe the original implementation milestones;
+they are not the current installation inventory.
+
 ## Source and redistribution record
 
 The user confirmed redistribution rights for generated derivatives of these supplied sources:
@@ -193,3 +201,4 @@ actor and the defeated owner cannot consume it.
 Record the CSP build, actor count, arena, and result here when that live gate is completed. If
 preview520 crashes in native skinned loading, keep Blocks as the only release theme and treat Modern
 as blocked by CSP rather than converting it to a rigid model.
+
