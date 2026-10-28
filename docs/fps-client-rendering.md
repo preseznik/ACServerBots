@@ -554,4 +554,3 @@ Preview images approximate CSP rendering; actual gameplay remains the visual acc
 
 Client pack **51** includes HUD app **1.14.0**, FPS network protocol **6**, and Modern archive **11**.
 The network and asset revisions also cover the team operators and separate skin selection.
-

@@ -332,4 +332,3 @@ Frag damage falls off across a 7.5 m blast radius; Sticky damage falls off acros
 - Track UI metadata can overstate pit capacity. After physics preparation, Race Control reads the actual contiguous `AC_START_n` count and drops trailing staged entries rather than advertising invalid slots.
 - The server derives bounded vehicle-controller values from `ui_car.json`; exact collision geometry does not turn the server into Kunos' proprietary tyre, suspension, aero, or damage simulation.
 - Public hosting, automatic firewall rule changes, port forwarding, remote spectator administration, and remote server management are intentionally out of scope for this LAN release.
-
