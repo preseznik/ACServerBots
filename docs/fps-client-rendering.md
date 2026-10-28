@@ -1,5 +1,14 @@
 # FPS client rendering handoff
 
+## Released component baseline
+
+Race Control 0.1.4 ships client pack **60**, HUD app **1.17.2**, HUD bridge
+`asrc.fps.hud.v17`, and ready protocol **7**. Map pack **2** contains six arenas
+prepared with format **5**. These client and map packs are unchanged from 0.1.3.
+Use the [Race Control installation guidance](race-control.md#fps-matches) for current setup.
+The sections below record feature milestones and their validation; their older pack,
+archive, protocol, and bridge numbers are historical implementation context.
+
 ## Xbox menu navigation (2026-09-12)
 
 The custom FPS deployment, match, loadout, controls and time/weather menus now register
@@ -200,7 +209,7 @@ Validation on 2026-09-08 passed 243 server tests, 97 Race Control tests, both Lu
 renderers, and this packaged gate (20.04 seconds of results before restart). The .NET 9 test suite
 used process-scoped .NET 10 roll-forward; the packaged server ran with its own .NET 9 runtime.
 
-Current match-mode delivery uses compatibility client pack 46, ready protocol 3, and presentation
+The earlier match-mode milestone used compatibility client pack 46, ready protocol 3, and presentation
 bridge `asrc.fps.hud.v12`. Protocol 3 adds authoritative team identity, match type, winning team, and
 team scores; older protocol/bridge references below describe the milestone that originally introduced
 the relevant rendering or audio surface.
@@ -545,3 +554,4 @@ Preview images approximate CSP rendering; actual gameplay remains the visual acc
 
 Client pack **51** includes HUD app **1.14.0**, FPS network protocol **6**, and Modern archive **11**.
 The network and asset revisions also cover the team operators and separate skin selection.
+

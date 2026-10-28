@@ -32,6 +32,26 @@ Race Control keeps one reusable runnable server rather than copying the self-con
 
 ## FPS matches
 
+Race Control [0.1.4](https://github.com/preseznik/ACServerBots/releases/tag/race-control-v0.1.4)
+ships **FPS client pack 60**, **map pack 2** (six maps), and **arena preparation version 5**.
+The client and map packs are byte-for-byte unchanged from 0.1.3; existing pack 60 and map pack 2
+installations remain compatible. Product, client-pack, map-pack, preparation, and protocol versions
+are separate identifiers. See [release packaging](release-packaging.md) and
+[`Release/build-provenance.json`](../Release/build-provenance.json) for the component inventory.
+
+For players, install `RaceControl-0.1.4-FPS-client-v60.zip` into the Assetto Corsa root,
+or select the FPS client component in Setup. Use CSP `0.3.0-preview520` or a newer compatible
+preview, the host's carrier car, and the same arena. The client pack does not contain the maps:
+install `RaceControl-0.1.4-FPS-maps-v2.zip` separately into the game root, or select the client
+map component in Setup. Map pack 2 contains Nuketown 2020, Fire Pit, Krvava Rotunda,
+Shipment 1519, Dust II, and Last Shift. Hosting maps and player map installation are separate
+choices; a portable Full host reads bundled maps without installing them into the game.
+Restart AC after updating the companion HUD; restart/re-stage the host and reconnect to receive
+its online Lua and versioned model archives.
+
+Older pack and bridge numbers in feature implementation notes below identify their original
+milestones; use the release inventory above for current installation requirements.
+
 The FPS editor’s **MATCH SETTINGS** section supports **FFA**, **TDM**, **Hardcore FFA**, and
 **Hardcore TDM**. TDM uses each lobby slot’s **Team 1**, **Team 2**, or **Auto-balance** assignment;
 unassigned slots are distributed deterministically to the smaller team and teammates cannot damage
@@ -39,8 +59,8 @@ one another. The kill target applies to an individual in FFA and to the shared t
 Hardcore direct weapon hits kill with one torso/head hit or two limb hits. The optional **Headshot
 only**, **Infinite sprint**, and **No HP regen** mutators are authoritative server rules and compose
 with every match type. Presets created before these fields existed load as Blocks + FFA, with Auto
-teams and all mutators disabled. Current delivery uses client pack 57, ready protocol 4, and HUD
-bridge `asrc.fps.hud.v16` (companion 1.16.0); older incompatible HUD apps fall back to the server
+teams and all mutators disabled. Race Control 0.1.4 uses client pack 60, ready protocol 7, and HUD
+bridge `asrc.fps.hud.v17` (companion 1.17.2); older incompatible HUD apps fall back to the server
 HUD instead of masking newer presentation fields. The compact ammo panel has a separate weapon
 cutout on its left, and confirmed frag/sticky kills display a short grenade-kill medal.
 
@@ -59,8 +79,8 @@ HUD and its online fallback. Their marker follows the snapshot trajectory, point
 grenades, and escalates from white to amber/red with fuse urgency. The local player's grenades and TDM
 teammate grenades do not produce warnings.
 
-Current runtime corrections are deliberately presentation- and movement-layer specific. Modern
-crouch and prone apply an exact -0.50 m world-up offset to the animated KN5 child because CSP's
+The earlier presentation- and movement-layer corrections described here were runtime-only. At that milestone, Modern
+crouch and prone applied an exact -0.50 m world-up offset to the animated KN5 child because CSP's
 KN5-to-KSANIM conversion raises those hips tracks by 50 cm; the authoritative actor root and hitbox
 do not move. Grounded movement uses graduated 0.48 m, 0.8 m, and 1.2 m probes to bridge an
 imported collision-only floor strip only when comparable reachable support exists on two opposing
@@ -68,12 +88,13 @@ sides. That rule covers Nuketown's measured 0.45-0.50 m colored-ring hole and th
 collision void around `(17.31, -0.07, 10.69)`, while one-sided ledges, wider gaps, and walls remain
 blocking. Overlapping imported floor bands can report several visually equivalent support planes;
 changes up to 0.22 m now converge at no more than 0.025 m per 0.08 m sweep instead of making the
-authoritative capsule pop between them. None of these corrections requires re-preparing an existing
-version-4 FPS arena.
+authoritative capsule pop between them. Those runtime-only corrections did not themselves invalidate version-4 arenas. For 0.1.4,
+preparation version 5 is required; re-prepare older sidecars. Modern revision 13 subsequently
+replaced the child offset with baked stance grounding (see the Modern handoff).
 
 **Event mode** switches between the existing Racing editor and an isolated **FPS** editor. Each mode retains its unsaved draft while the application is open and has a separately filtered saved-preset list. The last map and layout selected in FPS mode are also stored in the local application settings and restored on the next switch to FPS, including after an application restart. If that map is no longer installed, Race Control selects a prepared FPS arena; it never inherits the active racing circuit or silently falls back to the first racetrack. FPS mode renames the circuit selector to Map / Arena and layout, replaces sessions with Deathmatch settings, exposes FPS-specific difficulty, aggression, variance, and 50–200 HP controls, and displays grid roles as `Auto`, `Bot`, `Human`, and `Spectator`. Racing presets and behavior are not migrated or rewritten when modes are switched.
 
-FPS mode is an experimental solo-deathmatch milestone, not a completed shooter release. Choose a map, use **Prepare as FPS arena**, and stage a two-or-more-slot event. Preparation version 4 reads physical collision, explicit collision-proxy KN5s, and selectively named solid visual meshes (including Fire Pit's `FPV_` structural meshes) together with `AC_START_n` transforms. It also builds a layered 0.6 m navigation asset with standing-capsule clearance, walkable slopes, stairs, and explicit drop, jump, vault, and mantle links. Redundant jump/traversal links across ordinary walkable neighbors are omitted so large arenas do not inflate the runtime search graph. **Bounds padding** controls the horizontal area sampled beyond the outermost spawn (5–100 m, default 45 m); compact arenas can use a smaller value, but changing it requires preparing the arena again. Optional include/exclude glob lists are retained in the AppData arena sidecar for track-specific corrections; foliage, decals, billboards, glass, and effects remain excluded by default. Preparation writes bounded spawns plus navigation and collision-BVH summaries to `%LocalAppData%\AssettoServer Race Control\FpsArenas` and atomically stores the generated geometry and navigation binaries in `Cache\Physics`; the first staging pass reuses those binaries unless a track model, bounds padding, collision override, or preparation version has changed. The BVH itself is rebuilt deterministically in memory when a staged server loads the binary geometry, so existing preparation-version-4 arenas receive the runtime optimization without being rejected. Runtime capsule validation treats every walkable top within the 48 cm auto-step range as support rather than a ceiling, even during the one-tick support-height reconciliation at thin imported paint, kerb, and terrain layers. Unrelated server rebuilds do not invalidate prepared FPS assets. It never modifies the installed track. Older sidecars must be prepared again. **Show FPS arenas only** filters against current sidecars. **Export FPS Client Pack** version 38 writes the CSP version, carrier-car requirement, both visual themes, project-owned assets, attributed third-party assets, the 54-clip audio catalog, and the optional hybrid HUD app; the authoritative online Lua client is still delivered by AssettoServer. The confirmed CSP rendering pipeline and failure checklist are maintained in [FPS client rendering handoff](fps-client-rendering.md), and the generated skinned-model pipeline is maintained in [FPS Modern visual theme handoff](fps-modern-theme.md).
+FPS mode remains experimental. Choose a map, use **Prepare as FPS arena**, and stage a two-or-more-slot event. Preparation version 5 reads physical collision, explicit collision-proxy KN5s, and selectively named solid visual meshes (including Fire Pit's `FPV_` structural meshes) together with `AC_START_n` transforms. It also builds a layered 0.6 m navigation asset with standing-capsule clearance, walkable slopes, stairs, and explicit drop, jump, vault, and mantle links. Redundant jump/traversal links across ordinary walkable neighbors are omitted so large arenas do not inflate the runtime search graph. **Bounds padding** controls the horizontal area sampled beyond the outermost spawn (5–100 m, default 45 m); compact arenas can use a smaller value, but changing it requires preparing the arena again. Optional include/exclude glob lists are retained in the arena sidecar under the application data root for track-specific corrections; foliage, decals, billboards, glass, and effects remain excluded by default. Preparation writes bounded spawns plus navigation and collision-BVH summaries to `FpsArenas` under the application data root (AppData for installed editions, package-local `Data` for portable editions) and atomically stores the generated geometry and navigation binaries in `Cache\Physics`; the first staging pass reuses those binaries unless a track model, bounds padding, collision override, or preparation version has changed. The BVH itself is rebuilt deterministically in memory when a staged server loads the binary geometry, so current preparation-version-5 arenas receive that runtime optimization without an additional preparation pass. Runtime capsule validation treats every walkable top within the 48 cm auto-step range as support rather than a ceiling, even during the one-tick support-height reconciliation at thin imported paint, kerb, and terrain layers. Unrelated server rebuilds do not invalidate prepared FPS assets. It never modifies the installed track. Sidecars from preparation version 4 or earlier must be prepared again. Bundled map pack 2 already includes version-5 preparation; its seeds are reused only when map input hashes and preparation options match. **Show FPS arenas only** filters against current sidecars. **Export FPS Client Pack** writes client pack 60 with the CSP version, carrier-car requirement, both visual themes, project-owned assets, attributed third-party assets, the 54-clip audio catalog, and the optional hybrid HUD app; the authoritative online Lua client is still delivered by AssettoServer. The confirmed CSP rendering pipeline and failure checklist are maintained in [FPS client rendering handoff](fps-client-rendering.md), and the generated skinned-model pipeline is maintained in [FPS Modern visual theme handoff](fps-modern-theme.md).
 
 **Lobby Setup -> Theme** selects one server-wide FPS presentation. **Blocks** is the unchanged default. **Modern** loads the generated animated army officer, attached third-person carbine, and animated first-person arms/carbine. The selection is captured when the server is staged and is shown read-only in Live Match and the web GUI; editing the preset during a running match takes effect only after staging/restarting. Movement, collision, hitboxes, hitscan, damage, ammunition, and networking are theme-independent. Any Modern asset or animation failure reports a persistent error and immediately rebuilds the playable Blocks presentation. Dynamic skinned KN5 loading still has an explicit CSP `0.3.0-preview520` live acceptance gate documented in the Modern handoff.
 
@@ -184,12 +205,14 @@ The working instance directory is deliberately reused between launches. The live
 
 ## Files and safety
 
-Mutable application data lives under `%LocalAppData%\AssettoServer Race Control`:
+Installed editions keep mutable application data under `%LocalAppData%\AssettoServer Race Control`.
+Portable ZIP editions use `Data` beneath the extracted package root, with no AppData fallback.
+The directories below are relative to that data root:
 
 - `Presets`: JSON event presets;
 - `Grids`: reusable named grid favorites;
 - `FpsArenas`: FPS arena bounds and safe-spawn sidecars, separate from installed tracks;
-- `FpsClientPacks`: reserved for exported companion content after the compatibility gate;
+- `FpsClientPacks`: exported FPS companion client packs;
 - `Instances\Current`: the single reusable runnable server;
 - `History`: compact per-run configuration, logs, results, and compressed telemetry rather than duplicated server binaries and physics assets;
 - `Cache\Physics`: prepared track/grid/car collision assets keyed by input and server versions;
@@ -303,9 +326,10 @@ Frag damage falls off across a 7.5 m blast radius; Sticky damage falls off acros
 
 ## Current limits
 
-- Race Control is a portable build, not yet an MSIX/MSI installer.
+- Race Control 0.1.4 is available as a selectable Inno Setup installer and portable ZIP editions; see [release packaging](release-packaging.md).
 - Installed mod metadata can be incomplete. Such content remains visible, but validation blocks missing server checksums, AI lines, models, or bot colliders required by the selected mode.
 - The cached background scan preflights race-bot spline closure/readability and physical `MODEL_*` references. Unsupported content is rejected before a server preparation process starts.
 - Track UI metadata can overstate pit capacity. After physics preparation, Race Control reads the actual contiguous `AC_START_n` count and drops trailing staged entries rather than advertising invalid slots.
 - The server derives bounded vehicle-controller values from `ui_car.json`; exact collision geometry does not turn the server into Kunos' proprietary tyre, suspension, aero, or damage simulation.
 - Public hosting, automatic firewall rule changes, port forwarding, remote spectator administration, and remote server management are intentionally out of scope for this LAN release.
+
