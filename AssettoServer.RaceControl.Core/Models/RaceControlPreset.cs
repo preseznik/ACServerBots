@@ -22,6 +22,7 @@ public sealed class RaceControlPreset
     public BotOptions Bots { get; set; } = new();
     public FpsOptions Fps { get; set; } = new();
     public NetworkOptions Network { get; set; } = new();
+    public RegistrationOptions Registration { get; set; } = new();
 
     public static RaceControlPreset CreateDefault(string acRoot, string serverPayloadPath)
     {
@@ -36,6 +37,14 @@ public sealed class RaceControlPreset
             ],
         };
     }
+}
+
+/// <summary>Player pre-registration for this event through the Web GUI (Steam sign-in).</summary>
+public sealed class RegistrationOptions
+{
+    public bool IsOpen { get; set; }
+    public DateTimeOffset? ScheduledStart { get; set; }
+    public string Note { get; set; } = string.Empty;
 }
 
 public enum EventMode

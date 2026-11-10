@@ -22,9 +22,9 @@
       <button class="nav-item" data-view="overview"><span aria-hidden="true">◫</span>OVERVIEW</button>
       <button class="nav-item active" data-view="live"><span aria-hidden="true">◉</span>LIVE SESSION</button>
       <button class="nav-item" data-view="presets"><span aria-hidden="true">▱</span>PRESETS</button>
-      <button class="nav-item" data-view="players"><span aria-hidden="true">♙</span>PLAYERS <small>LATER</small></button>
+      <button class="nav-item" data-view="players"><span aria-hidden="true">♙</span>PLAYERS</button>
       <button class="nav-item" data-view="settings"><span aria-hidden="true">⚙</span>SETTINGS</button>
-      <p class="owner-note">Local owner access<br>Accounts and roles planned</p>
+      <p class="owner-note" id="owner-note">Watching<br>Sign in on Players</p>
     </aside>
 
     <main class="workspace">
@@ -69,6 +69,7 @@
               <button class="action" id="copy-join-address" type="button" title="IP and HTTP port for Content Manager's direct join">COPY ADDRESS</button>
               <button class="action" id="copy-join-link" type="button" title="acmanager:// link that opens Content Manager's join dialog (no password included)">COPY CM LINK</button>
             </div>
+            <p id="viewer-note" class="control-status" hidden>Server and race controls are for the host. Sign in on the Players page to register for the event.</p>
             <p id="launcher-status" class="control-status">Connecting to the desktop launcher…</p>
           </section>
 
@@ -131,13 +132,57 @@
       </section>
 
       <section id="view-players" class="view">
-        <div class="page-heading"><div><p class="eyebrow">PLANNED</p><h1>PLAYERS &amp; ROLES</h1></div></div>
-        <article class="panel placeholder"><h2>ACCOUNT FOUNDATION IS NEXT</h2><p>Future releases will add login, user profiles, admin and user roles, and role-appropriate links for joining the current server.</p><p class="muted">Until that exists, the web listener defaults to this machine only and exposes local-owner controls.</p></article>
+        <div class="page-heading"><div><p class="eyebrow">EVENT REGISTRATION</p><h1>PLAYERS</h1></div></div>
+        <div class="players-grid">
+          <article class="panel detail-card">
+            <h2>YOUR ACCOUNT</h2>
+            <p id="account-status" class="muted">Checking sign-in…</p>
+            <div class="account-actions">
+              <a id="steam-sign-in" class="action primary link-action" href="/auth/steam/login" hidden>SIGN IN THROUGH STEAM</a>
+              <button id="sign-out" class="action" type="button" hidden>SIGN OUT</button>
+            </div>
+            <p class="muted small">Steam confirms your SteamID64 to Race Control. Your Steam password is never shared with this page.</p>
+          </article>
+          <article class="panel detail-card">
+            <h2 id="event-title">EVENT</h2>
+            <dl>
+              <dt>When</dt><dd id="event-when">—</dd>
+              <dt>Track</dt><dd id="event-track">—</dd>
+              <dt>Registration</dt><dd id="event-state">—</dd>
+              <dt>Registered</dt><dd id="event-count">0</dd>
+            </dl>
+            <p id="event-note" class="event-note" hidden></p>
+          </article>
+          <article id="registration-panel" class="panel detail-card" hidden>
+            <h2 id="registration-title">REGISTER</h2>
+            <form id="registration-form" class="registration-form">
+              <label for="reg-name">NAME ON THE GRID</label>
+              <input id="reg-name" maxlength="32" required autocomplete="nickname">
+              <label for="reg-team">TEAM (OPTIONAL)</label>
+              <input id="reg-team" maxlength="32" placeholder="Same team name = you share one car">
+              <label for="reg-car">PREFERRED CAR</label>
+              <select id="reg-car"></select>
+              <div class="account-actions">
+                <button class="action primary" type="submit" id="reg-submit">REGISTER</button>
+                <button class="action" type="button" id="reg-withdraw" hidden>WITHDRAW</button>
+              </div>
+            </form>
+          </article>
+          <section class="panel players-roster">
+            <div class="panel-heading"><h2>REGISTERED PLAYERS</h2><span id="player-roster-caption">0 players</span></div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>#</th><th>NAME</th><th>TEAM</th><th>PREFERRED CAR</th><th class="admin-only" hidden>STEAM ID</th></tr></thead>
+                <tbody id="player-roster"><tr><td colspan="5" class="table-empty">Nobody has registered yet.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       </section>
 
       <section id="view-settings" class="view">
         <div class="page-heading"><div><p class="eyebrow">WEB GUI</p><h1>SETTINGS</h1></div></div>
-        <article class="panel placeholder"><h2>LISTENER</h2><dl><dt>Address</dt><dd id="settings-address">—</dd><dt>Access model</dt><dd>Local owner</dd><dt>API</dt><dd>Version 1</dd></dl><p>Enablement, bind address, and port are configured in the desktop launcher under <strong>Settings → Web GUI</strong>. Changes restart this listener without changing the game-server ports.</p></article>
+        <article class="panel placeholder"><h2>LISTENER</h2><dl><dt>Address</dt><dd id="settings-address">—</dd><dt>Your access</dt><dd id="settings-role">—</dd><dt>API</dt><dd>Version 1</dd></dl><p>Enablement, bind address, and port are configured in the desktop launcher under <strong>Settings → Web GUI</strong>. Changes restart this listener without changing the game-server ports. Admins are this PC and the Steam IDs listed there; everyone else can watch and register.</p></article>
       </section>
     </main>
   </div>

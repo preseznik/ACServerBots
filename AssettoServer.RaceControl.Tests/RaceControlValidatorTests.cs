@@ -106,9 +106,11 @@ public sealed class RaceControlValidatorTests
             Assert.That(RaceControlValidator.TryHostAddress("192.168.1.10", out _, out vpn), Is.True);
             Assert.That(vpn, Is.False);
             Assert.That(RaceControlValidator.TryHostAddress("0.0.0.0", out _, out _), Is.False);
-            // The Web GUI has no login, so it stays limited to loopback and the LAN.
             Assert.That(RaceControlValidator.TryPrivateAddress("100.100.1.2", out _), Is.False);
+            // With admin-only controls, players can reach the Web GUI's Players page over a VPN too.
             Assert.That(new AssettoServer.RaceControl.Core.Web.RaceControlWebServerOptions(true, "100.100.1.2", 8772)
+                .TryValidate(out _), Is.True);
+            Assert.That(new AssettoServer.RaceControl.Core.Web.RaceControlWebServerOptions(true, "0.0.0.0", 8772)
                 .TryValidate(out _), Is.False);
         });
     }

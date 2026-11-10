@@ -51,7 +51,7 @@ Friends who aren't on your LAN can join without port forwarding through a VPN ov
 2. On the **Network** tab, pick the host's Tailscale address (`100.x.y.z`) as the **Bind address**. VPN addresses are listed after the LAN addresses.
 3. Start the server. Friends won't see it under `Drive -> Online -> LAN`, because LAN discovery doesn't cross the VPN. Send them the address or Content Manager link from **Launch & Live** (**Copy address** / **Copy CM link**); they join directly with it.
 
-Race Control accepts any address in the shared range `100.64.0.0/10`, which Tailscale and similar VPNs use and which is never routed on the public internet. Only devices on the same VPN can reach the server. Tailscale must be connected before you start the server, because the server listens on that one address. LAN players can't join a server bound to a VPN address unless they're on the VPN too. The Web GUI is still limited to loopback and LAN addresses because it has no login.
+Race Control accepts any address in the shared range `100.64.0.0/10`, which Tailscale and similar VPNs use and which is never routed on the public internet. Only devices on the same VPN can reach the server. Tailscale must be connected before you start the server, because the server listens on that one address. LAN players can't join a server bound to a VPN address unless they're on the VPN too. The Web GUI can use a Tailscale address too, so friends can reach its Players page; see [Player registration](#player-registration).
 
 ## FPS matches
 
@@ -182,11 +182,30 @@ in-flight dashboard requests and asynchronously stops Kestrel before WPF exits; 
 UI dispatcher waiting for a request which is itself waiting on that dispatcher. This prevents the
 headless `AssettoServer Race Control.exe` process and port `8772` listener from surviving the window.
 
-The first web release is a local-owner control surface. It provides launcher and server state, responsive desktop/mobile views, the authoritative live race or match map, real participant names and results, and guarded server/session start, stop, and restart actions. Preset authoring remains in the desktop launcher. The browser reads the same `state.json` and `track.json` files used by the desktop Live view; it does not infer positions from carrier cars or client visuals.
+The Web GUI provides launcher and server state, responsive desktop/mobile views, the authoritative live race or match map, real participant names and results, guarded server/session start, stop, and restart actions, and the **Players** page for event registration. Preset authoring remains in the desktop launcher. The browser reads the same `state.json` and `track.json` files used by the desktop Live view; it does not infer positions from carrier cars or client visuals.
 
-The listener accepts only loopback or a specific RFC1918 private IPv4 address. It never binds to `0.0.0.0` or a public address, publishes no saved game/admin passwords, sends no permissive CORS headers, denies framing, and requires a random per-process control token on state-changing requests. Binding to a LAN address still grants local-owner control to every device that can reach the port because login and authorization do not exist yet. Keep the loopback default unless that exposure is intentional.
+The listener accepts loopback, a specific RFC1918 private IPv4 address, or a VPN overlay address (`100.64.0.0/10`, e.g. Tailscale). It never binds to `0.0.0.0` or a public address, publishes no saved game/admin passwords, sends no permissive CORS headers, and denies framing.
 
-The versioned routes are `/api/v1/health`, `/api/v1/status`, `/api/v1/track`, and `/api/v1/actions/{action}`. The API prefix and presentation/control split are reserved for the planned second stage: user profiles, authenticated sessions, `admin` and `user` roles, and role-appropriate Content Manager join links. That future work must add authentication before making LAN binding the default.
+Access has three roles:
+
+- **Admin**: a browser on the host PC itself, or a device signed in through Steam with a SteamID64 listed under **Settings -> Web GUI -> Admins**. Only admins receive the per-process control token that server, race and environment actions require, and only admins see players' Steam IDs.
+- **Player**: anyone else signed in through Steam. Players can register for the event, update their entry or withdraw.
+- **Visitor**: not signed in. Visitors can watch the live view and sign in.
+
+Steam sign-in uses Steam's OpenID: the browser goes to steamcommunity.com and returns with a SteamID64 that Race Control confirms with Steam directly. No Steam password or Web API key passes through Race Control, but the host needs internet access. Sign-in sessions live in memory for up to seven days and end when the Web GUI restarts. The Web GUI is plain HTTP, so on a shared LAN someone watching the network could copy a signed-in session; Tailscale encrypts the traffic.
+
+The versioned routes are `/api/v1/health`, `/api/v1/status`, `/api/v1/track`, `/api/v1/actions/{action}`, `/api/v1/environment`, `/api/v1/me`, `/api/v1/event` and `/api/v1/registration`, plus `/auth/steam/login`, `/auth/steam/callback` and `/auth/logout` for sign-in.
+
+## Player registration
+
+Players can sign up for a planned racing event on the Web GUI's **Players** page, and you assign them to cars on the Grid.
+
+1. Under **Settings -> Web GUI**, set the bind address to your LAN or Tailscale address so players can reach the page, and add your own SteamID64 under **Admins** if you want to run things from another device.
+2. On **Event & Content -> Player registration**, tick **Open registration in the Web GUI**. Optionally set the start date and time and a note (format, stint length, rules). Save the preset to keep these settings.
+3. Send players the Web GUI address. On **Players** they choose **Sign in through Steam**, then enter the name to show on the grid, an optional team name and a preferred car from the event's grid. They can update or withdraw while registration is open. Players who enter the same team name share one car.
+4. On the **Grid** tab, open **Registrations**. **Assign to selected car** puts the selected player (and their teammates) in the selected row: it fills **Drivers (Steam IDs)**, the driver name (the team name for a team car) and the team. **Auto-assign everyone** gives each player or team without a car a free row, preferring the car they asked for; spectator rows and rows that already have Steam IDs are left alone. **Remove registration** deletes an entry.
+
+Registrations are stored per event in the `Registrations` folder of Race Control's data folder. Closing registration keeps them. Registration applies to racing events; FPS slots can't be reserved by Steam ID.
 
 ## Live Race view
 
@@ -227,7 +246,7 @@ When a real race finishes, the server saves its classification and **Live** show
 - **Copy** copies a readable list to paste into a chat.
 - **Save CSV…** saves a spreadsheet-friendly file.
 
-Results are also saved when Race Control stops the race, when the session moves on before everyone finishes, and when the server stops mid-race; the title then says the results are incomplete. Races where nobody completed a lap aren't saved. Each race is a JSON file under `Instances\Currentace-control-liveesults` and is copied to `History` with the rest of the run when you next stage. Accelerated simulations keep their own results view.
+Results are also saved when Race Control stops the race, when the session moves on before everyone finishes, and when the server stops mid-race; the title then says the results are incomplete. Races where nobody completed a lap aren't saved. Each race is a JSON file under `Instances\Current\race-control-live\results` and is copied to `History` with the rest of the run when you next stage. Accelerated simulations keep their own results view.
 
 ## Content Manager interoperation
 

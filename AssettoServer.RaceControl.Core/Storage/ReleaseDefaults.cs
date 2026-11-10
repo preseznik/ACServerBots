@@ -75,6 +75,7 @@ public sealed class ReleaseDefaults(RaceControlPaths paths)
         result.Name = source.Mode == EventMode.Fps ? "FPS defaults" : "Racing defaults";
         result.ServerName = source.Mode == EventMode.Fps ? "AssettoServer LAN FPS Match" : "AssettoServer LAN Race";
         result.Network = new NetworkOptions();
+        result.Registration = new RegistrationOptions();
         result.Bots.NamePrefix = "Bot";
         result.Fps.Arena = null;
         for (int index = 0; index < result.Grid.Count; index++)

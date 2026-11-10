@@ -25,7 +25,7 @@ public sealed record SlotModeOption(SlotMode Value, string Label);
 public sealed record FpsMatchTypeOption(FpsMatchType Value, string Label);
 public sealed record FpsTeamOption(FpsTeamAssignment Value, string Label);
 
-public sealed class MainViewModel : ObservableObject, IDisposable
+public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly RaceControlPaths _paths = new();
     private readonly AcContentScanner _scanner = new();

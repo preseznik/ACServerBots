@@ -5,6 +5,7 @@ using System.IO;
 using System.Windows;
 using Microsoft.Win32;
 using AssettoServer.RaceControl.Core.Storage;
+using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Staging;
 using AssettoServer.RaceControl.Core.Network;
@@ -33,7 +34,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         Settings.AssettoCorsaRoot = assettoCorsaRoot;
         Settings.ServerPayloadPath = serverPayloadPath;
         WebDashboardStatus = webDashboardStatus;
-        WebBindAddresses = NetworkAddressService.GetPrivateIpv4Addresses()
+        _webAdminSteamIdsText = SteamIds.Format(settings.WebAdminSteamIds);
+        WebBindAddresses = NetworkAddressService.GetServerIpv4Addresses()
             .Append(Settings.WebUiBindAddress)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -122,6 +124,17 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public bool MapsChanged { get; private set; }
     public IReadOnlyList<AppThemeMode> ThemeModes { get; } = Enum.GetValues<AppThemeMode>();
     public IReadOnlyList<string> WebBindAddresses { get; }
+
+    private string _webAdminSteamIdsText;
+    public string WebAdminSteamIdsText
+    {
+        get => _webAdminSteamIdsText;
+        set
+        {
+            _webAdminSteamIdsText = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(WebAdminSteamIdsText)));
+        }
+    }
     public string WebDashboardStatus { get; }
     public string WebUiPortText
     {
@@ -170,8 +183,17 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             return;
         }
         Settings.WebUiPort = webPort;
+        var adminIds = SteamIds.Parse(WebAdminSteamIdsText);
+        var invalidIds = adminIds.Where(id => !SteamIds.IsValid(id)).ToArray();
+        if (invalidIds.Length > 0)
+        {
+            MessageBox.Show(this, $"These aren't 17-digit SteamID64s: {string.Join(", ", invalidIds)}",
+                "Invalid Web GUI settings", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        Settings.WebAdminSteamIds = [.. adminIds];
         var options = new RaceControlWebServerOptions(Settings.WebUiEnabled,
-            Settings.WebUiBindAddress, Settings.WebUiPort);
+            Settings.WebUiBindAddress, Settings.WebUiPort, Settings.WebAdminSteamIds);
         if (!options.TryValidate(out string error))
         {
             MessageBox.Show(this, error, "Invalid Web GUI settings",

@@ -11,6 +11,13 @@ public sealed class DispatcherRaceControlWebControl(
         ? viewModel.GetWebControlState()
         : dispatcher.Invoke(viewModel.GetWebControlState);
 
+    public PlayerEventInfo? GetPlayerEvent()
+    {
+        if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+            return null;
+        return dispatcher.CheckAccess() ? viewModel.GetPlayerEvent() : dispatcher.Invoke(viewModel.GetPlayerEvent);
+    }
+
     public async Task<RaceControlWebActionResult> ExecuteAsync(RaceControlWebAction action,
         CancellationToken cancellationToken = default)
     {

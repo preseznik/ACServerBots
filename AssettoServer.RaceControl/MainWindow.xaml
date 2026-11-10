@@ -179,6 +179,63 @@
                                              ToolTip="Name shown to players browsing Content Manager's Online → LAN list." />
                                 </StackPanel>
                             </Border>
+                            <Border>
+                                <Border.Style>
+                                    <Style TargetType="Border" BasedOn="{StaticResource Card}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock Text="Player registration" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Let players sign in through Steam on the Web GUI's Players page and register for this event. Assign them to cars from the Grid tab's Registrations panel."
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
+                                    <CheckBox Content="Open registration in the Web GUI" IsChecked="{Binding RegistrationOpen}" Margin="0,0,0,12"
+                                              ToolTip="While open, signed-in players can register, update or withdraw. Closing keeps existing registrations." />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="Start date" Style="{StaticResource FieldLabel}" />
+                                            <DatePicker SelectedDate="{Binding RegistrationDate}" Margin="0,0,10,12" Padding="6,5"
+                                                        Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        Foreground="{DynamicResource TextBrush}"
+                                                        ToolTip="Shown to players on the Players page. Leave empty if the date isn't fixed yet.">
+                                                <DatePicker.Resources>
+                                                    <!-- The built-in date box ignores the app's TextBox style; match the theme by hand. -->
+                                                    <Style TargetType="DatePickerTextBox">
+                                                        <Setter Property="Background" Value="{DynamicResource InputBrush}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                                                        <Setter Property="BorderThickness" Value="0" />
+                                                        <Setter Property="VerticalContentAlignment" Value="Center" />
+                                                        <Setter Property="Template">
+                                                            <Setter.Value>
+                                                                <ControlTemplate TargetType="DatePickerTextBox">
+                                                                    <ScrollViewer x:Name="PART_ContentHost" Margin="2,0" VerticalAlignment="Center"
+                                                                                  Background="{TemplateBinding Background}" />
+                                                                </ControlTemplate>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </Style>
+                                                </DatePicker.Resources>
+                                            </DatePicker>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="Start time" Style="{StaticResource FieldLabel}" />
+                                            <TextBox Text="{Binding RegistrationTime, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,12"
+                                                     ToolTip="Local time as HH:mm, e.g. 20:00." />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock Text="Note for players" Style="{StaticResource FieldLabel}" />
+                                    <TextBox Text="{Binding RegistrationNote, UpdateSourceTrigger=LostFocus}" AcceptsReturn="True" TextWrapping="Wrap"
+                                             MinHeight="54" MaxLength="500"
+                                             ToolTip="Optional: format, rules, stint length, how to reach you. Shown on the Players page." />
+                                    <TextBlock Text="Players need the Web GUI on a LAN or Tailscale address (Settings → Web GUI), and this PC needs internet access for Steam sign-in. Save the preset to keep these settings."
+                                               Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="Content tools" Style="{StaticResource SectionTitle}" />
@@ -280,6 +337,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid Grid.Row="0" Margin="0,0,0,14">
@@ -491,11 +549,57 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Binding="{Binding DriverSteamIdsText, UpdateSourceTrigger=LostFocus}" Width="190">
-                                <DataGridTextColumn.Header>
+                            <DataGridTemplateColumn Width="190" SortMemberPath="DriverSteamIdsText">
+                                <DataGridTemplateColumn.Header>
                                     <TextBlock Text="Drivers (Steam IDs)" ToolTip="Optional. Reserve this car for these drivers' 17-digit SteamID64s, separated by ; or commas. A reserved car is never driven by a bot. List two or more drivers to make a team car that can change drivers during the race." />
-                                </DataGridTextColumn.Header>
-                                <DataGridTextColumn.CellStyle>
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="4,0">
+                                            <TextBlock Text="{Binding DriverSteamIdsText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            <!-- Example text shows the ; separator while the cell is empty. -->
+                                            <TextBlock Text="e.g. 7656119…; 7656119…" VerticalAlignment="Center" FontStyle="Italic"
+                                                       Foreground="{DynamicResource MutedTextBrush}" IsHitTestVisible="False">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding DriverSteamIdsText}" Value="">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding DriverSteamIdsText}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Grid>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <Grid FocusManager.FocusedElement="{Binding ElementName=SteamIdsEditor}">
+                                            <TextBox x:Name="SteamIdsEditor" Text="{Binding DriverSteamIdsText, UpdateSourceTrigger=LostFocus}"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Text="e.g. 76561198000000001; 76561198000000002" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                       FontStyle="Italic" Foreground="{DynamicResource MutedTextBrush}" IsHitTestVisible="False"
+                                                       TextTrimming="CharacterEllipsis">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Text, ElementName=SteamIdsEditor}" Value="">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Grid>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                                <DataGridTemplateColumn.CellStyle>
                                     <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
                                         <Setter Property="ToolTip" Value="Steam IDs of the drivers who may take this car, e.g. 76561198000000001; 76561198000000002. Leave blank for an open slot." />
                                         <Style.Triggers>
@@ -504,8 +608,8 @@
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
-                                </DataGridTextColumn.CellStyle>
-                            </DataGridTextColumn>
+                                </DataGridTemplateColumn.CellStyle>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Binding="{Binding BallastKg}" Width="75">
                                 <DataGridTextColumn.Header>
                                     <TextBlock Text="Ballast" ToolTip="Extra ballast mass in kilograms applied to this entry." />
@@ -531,6 +635,41 @@
                                     ToolTip="Remove the selected entry. Race Control always retains at least two slots." />
                         </StackPanel>
                     </Grid>
+                    <Expander Grid.Row="4" Header="{Binding RegistrationsTitle}" Margin="0,12,0,0">
+                        <Expander.Style>
+                            <Style TargetType="Expander">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFpsMode}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Expander.Style>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <TextBlock Text="{Binding RegistrationStatus}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <DataGrid Grid.Row="1" ItemsSource="{Binding Registrations}" SelectedItem="{Binding SelectedRegistration}"
+                                      AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                                      MaxHeight="220" HorizontalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="2*" />
+                                    <DataGridTextColumn Header="Team" Binding="{Binding TeamName}" Width="2*" />
+                                    <DataGridTextColumn Header="Preferred car" Binding="{Binding PreferredCar}" Width="2*" />
+                                    <DataGridTextColumn Header="Assigned to" Binding="{Binding AssignedTo}" Width="2*" />
+                                    <DataGridTextColumn Header="Steam ID" Binding="{Binding SteamId}" Width="150" />
+                                    <DataGridTextColumn Header="Registered" Binding="{Binding RegisteredAt}" Width="130" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+                                <Button Content="Assign to selected car" Command="{Binding AssignRegistrationCommand}"
+                                        ToolTip="Put the selected player in the car selected in the grid above. Teammates (same team name) come along and share the car." />
+                                <Button Content="Auto-assign everyone" Command="{Binding AutoAssignRegistrationsCommand}" Margin="7,0,0,0"
+                                        ToolTip="Give every player or team without a car a free row (no Steam IDs yet), preferring the car they asked for." />
+                                <Button Content="Remove registration" Command="{Binding RemoveRegistrationCommand}" Margin="7,0,0,0"
+                                        ToolTip="Delete the selected registration. The player can register again while registration is open." />
+                            </StackPanel>
+                        </Grid>
+                    </Expander>
                 </Grid>
             </TabItem>
 

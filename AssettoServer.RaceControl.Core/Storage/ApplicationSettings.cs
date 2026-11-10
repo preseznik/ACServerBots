@@ -29,6 +29,8 @@ public sealed class ApplicationSettings
     public bool WebUiEnabled { get; set; } = true;
     public string WebUiBindAddress { get; set; } = "127.0.0.1";
     public int WebUiPort { get; set; } = 8772;
+    /// <summary>SteamID64s that get Web GUI admin controls when signed in from another device.</summary>
+    public List<string> WebAdminSteamIds { get; set; } = [];
 
     public ApplicationSettings Copy() => new()
     {
@@ -48,6 +50,7 @@ public sealed class ApplicationSettings
         WebUiEnabled = WebUiEnabled,
         WebUiBindAddress = WebUiBindAddress,
         WebUiPort = WebUiPort,
+        WebAdminSteamIds = [.. WebAdminSteamIds],
     };
 }
 

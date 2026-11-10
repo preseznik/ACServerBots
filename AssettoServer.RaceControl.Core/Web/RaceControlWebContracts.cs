@@ -42,6 +42,20 @@ public sealed record RaceControlWebActionResult(bool Accepted, string Message)
 
 public sealed record RaceControlWebEnvironmentRequest(int WeatherType, int TimeOfDaySeconds);
 
+public sealed record PlayerEventCar(string Id, string Name);
+
+/// <summary>The event players can register for on the Players page: the preset open in Race Control.</summary>
+public sealed record PlayerEventInfo(
+    Guid PresetId,
+    string EventName,
+    string Track,
+    string Layout,
+    bool IsOpen,
+    DateTimeOffset? ScheduledStart,
+    string Note,
+    IReadOnlyList<PlayerEventCar> Cars,
+    bool IsTeamEvent);
+
 public interface IRaceControlWebControl
 {
     RaceControlWebControlState GetState();
@@ -49,4 +63,7 @@ public interface IRaceControlWebControl
         CancellationToken cancellationToken = default);
     Task<RaceControlWebActionResult> SetEnvironmentAsync(RaceControlWebEnvironmentRequest request,
         CancellationToken cancellationToken = default);
+
+    /// <summary>The current event for the Players page, or null when Race Control has none.</summary>
+    PlayerEventInfo? GetPlayerEvent() => null;
 }

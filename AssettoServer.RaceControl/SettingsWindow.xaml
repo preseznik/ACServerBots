@@ -199,14 +199,42 @@
                                 <ComboBox ItemsSource="{Binding WebBindAddresses}"
                                           Text="{Binding Settings.WebUiBindAddress, UpdateSourceTrigger=PropertyChanged}"
                                           IsEditable="True"
-                                          ToolTip="127.0.0.1 limits access to this PC. Select a listed private LAN address only when other devices need access." />
+                                          ToolTip="127.0.0.1 limits access to this PC. Pick a LAN or Tailscale (100.x) address so players can open the Players page from their own devices." />
 
                                 <TextBlock Text="Port" Style="{DynamicResource FieldLabel}" Margin="0,14,0,5" />
                                 <TextBox Text="{Binding WebUiPortText, UpdateSourceTrigger=PropertyChanged}"
                                          ToolTip="Dedicated Web GUI HTTP port. This is separate from the AssettoServer game and HTTP ports." />
 
-                                <TextBlock Text="The safe default is http://127.0.0.1:8772. Because accounts and roles are not implemented yet, LAN binding grants every device that can reach this port local-owner control."
+                                <TextBlock Text="The default http://127.0.0.1:8772 is reachable only from this PC. On a LAN or VPN address, other devices can watch the live view and sign in through Steam to register for the event; only admins can control the server."
                                            Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,14,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{DynamicResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Admins" Style="{DynamicResource SectionTitle}" />
+                                <TextBlock Text="A browser on this PC always has admin controls. To run the event from a phone or laptop too, list your SteamID64 here and sign in through Steam on that device."
+                                           TextWrapping="Wrap" Margin="0,0,0,10" />
+                                <TextBlock Text="Admin Steam IDs" Style="{DynamicResource FieldLabel}" />
+                                <Grid>
+                                    <TextBox x:Name="AdminSteamIdsBox" Text="{Binding WebAdminSteamIdsText, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="17-digit SteamID64s, separated by ; or commas." />
+                                    <TextBlock Text="e.g. 76561198000000001; 76561198000000002" Margin="6,0,0,0" VerticalAlignment="Center"
+                                               FontStyle="Italic" Foreground="{DynamicResource MutedTextBrush}" IsHitTestVisible="False">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Text, ElementName=AdminSteamIdsBox}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                                <TextBlock Text="The Web GUI is plain HTTP. On a shared LAN, someone watching the network could copy a signed-in session; a VPN such as Tailscale encrypts the traffic."
+                                           Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
                             </StackPanel>
                         </Border>
 

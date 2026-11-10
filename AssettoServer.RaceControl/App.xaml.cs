@@ -4,6 +4,7 @@ using System.Runtime.Loader;
 using System.Windows;
 using System.Windows.Threading;
 using AssettoServer.RaceControl.Core.Infrastructure;
+using AssettoServer.RaceControl.Core.Players;
 using AssettoServer.RaceControl.Core.Storage;
 using AssettoServer.RaceControl.Core.Web;
 using AssettoServer.RaceControl.Infrastructure;
@@ -22,10 +23,14 @@ public partial class App : Application
     private bool _showingError;
 
     public ApplicationSettings Settings { get; private set; } = new();
+    /// <summary>Event registrations, shared by the Web GUI's Players page and the Grid's Registrations panel.</summary>
+    public PlayerRegistrationStore Registrations { get; private set; } = null!;
     public string DataRoot => _paths.DataRoot;
     public string WebDashboardStatus { get; private set; } = "Not started";
-    public string WebDashboardUrl => new RaceControlWebServerOptions(
-        Settings.WebUiEnabled, Settings.WebUiBindAddress, Settings.WebUiPort).BrowserUrl;
+    public string WebDashboardUrl => WebOptions.BrowserUrl;
+
+    private RaceControlWebServerOptions WebOptions => new(
+        Settings.WebUiEnabled, Settings.WebUiBindAddress, Settings.WebUiPort, Settings.WebAdminSteamIds);
 
     static App()
     {
@@ -49,6 +54,7 @@ public partial class App : Application
         if (File.Exists(Path.Combine(_paths.FpsMapsDirectory, "asrc-fps-maps.json")))
             AppContext.SetData("ASRC.FpsMapsRoot", _paths.FpsMapsDirectory);
         _settingsStore = new ApplicationSettingsStore(_paths);
+        Registrations = new PlayerRegistrationStore(_paths);
         Settings = _settingsStore.Load();
         ThemeManager.Apply(Settings);
         base.OnStartup(e);
@@ -90,9 +96,8 @@ public partial class App : Application
                 return;
             }
 
-            var options = new RaceControlWebServerOptions(true,
-                Settings.WebUiBindAddress, Settings.WebUiPort);
-            var server = new RaceControlWebServer(options, _paths, _webControl, LogWebDashboard);
+            var options = WebOptions with { Enabled = true };
+            var server = new RaceControlWebServer(options, _paths, _webControl, LogWebDashboard, Registrations);
             try
             {
                 await server.StartAsync(cancellationToken);

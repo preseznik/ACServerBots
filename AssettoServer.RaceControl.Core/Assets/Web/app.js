@@ -38,6 +38,26 @@ const ui = {
   selectedPlayerHealth: document.getElementById("selected-player-health"),
   selectedPlayerScore: document.getElementById("selected-player-score"),
   toast: document.getElementById("toast"),
+  viewerNote: document.getElementById("viewer-note"),
+  accountStatus: document.getElementById("account-status"),
+  steamSignIn: document.getElementById("steam-sign-in"),
+  signOut: document.getElementById("sign-out"),
+  eventTitle: document.getElementById("event-title"),
+  eventWhen: document.getElementById("event-when"),
+  eventTrack: document.getElementById("event-track"),
+  eventState: document.getElementById("event-state"),
+  eventCount: document.getElementById("event-count"),
+  eventNote: document.getElementById("event-note"),
+  registrationPanel: document.getElementById("registration-panel"),
+  registrationTitle: document.getElementById("registration-title"),
+  registrationForm: document.getElementById("registration-form"),
+  regName: document.getElementById("reg-name"),
+  regTeam: document.getElementById("reg-team"),
+  regCar: document.getElementById("reg-car"),
+  regSubmit: document.getElementById("reg-submit"),
+  regWithdraw: document.getElementById("reg-withdraw"),
+  playerRoster: document.getElementById("player-roster"),
+  playerRosterCaption: document.getElementById("player-roster-caption"),
 };
 
 let status = null;
@@ -48,19 +68,32 @@ let toastTimer = 0;
 let selectedPlayerId = null;
 let environmentDirty = false;
 let pendingEnvironment = null;
+let me = null;
+let playerEvent = null;
+let registrationDirty = false;
+let registrationPending = false;
+
+function showView(name) {
+  const button = document.querySelector(`.nav-item[data-view="${name}"]`);
+  if (!button) return;
+  document.querySelectorAll(".nav-item").forEach(item => item.classList.toggle("active", item === button));
+  document.querySelectorAll(".view").forEach(view => view.classList.toggle("active", view.id === `view-${name}`));
+  if (name === "players") pollPlayers();
+  requestAnimationFrame(drawMap);
+}
 
 document.querySelectorAll(".nav-item").forEach(button => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".nav-item").forEach(item => item.classList.toggle("active", item === button));
-    document.querySelectorAll(".view").forEach(view => view.classList.toggle("active", view.id === `view-${button.dataset.view}`));
-    requestAnimationFrame(drawMap);
-  });
+  button.addEventListener("click", () => showView(button.dataset.view));
 });
 
 document.querySelectorAll(".action").forEach(button => {
   if (button.dataset.action) button.addEventListener("click", () => executeAction(button.dataset.action));
 });
 ui.applyEnvironment.addEventListener("click", executeEnvironment);
+ui.registrationForm.addEventListener("submit", event => { event.preventDefault(); submitRegistration(); });
+ui.registrationForm.addEventListener("input", () => { registrationDirty = true; });
+ui.regWithdraw.addEventListener("click", withdrawRegistration);
+ui.signOut.addEventListener("click", signOut);
 ui.copyJoinAddress.addEventListener("click", () => copyText(status?.launcher?.joinAddress, "Join address"));
 ui.copyJoinLink.addEventListener("click", () => copyText(status?.launcher?.joinLink, "Content Manager join link"));
 ui.environmentWeather.addEventListener("change", () => { environmentDirty = true; });
@@ -218,6 +251,7 @@ function renderStatus() {
 }
 
 function renderButtons() {
+  ui.viewerNote.hidden = !status || Boolean(controlToken);
   const launcher = status?.launcher;
   const capabilities = {
     "launch-server": launcher?.canLaunchServer,
@@ -228,9 +262,9 @@ function renderButtons() {
     "restart-session": launcher?.canRestartSession,
   };
   document.querySelectorAll(".action").forEach(button => {
-    if (button.dataset.action) button.disabled = actionPending || !capabilities[button.dataset.action];
+    if (button.dataset.action) button.disabled = actionPending || !controlToken || !capabilities[button.dataset.action];
   });
-  ui.applyEnvironment.disabled = actionPending
+  ui.applyEnvironment.disabled = actionPending || !controlToken
     || !(status?.live?.isFps && status?.live?.serverRunning);
 }
 
@@ -492,7 +526,178 @@ function showToast(message, error = false) {
   toastTimer = window.setTimeout(() => ui.toast.classList.remove("show"), 3500);
 }
 
+
+// ---- Players: Steam sign-in and event registration ----
+
+async function pollPlayers() {
+  try {
+    const [nextMe, nextEvent] = await Promise.all([fetchJson("/api/v1/me"), fetchJson("/api/v1/event")]);
+    me = nextMe;
+    playerEvent = nextEvent;
+    renderPlayers();
+  } catch {
+    // The status poll already reports a lost connection.
+  }
+}
+
+function renderPlayers() {
+  const signedIn = Boolean(me?.signedIn);
+  const role = me?.role || "visitor";
+  ui.steamSignIn.hidden = signedIn;
+  ui.signOut.hidden = !signedIn;
+  if (signedIn) {
+    const roleText = role === "admin" ? "admin" : "player";
+    ui.accountStatus.textContent = `Signed in with Steam (${me.steamId}) as ${roleText}.`;
+  } else if (me?.isHostPc) {
+    ui.accountStatus.textContent = "You're on the host PC, so you have admin controls. Sign in through Steam to register yourself.";
+  } else {
+    ui.accountStatus.textContent = "Sign in through Steam to register for the event.";
+  }
+
+  const event = playerEvent?.available ? playerEvent : null;
+  ui.eventTitle.textContent = event ? event.eventName.toUpperCase() : "NO EVENT";
+  ui.eventWhen.textContent = event?.scheduledStart ? new Date(event.scheduledStart).toLocaleString() : "Not scheduled yet";
+  ui.eventTrack.textContent = event ? displayTrack(event.track, event.layout) : "—";
+  ui.eventState.textContent = !event ? "—" : event.isOpen ? "Open" : "Closed";
+  ui.eventCount.textContent = String(event?.registeredCount ?? 0);
+  ui.eventNote.hidden = !event?.note;
+  ui.eventNote.textContent = event?.note || "";
+
+  const mine = event?.myRegistration || null;
+  ui.registrationPanel.hidden = !(signedIn && event && (event.isOpen || mine));
+  ui.registrationTitle.textContent = mine ? "YOUR REGISTRATION" : "REGISTER";
+  ui.regSubmit.textContent = mine ? "UPDATE" : "REGISTER";
+  ui.regSubmit.disabled = registrationPending || !event?.isOpen;
+  ui.regWithdraw.hidden = !mine;
+  ui.regWithdraw.disabled = registrationPending;
+  if (event) renderCarOptions(event.cars, mine);
+  if (!registrationDirty) {
+    ui.regName.value = mine?.displayName || ui.regName.value;
+    ui.regTeam.value = mine?.teamName || ui.regTeam.value;
+  }
+
+  const isAdmin = role === "admin";
+  const roleLabel = { admin: "Admin", player: "Player", visitor: "Visitor" }[role] || "Visitor";
+  document.getElementById("settings-role").textContent = me?.isHostPc ? "Admin (this PC)" : roleLabel;
+  document.getElementById("owner-note").innerHTML = isAdmin
+    ? "Admin access<br>Server controls enabled"
+    : signedIn ? "Player access<br>Registration on Players" : "Watching<br>Sign in on Players";
+  document.querySelectorAll(".admin-only").forEach(element => { element.hidden = !isAdmin; });
+  const roster = event?.roster || [];
+  ui.playerRosterCaption.textContent = `${roster.length} ${roster.length === 1 ? "player" : "players"}`;
+  ui.playerRoster.replaceChildren();
+  if (roster.length === 0) {
+    const row = ui.playerRoster.insertRow();
+    const cell = row.insertCell();
+    cell.colSpan = 5;
+    cell.className = "table-empty";
+    cell.textContent = event ? "Nobody has registered yet." : "Race Control has no event open.";
+    return;
+  }
+  roster.forEach((player, index) => {
+    const row = ui.playerRoster.insertRow();
+    row.insertCell().textContent = String(index + 1);
+    const name = row.insertCell();
+    name.textContent = player.isYou ? `${player.displayName} (you)` : player.displayName;
+    if (player.isYou) name.className = "you";
+    row.insertCell().textContent = player.teamName || "—";
+    row.insertCell().textContent = player.preferredCar || "No preference";
+    if (isAdmin) row.insertCell().textContent = player.steamId || "";
+  });
+}
+
+function renderCarOptions(cars, mine) {
+  const current = registrationDirty ? ui.regCar.value : (mine?.preferredCarId ?? ui.regCar.value);
+  const signature = cars.map(car => car.id).join("|");
+  if (ui.regCar.dataset.cars !== signature) {
+    ui.regCar.replaceChildren();
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "No preference";
+    ui.regCar.append(none);
+    cars.forEach(car => {
+      const option = document.createElement("option");
+      option.value = car.id;
+      option.textContent = car.name;
+      ui.regCar.append(option);
+    });
+    ui.regCar.dataset.cars = signature;
+  }
+  ui.regCar.value = cars.some(car => car.id === current) ? current : "";
+}
+
+async function sendPlayerRequest(method, path, body) {
+  const response = await fetch(path, {
+    method,
+    headers: { "X-ASRC-Session": me?.sessionToken || "", "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({ message: response.statusText }));
+  if (!response.ok) throw new Error(payload.message || `Request failed (${response.status}).`);
+  return payload;
+}
+
+async function submitRegistration() {
+  if (registrationPending) return;
+  registrationPending = true;
+  renderPlayers();
+  try {
+    const result = await sendPlayerRequest("POST", "/api/v1/registration", {
+      displayName: ui.regName.value,
+      teamName: ui.regTeam.value,
+      preferredCarId: ui.regCar.value,
+    });
+    registrationDirty = false;
+    showToast(result.message || "You're registered.");
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  } finally {
+    registrationPending = false;
+    await pollPlayers();
+  }
+}
+
+async function withdrawRegistration() {
+  if (registrationPending || !window.confirm("Withdraw your registration for this event?")) return;
+  registrationPending = true;
+  try {
+    const result = await sendPlayerRequest("DELETE", "/api/v1/registration");
+    registrationDirty = false;
+    ui.registrationForm.reset();
+    showToast(result.message);
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  } finally {
+    registrationPending = false;
+    await pollPlayers();
+  }
+}
+
+async function signOut() {
+  try {
+    await sendPlayerRequest("POST", "/auth/logout");
+    registrationDirty = false;
+    ui.registrationForm.reset();
+    showToast("Signed out.");
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  }
+  await pollPlayers();
+}
+
+function handleSignInReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const result = params.get("signin");
+  if (result === "failed") showToast("Steam sign-in didn't complete. Try again.", true);
+  if (result === "expired") showToast("The sign-in took too long or was started elsewhere. Try again.", true);
+  if (result) window.history.replaceState(null, "", "/" + window.location.hash);
+  if (window.location.hash === "#players") showView("players");
+}
+
+handleSignInReturn();
 pollStatus();
 pollTrack();
+pollPlayers();
 window.setInterval(pollStatus, 750);
 window.setInterval(pollTrack, 5000);
+window.setInterval(pollPlayers, 5000);

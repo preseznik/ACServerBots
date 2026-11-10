@@ -88,7 +88,7 @@ public sealed class RaceControlWebServerTests
             Assert.That(index, Does.Contain("id=\"preset-start-policy\""));
             Assert.That(index, Does.Contain("id=\"preset-mutators\""));
             Assert.That(index, Does.Contain("class=\"map-card panel collapsible\""));
-            Assert.That(status.RootElement.GetProperty("localOwnerOnly").GetBoolean(), Is.True);
+            Assert.That(status.RootElement.GetProperty("role").GetString(), Is.EqualTo("admin"), "the host PC is admin");
             Assert.That(status.RootElement.GetProperty("live").GetProperty("sequence").GetInt64(), Is.EqualTo(42));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("eventName").GetString(), Is.EqualTo("Test Deathmatch"));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsMatchType").GetString(), Is.EqualTo("TDM"));
