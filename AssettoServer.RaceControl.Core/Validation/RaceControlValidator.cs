@@ -154,10 +154,16 @@ public sealed class RaceControlValidator
         ErrorIf(messages, !isFps && !Enum.IsDefined(preset.Bots.JoinSlotSelection), "Bots",
             "Choose First, Last, or Random for player slot selection.");
 
-        ErrorIf(messages, !TryPrivateAddress(preset.Network.BindAddress, out var isLoopback), "Network", "Use a wildcard, loopback, or private IPv4 LAN address.");
+        ErrorIf(messages, !TryHostAddress(preset.Network.BindAddress, out var isLoopback, out var isVpnOverlay), "Network",
+            "Use a loopback, private LAN, or VPN (100.64.0.0/10, e.g. Tailscale) IPv4 address.");
         if (isLoopback)
         {
             messages.Add(new(ValidationSeverity.Warning, "Network", "Loopback only allows clients on this PC. Select the host's LAN address for other computers."));
+        }
+        if (isVpnOverlay)
+        {
+            messages.Add(new(ValidationSeverity.Information, "Network",
+                "VPN address: only devices on the same VPN (e.g. your Tailscale network) can join. They won't see the server under Online -> LAN; they join by this address and the HTTP port."));
         }
         if (preset.Network.HttpPort == preset.Network.TcpPort)
         {
@@ -365,6 +371,28 @@ public sealed class RaceControlValidator
         isLoopback = bytes[0] == 127;
         return isLoopback || bytes[0] == 10 || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
             || (bytes[0] == 192 && bytes[1] == 168);
+    }
+
+    /// <summary>
+    /// Shared address space 100.64.0.0/10 (RFC 6598). VPN overlays such as Tailscale use it, so
+    /// friends can race over the internet without port forwarding. It is never publicly routed.
+    /// </summary>
+    public static bool IsVpnOverlayAddress(string text)
+        => IPAddress.TryParse(text, out var address)
+           && address.AddressFamily == AddressFamily.InterNetwork
+           && address.GetAddressBytes() is [100, >= 64 and <= 127, _, _];
+
+    /// <summary>
+    /// Addresses the game server may listen on: loopback, RFC 1918 LAN, or a VPN overlay address.
+    /// Never the 0.0.0.0 wildcard or a public address.
+    /// </summary>
+    public static bool TryHostAddress(string text, out bool isLoopback, out bool isVpnOverlay)
+    {
+        isVpnOverlay = false;
+        if (TryPrivateAddress(text, out isLoopback))
+            return true;
+        isVpnOverlay = IsVpnOverlayAddress(text);
+        return isVpnOverlay;
     }
 
     private static void ErrorIf(List<ValidationMessage> messages, bool condition, string field, string message)

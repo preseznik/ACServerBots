@@ -50,6 +50,78 @@ public sealed class RaceControlValidatorTests
         Assert.That(result.Messages, Has.Some.Property("Field").EqualTo("Network"));
     }
 
+    [TestCase("0.0.0.0")]
+    [TestCase("8.8.8.8")]
+    [TestCase("100.63.255.255")]
+    [TestCase("100.128.0.1")]
+    public void Validate_RejectedListenerMessageDoesNotOfferWildcard(string address)
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation();
+        var preset = factory.CreatePreset();
+        preset.Network.BindAddress = address;
+
+        var result = new RaceControlValidator().Validate(preset, factory.Scan());
+
+        var error = result.Messages.Single(message =>
+            message.Field == "Network" && message.Severity == ValidationSeverity.Error);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(error.Message, Does.Not.Contain("wildcard"));
+            Assert.That(error.Message, Does.Contain("100.64.0.0/10"));
+        });
+    }
+
+    [TestCase("100.64.0.1")]
+    [TestCase("100.101.102.103")]
+    [TestCase("100.127.255.254")]
+    public void Validate_AcceptsVpnOverlayListenerWithJoinNote(string address)
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation();
+        var preset = factory.CreatePreset();
+        preset.Network.BindAddress = address;
+
+        var result = new RaceControlValidator().Validate(preset, factory.Scan());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Messages.Where(message => message.Field == "Network"
+                                                         && message.Severity == ValidationSeverity.Error), Is.Empty);
+            Assert.That(result.Messages, Has.Some.Matches<ValidationMessage>(message =>
+                message.Field == "Network" && message.Severity == ValidationSeverity.Information
+                                           && message.Message.Contains("VPN", StringComparison.Ordinal)));
+        });
+    }
+
+    [Test]
+    public void VpnOverlayAddresses_AreForTheGameServerOnly()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceControlValidator.TryHostAddress("100.100.1.2", out var loopback, out var vpn), Is.True);
+            Assert.That(loopback, Is.False);
+            Assert.That(vpn, Is.True);
+            Assert.That(RaceControlValidator.TryHostAddress("192.168.1.10", out _, out vpn), Is.True);
+            Assert.That(vpn, Is.False);
+            Assert.That(RaceControlValidator.TryHostAddress("0.0.0.0", out _, out _), Is.False);
+            // The Web GUI has no login, so it stays limited to loopback and the LAN.
+            Assert.That(RaceControlValidator.TryPrivateAddress("100.100.1.2", out _), Is.False);
+            Assert.That(new AssettoServer.RaceControl.Core.Web.RaceControlWebServerOptions(true, "100.100.1.2", 8772)
+                .TryValidate(out _), Is.False);
+        });
+    }
+
+    [Test]
+    public void BindAddressPicker_ListsLanThenVpnThenLoopback()
+    {
+        var ordered = AssettoServer.RaceControl.Core.Network.NetworkAddressService.OrderHostAddresses(
+            ["100.101.102.103", "10.0.0.5", "192.168.1.10", "10.0.0.5"]);
+
+        Assert.That(ordered, Is.EqualTo(new[] { "192.168.1.10", "10.0.0.5", "100.101.102.103", "127.0.0.1" }));
+    }
+
     [Test]
     public void Validate_RejectsTimeOfDayOutsideClockRange()
     {

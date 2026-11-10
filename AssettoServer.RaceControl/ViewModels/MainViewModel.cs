@@ -855,7 +855,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             RefreshSavedPresets();
             RefreshSavedGrids();
             RefreshRecentInstances();
-            foreach (var address in NetworkAddressService.GetPrivateIpv4Addresses())
+            foreach (var address in NetworkAddressService.GetServerIpv4Addresses())
             {
                 NetworkAddresses.Add(address);
             }

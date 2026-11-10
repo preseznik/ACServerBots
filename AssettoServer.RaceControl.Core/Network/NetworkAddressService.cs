@@ -7,9 +7,33 @@ namespace AssettoServer.RaceControl.Core.Network;
 
 public static class NetworkAddressService
 {
+    /// <summary>LAN addresses plus loopback. Used for listeners without login, such as the Web GUI.</summary>
     public static IReadOnlyList<string> GetPrivateIpv4Addresses()
+        => OrderHostAddresses(GetInterfaceAddresses().Where(address =>
+            RaceControlValidator.TryPrivateAddress(address, out var isLoopback) && !isLoopback));
+
+    /// <summary>
+    /// Addresses the game server can listen on: LAN addresses first, then VPN overlay addresses
+    /// (Tailscale and similar, 100.64.0.0/10), then loopback.
+    /// </summary>
+    public static IReadOnlyList<string> GetServerIpv4Addresses()
+        => OrderHostAddresses(GetInterfaceAddresses().Where(address =>
+            RaceControlValidator.TryHostAddress(address, out var isLoopback, out _) && !isLoopback));
+
+    public static string GetPreferredPrivateIpv4() => GetPrivateIpv4Addresses().FirstOrDefault() ?? IPAddress.Loopback.ToString();
+
+    public static IReadOnlyList<string> OrderHostAddresses(IEnumerable<string> addresses)
+        => addresses.Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(address => address.StartsWith("192.168.", StringComparison.Ordinal) ? 0
+                : RaceControlValidator.IsVpnOverlayAddress(address) ? 2
+                : 1)
+            .ThenBy(address => address, StringComparer.OrdinalIgnoreCase)
+            .Append(IPAddress.Loopback.ToString())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static IEnumerable<string> GetInterfaceAddresses()
     {
-        var addresses = new List<string>();
         foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (networkInterface.OperationalStatus != OperationalStatus.Up
@@ -20,22 +44,9 @@ public static class NetworkAddressService
 
             foreach (var unicast in networkInterface.GetIPProperties().UnicastAddresses)
             {
-                var address = unicast.Address;
-                if (address.AddressFamily == AddressFamily.InterNetwork
-                    && RaceControlValidator.TryPrivateAddress(address.ToString(), out var isLoopback)
-                    && !isLoopback)
-                {
-                    addresses.Add(address.ToString());
-                }
+                if (unicast.Address.AddressFamily == AddressFamily.InterNetwork)
+                    yield return unicast.Address.ToString();
             }
         }
-
-        return addresses.Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(address => address.StartsWith("192.168.", StringComparison.Ordinal) ? 0 : 1)
-            .ThenBy(address => address, StringComparer.OrdinalIgnoreCase)
-            .Append(IPAddress.Loopback.ToString())
-            .ToArray();
     }
-
-    public static string GetPreferredPrivateIpv4() => GetPrivateIpv4Addresses().FirstOrDefault() ?? IPAddress.Loopback.ToString();
 }

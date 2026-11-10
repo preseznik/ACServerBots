@@ -18,9 +18,9 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                 .Must(PrivateNetworkAddress.IsValid)
                 .WithMessage("NetworkBindAddress must be an IPv4 address");
             extra.RuleFor(x => x.NetworkBindAddress)
-                .Must(PrivateNetworkAddress.IsPrivateIpv4)
+                .Must(PrivateNetworkAddress.IsLanOrVpnIpv4)
                 .When(x => x.AiParams.Behavior == AssettoServer.Server.Configuration.Extra.AiBehaviorMode.Race)
-                .WithMessage("Race bot V1 is LAN-only; NetworkBindAddress must be a private IPv4 address");
+                .WithMessage("Race bot V1 is LAN-only; NetworkBindAddress must be a private or VPN (100.64.0.0/10) IPv4 address");
             extra.RuleFor(x => x.ServerDescription).NotNull();
             extra.RuleFor(x => x.RainTrackGripReductionPercent).InclusiveBetween(0, 0.5);
             extra.RuleFor(x => x.IgnoreConfigurationErrors).NotNull();
@@ -32,9 +32,9 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
             extra.RuleFor(x => x.DriverSwapGraceSeconds).InclusiveBetween(0, 3600);
             extra.RuleFor(x => x.Fps).NotNull();
             extra.RuleFor(x => x.NetworkBindAddress)
-                .Must(PrivateNetworkAddress.IsPrivateIpv4)
+                .Must(PrivateNetworkAddress.IsLanOrVpnIpv4)
                 .When(x => x.Fps.Enabled)
-                .WithMessage("FPS V1 is LAN-only; NetworkBindAddress must be a private IPv4 address");
+                .WithMessage("FPS V1 is LAN-only; NetworkBindAddress must be a private or VPN (100.64.0.0/10) IPv4 address");
             extra.RuleFor(x => x.EnableAi).Equal(false).When(x => x.Fps.Enabled)
                 .WithMessage("FPS mode cannot run vehicle AI");
             extra.RuleFor(x => x.EnableClientMessages).Equal(true).When(x => x.Fps.Enabled)

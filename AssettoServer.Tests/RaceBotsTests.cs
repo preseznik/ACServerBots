@@ -148,6 +148,22 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void RaceListenerAcceptsVpnOverlayButNotNeighbouringPublicAddresses()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PrivateNetworkAddress.IsLanOrVpnIpv4("100.64.0.1"), Is.True);
+            Assert.That(PrivateNetworkAddress.IsLanOrVpnIpv4("100.101.102.103"), Is.True);
+            Assert.That(PrivateNetworkAddress.IsLanOrVpnIpv4("100.127.255.255"), Is.True);
+            Assert.That(PrivateNetworkAddress.IsLanOrVpnIpv4("192.168.1.10"), Is.True);
+            Assert.That(PrivateNetworkAddress.IsLanOrVpnIpv4("100.63.255.255"), Is.False);
+            Assert.That(PrivateNetworkAddress.IsLanOrVpnIpv4("100.128.0.1"), Is.False);
+            Assert.That(PrivateNetworkAddress.IsLanOrVpnIpv4("0.0.0.0"), Is.False);
+            Assert.That(PrivateNetworkAddress.IsLanOrVpnIpv4("8.8.8.8"), Is.False);
+        });
+    }
+
+    [Test]
     public void ClosedSplineSupportsGridPlacementBehindStart()
     {
         var points = CreateClosedSpline(100, 10);

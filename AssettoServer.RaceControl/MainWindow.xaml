@@ -916,7 +916,7 @@
                                 <TextBlock Text="Bind address" Style="{StaticResource FieldLabel}" />
                                 <ComboBox ItemsSource="{Binding NetworkAddresses}" SelectedItem="{Binding Preset.Network.BindAddress}"
                                           IsEditable="True" Margin="0,0,0,12"
-                                          ToolTip="Local IPv4 interface on which the server accepts LAN connections. Use a private-network address clients can reach." />
+                                          ToolTip="Local IPv4 interface on which the server accepts connections. Use a LAN address, or a VPN address such as Tailscale (100.x.y.z) for friends outside your network." />
                                 <TextBlock Text="TCP port" Style="{StaticResource FieldLabel}" />
                                 <TextBox Text="{Binding Preset.Network.TcpPort}" Margin="0,0,0,12"
                                          ToolTip="TCP port used for Assetto Corsa client handshakes and reliable server traffic." />

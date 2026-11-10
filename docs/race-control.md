@@ -16,7 +16,7 @@ The application targets .NET 10 WPF and opens in Visual Studio 2026 through `Ass
 2. Choose a track layout. The UI reports its pit capacity and whether a usable `fast_lane.ai` exists.
 3. Build the **Grid**. Every entry can select any installed car and skin. `Auto` means a bot occupies the slot until a human claims it, `Fixed` is bot-only, `None` is a human-only racing slot, and `Spectator` reserves a camera-only connection. New and default entries are `Auto`.
 4. Set sessions, rules, weather, bots, rigid-body fidelity, and LAN ports. Clear **Enable server-authoritative race bots** to stage every entry as human-only without losing the saved per-slot modes.
-5. Open **Launch & Live**, validate, then use **Start new**. Content Manager clients discover the event under `Drive -> Online -> LAN`.
+5. Open **Launch & Live**, validate, then use **Start new**. Content Manager clients discover the event under `Drive -> Online -> LAN`. For friends outside your network, see [Racing over a VPN](#racing-over-a-vpn-tailscale).
 
 **Race Bots -> Player slot selection** controls which eligible `Auto` slot is claimed when several slots use the connecting player's selected car. **First** uses the lowest configured grid entry, **Last** uses the highest, and **Random** chooses independently on every connection. Occupied, fixed-bot, human-only, and otherwise ineligible slots are skipped; explicit GUID reservations and CSP slot requests retain priority. Before race start this controls grid placement. With mid-race bot takeover enabled, it instead selects the active bot to replace at its current track position.
 
@@ -42,6 +42,16 @@ Two or more friends can share one car and hand it over during a race, as in a re
 If nobody listed for the car rejoins in time, the car is classified DNF with the laps it completed. While a car waits, the Live view and the Web GUI show it as awaiting a driver change with the time left, and both list every driver who has driven the car.
 
 Race Control writes the IDs to the entry list's `GUID` field, which the server already uses to reserve a car. Steam authentication is off in this LAN release, so the IDs reserve a car but do not prove who is connecting; that is fine between friends. Content Manager presets with `GUID` entries keep them on import.
+
+## Racing over a VPN (Tailscale)
+
+Friends who aren't on your LAN can join without port forwarding through a VPN overlay such as [Tailscale](https://tailscale.com).
+
+1. Everyone installs Tailscale and joins the same tailnet (or the host shares their machine with the others).
+2. On the **Network** tab, pick the host's Tailscale address (`100.x.y.z`) as the **Bind address**. VPN addresses are listed after the LAN addresses.
+3. Start the server. Friends won't see it under `Drive -> Online -> LAN`, because LAN discovery doesn't cross the VPN. In Content Manager they join directly using the host's Tailscale address and the server's HTTP port.
+
+Race Control accepts any address in the shared range `100.64.0.0/10`, which Tailscale and similar VPNs use and which is never routed on the public internet. Only devices on the same VPN can reach the server. Tailscale must be connected before you start the server, because the server listens on that one address. LAN players can't join a server bound to a VPN address unless they're on the VPN too. The Web GUI is still limited to loopback and LAN addresses because it has no login.
 
 ## FPS matches
 
@@ -235,7 +245,7 @@ The current working instance contains the published server, generated configurat
 
 This storage model applies to newly staged runs. Legacy timestamped instance directories created by older builds are left untouched so an update never deletes user data implicitly; they can be reviewed or removed separately after confirming they are no longer needed.
 
-V1 accepts only loopback or RFC1918 IPv4 listeners. Lobby registration, Steam authentication, UPnP, and automatic port forwarding are forced off. Stopping from the GUI creates a per-instance control file; the server observes it and shuts its host down gracefully. A process-tree termination is used only if graceful shutdown exceeds ten seconds.
+V1 accepts only loopback, RFC1918, or VPN overlay (`100.64.0.0/10`, e.g. Tailscale) IPv4 listeners. Lobby registration, Steam authentication, UPnP, and automatic port forwarding are forced off. Stopping from the GUI creates a per-instance control file; the server observes it and shuts its host down gracefully. A process-tree termination is used only if graceful shutdown exceeds ten seconds.
 
 ## Build and publish
 

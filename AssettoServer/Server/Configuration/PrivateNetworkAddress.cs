@@ -16,4 +16,15 @@ public static class PrivateNetworkAddress
             || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
             || (bytes[0] == 192 && bytes[1] == 168));
     }
+
+    /// <summary>
+    /// Shared address space 100.64.0.0/10 (RFC 6598), used by VPN overlays such as Tailscale.
+    /// It is never publicly routed, so only devices on the same VPN can reach the server.
+    /// </summary>
+    public static bool IsVpnOverlayIpv4(string value)
+        => IPAddress.TryParse(value, out var address)
+           && address.GetAddressBytes() is [100, >= 64 and <= 127, _, _];
+
+    /// <summary>Race and FPS listeners: private LAN or VPN overlay, never a wildcard or public address.</summary>
+    public static bool IsLanOrVpnIpv4(string value) => IsPrivateIpv4(value) || IsVpnOverlayIpv4(value);
 }
