@@ -22,6 +22,10 @@ const ui = {
   rosterCaption: document.getElementById("roster-caption"),
   rosterBody: document.getElementById("roster-body"),
   launcherStatus: document.getElementById("launcher-status"),
+  joinPanel: document.getElementById("join-panel"),
+  joinSummary: document.getElementById("join-summary"),
+  copyJoinAddress: document.getElementById("copy-join-address"),
+  copyJoinLink: document.getElementById("copy-join-link"),
   sessionControlTitle: document.getElementById("session-control-title"),
   environmentPanel: document.getElementById("environment-panel"),
   environmentWeather: document.getElementById("environment-weather"),
@@ -57,6 +61,8 @@ document.querySelectorAll(".action").forEach(button => {
   if (button.dataset.action) button.addEventListener("click", () => executeAction(button.dataset.action));
 });
 ui.applyEnvironment.addEventListener("click", executeEnvironment);
+ui.copyJoinAddress.addEventListener("click", () => copyText(status?.launcher?.joinAddress, "Join address"));
+ui.copyJoinLink.addEventListener("click", () => copyText(status?.launcher?.joinLink, "Content Manager join link"));
 ui.environmentWeather.addEventListener("change", () => { environmentDirty = true; });
 ui.environmentTime.addEventListener("change", () => { environmentDirty = true; });
 ui.selectedPlayer.addEventListener("change", () => {
@@ -152,6 +158,8 @@ function renderStatus() {
   ui.webAddress.textContent = new URL(status.webAddress).host;
   ui.updatedAt.textContent = `Updated ${new Date(status.generatedAt).toLocaleTimeString()}`;
   ui.launcherStatus.textContent = launcher.status || "Ready";
+  ui.joinPanel.hidden = !launcher.joinAddress;
+  ui.joinSummary.textContent = launcher.joinSummary || "";
 
   const isFps = Boolean(live?.isFps || launcher.mode === "FPS");
   const sessionLabel = isFps ? "MATCH" : "RACE";
@@ -339,6 +347,7 @@ function renderDisconnected(error) {
   ui.serverState.textContent = "WEB GUI OFFLINE";
   ui.updatedAt.textContent = `Connection error: ${error.message || error}`;
   ui.launcherStatus.textContent = "The browser cannot reach Race Control.";
+  ui.joinPanel.hidden = true;
   status = null;
   renderButtons();
 }
@@ -449,6 +458,30 @@ function formatDuration(milliseconds, includeHours = false) {
   return includeHours || hours > 0
     ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
     : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+async function copyText(text, label) {
+  if (!text) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      // On a LAN address the Web GUI is plain HTTP, where the async clipboard API isn't available.
+      const field = document.createElement("textarea");
+      field.value = text;
+      field.setAttribute("readonly", "");
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.append(field);
+      field.select();
+      const copied = document.execCommand("copy");
+      field.remove();
+      if (!copied) throw new Error("copy was blocked");
+    }
+    showToast(`${label} copied: ${text}`);
+  } catch {
+    showToast(`Couldn't copy. ${label}: ${text}`, true);
+  }
 }
 
 function showToast(message, error = false) {

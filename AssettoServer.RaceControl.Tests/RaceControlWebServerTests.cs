@@ -94,6 +94,9 @@ public sealed class RaceControlWebServerTests
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsMatchType").GetString(), Is.EqualTo("TDM"));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsStartPolicy").GetString(), Is.EqualTo("Wait for first human"));
             Assert.That(status.RootElement.GetProperty("launcher").GetProperty("fpsMutators").GetString(), Is.EqualTo("Infinite sprint"));
+            Assert.That(status.RootElement.GetProperty("launcher").GetProperty("joinAddress").GetString(), Is.EqualTo("192.168.1.10:8081"));
+            Assert.That(status.RootElement.GetProperty("launcher").GetProperty("joinLink").GetString(),
+                Is.EqualTo("acmanager://race/online/join?ip=192.168.1.10&httpPort=8081"));
             Assert.That(track.RootElement.GetProperty("track").GetString(), Is.EqualTo("fire_pit"));
             Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
             Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
@@ -157,7 +160,9 @@ public sealed class RaceControlWebServerTests
         public RaceControlWebControlState GetState() => new(
             "Test Deathmatch", "Test Server", "FPS", "MATCH", "fire_pit", "", "Blocks",
             "RUNNING", "Ready", false, false, true, true, true, true, true,
-            "TDM", "Infinite sprint", "Wait for first human");
+            "TDM", "Infinite sprint", "Wait for first human",
+            "Players join at 192.168.1.10:8081.", "192.168.1.10:8081",
+            "acmanager://race/online/join?ip=192.168.1.10&httpPort=8081");
 
         public Task<RaceControlWebActionResult> ExecuteAsync(RaceControlWebAction action,
             CancellationToken cancellationToken = default)

@@ -63,6 +63,12 @@
               <button class="action" data-action="stop-session">STOP SESSION</button>
               <button class="action" data-action="restart-session">RESTART SESSION</button>
             </div>
+            <div id="join-panel" class="control-group" hidden>
+              <h2>JOIN</h2>
+              <p id="join-summary" class="join-summary"></p>
+              <button class="action" id="copy-join-address" type="button" title="IP and HTTP port for Content Manager's direct join">COPY ADDRESS</button>
+              <button class="action" id="copy-join-link" type="button" title="acmanager:// link that opens Content Manager's join dialog (no password included)">COPY CM LINK</button>
+            </div>
             <p id="launcher-status" class="control-status">Connecting to the desktop launcher…</p>
           </section>
 

@@ -3,6 +3,7 @@ using System.Text.Json;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Models;
+using AssettoServer.RaceControl.Core.Network;
 using AssettoServer.RaceControl.Core.Validation;
 
 namespace AssettoServer.RaceControl.Core.Staging;
@@ -17,7 +18,8 @@ public sealed record StagedInstance(
     int SlotCount,
     int BotSlotCount,
     bool PhysicsCacheHit,
-    FpsVisualTheme FpsVisualTheme);
+    FpsVisualTheme FpsVisualTheme,
+    ServerJoinInfo? Join = null);
 
 public sealed class ServerInstanceStager
 {
@@ -181,7 +183,8 @@ public sealed class ServerInstanceStager
             rendered.EffectiveGrid.Count,
             botSlots,
             cacheHit,
-            preset.Fps.Theme);
+            preset.Fps.Theme,
+            ServerJoinInfo.Create(preset.Network.BindAddress, preset.Network.HttpPort));
     }
 
     private static async Task WriteRenderedConfigurationAsync(string presetRoot,

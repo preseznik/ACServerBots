@@ -29,7 +29,10 @@ public sealed record RaceControlWebControlState(
     bool CanRestartSession,
     string FpsMatchType = "",
     string FpsMutators = "",
-    string FpsStartPolicy = "");
+    string FpsStartPolicy = "",
+    string JoinSummary = "",
+    string JoinAddress = "",
+    string JoinLink = "");
 
 public sealed record RaceControlWebActionResult(bool Accepted, string Message)
 {

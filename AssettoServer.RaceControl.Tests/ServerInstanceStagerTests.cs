@@ -2,6 +2,7 @@ using System.IO.Compression;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Models;
+using AssettoServer.RaceControl.Core.Network;
 using AssettoServer.RaceControl.Core.Staging;
 using AssettoServer.RaceControl.Core.Storage;
 using AssettoServer.RaceControl.Core.Validation;
@@ -63,6 +64,8 @@ public sealed class ServerInstanceStagerTests
             Assert.That(IniDocument.Load(Path.Combine(presetRoot, "entry_list.ini")).Get("CAR_0", "AI"), Is.EqualTo("none"));
             Assert.That(manifest, Does.Not.Contain("join-secret"));
             Assert.That(manifest, Does.Not.Contain("admin-secret"));
+            Assert.That(instance.Join, Is.EqualTo(new ServerJoinInfo(preset.Network.BindAddress, preset.Network.HttpPort)));
+            Assert.That(instance.Join!.ContentManagerLink, Does.Not.Contain("join-secret"));
             Assert.That(Directory.Exists(Path.Combine(factory.PayloadRoot, "presets")), Is.False);
             Assert.That(recent.Single().RootPath, Is.EqualTo(instance.RootPath));
         });

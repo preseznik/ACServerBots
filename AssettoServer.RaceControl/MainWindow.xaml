@@ -947,7 +947,7 @@
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="Joining" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="After launch, other PCs on the same network can find the event under Content Manager → Drive → Online → LAN."
+                                    <TextBlock Text="After launch, other PCs on the same network can find the event under Content Manager → Drive → Online → LAN. If they can't (another subnet, or a VPN such as Tailscale), Launch &amp; Live shows the address to join with and a Content Manager link to copy."
                                                TextWrapping="Wrap" Margin="0,0,0,12" />
                                     <Button Content="Open Content Manager" Command="{Binding OpenContentManagerCommand}" HorizontalAlignment="Left"
                                             ToolTip="Launch Content Manager so this PC can browse or join the server under Online → LAN." />
@@ -996,7 +996,7 @@
                         </Border>
                         <Border Grid.Column="1" Style="{StaticResource Card}">
                             <Grid>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <StackPanel>
@@ -1027,6 +1027,26 @@
                                     <Button Content="Open selected folder" Command="{Binding OpenInstanceCommand}" Margin="7,0,0,0"
                                             ToolTip="Open the selected working-server or compact-history folder." />
                                 </StackPanel>
+                                <Grid Grid.Row="4" Margin="0,14,0,0">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasJoinInfo}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding JoinSummary}" FontWeight="Bold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                        <Button Content="Copy address" Command="{Binding CopyJoinAddressCommand}"
+                                                ToolTip="Copy the IP and HTTP port. In Content Manager, players can join with them directly instead of looking under Online → LAN." />
+                                        <Button Content="Copy CM link" Command="{Binding CopyJoinLinkCommand}" Margin="7,0,0,0"
+                                                ToolTip="Copy an acmanager:// link. Opening it on a player's PC opens Content Manager's join dialog for this server. No password is included." />
+                                    </StackPanel>
+                                </Grid>
                             </Grid>
                         </Border>
                     </Grid>

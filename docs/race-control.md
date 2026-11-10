@@ -16,7 +16,7 @@ The application targets .NET 10 WPF and opens in Visual Studio 2026 through `Ass
 2. Choose a track layout. The UI reports its pit capacity and whether a usable `fast_lane.ai` exists.
 3. Build the **Grid**. Every entry can select any installed car and skin. `Auto` means a bot occupies the slot until a human claims it, `Fixed` is bot-only, `None` is a human-only racing slot, and `Spectator` reserves a camera-only connection. New and default entries are `Auto`.
 4. Set sessions, rules, weather, bots, rigid-body fidelity, and LAN ports. Clear **Enable server-authoritative race bots** to stage every entry as human-only without losing the saved per-slot modes.
-5. Open **Launch & Live**, validate, then use **Start new**. Content Manager clients discover the event under `Drive -> Online -> LAN`. For friends outside your network, see [Racing over a VPN](#racing-over-a-vpn-tailscale).
+5. Open **Launch & Live**, validate, then use **Start new**. Content Manager clients discover the event under `Drive -> Online -> LAN`. While the server runs, **Launch & Live** also shows where players join (for example `Players join at 192.168.1.10:8081.`) with **Copy address** and **Copy CM link** buttons, for players that LAN discovery doesn't reach. The Web GUI shows the same under **JOIN**. The `acmanager://` link opens Content Manager's join dialog and never includes the join password. For friends outside your network, see [Racing over a VPN](#racing-over-a-vpn-tailscale).
 
 **Race Bots -> Player slot selection** controls which eligible `Auto` slot is claimed when several slots use the connecting player's selected car. **First** uses the lowest configured grid entry, **Last** uses the highest, and **Random** chooses independently on every connection. Occupied, fixed-bot, human-only, and otherwise ineligible slots are skipped; explicit GUID reservations and CSP slot requests retain priority. Before race start this controls grid placement. With mid-race bot takeover enabled, it instead selects the active bot to replace at its current track position.
 
@@ -49,7 +49,7 @@ Friends who aren't on your LAN can join without port forwarding through a VPN ov
 
 1. Everyone installs Tailscale and joins the same tailnet (or the host shares their machine with the others).
 2. On the **Network** tab, pick the host's Tailscale address (`100.x.y.z`) as the **Bind address**. VPN addresses are listed after the LAN addresses.
-3. Start the server. Friends won't see it under `Drive -> Online -> LAN`, because LAN discovery doesn't cross the VPN. In Content Manager they join directly using the host's Tailscale address and the server's HTTP port.
+3. Start the server. Friends won't see it under `Drive -> Online -> LAN`, because LAN discovery doesn't cross the VPN. Send them the address or Content Manager link from **Launch & Live** (**Copy address** / **Copy CM link**); they join directly with it.
 
 Race Control accepts any address in the shared range `100.64.0.0/10`, which Tailscale and similar VPNs use and which is never routed on the public internet. Only devices on the same VPN can reach the server. Tailscale must be connected before you start the server, because the server listens on that one address. LAN players can't join a server bound to a VPN address unless they're on the VPN too. The Web GUI is still limited to loopback and LAN addresses because it has no login.
 

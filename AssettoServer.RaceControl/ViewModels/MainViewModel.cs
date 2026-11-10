@@ -146,6 +146,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                       "race-control-instance.json")));
         OpenInstanceCommand = new RelayCommand(OpenInstance, () => _lastInstance is not null || SelectedRecentInstance is not null);
         OpenContentManagerCommand = new RelayCommand(OpenContentManager);
+        CopyJoinAddressCommand = new RelayCommand(() => CopyJoinText(JoinInfo?.Endpoint, "Join address"), () => HasJoinInfo);
+        CopyJoinLinkCommand = new RelayCommand(() => CopyJoinText(JoinInfo?.ContentManagerLink, "Content Manager join link"), () => HasJoinInfo);
         ClearLogCommand = new RelayCommand(() => LogText = string.Empty);
 
         _processController.LogReceived += (_, line) => RunOnUi(() => AppendLog(line));
@@ -154,6 +156,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(ServerStateText));
             OnPropertyChanged(nameof(IsServerRunning));
             OnPropertyChanged(nameof(ActiveFpsVisualTheme));
+            OnPropertyChanged(nameof(JoinInfo));
+            OnPropertyChanged(nameof(HasJoinInfo));
+            OnPropertyChanged(nameof(JoinSummary));
+            CopyJoinAddressCommand.RaiseCanExecuteChanged();
+            CopyJoinLinkCommand.RaiseCanExecuteChanged();
             RaiseCommandStates();
         });
         _liveMonitorTask = MonitorLiveRaceAsync(_liveMonitorCancellation.Token);
@@ -839,7 +846,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand ExportServerPackageCommand { get; }
     public RelayCommand OpenInstanceCommand { get; }
     public RelayCommand OpenContentManagerCommand { get; }
+    public RelayCommand CopyJoinAddressCommand { get; }
+    public RelayCommand CopyJoinLinkCommand { get; }
     public RelayCommand ClearLogCommand { get; }
+
+    /// <summary>
+    /// Where players join the running server. Taken from the staged instance, so editing the Network
+    /// tab while the server runs doesn't show an address the server isn't using. Hidden for simulations.
+    /// </summary>
+    public ServerJoinInfo? JoinInfo => IsServerRunning && !_processController.IsSimulation ? _lastInstance?.Join : null;
+    public bool HasJoinInfo => JoinInfo is not null;
+    public string JoinSummary => JoinInfo?.Summary ?? string.Empty;
 
     public async Task InitializeAsync(ApplicationSettings? settings = null)
     {
@@ -953,7 +970,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         FpsMutators: FormatFpsMutators(Preset.Fps),
         FpsStartPolicy: Preset.Fps.StartWithBotsOnly
             ? "Bots can start immediately"
-            : "Wait for first human");
+            : "Wait for first human",
+        JoinSummary: JoinSummary,
+        JoinAddress: JoinInfo?.Endpoint ?? string.Empty,
+        JoinLink: JoinInfo?.ContentManagerLink ?? string.Empty);
 
     private static string FormatFpsMutators(FpsOptions options)
     {
@@ -2556,6 +2576,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         return duration.TotalHours >= 1
             ? $"{(int)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}"
             : $"{duration.Minutes}:{duration.Seconds:00}";
+    }
+
+    private void CopyJoinText(string? text, string label)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+        try
+        {
+            Clipboard.SetText(text);
+            StatusText = $"{label} copied: {text}";
+        }
+        catch (System.Runtime.InteropServices.ExternalException exception)
+        {
+            // Another app can hold the clipboard open briefly.
+            StatusText = $"Could not copy to the clipboard ({exception.Message}). {label}: {text}";
+        }
     }
 
     private void OpenContentManager()
