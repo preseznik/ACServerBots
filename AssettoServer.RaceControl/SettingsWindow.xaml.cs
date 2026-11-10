@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -8,6 +9,7 @@ using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Staging;
 using AssettoServer.RaceControl.Core.Network;
 using AssettoServer.RaceControl.Core.Web;
+using AssettoServer.RaceControl.Infrastructure;
 using AssettoServer.RaceControl.Theming;
 
 namespace AssettoServer.RaceControl;
@@ -38,6 +40,80 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         InitializeComponent();
         DataContext = this;
         Closing += (_, e) => { if (_installing) { _installationCancellation.Cancel(); e.Cancel = true; } };
+        _legacyCatalog = new LegacyInstanceCatalog(new RaceControlPaths(dataRoot));
+        Loaded += async (_, _) => await RefreshLegacyInstancesAsync();
+    }
+
+    private readonly LegacyInstanceCatalog _legacyCatalog;
+    private string _legacyInstancesSummary = "Looking for old instance folders…";
+
+    public ObservableCollection<LegacyInstance> LegacyInstances { get; } = [];
+    public bool HasLegacyInstances => LegacyInstances.Count > 0;
+    public string LegacyInstancesSummary
+    {
+        get => _legacyInstancesSummary;
+        private set
+        {
+            _legacyInstancesSummary = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(LegacyInstancesSummary)));
+        }
+    }
+
+    private async Task RefreshLegacyInstancesAsync()
+    {
+        IReadOnlyList<LegacyInstance> found;
+        try
+        {
+            // Measuring folder sizes touches every file, so keep it off the UI thread.
+            found = await Task.Run(_legacyCatalog.List);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            LegacyInstancesSummary = $"Could not read the Instances folder: {exception.Message}";
+            return;
+        }
+
+        LegacyInstances.Clear();
+        foreach (var instance in found)
+            LegacyInstances.Add(instance);
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasLegacyInstances)));
+        long total = found.Sum(instance => instance.SizeBytes);
+        LegacyInstancesSummary = found.Count == 0
+            ? "No old instance folders. Race Control now reuses one working server and keeps compact copies in History."
+            : $"{found.Count} folder(s) from older Race Control builds use {LegacyInstanceCatalog.FormatSize(total)}. "
+              + "Race Control no longer uses them. Select the ones you don't need and move them to the Recycle Bin.";
+    }
+
+    private void LegacyInstancesList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        => RemoveLegacyInstancesButton.IsEnabled = LegacyInstancesList.SelectedItems.Count > 0;
+
+    private void SelectAllLegacyInstances_Click(object sender, RoutedEventArgs e) => LegacyInstancesList.SelectAll();
+
+    private async void RemoveLegacyInstances_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = LegacyInstancesList.SelectedItems.Cast<LegacyInstance>().ToArray();
+        if (selected.Length == 0)
+            return;
+        string size = LegacyInstanceCatalog.FormatSize(selected.Sum(instance => instance.SizeBytes));
+        if (MessageBox.Show(this,
+                $"Move {selected.Length} old instance folder(s) ({size}) to the Recycle Bin?\n\nYou can restore them from the Recycle Bin.",
+                "Old instance folders", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+            return;
+
+        var owner = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        var failed = new List<string>();
+        foreach (var instance in selected)
+        {
+            // Re-check right before removing: never Current, History, or anything outside Instances.
+            if (!_legacyCatalog.CanRemove(instance.Path) || !RecycleBin.MoveDirectory(instance.Path, owner))
+                failed.Add(instance.Name);
+        }
+
+        await RefreshLegacyInstancesAsync();
+        if (failed.Count > 0)
+            MessageBox.Show(this,
+                $"These folders were not moved (in use, or a file is locked):\n\n{string.Join("\n", failed)}",
+                "Old instance folders", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

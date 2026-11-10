@@ -561,6 +561,26 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     /// Idempotent: AiBehavior and this manager both ask on disconnect, in either order.
     /// </summary>
     public bool TryHoldForDriverChange(EntryCar entryCar)
+        => TryHoldForDriver(entryCar, ServerTimeMilliseconds + _configuration.Extra.DriverSwapGraceSeconds * 1000L,
+            "a driver change");
+
+    /// <summary>
+    /// A reserved team car that is empty when a race session begins waits for its first driver until the
+    /// driver change time after the start, so a teammate who is late can still join (from the pits).
+    /// </summary>
+    private void HoldEmptyTeamCarsForLateStart()
+    {
+        if (CurrentSession.Configuration.Type != SessionType.Race)
+            return;
+        long deadline = CurrentSession.StartTimeMilliseconds + _configuration.Extra.DriverSwapGraceSeconds * 1000L;
+        foreach (var entryCar in _entryCarManager.EntryCars)
+        {
+            if (!entryCar.IsSpectator && entryCar.Client == null && entryCar.AllowedGuids.Count > 0)
+                TryHoldForDriver(entryCar, deadline, "its first driver");
+        }
+    }
+
+    private bool TryHoldForDriver(EntryCar entryCar, long deadline, string waitingFor)
     {
         if (entryCar.IsSpectator || entryCar.Client != null)
             return false;
@@ -579,9 +599,10 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
                     entryCar.AllowedGuids, result))
                 return false;
 
-            _driverChangeDeadlines[entryCar.SessionId] = ServerTimeMilliseconds + graceSeconds * 1000L;
-            Log.Information("Race slot {SessionId} ({ParticipantName}) is waiting up to {GraceSeconds}s for a driver change",
-                entryCar.SessionId, result!.Name, graceSeconds);
+            _driverChangeDeadlines[entryCar.SessionId] = deadline;
+            Log.Information("Race slot {SessionId} ({ParticipantName}) is waiting up to {Seconds}s for {WaitingFor}",
+                entryCar.SessionId, string.IsNullOrWhiteSpace(result!.Name) ? "empty team car" : result.Name,
+                Math.Max(0, (deadline - ServerTimeMilliseconds) / 1000), waitingFor);
             return true;
         }
     }
@@ -644,7 +665,10 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             var entryCar = _entryCarManager.EntryCars[sessionId];
             if (entryCar.Client != null)
                 continue;
-            string name = CurrentSession.Results?.TryGetValue(sessionId, out var result) == true ? result.Name : $"Driver {sessionId}";
+            string name = CurrentSession.Results?.TryGetValue(sessionId, out var result) == true
+                          && !string.IsNullOrWhiteSpace(result.Name)
+                ? result.Name
+                : $"Team car {sessionId + 1}";
             Log.Information("No driver change for race slot {SessionId} within the grace period", sessionId);
             MarkParticipantDnf(entryCar, name);
         }
@@ -740,6 +764,8 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         {
             IsLastRaceInverted = false;
         }
+
+        HoldEmptyTeamCarsForLateStart();
 
         _configuration.Server.DynamicTrack.TransferSession();
         // TODO weather

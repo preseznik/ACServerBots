@@ -1045,6 +1045,8 @@
                                                 ToolTip="Copy the IP and HTTP port. In Content Manager, players can join with them directly instead of looking under Online → LAN." />
                                         <Button Content="Copy CM link" Command="{Binding CopyJoinLinkCommand}" Margin="7,0,0,0"
                                                 ToolTip="Copy an acmanager:// link. Opening it on a player's PC opens Content Manager's join dialog for this server. No password is included." />
+                                        <Button Content="Join from this PC" Command="{Binding JoinFromThisPcCommand}" Margin="7,0,0,0"
+                                                ToolTip="Open Content Manager's join dialog for this server on this PC." />
                                     </StackPanel>
                                 </Grid>
                             </Grid>

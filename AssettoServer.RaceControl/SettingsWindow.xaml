@@ -112,6 +112,33 @@
                                         ToolTip="Open the folder containing saved presets, settings, staged instances, caches, and logs." />
                             </Grid>
                         </Border>
+
+                        <Border Style="{DynamicResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Old instance folders" Style="{DynamicResource SectionTitle}" />
+                                <TextBlock Text="{Binding LegacyInstancesSummary}" TextWrapping="Wrap" />
+                                <ListBox x:Name="LegacyInstancesList" ItemsSource="{Binding LegacyInstances}" DisplayMemberPath="DisplayName"
+                                         SelectionMode="Extended" MaxHeight="180" Margin="0,10,0,0"
+                                         SelectionChanged="LegacyInstancesList_SelectionChanged"
+                                         ToolTip="Timestamped server folders left by older Race Control builds. The current server and History are never listed.">
+                                    <ListBox.Style>
+                                        <Style TargetType="ListBox">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasLegacyInstances}" Value="False">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ListBox.Style>
+                                </ListBox>
+                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                    <Button x:Name="RemoveLegacyInstancesButton" Content="Move selected to Recycle Bin" IsEnabled="False"
+                                            Click="RemoveLegacyInstances_Click"
+                                            ToolTip="Move the selected folders to the Windows Recycle Bin. You can restore them from there." />
+                                    <Button Content="Select all" Click="SelectAllLegacyInstances_Click" Margin="7,0,0,0" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

@@ -42,6 +42,21 @@ public class DriverChangePolicyTests
     }
 
     [Test]
+    public void EmptyTeamCarAtRaceStart_WaitsForALateDriverWhoStartsFresh()
+    {
+        // SessionManager gives a car with nobody in it a blank result when the race session begins.
+        var empty = new EntryCarResult(null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceParticipantPolicy.CanHoldForDriverChange(300, true, false, [Alice, Bob], empty), Is.True,
+                "an empty team car waits for its first driver");
+            Assert.That(RaceParticipantPolicy.ShouldContinueResult([Alice, Bob], empty, Bob), Is.False,
+                "there are no laps to continue, so the late driver gets a fresh result");
+        });
+    }
+
+    [Test]
     public void OnlyListedTeammatesContinueTheCarsResult()
     {
         var result = Running(Alice, "Alice", laps: 12);

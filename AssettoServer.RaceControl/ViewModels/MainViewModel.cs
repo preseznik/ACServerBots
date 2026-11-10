@@ -157,6 +157,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OpenContentManagerCommand = new RelayCommand(OpenContentManager);
         CopyJoinAddressCommand = new RelayCommand(() => CopyJoinText(JoinInfo?.Endpoint, "Join address"), () => HasJoinInfo);
         CopyJoinLinkCommand = new RelayCommand(() => CopyJoinText(JoinInfo?.ContentManagerLink, "Content Manager join link"), () => HasJoinInfo);
+        JoinFromThisPcCommand = new RelayCommand(JoinFromThisPc, () => HasJoinInfo);
         ClearLogCommand = new RelayCommand(() => LogText = string.Empty);
 
         _processController.LogReceived += (_, line) => RunOnUi(() => AppendLog(line));
@@ -170,6 +171,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(JoinSummary));
             CopyJoinAddressCommand.RaiseCanExecuteChanged();
             CopyJoinLinkCommand.RaiseCanExecuteChanged();
+            JoinFromThisPcCommand.RaiseCanExecuteChanged();
             RaiseCommandStates();
         });
         _liveMonitorTask = MonitorLiveRaceAsync(_liveMonitorCancellation.Token);
@@ -894,6 +896,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand OpenContentManagerCommand { get; }
     public RelayCommand CopyJoinAddressCommand { get; }
     public RelayCommand CopyJoinLinkCommand { get; }
+    public RelayCommand JoinFromThisPcCommand { get; }
     public RelayCommand ClearLogCommand { get; }
 
     /// <summary>
@@ -2709,6 +2712,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             StatusText = $"Could not save race results: {exception.Message}";
+        }
+    }
+
+    private void JoinFromThisPc()
+    {
+        if (JoinInfo is not { } join)
+            return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(join.ContentManagerLink) { UseShellExecute = true });
+            StatusText = $"Opening Content Manager to join {join.Endpoint}…";
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // No handler for acmanager:// links means Content Manager isn't installed or registered.
+            StatusText = "Content Manager didn't open. Install it, or join by address under Online in Content Manager.";
         }
     }
 
