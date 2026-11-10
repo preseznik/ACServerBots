@@ -1,4 +1,5 @@
 using System.Windows.Input;
+using AssettoServer.RaceControl.Core.Infrastructure;
 
 namespace AssettoServer.RaceControl.Infrastructure;
 
@@ -14,10 +15,18 @@ public sealed class AsyncRelayCommand(Func<Task> execute, Func<bool>? canExecute
 {
     private bool _isRunning;
 
+    /// <summary>
+    /// Receives non-fatal errors from every async command so one failed action doesn't close the app.
+    /// The app sets it at startup. Without it, errors propagate as before.
+    /// </summary>
+    public static Action<Exception>? ErrorHandler { get; set; }
+
     public event EventHandler? CanExecuteChanged;
     public bool CanExecute(object? parameter) => !_isRunning && (canExecute?.Invoke() ?? true);
 
-    public async void Execute(object? parameter)
+    public async void Execute(object? parameter) => await ExecuteAsync(parameter);
+
+    public async Task ExecuteAsync(object? parameter = null)
     {
         if (!CanExecute(parameter))
         {
@@ -29,6 +38,14 @@ public sealed class AsyncRelayCommand(Func<Task> execute, Func<bool>? canExecute
         try
         {
             await execute();
+        }
+        catch (Exception exception) when (UnhandledErrorPolicy.IsCancellation(exception))
+        {
+            // A cancelled action is not an error.
+        }
+        catch (Exception exception) when (!UnhandledErrorPolicy.IsFatal(exception) && ErrorHandler is not null)
+        {
+            ErrorHandler(exception);
         }
         finally
         {

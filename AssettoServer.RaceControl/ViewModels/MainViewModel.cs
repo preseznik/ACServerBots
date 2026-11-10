@@ -2616,6 +2616,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         LogText = updated.Length > 150_000 ? updated[^120_000..] : updated;
     }
 
+    /// <summary>
+    /// Records an error that escaped a command or click handler. Unlike HandleException it stays on the
+    /// current tab, so an error mid-race doesn't pull the user away from Live.
+    /// </summary>
+    public void ReportUnexpectedError(Exception exception)
+    {
+        StatusText = $"Unexpected error: {exception.Message}";
+        AppendLog($"ERROR: Unexpected error (Race Control kept running): {exception}");
+    }
+
     private void HandleException(string context, Exception exception)
     {
         StatusText = $"{context}: {exception.Message}";

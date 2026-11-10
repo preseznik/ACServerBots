@@ -6,6 +6,7 @@ using System.Windows.Threading;
 using AssettoServer.RaceControl.Core.Infrastructure;
 using AssettoServer.RaceControl.Core.Storage;
 using AssettoServer.RaceControl.Core.Web;
+using AssettoServer.RaceControl.Infrastructure;
 using AssettoServer.RaceControl.Theming;
 
 namespace AssettoServer.RaceControl;
@@ -17,6 +18,8 @@ public partial class App : Application
     private readonly SemaphoreSlim _webServerLock = new(1, 1);
     private IRaceControlWebControl? _webControl;
     private RaceControlWebServer? _webServer;
+    private Action<Exception>? _errorLog;
+    private bool _showingError;
 
     public ApplicationSettings Settings { get; private set; } = new();
     public string DataRoot => _paths.DataRoot;
@@ -32,6 +35,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AsyncRelayCommand.ErrorHandler = ReportRecoverableError;
         try { _paths.ConfigureProcessStorage(); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -60,6 +64,9 @@ public partial class App : Application
     public void SaveSettings() => _settingsStore?.Save(Settings);
 
     public void AttachWebControl(IRaceControlWebControl control) => _webControl = control;
+
+    /// <summary>Shows unexpected but recoverable errors in the main window's log.</summary>
+    public void AttachErrorLog(Action<Exception> log) => _errorLog = log;
 
     public async Task RestartWebDashboardAsync(CancellationToken cancellationToken = default)
     {
@@ -191,25 +198,71 @@ public partial class App : Application
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
+        e.Handled = true;
+        // Before the main window is up, or after a truly fatal error, the app can't be trusted to keep
+        // running. Anything else (a failed button, a locked file) only affects that one action, and
+        // closing mid-race would also take the server controls down with it.
+        if (!UnhandledErrorPolicy.IsFatal(e.Exception) && MainWindow is { IsLoaded: true })
+        {
+            ReportRecoverableError(e.Exception);
+            return;
+        }
+
+        WriteCrashLog(e.Exception);
+        MessageBox.Show(
+            $"Race Control encountered an unexpected error and must close.\n\n{e.Exception.Message}\n\nA diagnostic was written to the local Logs folder.",
+            "AssettoServer Race Control",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+        Shutdown(1);
+    }
+
+    private void ReportRecoverableError(Exception exception)
+    {
+        if (UnhandledErrorPolicy.IsCancellation(exception))
+            return;
+
+        WriteCrashLog(exception);
+        try
+        {
+            _errorLog?.Invoke(exception);
+        }
+        catch (Exception logException) when (!UnhandledErrorPolicy.IsFatal(logException))
+        {
+            WriteCrashLog(logException);
+        }
+
+        // MessageBox pumps messages, so a repeating error (a timer, say) could otherwise stack dialogs.
+        if (_showingError)
+            return;
+        _showingError = true;
+        try
+        {
+            MessageBox.Show(
+                $"Something went wrong, but Race Control is still running.\n\n{exception.Message}\n\nDetails were written to Logs\\race-control-crash.log. If something looks wrong, save your event and restart Race Control when convenient.",
+                "AssettoServer Race Control",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _showingError = false;
+        }
+    }
+
+    private void WriteCrashLog(Exception exception)
+    {
         try
         {
             var logDirectory = _paths.LogsDirectory;
             Directory.CreateDirectory(logDirectory);
             File.AppendAllText(
                 Path.Combine(logDirectory, "race-control-crash.log"),
-                $"[{DateTimeOffset.Now:O}] {e.Exception}{Environment.NewLine}{Environment.NewLine}");
+                $"[{DateTimeOffset.Now:O}] {exception}{Environment.NewLine}{Environment.NewLine}");
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception logException) when (logException is IOException or UnauthorizedAccessException)
         {
             // The original exception is more useful than a secondary logging failure.
         }
-
-        MessageBox.Show(
-            $"Race Control encountered an unexpected error and must close.\n\n{e.Exception.Message}\n\nA diagnostic was written to the local Logs folder.",
-            "AssettoServer Race Control",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
-        e.Handled = true;
-        Shutdown(1);
     }
 }

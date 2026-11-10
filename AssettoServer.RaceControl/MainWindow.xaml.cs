@@ -32,6 +32,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _viewModel;
         RaceControlApp.AttachWebControl(new DispatcherRaceControlWebControl(_viewModel, Dispatcher));
+        RaceControlApp.AttachErrorLog(_viewModel.ReportUnexpectedError);
         _takeoverInputTimer = new DispatcherTimer(TimeSpan.FromSeconds(1d / 60d),
             DispatcherPriority.Input, TakeoverInputTimer_Tick, Dispatcher);
         _takeoverInputTimer.Start();

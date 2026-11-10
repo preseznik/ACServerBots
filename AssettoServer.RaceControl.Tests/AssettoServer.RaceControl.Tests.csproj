@@ -16,4 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\AssettoServer.RaceControl.Core\AssettoServer.RaceControl.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The WPF app can't be referenced from this test project; its command type has no WPF dependencies. -->
+    <Compile Include="..\AssettoServer.RaceControl\Infrastructure\Commands.cs" Link="Linked\Commands.cs" />
+  </ItemGroup>
 </Project>
