@@ -2,9 +2,9 @@
 
 ## Released component baseline
 
-Race Control 0.1.4 ships client pack **60**, HUD app **1.17.2**, HUD bridge
+Race Control 0.1.5 ships client pack **60**, HUD app **1.17.2**, HUD bridge
 `asrc.fps.hud.v17`, and ready protocol **7**. Map pack **2** contains six arenas
-prepared with format **5**. These client and map packs are unchanged from 0.1.3.
+prepared with format **5**. These client and map packs are unchanged since 0.1.3.
 Use the [Race Control installation guidance](race-control.md#fps-matches) for current setup.
 The sections below record feature milestones and their validation; their older pack,
 archive, protocol, and bridge numbers are historical implementation context.

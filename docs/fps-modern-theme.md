@@ -14,7 +14,7 @@ Standing locomotion uses Quaternius Source clips shared by both operators. See
 
 ## Released component baseline
 
-Race Control 0.1.4 distributes both themes in client pack **60**, with Modern archive
+Race Control 0.1.5 distributes both themes in client pack **60**, with Modern archive
 **v14** and base archive **v23** served by the host. Map pack **2** includes six arenas
 prepared with format **5**. See [Race Control installation guidance](race-control.md#fps-matches).
 Older pack and protocol numbers below describe the original implementation milestones;

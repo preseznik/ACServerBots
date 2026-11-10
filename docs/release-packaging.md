@@ -1,6 +1,6 @@
 # Local release packaging
 
-Current release: **0.1.4** (2026-10-26). The previous published installer is 0.1.3.
+Current release: **0.1.5** (2026-11-10). The previous published installer is 0.1.4.
 FPS content uses **client pack 60** and **map pack 2**, including six maps.
 The launcher and server share version
 metadata in `Release/Release.props`.
@@ -11,7 +11,7 @@ Build all Windows x64 artifacts with:
 pwsh -NoProfile -File tools/Build-RaceControlRelease.ps1 -LocalReview
 ```
 
-Output: `dist/v0.1.4/`. An existing version directory is never overwritten.
+Output: `dist/v0.1.5/`. An existing version directory is never overwritten.
 `-LocalReview` records the local-only intent in the release manifest and permits
 packaging the current Ghost assets without changing their redistribution record.
 The default public-package check still requires Ghost-specific permission.
@@ -20,13 +20,13 @@ the current working tree as Corresponding Source, and writes release.json plus
 SHA256SUMS.txt. ZIP entries have stable order and timestamps. Inno executables
 are unsigned; compiler metadata prevents claiming identical installer bytes.
 
-The 0.1.4 package retains the 0.1.3 FPS code and assets, including perks and field upgrades,
-HUD and control updates, movement volumes, Dust II, and Last Shift. It retains the
-VRC KN5 reader fix, physics-preparation diagnostics, and GitHub updater from 0.1.2.
-After upgrades, startup skips incompatible saved settings, restored-preset, and detected
-server paths, selecting a matching bundled or downloaded server; valid configured paths retain
-priority. The release includes server-selection regression tests. Client pack 60 and map pack 2
-are byte-for-byte unchanged from 0.1.3 and remain compatible.
+The 0.1.5 package adds endurance driver swaps (team cars reserved by Steam ID, a driver
+change time, and one car per team), saved race results with Copy and CSV export, Steam sign-in
+and event registration in the Web GUI with admin-only controls, a Web GUI overview with track and
+car pictures, Tailscale/VPN bind addresses, join address and Content Manager links, recovery from
+non-fatal errors instead of closing, and cleanup of old instance folders. It retains the 0.1.4
+server selection on startup and the full 0.1.3 FPS feature set. Client pack 60 and map pack 2 are
+unchanged from 0.1.4 and remain compatible. The bundled server must match this launcher version.
 The application ID stays unchanged, so Setup reuses an existing installation's
 directory, installation mode, and selected setup type. It replaces selected program
 components while keeping settings and presets in the existing data folder.
@@ -62,14 +62,14 @@ players install the separate FPS overlay deliberately.
 Launcher-only users can import this release's Server ZIP and optional FPS ZIP in
 Settings > Local Installations. Server execution checks the release manifest,
 payload hashes and executable capability output. Downloads target the exact
-matching fork version, using HTTPS and SHA-256; the 0.1.4 assets are published under `race-control-v0.1.4`.
+matching fork version, using HTTPS and SHA-256; the 0.1.5 assets are published under `race-control-v0.1.5`.
 Offline ZIP import is also supported. No GitHub tag or release is created by the local builder.
 Do not reuse the inherited upstream `v0.0.55-pre35` tag for the modified fork.
 
 Validate an artifact set with:
 
 ```powershell
-pwsh -NoProfile -File tools/Test-RaceControlRelease.ps1 -ReleaseDirectory dist/v0.1.4 -EvidenceDirectory .artifacts/release-verification-new
+pwsh -NoProfile -File tools/Test-RaceControlRelease.ps1 -ReleaseDirectory dist/v0.1.5 -EvidenceDirectory .artifacts/release-verification-0.1.5
 ```
 
 Use tools/Test-RaceControlLocal.ps1 against an extracted Full directory for

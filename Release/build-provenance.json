@@ -1,6 +1,6 @@
 {
-  "version": "0.1.4",
-  "baselineCommit": "82e43a9b941908755ac69791dfa368037e5ae4d7",
+  "version": "0.1.5",
+  "baselineCommit": "c2b28b8395e5a2165dd3fdecf7a22c11322289e5",
   "fpsClientPackVersion": 60,
   "fpsMapPackVersion": 2,
   "includesCurrentFpsSourceAndAssets": true,
@@ -16,5 +16,5 @@
   "mapSourceOverrides": {
     "bo2_nuketown_2020": "authoring snapshot 0.1.16 with bus movement volume"
   },
-  "sourceSelection": "Race Control 0.1.3 source and complete FPS assets, plus compatible server selection after upgrades and regression tests."
+  "sourceSelection": "Race Control 0.1.4 source and complete FPS assets, plus endurance driver swaps, saved race results, Web GUI Steam sign-in and registration, VPN bind addresses, join links, error recovery and instance cleanup."
 }
