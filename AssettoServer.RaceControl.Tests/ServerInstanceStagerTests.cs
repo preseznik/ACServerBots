@@ -92,6 +92,9 @@ public sealed class ServerInstanceStagerTests
             "sample-one\nsample-two\n");
         await File.WriteAllTextAsync(Path.Combine(first.RootPath, "logs", "server.txt"),
             "important log");
+        Directory.CreateDirectory(Path.Combine(first.RootPath, "race-control-live", "results"));
+        await File.WriteAllTextAsync(Path.Combine(first.RootPath, "race-control-live", "results",
+            "race-20261110-200000-session2.json"), "{\"status\":\"finished\"}");
 
         var second = await stager.StageAsync(preset, factory.Scan());
         string archive = Directory.GetDirectories(paths.HistoryDirectory).Single();
@@ -113,6 +116,8 @@ public sealed class ServerInstanceStagerTests
             Assert.That(File.Exists(Path.Combine(archive, "simulation", "summary.json")), Is.True);
             Assert.That(File.Exists(Path.Combine(archive, "simulation", "events.jsonl")), Is.True);
             Assert.That(File.Exists(Path.Combine(archive, "logs", "server.txt")), Is.True);
+            Assert.That(File.Exists(Path.Combine(archive, "race-control-live", "results",
+                "race-20261110-200000-session2.json")), Is.True, "real race results must be kept in History");
             Assert.That(File.Exists(Path.Combine(archive, "AssettoServer.exe")), Is.False,
                 "compact history must not duplicate the standalone server payload");
             Assert.That(File.Exists(Path.Combine(archive, "support.dll")), Is.False);

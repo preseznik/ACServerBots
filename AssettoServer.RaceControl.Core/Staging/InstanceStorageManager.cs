@@ -77,6 +77,9 @@ public sealed class InstanceStorageManager(RaceControlPaths paths)
             await CopyIfPresentAsync(workingRoot,
                 Path.Combine(workingRoot, "race-control-live", "track.json"), temporary,
                 cancellationToken);
+            await CopyDirectoryAsync(workingRoot,
+                Path.Combine(workingRoot, "race-control-live", "results"), temporary,
+                cancellationToken);
 
             string samplesPath = Path.Combine(workingRoot, "simulation", "samples.jsonl");
             if (File.Exists(samplesPath))

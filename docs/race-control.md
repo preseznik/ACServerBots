@@ -220,6 +220,15 @@ Live control remains independent of AssettoServer's LAN HTTP port. Race Control 
 
 The working instance directory is deliberately reused between launches. The live viewer therefore keys its track cache by both launch generation and the `track.json` file revision, and ignores empty or partial maps until a renderable replacement appears. Switching event mode, staging, launching, or restarting invalidates the cached map so both the top-down and takeover views rebuild from the current event.
 
+## Race results
+
+When a real race finishes, the server saves its classification and **Live** shows it: position, driver and car, team, laps, total time, gap to the winner, best lap, and result. For cars that changed drivers, every driver who drove the car is listed. The results update as the remaining cars cross the line. **Back to map** hides them, and **Race results** next to the race controls shows them again.
+
+- **Copy** copies a readable list to paste into a chat.
+- **Save CSV…** saves a spreadsheet-friendly file.
+
+Results are also saved when Race Control stops the race, when the session moves on before everyone finishes, and when the server stops mid-race; the title then says the results are incomplete. Races where nobody completed a lap aren't saved. Each race is a JSON file under `Instances\Currentace-control-liveesults` and is copied to `History` with the rest of the run when you next stage. Accelerated simulations keep their own results view.
+
 ## Content Manager interoperation
 
 **Import latest CM preset** reads the most recently modified `server_cfg.ini` and `entry_list.ini` pair under `<Assetto Corsa>\server\presets`. A single imported entry is cloned to the two-slot minimum. Import does not modify the CM preset.

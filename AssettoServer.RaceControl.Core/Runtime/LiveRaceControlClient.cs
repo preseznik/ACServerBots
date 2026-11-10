@@ -23,6 +23,7 @@ public sealed class LiveRaceControlClient
     public string SnapshotPath => Path.Combine(ControlDirectory, "state.json");
     public string TrackPath => Path.Combine(ControlDirectory, "track.json");
     public string ManualInputPath => Path.Combine(ControlDirectory, "manual-input.json");
+    public string ResultsDirectory => Path.Combine(ControlDirectory, "results");
     public string SimulationSummaryPath => Path.Combine(GetSimulationOutputDirectory(
         Path.GetDirectoryName(ControlDirectory)!), "summary.json");
 
@@ -56,6 +57,31 @@ public sealed class LiveRaceControlClient
     }
     public SimulationRaceSummary? TryReadSimulationSummary() =>
         TryRead<SimulationRaceSummary>(SimulationSummaryPath);
+
+    /// <summary>
+    /// The newest saved race classification written at or after <paramref name="notBeforeUtc"/>, so a
+    /// restarted server doesn't show the previous run's results as new.
+    /// </summary>
+    public RaceResultsFile? TryReadLatestRaceResults(DateTime notBeforeUtc)
+    {
+        try
+        {
+            var directory = new DirectoryInfo(ResultsDirectory);
+            if (!directory.Exists)
+                return null;
+            var newest = directory.EnumerateFiles("race-*.json")
+                .Where(file => file.LastWriteTimeUtc >= notBeforeUtc)
+                .MaxBy(file => file.LastWriteTimeUtc);
+            if (newest is null)
+                return null;
+            var report = TryRead<RaceResultsReport>(newest.FullName);
+            return report is null ? null : new RaceResultsFile(newest.FullName, newest.LastWriteTimeUtc, report.Classify());
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     public async Task<Guid> SendCommandAsync(LiveRaceCommand command,
         CancellationToken cancellationToken = default)

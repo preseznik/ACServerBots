@@ -1104,6 +1104,8 @@
                                             ToolTip="{Binding StopRaceToolTip}" />
                                     <Button Content="{Binding RestartRaceLabel}" Command="{Binding RestartRaceCommand}" Margin="7,0,0,0"
                                             ToolTip="{Binding RestartRaceToolTip}" />
+                                    <Button Content="Race results" Command="{Binding ShowRaceResultsCommand}" Margin="7,0,0,0"
+                                            ToolTip="Show the last race's saved classification again." />
                                 </StackPanel>
                                 <TextBlock Text="{Binding LiveControlStatus}" Foreground="{DynamicResource MutedTextBrush}"
                                            TextWrapping="Wrap" Margin="0,10,0,0" />
@@ -1360,6 +1362,57 @@
                                         </DataGrid>
                                         <TextBlock Grid.Row="3" Margin="0,12,0,0" Foreground="{DynamicResource MutedTextBrush}"
                                                    Text="* Crash count is a contact episode, not every physics contact frame. STOP commands are retained as deliberate obstacle tests, and the overview reports how many committed stopped-car passes completed. Full stops exclude the starting grid hold." />
+                                    </Grid>
+                                </Border>
+                                <Border Margin="24" Padding="20" Background="{DynamicResource PanelBrush}"
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsRaceResultsVisible}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding RaceResultsTitle}" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" />
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                                <Button Content="Copy" Command="{Binding CopyRaceResultsCommand}"
+                                                        ToolTip="Copy the classification as text, ready to paste into a chat." />
+                                                <Button Content="Save CSV…" Command="{Binding SaveRaceResultsCsvCommand}" Margin="7,0,0,0"
+                                                        ToolTip="Save the classification as a CSV file for a spreadsheet." />
+                                                <Button Content="Back to map" Command="{Binding DismissRaceResultsCommand}" Margin="7,0,0,0"
+                                                        ToolTip="Hide the results. Reopen them with the Race results button." />
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock Grid.Row="1" Text="{Binding RaceResultsOverview}"
+                                                   Foreground="{DynamicResource MutedTextBrush}" Margin="0,5,0,14" />
+                                        <DataGrid Grid.Row="2" ItemsSource="{Binding RaceResults.Results}"
+                                                  AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                                                  SelectionMode="Single" HorizontalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="POS" Binding="{Binding Position}" Width="48" />
+                                                <DataGridTextColumn Header="DRIVER / CAR" Binding="{Binding DriverAndCar}" Width="2*" />
+                                                <DataGridTextColumn Header="TEAM" Binding="{Binding Team}" Width="*" />
+                                                <DataGridTextColumn Header="LAPS" Binding="{Binding Laps}" Width="55" />
+                                                <DataGridTextColumn Header="TIME" Binding="{Binding Time}" Width="96" />
+                                                <DataGridTextColumn Header="GAP" Binding="{Binding Gap}" Width="88" />
+                                                <DataGridTextColumn Header="BEST LAP" Binding="{Binding BestLap}" Width="88" />
+                                                <DataGridTextColumn Header="RESULT" Binding="{Binding Outcome}" Width="100" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <TextBlock Grid.Row="3" Margin="0,12,0,0" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap"
+                                                   Text="Saved with the server instance and kept in History. Cars that shared drivers list everyone who drove them." />
                                     </Grid>
                                 </Border>
                             </Grid>

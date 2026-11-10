@@ -88,6 +88,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _simulationTimeScaleUpdateCancellation;
     private SimulationRaceSummary? _simulationResults;
     private bool _showSimulationResults;
+    private RaceResultsReport? _raceResults;
+    private bool _showRaceResults;
+    // Results files older than this belong to an earlier server run (UTC ticks; read by the monitor task).
+    private long _raceResultsSinceTicks = DateTime.UtcNow.Ticks;
     private Guid? _pendingLiveCommandId;
     private int? _takeoverSessionId;
     private int _manualInputWriteInProgress;
@@ -140,6 +144,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         TakeOverSelectedBotCommand = new AsyncRelayCommand(ToggleSelectedBotTakeoverAsync, CanToggleTakeover);
         DismissSimulationResultsCommand = new RelayCommand(() => ShowSimulationResults = false,
             () => SimulationResults is not null && ShowSimulationResults);
+        DismissRaceResultsCommand = new RelayCommand(() => ShowRaceResults = false, () => IsRaceResultsVisible);
+        ShowRaceResultsCommand = new RelayCommand(() => ShowRaceResults = true,
+            () => RaceResults is not null && !ShowRaceResults);
+        CopyRaceResultsCommand = new RelayCommand(CopyRaceResults, () => RaceResults is not null);
+        SaveRaceResultsCsvCommand = new RelayCommand(SaveRaceResultsCsv, () => RaceResults is not null);
         ExportServerPackageCommand = new AsyncRelayCommand(ExportServerPackageAsync,
             () => !IsBusy && _processController.State == ServerProcessState.Stopped
                   && File.Exists(Path.Combine(_paths.WorkingInstanceDirectory,
@@ -695,6 +704,39 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsSimulationResultsVisible => SimulationResults is not null && ShowSimulationResults;
     public string SimulationResultsTitle => SimulationResults?.Outcome ?? "SIMULATION RESULTS";
     public string SimulationResultsOverview => SimulationResults?.Overview ?? string.Empty;
+
+    /// <summary>The latest real race classification saved by the server during this run.</summary>
+    public RaceResultsReport? RaceResults
+    {
+        get => _raceResults;
+        private set
+        {
+            if (!SetProperty(ref _raceResults, value))
+                return;
+            if (value is null)
+                ShowRaceResults = false;
+            OnPropertyChanged(nameof(RaceResultsTitle));
+            OnPropertyChanged(nameof(RaceResultsOverview));
+            OnPropertyChanged(nameof(IsRaceResultsVisible));
+            RaiseRaceResultsCommands();
+        }
+    }
+
+    public bool ShowRaceResults
+    {
+        get => _showRaceResults;
+        private set
+        {
+            if (!SetProperty(ref _showRaceResults, value))
+                return;
+            OnPropertyChanged(nameof(IsRaceResultsVisible));
+            RaiseRaceResultsCommands();
+        }
+    }
+
+    public bool IsRaceResultsVisible => RaceResults is not null && ShowRaceResults;
+    public string RaceResultsTitle => RaceResults?.Title ?? "RACE RESULTS";
+    public string RaceResultsOverview => RaceResults?.Overview ?? string.Empty;
     public bool IsSelectedBotControllable => !IsFpsMode && IsServerRunning
         && SelectedLiveCar is { IsBot: true, IsActive: true };
     public bool SelectedBotIsStopped => SelectedLiveCar?.IsStoppedByRaceControl == true;
@@ -843,6 +885,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand TeleportSelectedBotCommand { get; }
     public AsyncRelayCommand TakeOverSelectedBotCommand { get; }
     public RelayCommand DismissSimulationResultsCommand { get; }
+    public RelayCommand DismissRaceResultsCommand { get; }
+    public RelayCommand ShowRaceResultsCommand { get; }
+    public RelayCommand CopyRaceResultsCommand { get; }
+    public RelayCommand SaveRaceResultsCsvCommand { get; }
     public AsyncRelayCommand ExportServerPackageCommand { get; }
     public RelayCommand OpenInstanceCommand { get; }
     public RelayCommand OpenContentManagerCommand { get; }
@@ -2102,6 +2148,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(ActiveFpsVisualTheme));
             InvalidateLiveTrackCache();
             SimulationResults = null;
+            RaceResults = null;
+            MarkRaceResultsBaseline();
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
                 _lastInstance.PresetName, _lastInstance.ShutdownFilePath,
@@ -2188,6 +2236,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (restartSimulation)
                 SimulationResults = null;
             InvalidateLiveTrackCache();
+            // Keep the last race's results on screen; only races saved after the restart are new.
+            MarkRaceResultsBaseline();
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             await _processController.RestartAsync(
                 _lastInstance.ExecutablePath,
@@ -2226,6 +2276,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(ActiveFpsVisualTheme));
             InvalidateLiveTrackCache();
             SimulationResults = null;
+            RaceResults = null;
             var liveClient = new LiveRaceControlClient(_lastInstance.RootPath);
             _processController.Start(_lastInstance.ExecutablePath, _lastInstance.RootPath,
                 _lastInstance.PresetName, _lastInstance.ShutdownFilePath,
@@ -2437,6 +2488,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         int observedTrackGeneration = -1;
         var trackCache = new LiveTrackFileCache();
         DateTimeOffset? observedResultsAt = null;
+        string? observedRaceResultsPath = null;
+        DateTime observedRaceResultsWrite = default;
+        int raceResultsPoll = 0;
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -2477,6 +2531,34 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                             results = candidate;
                         }
                     }
+                    // Real races: check about once a second for a newly saved classification.
+                    RaceResultsFile? raceResults = null;
+                    bool newRaceResultsFile = false;
+                    if (snapshot is not { IsSimulation: true } && ++raceResultsPoll >= 10)
+                    {
+                        raceResultsPoll = 0;
+                        var since = new DateTime(Interlocked.Read(ref _raceResultsSinceTicks), DateTimeKind.Utc);
+                        var candidate = client.TryReadLatestRaceResults(since);
+                        if (candidate != null && (candidate.Path != observedRaceResultsPath
+                                                  || candidate.WrittenAtUtc != observedRaceResultsWrite))
+                        {
+                            newRaceResultsFile = candidate.Path != observedRaceResultsPath;
+                            observedRaceResultsPath = candidate.Path;
+                            observedRaceResultsWrite = candidate.WrittenAtUtc;
+                            raceResults = candidate;
+                        }
+                    }
+                    if (raceResults != null)
+                        RunOnUi(() =>
+                        {
+                            RaceResults = raceResults.Report;
+                            // Pop up for a new race; later updates (more cars finishing) refresh quietly.
+                            if (newRaceResultsFile)
+                            {
+                                ShowRaceResults = true;
+                                AppendLog($"[Live] Race results saved: {raceResults.Path}");
+                            }
+                        });
                     if (snapshot != null || track != null || results != null)
                         RunOnUi(() =>
                         {
@@ -2576,6 +2658,58 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         return duration.TotalHours >= 1
             ? $"{(int)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}"
             : $"{duration.Minutes}:{duration.Seconds:00}";
+    }
+
+    private void RaiseRaceResultsCommands()
+    {
+        DismissRaceResultsCommand.RaiseCanExecuteChanged();
+        ShowRaceResultsCommand.RaiseCanExecuteChanged();
+        CopyRaceResultsCommand.RaiseCanExecuteChanged();
+        SaveRaceResultsCsvCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>Only results saved after this point count as the new run's results.</summary>
+    private void MarkRaceResultsBaseline() => Interlocked.Exchange(ref _raceResultsSinceTicks, DateTime.UtcNow.Ticks);
+
+    private void CopyRaceResults()
+    {
+        if (RaceResults is null)
+            return;
+        try
+        {
+            Clipboard.SetText(RaceResults.ToText());
+            StatusText = "Race results copied.";
+        }
+        catch (System.Runtime.InteropServices.ExternalException exception)
+        {
+            StatusText = $"Could not copy race results to the clipboard: {exception.Message}";
+        }
+    }
+
+    private void SaveRaceResultsCsv()
+    {
+        if (RaceResults is null)
+            return;
+        var dialog = new SaveFileDialog
+        {
+            Title = "Save race results",
+            Filter = "CSV file (*.csv)|*.csv",
+            FileName = RaceResults.SuggestedFileName,
+            AddExtension = true,
+            DefaultExt = ".csv",
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+        try
+        {
+            // A BOM lets Excel open names with accents correctly.
+            File.WriteAllText(dialog.FileName, RaceResults.ToCsv(), new System.Text.UTF8Encoding(true));
+            StatusText = $"Race results saved to {dialog.FileName}";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            StatusText = $"Could not save race results: {exception.Message}";
+        }
     }
 
     private void CopyJoinText(string? text, string label)

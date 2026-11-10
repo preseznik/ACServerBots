@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -44,6 +45,8 @@ public sealed class RaceControlBridge : IHostedService
     private string _commandsDirectory = null!;
     private string _snapshotPath = null!;
     private string _manualInputPath = null!;
+    private string _resultsDirectory = null!;
+    private readonly RaceResultsRecorder _raceResults = new();
     private long _initialServerTime;
     private long _sequence;
     private long _nextSnapshotAt;
@@ -90,6 +93,7 @@ public sealed class RaceControlBridge : IHostedService
         _commandsDirectory = Path.Combine(_controlDirectory, "commands");
         _snapshotPath = Path.Combine(_controlDirectory, "state.json");
         _manualInputPath = Path.Combine(_controlDirectory, "manual-input.json");
+        _resultsDirectory = Path.Combine(_controlDirectory, "results");
         Directory.CreateDirectory(_commandsDirectory);
 
         _initialServerTime = _sessionManager.ServerTimeMilliseconds;
@@ -104,6 +108,8 @@ public sealed class RaceControlBridge : IHostedService
     public Task StopAsync(CancellationToken cancellationToken)
     {
         _server.Update -= OnServerUpdate;
+        if (_raceResults.Flush(DateTimeOffset.UtcNow) is { } unfinished)
+            SaveRaceResults(unfinished);
         WriteSnapshot(serverRunning: false);
         return Task.CompletedTask;
     }
@@ -370,6 +376,8 @@ public sealed class RaceControlBridge : IHostedService
             : session.HasSentRaceOverPacket ? "finished"
             : "racing";
         var results = session.Results;
+        if (serverRunning && !_runtimeOptions.IsRaceSimulation)
+            RecordRaceResults(session, now, phase);
         var driverChanges = _sessionManager.GetDriverChangeRemainingMilliseconds();
         var cars = _entryCarManager.EntryCars.Where(car => !car.IsSpectator).Select(car =>
         {
@@ -599,6 +607,79 @@ public sealed class RaceControlBridge : IHostedService
         byte clientGear, ushort clientEngineRpm) => ai.HasValue
         ? new RaceBotVehicleTelemetry(ai.Value.ProtocolGear, ai.Value.EngineRpm)
         : new RaceBotVehicleTelemetry(clientGear, clientEngineRpm);
+
+    private void RecordRaceResults(SessionState session, long now, string phase)
+    {
+        RaceRunKey? key = session.Configuration.Type == SessionType.Race
+                          && now >= session.StartTimeMilliseconds
+                          && session.Results != null
+            ? new RaceRunKey(_sessionManager.CurrentSessionIndex, session.StartTimeMilliseconds)
+            : null;
+        foreach (var capture in _raceResults.Observe(key, session.Configuration.Name ?? "Race",
+                     session.Configuration.Laps, phase, DateTimeOffset.UtcNow,
+                     () => BuildRaceClassification(session)))
+        {
+            SaveRaceResults(capture);
+        }
+    }
+
+    private IReadOnlyList<RaceResultLine> BuildRaceClassification(SessionState session)
+    {
+        if (session.Results == null)
+            return [];
+        var cars = _entryCarManager.EntryCars.ToDictionary(car => car.SessionId);
+        return session.Results
+            .Where(pair => !pair.Value.IsSpectator)
+            .OrderBy(pair => pair.Value.RacePos)
+            .Select(pair =>
+            {
+                var car = cars.GetValueOrDefault(pair.Key);
+                var result = pair.Value;
+                return new RaceResultLine(
+                    pair.Key,
+                    (int)result.RacePos + 1,
+                    string.IsNullOrWhiteSpace(result.Name) ? car?.AiName ?? $"Slot {pair.Key + 1}" : result.Name,
+                    result.Drivers.ToArray(),
+                    result.Team,
+                    car?.Model ?? string.Empty,
+                    car?.AiControlled == true,
+                    result.NumLaps,
+                    result.TotalTime,
+                    result.BestLap,
+                    result.HasCompletedLastLap,
+                    result.IsDnf);
+            })
+            .ToArray();
+    }
+
+    private void SaveRaceResults(RaceResultsCapture capture)
+    {
+        string path = Path.Combine(_resultsDirectory,
+            $"race-{capture.StartedAt.UtcDateTime:yyyyMMdd-HHmmss}-session{capture.Key.SessionIndex}.json");
+        string temporaryPath = path + $".{Environment.ProcessId}.tmp";
+        try
+        {
+            Directory.CreateDirectory(_resultsDirectory);
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1,
+                status = capture.Status,
+                sessionName = capture.SessionName,
+                track = _configuration.CSPTrackOptions.Track,
+                layout = _configuration.Server.TrackConfig,
+                targetLaps = capture.TargetLaps,
+                startedAt = capture.StartedAt,
+                recordedAt = capture.RecordedAt,
+                results = capture.Results,
+            }, _jsonOptions), new UTF8Encoding(false));
+            File.Move(temporaryPath, path, true);
+            Log.Information("Race results ({Status}) saved to {Path}", capture.Status, path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning(exception, "Could not save race results to {Path}", path);
+        }
+    }
 
     private void AtomicWrite(string path, object value)
     {
