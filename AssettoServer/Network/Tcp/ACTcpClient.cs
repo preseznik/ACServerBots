@@ -412,7 +412,8 @@ public class ACTcpClient : IClient
                              && !_configuration.Server.CheckAdminPassword(handshakeRequest.Password))
                         SendPacket(new WrongPasswordResponse());
                     else if (!_sessionManager.IsOpen
-                             && !_entryCarManager.IsExplicitSpectatorRequest(handshakeRequest, SupportsCSPSpectating))
+                             && !_entryCarManager.IsExplicitSpectatorRequest(handshakeRequest, SupportsCSPSpectating)
+                             && !_sessionManager.IsAwaitingDriverChange(Guid))
                     {
                         Logger.Information("Rejecting handshake for {ClientName}: session {SessionType} is closed to new connections",
                             Name, _sessionManager.CurrentSession.Configuration.Type);

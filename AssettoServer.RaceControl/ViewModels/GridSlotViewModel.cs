@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Models;
 using AssettoServer.RaceControl.Infrastructure;
 
@@ -20,6 +21,7 @@ public sealed class GridSlotViewModel : ObservableObject
     private double? _aggression;
     private SlotMode _mode;
     private FpsTeamAssignment _fpsTeam;
+    private string _driverSteamIdsText;
 
     public GridSlotViewModel(GridSlotPreset slot, IReadOnlyList<AcCar> cars, int index)
     {
@@ -34,6 +36,7 @@ public sealed class GridSlotViewModel : ObservableObject
         _aggression = slot.Aggression;
         _mode = slot.Mode;
         _fpsTeam = slot.FpsTeam;
+        _driverSteamIdsText = SteamIds.Format(slot.DriverSteamIds);
         _selectedCar = cars.FirstOrDefault(car => car.Id.Equals(slot.CarId, StringComparison.OrdinalIgnoreCase)) ?? cars.FirstOrDefault();
         RefreshSkins(slot.SkinId);
     }
@@ -143,6 +146,19 @@ public sealed class GridSlotViewModel : ObservableObject
         set => SetProperty(ref _fpsTeam, value);
     }
 
+    /// <summary>Steam IDs of the drivers this car is reserved for, separated by ; , or spaces.</summary>
+    public string DriverSteamIdsText
+    {
+        get => _driverSteamIdsText;
+        set
+        {
+            if (SetProperty(ref _driverSteamIdsText, value))
+                OnPropertyChanged(nameof(IsReserved));
+        }
+    }
+
+    public bool IsReserved => SteamIds.Parse(DriverSteamIdsText).Count > 0;
+
     public string CarDetails => SelectedCar is null
         ? string.Empty
         : $"{SelectedCar.MassKg:0} kg  •  {SelectedCar.PowerHp:0} hp  •  {SelectedCar.TopSpeedKmh:0} km/h";
@@ -160,6 +176,7 @@ public sealed class GridSlotViewModel : ObservableObject
         Aggression = Aggression,
         Mode = Mode,
         FpsTeam = FpsTeam,
+        DriverSteamIds = SteamIds.Parse(DriverSteamIdsText),
     };
 
     private void RefreshSkins(string? selectedSkinId)

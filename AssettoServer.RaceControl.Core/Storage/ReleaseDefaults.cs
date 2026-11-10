@@ -83,6 +83,7 @@ public sealed class ReleaseDefaults(RaceControlPaths paths)
             slot.DriverName = $"{(source.Mode == EventMode.Fps ? "Operative" : "Bot")} {index + 1:00}";
             slot.TeamName = "Race Control";
             slot.NationCode = string.Empty;
+            slot.DriverSteamIds = [];
         }
         return result;
     }

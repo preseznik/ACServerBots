@@ -29,6 +29,7 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
             extra.RuleFor(x => x.WhitelistUserGroup).NotEmpty();
             extra.RuleFor(x => x.AdminUserGroup).NotEmpty();
             extra.RuleFor(x => x.VoteKickMinimumConnectedPlayers).GreaterThanOrEqualTo((ushort)3);
+            extra.RuleFor(x => x.DriverSwapGraceSeconds).InclusiveBetween(0, 3600);
             extra.RuleFor(x => x.Fps).NotNull();
             extra.RuleFor(x => x.NetworkBindAddress)
                 .Must(PrivateNetworkAddress.IsPrivateIpv4)

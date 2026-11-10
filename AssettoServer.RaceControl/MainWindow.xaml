@@ -491,6 +491,21 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
+                            <DataGridTextColumn Binding="{Binding DriverSteamIdsText, UpdateSourceTrigger=LostFocus}" Width="190">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Drivers (Steam IDs)" ToolTip="Optional. Reserve this car for these drivers' 17-digit SteamID64s, separated by ; or commas. A reserved car is never driven by a bot. List two or more drivers to make a team car that can change drivers during the race." />
+                                </DataGridTextColumn.Header>
+                                <DataGridTextColumn.CellStyle>
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                        <Setter Property="ToolTip" Value="Steam IDs of the drivers who may take this car, e.g. 76561198000000001; 76561198000000002. Leave blank for an open slot." />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DataContext.IsFpsMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                <Setter Property="IsEnabled" Value="False" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTextColumn.CellStyle>
+                            </DataGridTextColumn>
                             <DataGridTextColumn Binding="{Binding BallastKg}" Width="75">
                                 <DataGridTextColumn.Header>
                                     <TextBlock Text="Ballast" ToolTip="Extra ballast mass in kilograms applied to this entry." />
@@ -549,6 +564,9 @@
                                          ToolTip="Number of laps required to finish the race." />
                                 <CheckBox Content="Reverse grid" IsChecked="{Binding Preset.Sessions.ReverseGrid}" Margin="0,10,0,0"
                                           ToolTip="Reverse the qualifying order when assigning race grid positions." />
+                                <TextBlock Text="Driver change time (minutes)" Style="{StaticResource FieldLabel}" Margin="0,14,0,5" />
+                                <TextBox Text="{Binding Preset.Sessions.DriverSwapGraceMinutes}"
+                                         ToolTip="Team cars (two or more Steam IDs on the Grid) keep their laps and race time for this long after a driver leaves, so a teammate can join and take over. 0 turns driver changes off." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Width="390">

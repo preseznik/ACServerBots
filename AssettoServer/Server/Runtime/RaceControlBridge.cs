@@ -370,10 +370,12 @@ public sealed class RaceControlBridge : IHostedService
             : session.HasSentRaceOverPacket ? "finished"
             : "racing";
         var results = session.Results;
+        var driverChanges = _sessionManager.GetDriverChangeRemainingMilliseconds();
         var cars = _entryCarManager.EntryCars.Where(car => !car.IsSpectator).Select(car =>
         {
             EntryCarResult? result = null;
             results?.TryGetValue(car.SessionId, out result);
+            bool awaitingDriverChange = driverChanges.TryGetValue(car.SessionId, out long driverChangeRemaining);
             var ai = car.AiControlled ? car.GetRaceAiStateSnapshot() : null;
             RaceBotPhysicsTelemetry? physicsTelemetry = null;
             if (car.AiControlled && _physicsWorld?.TryGetBotTelemetry(
@@ -395,7 +397,11 @@ public sealed class RaceControlBridge : IHostedService
             return new
             {
                 sessionId = (int)car.SessionId,
-                name = car.Client?.Name ?? car.AiName ?? $"Slot {car.SessionId + 1}",
+                name = car.Client?.Name ?? car.AiName
+                    ?? (string.IsNullOrWhiteSpace(result?.Name) ? $"Slot {car.SessionId + 1}" : result.Name),
+                drivers = result?.Drivers.ToArray() ?? [],
+                awaitingDriverChange,
+                driverChangeSecondsLeft = awaitingDriverChange ? (int)Math.Ceiling(driverChangeRemaining / 1000.0) : 0,
                 model = car.Model,
                 skin = car.Skin,
                 isBot = car.AiControlled,

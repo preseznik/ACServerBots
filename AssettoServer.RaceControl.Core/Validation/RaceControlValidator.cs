@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Models;
 
 namespace AssettoServer.RaceControl.Core.Validation;
@@ -114,6 +115,7 @@ public sealed class RaceControlValidator
                 ErrorIf(messages, car.DataAcdPath is null, $"Grid[{index}]", $"{car.DisplayName} has no data.acd checksum source.");
                 ErrorIf(messages, preset.Bots.Enabled
                                   && (slot.Mode is SlotMode.Auto or SlotMode.Fixed)
+                                  && slot.DriverSteamIds.Count == 0
                                   && !car.HasCollider,
                     $"Grid[{index}]", $"{car.DisplayName} has no collider.kn5 for rigid-body bots.");
                 ErrorIf(messages,
@@ -127,11 +129,18 @@ public sealed class RaceControlValidator
             ErrorIf(messages, slot.RestrictorPercent is < 0 or > 100, $"Grid[{index}]", "Restrictor must be between 0 and 100 percent.");
             ErrorIf(messages, slot.Difficulty is < 0 or > 1, $"Grid[{index}]", "Bot skill must be between 0 and 1, or blank for automatic variance.");
             ErrorIf(messages, slot.Aggression is < 0 or > 1, $"Grid[{index}]", "Bot aggression must be between 0 and 1, or blank for automatic variance.");
+            var invalidSteamIds = slot.DriverSteamIds.Where(id => !SteamIds.IsValid(id.Trim())).ToArray();
+            ErrorIf(messages, invalidSteamIds.Length > 0, $"Grid[{index}]",
+                $"'{string.Join("', '", invalidSteamIds)}' is not a Steam ID. Use each driver's 17-digit SteamID64 (7656119…).");
         }
+
+        if (!isFps)
+            ValidateDriverReservations(messages, preset);
 
         ErrorIf(messages, !isFps && preset.Sessions.PracticeEnabled && preset.Sessions.PracticeMinutes is < 1 or > 1440, "Sessions", "Practice duration must be 1..1440 minutes.");
         ErrorIf(messages, !isFps && preset.Sessions.QualifyingEnabled && preset.Sessions.QualifyingMinutes is < 1 or > 1440, "Sessions", "Qualifying duration must be 1..1440 minutes.");
         ErrorIf(messages, !isFps && preset.Sessions.RaceLaps is < 1 or > 999, "Sessions", "Race laps must be 1..999.");
+        ErrorIf(messages, !isFps && preset.Sessions.DriverSwapGraceMinutes is < 0 or > 60, "Sessions", "Driver change time must be 0..60 minutes.");
         ErrorIf(messages, preset.Conditions.TimeOfDayHour is < 0 or > 23,
             "Conditions", "Time of day must be between 00:00 and 23:00.");
 
@@ -167,6 +176,36 @@ public sealed class RaceControlValidator
         }
 
         return new ValidationResult(messages);
+    }
+
+    private static void ValidateDriverReservations(List<ValidationMessage> messages, RaceControlPreset preset)
+    {
+        var reserved = preset.Grid.Select((slot, index) => (slot, index))
+            .Where(entry => entry.slot.Mode != SlotMode.Spectator && entry.slot.DriverSteamIds.Count > 0)
+            .ToArray();
+        if (reserved.Length == 0)
+            return;
+
+        foreach (var duplicate in reserved
+                     .SelectMany(entry => SteamIds.Normalize(entry.slot.DriverSteamIds).Select(id => (id, entry.index)))
+                     .GroupBy(entry => entry.id)
+                     .Where(group => group.Count() > 1))
+        {
+            messages.Add(new(ValidationSeverity.Warning, "Grid",
+                $"Steam ID {duplicate.Key} is listed on entries {string.Join(", ", duplicate.Select(entry => entry.index + 1))}; that driver can take any of those cars."));
+        }
+
+        int teamCars = reserved.Count(entry => SteamIds.Normalize(entry.slot.DriverSteamIds).Count() > 1);
+        messages.Add(new(ValidationSeverity.Information, "Grid",
+            $"{reserved.Length} car(s) are reserved for listed drivers and are never driven by bots"
+            + (teamCars > 0 && preset.Sessions.DriverSwapGraceMinutes > 0
+                ? $"; {teamCars} team car(s) allow driver changes within {preset.Sessions.DriverSwapGraceMinutes} min."
+                : ".")));
+        if (teamCars > 0 && preset.Sessions.DriverSwapGraceMinutes == 0)
+        {
+            messages.Add(new(ValidationSeverity.Warning, "Sessions",
+                "Team cars are listed but driver change time is 0, so a driver who leaves the race is classified DNF."));
+        }
     }
 
     private static void ValidateFps(List<ValidationMessage> messages, RaceControlPreset preset, AcContentCatalog? catalog)

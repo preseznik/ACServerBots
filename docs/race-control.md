@@ -30,6 +30,19 @@ The application targets .NET 10 WPF and opens in Visual Studio 2026 through `Ass
 
 Race Control keeps one reusable runnable server rather than copying the self-contained payload for every start. Staging replaces `Instances\Current` only after preserving the previous run's compact configuration, logs, telemetry summary/events, track map, and gzip-compressed telemetry samples under `History`. Use **Export package…** when a complete portable server ZIP is actually needed; export is available while the server is stopped and does not disturb the working instance.
 
+## Endurance races with driver swaps
+
+Two or more friends can share one car and hand it over during a race, as in a real endurance pit stop.
+
+1. On the **Grid**, enter each team member's 17-digit SteamID64 in the car's **Drivers (Steam IDs)** cell, separated by `;` or commas. Any driver can find their ID in Steam under their profile URL or account details. A car with Steam IDs is reserved for those drivers and is never driven by a bot; its saved slot mode is kept for when the IDs are removed.
+2. Under **Sessions**, set **Driver change time (minutes)**. The default is 5 minutes; `0` turns driver changes off.
+3. Make the race long enough with **Race laps**. One team member must be on the grid when the race starts.
+4. To swap, the current driver pits and leaves the server. Within the driver change time, the next team member joins with the same car in Content Manager. They start from the pits and continue with the car's laps, race time, and position. The same driver can also rejoin after a crash or a dropped connection.
+
+If nobody listed for the car rejoins in time, the car is classified DNF with the laps it completed. While a car waits, the Live view and the Web GUI show it as awaiting a driver change with the time left, and both list every driver who has driven the car.
+
+Race Control writes the IDs to the entry list's `GUID` field, which the server already uses to reserve a car. Steam authentication is off in this LAN release, so the IDs reserve a car but do not prove who is connecting; that is fine between friends. Content Manager presets with `GUID` entries keep them on import.
+
 ## FPS matches
 
 Race Control [0.1.4](https://github.com/preseznik/ACServerBots/releases/tag/race-control-v0.1.4)

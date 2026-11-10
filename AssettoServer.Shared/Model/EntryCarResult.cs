@@ -15,6 +15,11 @@ public class EntryCarResult
     public uint RacePos { get; set; } = 0;
     public bool IsDnf { get; set; }
     public bool IsSpectator { get; set; }
+    /// <summary>
+    /// Every driver who shared this car's result through a driver change, in order of first stint.
+    /// Empty when a single driver (or a bot) produced the whole result.
+    /// </summary>
+    public List<string> Drivers { get; set; } = [];
 
     public EntryCarResult(IClient? client)
     {

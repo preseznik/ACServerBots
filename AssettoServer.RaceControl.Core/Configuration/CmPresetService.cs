@@ -45,6 +45,7 @@ public sealed class CmPresetService
                 RestrictorPercent = ParseInt(section.Get("RESTRICTOR"), 0),
                 Difficulty = ParseOptionalRacecraft(section.Get("AI_DIFFICULTY")),
                 Aggression = ParseOptionalRacecraft(section.Get("AI_AGGRESSION")),
+                DriverSteamIds = SteamIds.Parse(section.Get("GUID")),
                 Mode = ParseInt(section.Get("SPECTATOR_MODE"), 0) != 0
                     ? SlotMode.Spectator
                     : ParseMode(section.Get("AI")),

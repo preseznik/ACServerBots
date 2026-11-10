@@ -182,11 +182,13 @@ public sealed class ServerConfigurationRenderer
             Set(ini, section, "SPECTATOR_MODE", slot.Mode == SlotMode.Spectator ? 1 : 0);
             Set(ini, section, "DRIVERNAME", slot.DriverName);
             Set(ini, section, "TEAM", slot.TeamName);
-            Set(ini, section, "GUID", string.Empty);
+            Set(ini, section, "GUID", RenderGuids(preset, slot));
             Set(ini, section, "BALLAST", slot.BallastKg);
             Set(ini, section, "RESTRICTOR", slot.RestrictorPercent);
             Set(ini, section, "NATION", slot.NationCode);
-            Set(ini, section, "AI", preset.Mode == EventMode.Fps ? "none" : preset.Bots.Enabled ? AiValue(slot.Mode) : "none");
+            // A car reserved for named drivers is theirs alone: no bot drives it before or between stints.
+            Set(ini, section, "AI", preset.Mode == EventMode.Fps || RenderGuids(preset, slot).Length > 0 ? "none"
+                : preset.Bots.Enabled ? AiValue(slot.Mode) : "none");
             Set(ini, section, "AI_DIFFICULTY", OptionalRacecraftValue(slot.Difficulty));
             Set(ini, section, "AI_AGGRESSION", OptionalRacecraftValue(slot.Aggression));
             if (preset.Mode == EventMode.Fps)
@@ -210,6 +212,8 @@ public sealed class ServerConfigurationRenderer
         Line("  MissingTrackParams: true");
         Line($"MinimumCSPVersion: {(preset.Mode == EventMode.Fps ? 4053 : 2651)}");
         Line($"EnableAi: {Lower(preset.Mode != EventMode.Fps && preset.Bots.Enabled)}");
+        if (preset.Mode != EventMode.Fps)
+            Line($"DriverSwapGraceSeconds: {Math.Clamp(preset.Sessions.DriverSwapGraceMinutes, 0, 60) * 60}");
         Line("AiParams:");
         Line($"  Behavior: {(preset.Mode != EventMode.Fps && preset.Bots.Enabled ? "Race" : "Traffic")}");
         Line("  AutoAssignTrafficCars: false");
@@ -341,8 +345,17 @@ public sealed class ServerConfigurationRenderer
         void Line(string line) => builder.AppendLine(line);
     }
 
+    /// <summary>
+    /// Driver reservations for racing entries only; FPS and spectator slots stay open to anyone.
+    /// </summary>
+    internal static string RenderGuids(RaceControlPreset preset, GridSlotPreset slot)
+        => preset.Mode == EventMode.Fps || slot.Mode == SlotMode.Spectator
+            ? string.Empty
+            : string.Join(';', SteamIds.Normalize(slot.DriverSteamIds));
+
     private static GridSlotPreset Clone(GridSlotPreset source) => new()
     {
+        DriverSteamIds = [.. source.DriverSteamIds],
         CarId = source.CarId,
         SkinId = source.SkinId,
         DriverName = source.DriverName,

@@ -391,7 +391,9 @@ public class AiBehavior : BackgroundService
             && _raceRosterFrozen
             && _sessionManager.CurrentSession.Configuration.Type == SessionType.Race)
         {
-            _sessionManager.MarkParticipantDnf(sender.EntryCar, sender.Name ?? $"Driver {sender.SessionId}");
+            // A reserved car keeps its result while a listed driver takes over (driver change).
+            if (!_sessionManager.TryHoldForDriverChange(sender.EntryCar))
+                _sessionManager.MarkParticipantDnf(sender.EntryCar, sender.Name ?? $"Driver {sender.SessionId}");
             sender.EntryCar.SetAiControl(false);
             return;
         }

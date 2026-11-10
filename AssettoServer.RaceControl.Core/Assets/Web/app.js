@@ -251,7 +251,8 @@ function renderSelectedPlayer(cars) {
 }
 
 function renderRoster(cars, isFps) {
-  const active = cars.filter(car => car.isActive);
+  // A car waiting for its next driver (driver change) stays in the race classification.
+  const active = cars.filter(car => car.isActive || car.awaitingDriverChange);
   active.sort((a, b) => isFps
     ? (b.kills - a.kills) || (a.deaths - b.deaths) || (a.sessionId - b.sessionId)
     : ((a.racePosition ?? 999) - (b.racePosition ?? 999)) || (a.sessionId - b.sessionId));
@@ -269,7 +270,8 @@ function renderRoster(cars, isFps) {
   active.forEach((car, index) => {
     const row = ui.rosterBody.insertRow();
     addCell(row, String(index + 1));
-    const name = addCell(row, car.name || `Slot ${car.sessionId + 1}`);
+    const drivers = car.drivers?.length > 1 ? car.drivers.join(" / ") : car.name;
+    const name = addCell(row, drivers || `Slot ${car.sessionId + 1}`);
     if (!car.isBot) name.className = "player-human";
     const participantType = car.isBot ? "BOT" : car.isConnected ? "HUMAN" : "PLAYER";
     addCell(row, isFps && car.team ? `TEAM ${car.team} / ${participantType}` : participantType);
@@ -278,10 +280,16 @@ function renderRoster(cars, isFps) {
     addCell(row, isFps ? String(car.score || 0) : "—");
     addCell(row, isFps ? String(car.kills || 0) : String(car.lap || 0));
     addCell(row, isFps ? String(car.deaths || 0) : String(car.racePosition ?? "—"));
-    const state = isFps ? (car.health > 0 ? "ALIVE" : "RESPAWNING") : car.isDnf ? "DNF" : car.hasFinished ? "FINISHED" : "ACTIVE";
-    const stateCell = addCell(row, state);
+    const state = isFps ? (car.health > 0 ? "ALIVE" : "RESPAWNING") : car.isDnf ? "DNF" : car.hasFinished ? "FINISHED"
+      : car.awaitingDriverChange ? "DRIVER CHANGE" : "ACTIVE";
+    const stateCell = addCell(row, state === "DRIVER CHANGE" ? `${state} ${formatCountdown(car.driverChangeSecondsLeft)}` : state);
     stateCell.className = state === "ALIVE" || state === "ACTIVE" ? "state-alive" : state === "RESPAWNING" || state === "DNF" ? "state-dead" : "";
   });
+}
+
+function formatCountdown(seconds) {
+  const total = Math.max(0, seconds || 0);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 function addCell(row, text) {

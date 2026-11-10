@@ -57,6 +57,11 @@ public sealed class GridSlotPreset
     public double? Aggression { get; set; }
     public SlotMode Mode { get; set; } = SlotMode.Auto;
     public FpsTeamAssignment FpsTeam { get; set; } = FpsTeamAssignment.Auto;
+    /// <summary>
+    /// SteamID64s of the drivers this car is reserved for (entry_list GUID). Two or more make a team
+    /// car whose drivers can swap during a race. A reserved car is never driven by a bot.
+    /// </summary>
+    public List<string> DriverSteamIds { get; set; } = [];
 }
 
 public enum SlotMode
@@ -77,6 +82,11 @@ public sealed class SessionOptions
     public int RaceOverTimeSeconds { get; set; } = 60;
     public int ResultScreenSeconds { get; set; } = 30;
     public bool ReverseGrid { get; set; }
+    /// <summary>
+    /// How long a reserved car keeps its race result after its driver leaves, so a listed teammate can
+    /// take over. 0 disables driver changes.
+    /// </summary>
+    public int DriverSwapGraceMinutes { get; set; } = 5;
 }
 
 public sealed class RuleOptions

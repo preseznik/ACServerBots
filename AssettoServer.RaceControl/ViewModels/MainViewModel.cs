@@ -1974,6 +1974,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Difficulty = slot.Difficulty,
         Aggression = slot.Aggression,
         Mode = slot.Mode,
+        DriverSteamIds = [.. slot.DriverSteamIds],
     };
 
     private void EnsureTwoSlots()

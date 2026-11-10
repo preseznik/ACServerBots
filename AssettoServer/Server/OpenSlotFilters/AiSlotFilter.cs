@@ -31,7 +31,8 @@ public class AiSlotFilter : OpenSlotFilterBase
         }
 
         if (_sessionManager.IsMidRaceBotTakeoverSession
-            && !_sessionManager.CanTakeOverBotSlot(entryCar))
+            && !_sessionManager.CanTakeOverBotSlot(entryCar)
+            && !_sessionManager.IsAwaitingDriverChange(entryCar))
         {
             return false;
         }

@@ -29,6 +29,8 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     private readonly object _firstHumanRestartLock = new();
     private readonly FirstHumanSessionRestartGate _firstHumanRestartGate = new();
     private bool _firstHumanRestartPending;
+    private readonly object _driverChangeLock = new();
+    private readonly Dictionary<byte, long> _driverChangeDeadlines = new();
 
     public int CurrentSessionIndex { get; private set; } = -1;
     public bool IsLastRaceInverted { get; private set; } = false;
@@ -111,6 +113,8 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         {
             if (CurrentSession.IsStoppedByRaceControl)
                 return;
+
+            ExpireDriverChangeHolds();
 
             if (IsSessionOver())
                 NextSession();
@@ -458,11 +462,24 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             client.FirstUpdateSent += OnClientFirstUpdateSent;
 
         var currentResult = CurrentSession.Results;
-        
+        bool wasHeldForDriverChange = ReleaseDriverChangeHold(client.SessionId);
+
         if (currentResult != null
             && currentResult.TryGetValue(client.SessionId, out var previousResult)
             && previousResult.Guid != client.Guid)
         {
+            if (wasHeldForDriverChange
+                && CurrentSession.Configuration.Type == SessionType.Race
+                && RaceParticipantPolicy.ShouldContinueResult(client.EntryCar.AllowedGuids, previousResult, client.Guid))
+            {
+                string previousDriver = previousResult.Name;
+                RaceParticipantPolicy.HandOverResult(previousResult, client.Guid, client.Name ?? "",
+                    client.Team ?? "", client.NationCode ?? "");
+                Log.Information("Driver change in race slot {SessionId}: {ClientName} takes over from {PreviousDriver} with {CompletedLaps} laps",
+                    client.SessionId, client.Name, previousDriver, previousResult.NumLaps);
+                return;
+            }
+
             var replacement = new EntryCarResult(client);
             if (CurrentSession.Configuration.Type == SessionType.Race)
             {
@@ -484,7 +501,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             }
         }
 
-        if (!IsFirstHumanSessionRestartEnabled)
+        if (!IsFirstHumanSessionRestartEnabled || wasHeldForDriverChange)
             return;
 
         bool rosterIsBotCapable = client.EntryCar.AiMode == AiMode.Auto
@@ -523,15 +540,126 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             return;
         }
 
+        TryHoldForDriverChange(client.EntryCar);
+
         lock (_firstHumanRestartLock)
         {
             int connectedHumanCount = ConnectedDriverCount;
-            _firstHumanRestartGate.UpdateConnectedHumanCount(connectedHumanCount);
+            // A car waiting for its next driver is still part of this race; re-arming would let
+            // the teammate's connection restart the whole session.
+            if (!HasDriverChangeHolds)
+                _firstHumanRestartGate.UpdateConnectedHumanCount(connectedHumanCount);
             if (connectedHumanCount == 0)
                 _firstHumanRestartPending = false;
         }
 
         TryRestartPendingFirstHumanSession();
+    }
+
+    /// <summary>
+    /// Starts the driver-change grace period for a reserved car whose driver left a running race.
+    /// Idempotent: AiBehavior and this manager both ask on disconnect, in either order.
+    /// </summary>
+    public bool TryHoldForDriverChange(EntryCar entryCar)
+    {
+        if (entryCar.IsSpectator || entryCar.Client != null)
+            return false;
+
+        lock (_driverChangeLock)
+        {
+            if (_driverChangeDeadlines.ContainsKey(entryCar.SessionId))
+                return true;
+
+            EntryCarResult? result = null;
+            CurrentSession.Results?.TryGetValue(entryCar.SessionId, out result);
+            int graceSeconds = _configuration.Extra.DriverSwapGraceSeconds;
+            if (!RaceParticipantPolicy.CanHoldForDriverChange(graceSeconds,
+                    CurrentSession.Configuration.Type == SessionType.Race,
+                    CurrentSession.EndTimeMilliseconds != 0 || CurrentSession.IsStoppedByRaceControl,
+                    entryCar.AllowedGuids, result))
+                return false;
+
+            _driverChangeDeadlines[entryCar.SessionId] = ServerTimeMilliseconds + graceSeconds * 1000L;
+            Log.Information("Race slot {SessionId} ({ParticipantName}) is waiting up to {GraceSeconds}s for a driver change",
+                entryCar.SessionId, result!.Name, graceSeconds);
+            return true;
+        }
+    }
+
+    public bool IsAwaitingDriverChange(EntryCar entryCar)
+    {
+        lock (_driverChangeLock)
+            return _driverChangeDeadlines.ContainsKey(entryCar.SessionId);
+    }
+
+    /// <summary>True when a free reserved car listing this driver is waiting for its next driver.</summary>
+    public bool IsAwaitingDriverChange(ulong guid)
+    {
+        lock (_driverChangeLock)
+        {
+            return _driverChangeDeadlines.Count > 0
+                   && _entryCarManager.EntryCars.Any(car => car.Client == null
+                                                           && car.AllowedGuids.Contains(guid)
+                                                           && _driverChangeDeadlines.ContainsKey(car.SessionId));
+        }
+    }
+
+    /// <summary>Remaining grace time per waiting car, for Race Control's live view.</summary>
+    public IReadOnlyDictionary<byte, long> GetDriverChangeRemainingMilliseconds()
+    {
+        long now = ServerTimeMilliseconds;
+        lock (_driverChangeLock)
+            return _driverChangeDeadlines.ToDictionary(hold => hold.Key, hold => Math.Max(0, hold.Value - now));
+    }
+
+    private bool HasDriverChangeHolds
+    {
+        get
+        {
+            lock (_driverChangeLock)
+                return _driverChangeDeadlines.Count > 0;
+        }
+    }
+
+    private bool ReleaseDriverChangeHold(byte sessionId)
+    {
+        lock (_driverChangeLock)
+            return _driverChangeDeadlines.Remove(sessionId);
+    }
+
+    private void ExpireDriverChangeHolds()
+    {
+        byte[] expired;
+        lock (_driverChangeLock)
+        {
+            if (_driverChangeDeadlines.Count == 0)
+                return;
+            expired = RaceParticipantPolicy.ExpiredDriverChangeHolds(_driverChangeDeadlines, ServerTimeMilliseconds).ToArray();
+            foreach (var sessionId in expired)
+                _driverChangeDeadlines.Remove(sessionId);
+        }
+
+        foreach (var sessionId in expired)
+        {
+            var entryCar = _entryCarManager.EntryCars[sessionId];
+            if (entryCar.Client != null)
+                continue;
+            string name = CurrentSession.Results?.TryGetValue(sessionId, out var result) == true ? result.Name : $"Driver {sessionId}";
+            Log.Information("No driver change for race slot {SessionId} within the grace period", sessionId);
+            MarkParticipantDnf(entryCar, name);
+        }
+
+        if (expired.Length > 0 && !HasDriverChangeHolds)
+        {
+            lock (_firstHumanRestartLock)
+                _firstHumanRestartGate.UpdateConnectedHumanCount(ConnectedDriverCount);
+        }
+    }
+
+    private void ClearDriverChangeHolds()
+    {
+        lock (_driverChangeLock)
+            _driverChangeDeadlines.Clear();
     }
 
     private void TryRestartPendingFirstHumanSession()
@@ -573,6 +701,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         var previousSession = CurrentSession;
         Dictionary<byte, EntryCarResult>? previousSessionResults = CurrentSession?.Results; // breaks with CurrentSession.Result don't believe the IDE
 
+        ClearDriverChangeHolds();
         CurrentSession = _sessionStateFactory(_configuration.Sessions[sessionId]);
         CurrentSession.Results = new Dictionary<byte, EntryCarResult>();
         CurrentSession.StartTimeMilliseconds = ServerTimeMilliseconds;
@@ -724,6 +853,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
 
         CurrentSession.IsStoppedByRaceControl = true;
         CurrentSession.EndTimeMilliseconds = ServerTimeMilliseconds;
+        ClearDriverChangeHolds();
         if (CurrentSession.Results != null)
         {
             MarkUnfinishedParticipantsDnf(CurrentSession.Results);

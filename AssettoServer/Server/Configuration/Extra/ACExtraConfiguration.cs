@@ -74,6 +74,8 @@ public class ACExtraConfiguration
     public bool DebugClientMessages { get; set; } = false;
     [YamlMember(Description = "Enable CSP custom position updates. This is an improved version of batched position updates, reducing network traffic even further. Requires CSP 0.1.77+")]
     public bool EnableCustomUpdate { get; set; } = true;
+    [YamlMember(Description = "Race driver changes: seconds a car with entry_list GUIDs keeps its running result after its driver disconnects, so a listed teammate (or the same driver) can rejoin and continue with the car's laps and time. 0 = no driver changes; a driver who leaves is classified as before", DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
+    public int DriverSwapGraceSeconds { get; init; } = 0;
     [YamlMember(Description = "Maximum time a player can spend on the loading screen before being disconnected")]
     public int PlayerLoadingTimeoutMinutes { get; set; } = 10;
     [YamlMember(Description = "Maximum time the server will wait for a checksum response before disconnecting the player")]

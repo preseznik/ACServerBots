@@ -336,7 +336,16 @@ public sealed class LiveRaceCar
     public int Deaths { get; set; }
     public uint Score { get; set; }
 
-    public string DisplayName => $"{SessionId + 1}. {Name} — {Model}";
+    public List<string> Drivers { get; set; } = [];
+    public bool AwaitingDriverChange { get; set; }
+    public int DriverChangeSecondsLeft { get; set; }
+
+    /// <summary>Everyone who drove this car in a shared (driver-change) result, otherwise the current name.</summary>
+    public string DriverNames => Drivers.Count > 1 ? string.Join(" / ", Drivers) : Name;
+
+    public string DisplayName => AwaitingDriverChange
+        ? $"{SessionId + 1}. {DriverNames} — {Model} — awaiting driver change ({DriverChangeSecondsLeft / 60}:{DriverChangeSecondsLeft % 60:00})"
+        : $"{SessionId + 1}. {DriverNames} — {Model}";
     public string GearDisplay => ProtocolGear switch
     {
         0 => "R",
