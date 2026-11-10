@@ -128,6 +128,20 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RegisteredPlayerPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // The picker is an action, not a stored value: assign, then clear it back to its hint.
+        if (sender is not ComboBox { SelectedItem: RegistrationRowViewModel row } picker
+            || picker.DataContext is not GridSlotViewModel slot)
+            return;
+        // Every row shares one list. Only a choice the user made in this picker counts, never a
+        // selection change caused by the list being refreshed.
+        bool userChoice = picker.IsDropDownOpen || picker.IsKeyboardFocusWithin;
+        picker.SelectedItem = null;
+        if (userChoice)
+            _viewModel.AssignRegistrationToSlot(slot, row);
+    }
+
     private void LogTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         LogTextBox.ScrollToEnd();

@@ -11,7 +11,8 @@ public sealed record RenderedServerConfiguration(
     IReadOnlyList<GridSlotPreset> EffectiveGrid,
     AcTrackLayout Track,
     IReadOnlyList<AcCar> Cars,
-    IReadOnlyList<AcCar> RacingCars);
+    IReadOnlyList<AcCar> RacingCars,
+    IReadOnlyList<int>? SourceSlotIndexes = null);
 
 public sealed class ServerConfigurationRenderer
 {
@@ -26,20 +27,11 @@ public sealed class ServerConfigurationRenderer
         var slotLimit = track.PitBoxes;
         if (physicalGridSlotLimit.HasValue)
             slotLimit = Math.Min(slotLimit, physicalGridSlotLimit.Value);
-        var racingGrid = preset.Grid
-            .Where(slot => slot.Mode != SlotMode.Spectator)
-            .Take(preset.Mode == EventMode.Fps ? 32 : int.MaxValue)
-            .Take(slotLimit)
-            .Select(Clone)
-            .ToArray();
+        var order = EffectiveSlotOrder(preset.Grid, preset.Mode, slotLimit);
+        var grid = order.Select(index => Clone(preset.Grid[index])).ToArray();
+        var racingGrid = grid.Where(slot => slot.Mode != SlotMode.Spectator).ToArray();
         if (racingGrid.Length < 2)
             throw new InvalidOperationException("The selected layout exposes fewer than two physical race-grid positions.");
-        var spectatorGrid = preset.Grid
-            .Where(slot => slot.Mode == SlotMode.Spectator)
-            .Take(254 - racingGrid.Length)
-            .Select(Clone)
-            .ToArray();
-        var grid = racingGrid.Concat(spectatorGrid).ToArray();
         if (preset.Mode == EventMode.Fps)
         {
             foreach (var slot in grid)
@@ -80,7 +72,25 @@ public sealed class ServerConfigurationRenderer
             grid,
             track,
             cars,
-            racingCars);
+            racingCars,
+            order);
+    }
+
+    /// <summary>
+    /// The preset grid rows that make up the server's entry list, in session id order: racing rows
+    /// (capped by pit boxes, and 32 for FPS) followed by spectator rows. Entry n is server session id n.
+    /// </summary>
+    public static IReadOnlyList<int> EffectiveSlotOrder(IReadOnlyList<GridSlotPreset> grid, EventMode mode, int slotLimit)
+    {
+        var racing = Enumerable.Range(0, grid.Count)
+            .Where(index => grid[index].Mode != SlotMode.Spectator)
+            .Take(mode == EventMode.Fps ? 32 : int.MaxValue)
+            .Take(slotLimit)
+            .ToArray();
+        var spectators = Enumerable.Range(0, grid.Count)
+            .Where(index => grid[index].Mode == SlotMode.Spectator)
+            .Take(Math.Max(0, 254 - racing.Length));
+        return racing.Concat(spectators).ToArray();
     }
 
     private static IniDocument RenderServerConfiguration(

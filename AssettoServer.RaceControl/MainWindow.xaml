@@ -196,7 +196,7 @@
                                     <CheckBox Content="Open registration in the Web GUI" IsChecked="{Binding RegistrationOpen}" Margin="0,0,0,12"
                                               ToolTip="While open, signed-in players can register, update or withdraw. Closing keeps existing registrations." />
                                     <Grid>
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="170" /></Grid.ColumnDefinitions>
                                         <StackPanel>
                                             <TextBlock Text="Start date" Style="{StaticResource FieldLabel}" />
                                             <DatePicker SelectedDate="{Binding RegistrationDate}" Margin="0,0,10,12" Padding="6,5"
@@ -223,9 +223,9 @@
                                             </DatePicker>
                                         </StackPanel>
                                         <StackPanel Grid.Column="1">
-                                            <TextBlock Text="Start time" Style="{StaticResource FieldLabel}" />
+                                            <TextBlock Text="Start time (24-hour HH:mm)" Style="{StaticResource FieldLabel}" />
                                             <TextBox Text="{Binding RegistrationTime, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,12"
-                                                     ToolTip="Local time as HH:mm, e.g. 20:00." />
+                                                     ToolTip="Local time in 24-hour HH:mm, for example 20:00 for 8 pm or 09:30. 2030 and 20.30 also work." />
                                         </StackPanel>
                                     </Grid>
                                     <TextBlock Text="Note for players" Style="{StaticResource FieldLabel}" />
@@ -456,15 +456,53 @@
                         </Border>
                     </Grid>
                     <DataGrid Grid.Row="2" ItemsSource="{Binding Grid}" SelectedItem="{Binding SelectedGridSlot}"
-                              AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single" AlternationCount="2">
+                              AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single" AlternationCount="2"
+                              HorizontalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="#" Binding="{Binding Index}" IsReadOnly="True" Width="45" />
-                            <DataGridTextColumn Binding="{Binding DriverName, UpdateSourceTrigger=PropertyChanged}" Width="150">
-                                <DataGridTextColumn.Header>
-                                    <TextBlock Text="Driver / bot name" ToolTip="Display name used for the human reservation or generated bot in this slot." />
-                                </DataGridTextColumn.Header>
-                            </DataGridTextColumn>
-                            <DataGridTemplateColumn Header="Car" Width="2*">
+                            <DataGridTemplateColumn Width="150" SortMemberPath="DriverName">
+                                <DataGridTemplateColumn.Header>
+                                    <TextBlock Text="Driver / bot name" ToolTip="Display name used for the human reservation or generated bot in this slot. While the server runs, a connected player's own name is shown in green." />
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="4,0">
+                                            <TextBlock Text="● " Foreground="#3DBE7A" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasLiveDriver}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding DriverDisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasLiveDriver}" Value="True">
+                                                                <Setter Property="Foreground" Value="#3DBE7A" />
+                                                                <Setter Property="ToolTip" Value="{Binding DriverName}" />
+                                                                <Setter Property="ToolTipService.InitialShowDelay" Value="300" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <TextBox Text="{Binding DriverName, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center"
+                                                 FocusManager.FocusedElement="{Binding RelativeSource={RelativeSource Self}}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Car" Width="2*" MinWidth="200">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <ComboBox ItemsSource="{Binding Cars}" SelectedValuePath="Id"
@@ -474,7 +512,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Skin" Width="2*">
+                            <DataGridTemplateColumn Header="Skin" Width="2*" MinWidth="130">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <ComboBox ItemsSource="{Binding Skins}" SelectedValuePath="Id"
@@ -548,6 +586,34 @@
                                         </Grid>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Width="170">
+                                <DataGridTemplateColumn.Header>
+                                    <TextBlock Text="Registered player" ToolTip="Players who signed up on the Web GUI's Players page. Picking one puts them (and their teammates) in this row: Steam IDs, driver name and team." />
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <ComboBox ItemsSource="{Binding DataContext.Registrations, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      DisplayMemberPath="PickLabel" SelectionChanged="RegisteredPlayerPicker_SelectionChanged"
+                                                      IsSynchronizedWithCurrentItem="False"
+                                                      IsEnabled="{Binding DataContext.HasRegistrations, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      ToolTip="Assign a registered player to this car. Players with the same team name share the car." />
+                                            <TextBlock Text="{Binding DataContext.RegistrationPickerHint, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                       Margin="9,0,26,0" VerticalAlignment="Center" FontStyle="Italic" IsHitTestVisible="False"
+                                                       Foreground="{DynamicResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellStyle>
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DataContext.IsFpsMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                <Setter Property="IsEnabled" Value="False" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGridTemplateColumn.CellStyle>
                             </DataGridTemplateColumn>
                             <DataGridTemplateColumn Width="190" SortMemberPath="DriverSteamIdsText">
                                 <DataGridTemplateColumn.Header>
@@ -635,7 +701,7 @@
                                     ToolTip="Remove the selected entry. Race Control always retains at least two slots." />
                         </StackPanel>
                     </Grid>
-                    <Expander Grid.Row="4" Header="{Binding RegistrationsTitle}" Margin="0,12,0,0">
+                    <Expander Grid.Row="4" Header="{Binding RegistrationsTitle}" IsExpanded="{Binding RegistrationsExpanded, Mode=TwoWay}" Margin="0,12,0,0">
                         <Expander.Style>
                             <Style TargetType="Expander">
                                 <Style.Triggers>

@@ -168,6 +168,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(ActiveFpsVisualTheme));
             OnPropertyChanged(nameof(JoinInfo));
             OnPropertyChanged(nameof(HasJoinInfo));
+            if (!IsServerRunning)
+                ClearLiveDriverNames();
             OnPropertyChanged(nameof(JoinSummary));
             CopyJoinAddressCommand.RaiseCanExecuteChanged();
             CopyJoinLinkCommand.RaiseCanExecuteChanged();
@@ -2201,6 +2203,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         });
         var stager = new ServerInstanceStager(_paths, _validator, _renderer);
         var instance = await stager.StageAsync(Preset, _catalog, progress);
+        CaptureLiveSlotRows(instance);
         RefreshRecentInstances();
         SelectedRecentInstance = RecentInstances.FirstOrDefault(summary =>
             summary.RootPath.Equals(instance.RootPath, StringComparison.OrdinalIgnoreCase));
@@ -2610,6 +2613,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 nameof(LiveTimeOfDayHour));
         }
         Replace(LiveCars, snapshot.Cars);
+        UpdateLiveDriverNames(snapshot);
         SelectedLiveCar = LiveCars.FirstOrDefault(car => car.SessionId == selectedSessionId)
                           ?? LiveCars.FirstOrDefault(car => car.IsActive)
                           ?? LiveCars.FirstOrDefault();

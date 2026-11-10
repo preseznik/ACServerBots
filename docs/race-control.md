@@ -41,6 +41,10 @@ Two or more friends can share one car and hand it over during a race, as in a re
 
 If nobody listed for the car rejoins in time, the car is classified DNF with the laps it completed. While a car waits, the Live view and the Web GUI show it as awaiting a driver change with the time left, and both list every driver who has driven the car.
 
+With driver changes on, a team is the drivers sharing one car, so each team name can be on only one car. The Grid refuses a Team edit that another car already uses, and validation reports duplicates (for example from an older preset). The bots' default team "Race Control" is the exception.
+
+While the server runs, the Grid's **Driver / bot name** column shows the name of the player connected in each row in green. It's display only: the name you entered for the entry list stays as it was.
+
 Race Control writes the IDs to the entry list's `GUID` field, which the server already uses to reserve a car. Steam authentication is off in this LAN release, so the IDs reserve a car but do not prove who is connecting; that is fine between friends. Content Manager presets with `GUID` entries keep them on import.
 
 ## Racing over a VPN (Tailscale)
@@ -182,7 +186,7 @@ in-flight dashboard requests and asynchronously stops Kestrel before WPF exits; 
 UI dispatcher waiting for a request which is itself waiting on that dispatcher. This prevents the
 headless `AssettoServer Race Control.exe` process and port `8772` listener from surviving the window.
 
-The Web GUI provides launcher and server state, responsive desktop/mobile views, the authoritative live race or match map, real participant names and results, guarded server/session start, stop, and restart actions, and the **Players** page for event registration. Preset authoring remains in the desktop launcher. The browser reads the same `state.json` and `track.json` files used by the desktop Live view; it does not infer positions from carrier cars or client visuals.
+The Web GUI provides an **Overview** of the event (track picture and outline, the cars with their skin previews, the teams and the entry list from the desktop Grid, with connected players' names), launcher and server state, responsive desktop/mobile views, the authoritative live race or match map, real participant names and results, guarded server/session start, stop, and restart actions, and the **Players** page for event registration. Preset authoring remains in the desktop launcher. The browser reads the same `state.json` and `track.json` files used by the desktop Live view; it does not infer positions from carrier cars or client visuals.
 
 The listener accepts loopback, a specific RFC1918 private IPv4 address, or a VPN overlay address (`100.64.0.0/10`, e.g. Tailscale). It never binds to `0.0.0.0` or a public address, publishes no saved game/admin passwords, sends no permissive CORS headers, and denies framing.
 
@@ -201,9 +205,9 @@ The versioned routes are `/api/v1/health`, `/api/v1/status`, `/api/v1/track`, `/
 Players can sign up for a planned racing event on the Web GUI's **Players** page, and you assign them to cars on the Grid.
 
 1. Under **Settings -> Web GUI**, set the bind address to your LAN or Tailscale address so players can reach the page, and add your own SteamID64 under **Admins** if you want to run things from another device.
-2. On **Event & Content -> Player registration**, tick **Open registration in the Web GUI**. Optionally set the start date and time and a note (format, stint length, rules). Save the preset to keep these settings.
+2. On **Event & Content -> Player registration**, tick **Open registration in the Web GUI**. Optionally set the start date, the start time in 24-hour `HH:mm` (20:00 until you change it; `2030` and `20.30` also work) and a note (format, stint length, rules). Save the preset to keep these settings.
 3. Send players the Web GUI address. On **Players** they choose **Sign in through Steam**, then enter the name to show on the grid, an optional team name and a preferred car from the event's grid. They can update or withdraw while registration is open. Players who enter the same team name share one car.
-4. On the **Grid** tab, open **Registrations**. **Assign to selected car** puts the selected player (and their teammates) in the selected row: it fills **Drivers (Steam IDs)**, the driver name (the team name for a team car) and the team. **Auto-assign everyone** gives each player or team without a car a free row, preferring the car they asked for; spectator rows and rows that already have Steam IDs are left alone. **Remove registration** deletes an entry.
+4. On the **Grid** tab, each row's **Registered player** list shows everyone who signed up and where they are. Picking a player puts them in that row: it fills **Drivers (Steam IDs)**, the driver name (the team name for a team car) and the team. Teammates with the same team name come along, and a player moved from another row frees that row again. The **Registrations** panel below the grid opens by itself when the first player signs up. There, **Auto-assign everyone** gives each player or team without a car a free row, preferring the car they asked for; spectator rows and rows that already have Steam IDs are left alone. **Remove registration** deletes an entry.
 
 Registrations are stored per event in the `Registrations` folder of Race Control's data folder. Closing registration keeps them. Registration applies to racing events; FPS slots can't be reserved by Steam ID.
 

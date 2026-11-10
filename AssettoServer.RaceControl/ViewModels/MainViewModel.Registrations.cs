@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Threading;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Models;
 using AssettoServer.RaceControl.Core.Players;
@@ -21,6 +22,12 @@ public sealed class RegistrationRowViewModel(PlayerRegistration registration, st
     public string SteamId => Registration.SteamId;
     public string AssignedTo { get; } = assignedTo;
     public string RegisteredAt => Registration.RegisteredAt.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+
+    /// <summary>How the player appears in the Grid's per-row pick list.</summary>
+    public string PickLabel => (string.IsNullOrWhiteSpace(Registration.TeamName)
+                                   ? DisplayName
+                                   : $"{DisplayName}  •  {Registration.TeamName}")
+                               + (AssignedTo == "—" ? "  (no car yet)" : $"  (in {AssignedTo})");
 }
 
 /// <summary>
@@ -33,6 +40,10 @@ public sealed partial class MainViewModel
     private RegistrationRowViewModel? _selectedRegistration;
     private string _registrationStatus = string.Empty;
     private bool _gridWatchAttached;
+    // Last accepted team name per row, so a clashing edit can be undone.
+    private readonly Dictionary<GridSlotViewModel, string> _teamByRow = new();
+    // The time used once a date is picked, so typing a time first doesn't invent a date.
+    private TimeSpan _draftStartTime = new(20, 0, 0);
 
     public ObservableCollection<RegistrationRowViewModel> Registrations { get; } = [];
 
@@ -54,6 +65,18 @@ public sealed partial class MainViewModel
     {
         get => _registrationStatus;
         private set => SetProperty(ref _registrationStatus, value);
+    }
+
+    private bool _registrationsExpanded;
+
+    public bool HasRegistrations => Registrations.Count > 0;
+    public string RegistrationPickerHint => HasRegistrations ? "Pick a player…" : "No sign-ups yet";
+
+    /// <summary>The Grid's Registrations panel opens by itself when the first players sign up.</summary>
+    public bool RegistrationsExpanded
+    {
+        get => _registrationsExpanded;
+        set => SetProperty(ref _registrationsExpanded, value);
     }
 
     public string RegistrationsTitle => Registrations.Count == 0
@@ -79,23 +102,33 @@ public sealed partial class MainViewModel
         get => Preset.Registration.ScheduledStart?.LocalDateTime.Date;
         set
         {
-            SetScheduledStart(value, RegistrationTimeOfDay);
+            // Keep the chosen time when the date is cleared, so picking a new date restores it.
+            _draftStartTime = RegistrationTimeOfDay;
+            SetScheduledStart(value, _draftStartTime);
             OnPropertyChanged();
         }
     }
 
-    /// <summary>Start time as HH:mm, local time.</summary>
+    /// <summary>Start time in 24-hour HH:mm, local time. Shows 20:00 until a time is chosen.</summary>
     public string RegistrationTime
     {
-        get => Preset.Registration.ScheduledStart?.LocalDateTime.ToString("HH:mm", CultureInfo.InvariantCulture) ?? string.Empty;
+        get => RegistrationTimeOfDay.ToString(@"hh\:mm", CultureInfo.InvariantCulture);
         set
         {
-            if (TimeSpan.TryParseExact(value?.Trim(), [@"h\:mm", @"hh\:mm"], CultureInfo.InvariantCulture, out var time))
-                SetScheduledStart(RegistrationDate ?? DateTime.Today, time);
+            if (StartTimeText.TryParse(value, out var time))
+            {
+                _draftStartTime = time;
+                if (RegistrationDate is { } date)
+                    SetScheduledStart(date, time);
+            }
+            else
+            {
+                StatusText = $"Start time must be 24-hour HH:mm, for example 20:00 or 09:30 (got \"{value}\").";
+            }
             OnPropertyChanged();
-            OnPropertyChanged(nameof(RegistrationDate));
         }
     }
+
 
     public string RegistrationNote
     {
@@ -107,7 +140,7 @@ public sealed partial class MainViewModel
         }
     }
 
-    private TimeSpan RegistrationTimeOfDay => Preset.Registration.ScheduledStart?.LocalDateTime.TimeOfDay ?? new TimeSpan(20, 0, 0);
+    private TimeSpan RegistrationTimeOfDay => Preset.Registration.ScheduledStart?.LocalDateTime.TimeOfDay ?? _draftStartTime;
 
     private void SetScheduledStart(DateTime? date, TimeSpan time)
         => Preset.Registration.ScheduledStart = date is { } day
@@ -144,7 +177,10 @@ public sealed partial class MainViewModel
         {
             Grid.CollectionChanged += OnGridRowsChanged;
             foreach (var slot in Grid)
+            {
                 slot.PropertyChanged += OnGridSlotChanged;
+                _teamByRow[slot] = slot.TeamName;
+            }
             _gridWatchAttached = true;
         }
         RefreshRegistrations();
@@ -161,15 +197,23 @@ public sealed partial class MainViewModel
     private void OnGridRowsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         foreach (GridSlotViewModel slot in e.OldItems ?? Array.Empty<GridSlotViewModel>())
+        {
             slot.PropertyChanged -= OnGridSlotChanged;
+            _teamByRow.Remove(slot);
+        }
         foreach (GridSlotViewModel slot in e.NewItems ?? Array.Empty<GridSlotViewModel>())
+        {
             slot.PropertyChanged += OnGridSlotChanged;
+            _teamByRow[slot] = slot.TeamName;
+        }
         if (e.Action == NotifyCollectionChangedAction.Reset)
         {
+            _teamByRow.Clear();
             foreach (var slot in Grid)
             {
                 slot.PropertyChanged -= OnGridSlotChanged;
                 slot.PropertyChanged += OnGridSlotChanged;
+                _teamByRow[slot] = slot.TeamName;
             }
         }
         RefreshRegistrations();
@@ -177,8 +221,38 @@ public sealed partial class MainViewModel
 
     private void OnGridSlotChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(GridSlotViewModel.TeamName) && sender is GridSlotViewModel slot)
+        {
+            EnforceOneCarPerTeam(slot);
+            return;
+        }
         if (e.PropertyName is nameof(GridSlotViewModel.DriverSteamIdsText) or nameof(GridSlotViewModel.SelectedCarId))
             RefreshRegistrations();
+    }
+
+    private bool IsDriverChangeRace => !IsFpsMode && Preset.Sessions.DriverSwapGraceMinutes > 0;
+
+    private static TeamCarRow TeamRow(GridSlotViewModel slot)
+        => new(slot.Index, slot.TeamName, slot.Mode == SlotMode.Spectator);
+
+    /// <summary>
+    /// With driver changes a team is the drivers sharing one car, so a team name that another car
+    /// already has is refused (the bots' "Race Control" label excepted).
+    /// </summary>
+    private void EnforceOneCarPerTeam(GridSlotViewModel slot)
+    {
+        string previous = _teamByRow.GetValueOrDefault(slot, TeamCars.BotTeamName);
+        if (slot.TeamName == previous)
+            return;
+        if (IsDriverChangeRace && TeamCars.ConflictFor(TeamRow(slot), Grid.Select(TeamRow)) is int car)
+        {
+            StatusText = $"Team \"{slot.TeamName.Trim()}\" already has car #{car}. With driver changes a team shares one car: "
+                         + $"put this driver's Steam ID on car #{car} instead, or use another team name.";
+            // Undo after the grid has finished committing the edit, or the cell keeps the refused name.
+            Application.Current?.Dispatcher.BeginInvoke(() => slot.TeamName = previous, DispatcherPriority.Background);
+            return;
+        }
+        _teamByRow[slot] = slot.TeamName;
     }
 
     private void RaiseRegistrationCommands()
@@ -233,9 +307,14 @@ public sealed partial class MainViewModel
                 assigned.GetValueOrDefault(registration.SteamId, "—")))
             .ToArray();
 
+        bool hadRegistrations = Registrations.Count > 0;
         Registrations.Clear();
         foreach (var row in rows)
             Registrations.Add(row);
+        if (!hadRegistrations && rows.Length > 0)
+            RegistrationsExpanded = true;
+        OnPropertyChanged(nameof(HasRegistrations));
+        OnPropertyChanged(nameof(RegistrationPickerHint));
         SelectedRegistration = Registrations.FirstOrDefault(row => row.SteamId == selectedId);
         int unassigned = rows.Count(row => row.AssignedTo == "—");
         RegistrationStatus = rows.Length == 0
@@ -251,10 +330,22 @@ public sealed partial class MainViewModel
 
     private void AssignSelectedRegistration()
     {
-        if (_registrationStore is null || SelectedRegistration is null || SelectedGridSlot is not { } slot)
+        if (SelectedRegistration is { } row && SelectedGridSlot is { } slot)
+            AssignRegistrationToSlot(slot, row);
+    }
+
+    /// <summary>Puts a registered player (and their teammates) in this grid row.</summary>
+    public void AssignRegistrationToSlot(GridSlotViewModel slot, RegistrationRowViewModel row)
+    {
+        if (_registrationStore is null || IsFpsMode)
             return;
+        if (slot.Mode == SlotMode.Spectator)
+        {
+            StatusText = "Spectator rows can't take a driver. Pick a racing row.";
+            return;
+        }
         var all = _registrationStore.List(Preset.Id);
-        var groups = RegistrationAssigner.ExpandToTeams([SelectedRegistration.Registration], all);
+        var groups = RegistrationAssigner.ExpandToTeams([row.Registration], all);
         if (groups.Count == 0)
             return;
         ApplyAssignment(RegistrationAssigner.ToSlot(slot.Index, groups[0]));
@@ -282,12 +373,21 @@ public sealed partial class MainViewModel
         var target = Grid.FirstOrDefault(slot => slot.Index == assignment.SlotIndex);
         if (target is null || target.Mode == SlotMode.Spectator)
             return;
-        // A driver belongs to one car: take them off any other row first.
+        // A driver belongs to one car: take them off any other row first. A row left with nobody
+        // gets its default bot name and team back instead of keeping the moved player's name.
         foreach (var other in Grid.Where(slot => !ReferenceEquals(slot, target)))
         {
             var ids = SteamIds.Parse(other.DriverSteamIdsText);
-            if (ids.RemoveAll(assignment.SteamIds.Contains) > 0)
-                other.DriverSteamIdsText = SteamIds.Format(ids);
+            if (ids.RemoveAll(assignment.SteamIds.Contains) == 0)
+                continue;
+            other.DriverSteamIdsText = SteamIds.Format(ids);
+            if (ids.Count == 0)
+            {
+                if (other.DriverName == assignment.DriverName)
+                    other.DriverName = $"Bot {other.Index:00}";
+                if (assignment.TeamName.Length > 0 && other.TeamName == assignment.TeamName)
+                    other.TeamName = "Race Control";
+            }
         }
         target.DriverSteamIdsText = SteamIds.Format(assignment.SteamIds);
         target.DriverName = assignment.DriverName;

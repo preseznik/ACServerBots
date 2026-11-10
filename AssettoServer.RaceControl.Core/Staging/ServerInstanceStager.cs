@@ -19,7 +19,8 @@ public sealed record StagedInstance(
     int BotSlotCount,
     bool PhysicsCacheHit,
     FpsVisualTheme FpsVisualTheme,
-    ServerJoinInfo? Join = null);
+    ServerJoinInfo? Join = null,
+    IReadOnlyList<int>? SourceSlotIndexes = null);
 
 public sealed class ServerInstanceStager
 {
@@ -184,7 +185,8 @@ public sealed class ServerInstanceStager
             botSlots,
             cacheHit,
             preset.Fps.Theme,
-            ServerJoinInfo.Create(preset.Network.BindAddress, preset.Network.HttpPort));
+            ServerJoinInfo.Create(preset.Network.BindAddress, preset.Network.HttpPort),
+            rendered.SourceSlotIndexes);
     }
 
     private static async Task WriteRenderedConfigurationAsync(string presetRoot,

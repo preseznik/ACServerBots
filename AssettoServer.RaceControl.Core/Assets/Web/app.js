@@ -79,6 +79,7 @@ function showView(name) {
   document.querySelectorAll(".nav-item").forEach(item => item.classList.toggle("active", item === button));
   document.querySelectorAll(".view").forEach(view => view.classList.toggle("active", view.id === `view-${name}`));
   if (name === "players") pollPlayers();
+  if (name === "overview") pollOverview();
   requestAnimationFrame(drawMap);
 }
 
@@ -361,7 +362,8 @@ function renderSecondaryViews(launcher) {
   setText("overview-event", launcher.eventName);
   setText("overview-mode", launcher.mode);
   setText("overview-server", launcher.serverName);
-  setText("overview-track", displayTrack(launcher.track, launcher.layout));
+  // The overview poll shows the track by its display name; this is only the first-load fallback.
+  if (!overview) setText("overview-track", displayTrack(launcher.track, launcher.layout));
   setText("preset-name", launcher.eventName);
   setText("preset-mode", launcher.mode);
   setText("preset-track", displayTrack(launcher.track, launcher.layout));
@@ -694,6 +696,118 @@ function handleSignInReturn() {
   if (window.location.hash === "#players") showView("players");
 }
 
+
+// ---- Overview: track and car pictures, teams and entry list ----
+
+let overview = null;
+
+async function pollOverview() {
+  try {
+    const next = await fetchJson("/api/v1/overview");
+    overview = next?.available ? next.overview : null;
+    renderOverview();
+  } catch {
+    // The status poll already reports a lost connection.
+  }
+}
+
+function mediaUrl(key) {
+  return `/api/v1/media?key=${encodeURIComponent(key)}`;
+}
+
+function setImage(img, key) {
+  const wrap = img.closest(".media-frame") || img;
+  if (!key) {
+    wrap.hidden = true;
+    img.removeAttribute("src");
+    img.dataset.key = "";
+    return;
+  }
+  wrap.hidden = false;
+  if (img.dataset.key !== key) {
+    img.dataset.key = key;
+    img.src = mediaUrl(key);
+  }
+}
+
+function renderOverview() {
+  const data = overview;
+  setImage(document.getElementById("overview-track-image"), data?.trackImageKey);
+  setImage(document.getElementById("overview-track-outline"), data?.trackOutlineKey);
+  if (data) {
+    setText("overview-event", data.eventName);
+    setText("overview-mode", data.mode);
+    setText("overview-track", displayTrack(data.track, data.layout) + (data.country ? ` • ${data.country}` : ""));
+  }
+
+  const carList = document.getElementById("overview-cars");
+  const cars = data?.cars || [];
+  const carSignature = cars.map(car => `${car.imageKey}|${car.count}`).join(";");
+  if (carList.dataset.signature !== carSignature) {
+    carList.dataset.signature = carSignature;
+    carList.replaceChildren();
+    cars.forEach(car => {
+      const tile = document.createElement("figure");
+      tile.className = "car-tile";
+      if (car.imageKey) {
+        const img = document.createElement("img");
+        img.src = mediaUrl(car.imageKey);
+        img.alt = car.name;
+        img.loading = "lazy";
+        img.addEventListener("error", () => img.remove());
+        tile.append(img);
+      }
+      const caption = document.createElement("figcaption");
+      caption.textContent = car.count > 1 ? `${car.name} ×${car.count}` : car.name;
+      tile.append(caption);
+      carList.append(tile);
+    });
+  }
+  document.getElementById("overview-cars-empty").hidden = cars.length > 0;
+
+  const teamList = document.getElementById("overview-teams");
+  const teams = data?.teams || [];
+  teamList.replaceChildren();
+  teams.forEach(team => {
+    const item = document.createElement("li");
+    const name = document.createElement("strong");
+    name.textContent = team.name;
+    const detail = document.createElement("span");
+    detail.className = "muted";
+    const drivers = team.drivers.slice(0, 6).join(", ") + (team.drivers.length > 6 ? ` +${team.drivers.length - 6}` : "");
+    detail.textContent = ` ${team.cars} ${team.cars === 1 ? "car" : "cars"}${drivers ? ` • ${drivers}` : ""}`;
+    item.append(name, detail);
+    teamList.append(item);
+  });
+  document.getElementById("overview-teams-empty").hidden = teams.length > 0;
+
+  const body = document.getElementById("overview-entries");
+  const entries = data?.entries || [];
+  document.getElementById("overview-entries-caption").textContent = `${entries.length} ${entries.length === 1 ? "car" : "cars"}`;
+  body.replaceChildren();
+  if (entries.length === 0) {
+    const row = body.insertRow();
+    const cell = row.insertCell();
+    cell.colSpan = 5;
+    cell.className = "table-empty";
+    cell.textContent = "No grid entries.";
+    return;
+  }
+  entries.forEach(entry => {
+    const row = body.insertRow();
+    row.insertCell().textContent = String(entry.number);
+    const driver = row.insertCell();
+    driver.textContent = entry.driverName || "—";
+    if (entry.isLive) {
+      driver.className = "player-human";
+      driver.title = "Connected now";
+    }
+    row.insertCell().textContent = entry.teamName || "—";
+    row.insertCell().textContent = entry.carName || "—";
+    row.insertCell().textContent = entry.role;
+  });
+}
+
 handleSignInReturn();
 pollStatus();
 pollTrack();
@@ -701,3 +815,5 @@ pollPlayers();
 window.setInterval(pollStatus, 750);
 window.setInterval(pollTrack, 5000);
 window.setInterval(pollPlayers, 5000);
+pollOverview();
+window.setInterval(pollOverview, 5000);

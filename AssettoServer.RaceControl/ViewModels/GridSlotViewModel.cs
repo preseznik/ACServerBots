@@ -95,8 +95,34 @@ public sealed class GridSlotViewModel : ObservableObject
     public string DriverName
     {
         get => _driverName;
-        set => SetProperty(ref _driverName, value);
+        set
+        {
+            if (SetProperty(ref _driverName, value))
+                OnPropertyChanged(nameof(DriverDisplayName));
+        }
     }
+
+    private string? _liveDriverName;
+
+    /// <summary>
+    /// The real player driving this row on the running server, or null. Display only: the configured
+    /// DriverName (what's written to the entry list) is never overwritten.
+    /// </summary>
+    public string? LiveDriverName
+    {
+        get => _liveDriverName;
+        set
+        {
+            if (SetProperty(ref _liveDriverName, string.IsNullOrWhiteSpace(value) ? null : value))
+            {
+                OnPropertyChanged(nameof(DriverDisplayName));
+                OnPropertyChanged(nameof(HasLiveDriver));
+            }
+        }
+    }
+
+    public bool HasLiveDriver => LiveDriverName is not null;
+    public string DriverDisplayName => LiveDriverName ?? DriverName;
 
     public string TeamName
     {

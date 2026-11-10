@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using AssettoServer.RaceControl.Core.Configuration;
 using AssettoServer.RaceControl.Core.Models;
+using AssettoServer.RaceControl.Core.Players;
 
 namespace AssettoServer.RaceControl.Core.Validation;
 
@@ -135,7 +136,10 @@ public sealed class RaceControlValidator
         }
 
         if (!isFps)
+        {
             ValidateDriverReservations(messages, preset);
+            ValidateTeamCars(messages, preset);
+        }
 
         ErrorIf(messages, !isFps && preset.Sessions.PracticeEnabled && preset.Sessions.PracticeMinutes is < 1 or > 1440, "Sessions", "Practice duration must be 1..1440 minutes.");
         ErrorIf(messages, !isFps && preset.Sessions.QualifyingEnabled && preset.Sessions.QualifyingMinutes is < 1 or > 1440, "Sessions", "Qualifying duration must be 1..1440 minutes.");
@@ -182,6 +186,19 @@ public sealed class RaceControlValidator
         }
 
         return new ValidationResult(messages);
+    }
+
+    /// <summary>With driver changes a team is the drivers sharing one car, so a team name may be on one car only.</summary>
+    private static void ValidateTeamCars(List<ValidationMessage> messages, RaceControlPreset preset)
+    {
+        if (preset.Mode == EventMode.Fps || preset.Sessions.DriverSwapGraceMinutes <= 0)
+            return;
+        var rows = preset.Grid.Select((slot, index) => new TeamCarRow(index + 1, slot.TeamName, slot.Mode == SlotMode.Spectator));
+        foreach (var (team, cars) in TeamCars.Conflicts(rows))
+        {
+            messages.Add(new(ValidationSeverity.Error, "Grid",
+                $"Team \"{team}\" is on cars {string.Join(", ", cars)}. With driver changes a team shares one car: give each car its own team name."));
+        }
     }
 
     private static void ValidateDriverReservations(List<ValidationMessage> messages, RaceControlPreset preset)

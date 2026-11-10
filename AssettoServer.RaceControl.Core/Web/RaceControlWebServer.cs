@@ -109,6 +109,8 @@ public sealed class RaceControlWebServer : IAsyncDisposable
         app.MapGet(CallbackPath, CompleteSteamSignInAsync);
         app.MapPost("/auth/logout", SignOut);
         app.MapGet("/api/v1/me", GetMe);
+        app.MapGet("/api/v1/overview", GetOverview);
+        app.MapGet("/api/v1/media", GetMediaAsync);
         app.MapGet("/api/v1/event", GetEvent);
         app.MapPost("/api/v1/registration", RegisterAsync);
         app.MapDelete("/api/v1/registration", Withdraw);
@@ -292,6 +294,39 @@ public sealed class RaceControlWebServer : IAsyncDisposable
                          || (loopbackListener && string.Equals(host.Host, "localhost", StringComparison.OrdinalIgnoreCase));
         origin = $"http://{host.Host}:{_options.Port}";
         return knownHost && (host.Port ?? 80) == _options.Port;
+    }
+
+    // ---- Overview ------------------------------------------------------------------------------
+
+    private IResult GetOverview(HttpContext context)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        var overview = _control.GetOverview();
+        return overview is null ? Results.Ok(new { available = false }) : Results.Ok(new { available = true, overview });
+    }
+
+    private static readonly Dictionary<string, string> ImageTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".png"] = "image/png",
+        [".jpg"] = "image/jpeg",
+        [".jpeg"] = "image/jpeg",
+    };
+
+    private async Task GetMediaAsync(HttpContext context)
+    {
+        string key = context.Request.Query["key"].ToString();
+        string? path = key.Length is > 0 and <= 300 ? _control.GetMediaPath(key) : null;
+        FileInfo? file = path is null ? null : new FileInfo(path);
+        if (file is not { Exists: true, Length: > 0 and <= 15 * 1024 * 1024 }
+            || !ImageTypes.TryGetValue(file.Extension, out var contentType))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+        context.Response.ContentType = contentType;
+        context.Response.Headers.CacheControl = "private, max-age=300";
+        await using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        await stream.CopyToAsync(context.Response.Body, context.RequestAborted);
     }
 
     // ---- Players -------------------------------------------------------------------------------

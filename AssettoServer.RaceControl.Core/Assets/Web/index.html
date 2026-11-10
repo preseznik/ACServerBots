@@ -122,7 +122,30 @@
         <div class="page-heading"><div><p class="eyebrow">LAUNCHER</p><h1>OVERVIEW</h1></div></div>
         <div class="overview-grid">
           <article class="panel detail-card"><h2>CURRENT EVENT</h2><dl><dt>Name</dt><dd id="overview-event">—</dd><dt>Mode</dt><dd id="overview-mode">—</dd><dt>Server</dt><dd id="overview-server">—</dd><dt>Location</dt><dd id="overview-track">—</dd></dl></article>
-          <article class="panel detail-card"><h2>WEB CONTROL</h2><p>This first web release provides live state and safe local-owner controls. Event authoring remains in the desktop launcher.</p><p class="muted">The browser updates from the same server-authored telemetry used by the desktop Live Session view.</p></article>
+          <article class="panel detail-card track-card">
+            <h2>TRACK</h2>
+            <div class="media-frame" hidden><img id="overview-track-image" alt="Track preview"></div>
+            <div class="media-frame outline-frame" hidden><img id="overview-track-outline" alt="Track outline"></div>
+          </article>
+          <article class="panel detail-card">
+            <h2>CARS</h2>
+            <div id="overview-cars" class="car-tiles"></div>
+            <p id="overview-cars-empty" class="muted">No cars on the grid.</p>
+          </article>
+          <article class="panel detail-card">
+            <h2>TEAMS</h2>
+            <ul id="overview-teams" class="team-list"></ul>
+            <p id="overview-teams-empty" class="muted">No team names set. Teams come from the Team column on the desktop Grid.</p>
+          </article>
+          <section class="panel overview-entries">
+            <div class="panel-heading"><h2>ENTRY LIST</h2><span id="overview-entries-caption">0 cars</span></div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>#</th><th>DRIVER</th><th>TEAM</th><th>CAR</th><th>SEAT</th></tr></thead>
+                <tbody id="overview-entries"><tr><td colspan="5" class="table-empty">No grid entries.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </section>
 

@@ -11,6 +11,20 @@ public sealed class DispatcherRaceControlWebControl(
         ? viewModel.GetWebControlState()
         : dispatcher.Invoke(viewModel.GetWebControlState);
 
+    public WebOverview? GetOverview()
+    {
+        if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+            return null;
+        return dispatcher.CheckAccess() ? viewModel.GetWebOverview() : dispatcher.Invoke(viewModel.GetWebOverview);
+    }
+
+    public string? GetMediaPath(string key)
+    {
+        if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+            return null;
+        return dispatcher.CheckAccess() ? viewModel.GetWebMediaPath(key) : dispatcher.Invoke(() => viewModel.GetWebMediaPath(key));
+    }
+
     public PlayerEventInfo? GetPlayerEvent()
     {
         if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
