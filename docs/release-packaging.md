@@ -1,6 +1,6 @@
 # Local release packaging
 
-Current release: **0.1.5** (2026-11-10). The previous published installer is 0.1.4.
+Local review build **0.1.6** (2026-11-22). The latest published installer is 0.1.5.
 FPS content uses **client pack 60** and **map pack 2**, including six maps.
 The launcher and server share version
 metadata in `Release/Release.props`.
@@ -11,7 +11,7 @@ Build all Windows x64 artifacts with:
 pwsh -NoProfile -File tools/Build-RaceControlRelease.ps1 -LocalReview
 ```
 
-Output: `dist/v0.1.5/`. An existing version directory is never overwritten.
+Output directory for this build is `dist/v0.1.6/`. An existing version directory is never overwritten.
 `-LocalReview` records the local-only intent in the release manifest and permits
 packaging the current Ghost assets without changing their redistribution record.
 The default public-package check still requires Ghost-specific permission.
@@ -19,6 +19,8 @@ The builder retains isolated staging under .artifacts for inspection, packages
 the current working tree as Corresponding Source, and writes release.json plus
 SHA256SUMS.txt. ZIP entries have stable order and timestamps. Inno executables
 are unsigned; compiler metadata prevents claiming identical installer bytes.
+
+Race Control 0.1.6 gives bots their full pace at 100% Skill and improves steering from the grid, line choice on tight banked bends, and returns after timed-out passes. It uses the existing car profiles and FPS content.
 
 The 0.1.5 package adds endurance driver swaps (team cars reserved by Steam ID, a driver
 change time, and one car per team), saved race results with Copy and CSV export, Steam sign-in
@@ -69,7 +71,7 @@ Do not reuse the inherited upstream `v0.0.55-pre35` tag for the modified fork.
 Validate an artifact set with:
 
 ```powershell
-pwsh -NoProfile -File tools/Test-RaceControlRelease.ps1 -ReleaseDirectory dist/v0.1.5 -EvidenceDirectory .artifacts/release-verification-0.1.5
+pwsh -NoProfile -File tools/Test-RaceControlRelease.ps1 -ReleaseDirectory dist/v0.1.6 -EvidenceDirectory .artifacts/release-verification-0.1.6
 ```
 
 Use tools/Test-RaceControlLocal.ps1 against an extracted Full directory for
