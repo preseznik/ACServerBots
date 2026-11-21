@@ -180,12 +180,76 @@ public class RaceBotsTests
         });
     }
 
+    [TestCase(0.3f, 0f, 1f, 0)]
+    [TestCase(0.8f, 0f, 1f, 40)]
+    [TestCase(0.1f, 2f, 1f, 40)]
+    [TestCase(0.3f, 0f, -1f, 40)]
+    public void GridProjectionOnlyPrefersAnAdjacentStartBranch(float offset, float height,
+        float direction, int expected)
+    {
+        var points = CreateClosedSpline(100, 10);
+        for (int index = 0; index < points.Length; index++)
+            points[index].Position = new Vector3(50, 0, 10 * index);
+        points[0].Position = new Vector3(offset, height, 0);
+        points[1].Position = new Vector3(offset, height, 10 * direction);
+        points[40].Position = Vector3.Zero;
+        var layout = RaceSplineLayout.Create(points, 0);
+
+        Assert.That(layout.ResolveGridPoint(points, Vector3.Zero, Vector3.UnitZ, 40, 0),
+            Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void GridProjectionKeepsTheNearestPointOnTheSameStretchOfRoad()
+    {
+        var points = CreateClosedSpline(100, 10);
+        for (int index = 0; index < points.Length; index++)
+            points[index].Position = new Vector3(50, 0, 10 * index);
+        points[15].Position = new Vector3(0, 0, -0.4f);
+        points[16].Position = Vector3.Zero;
+        var layout = RaceSplineLayout.Create(points, 0);
+
+        Assert.That(layout.ResolveGridPoint(points, Vector3.Zero, Vector3.UnitZ, 16, 0), Is.EqualTo(16));
+    }
+
     [Test]
     public void OpenSplineIsRejected()
     {
         var points = CreateClosedSpline(30, 10);
         points[^1].NextId = -1;
         Assert.That(() => RaceSplineLayout.Create(points, 0), Throws.TypeOf<ConfigurationException>());
+    }
+
+    [Test]
+    public void PointToPointSplineMeasuresDistanceWithoutWrapping()
+    {
+        var points = CreateClosedSpline(30, 10);
+        points[0].PreviousId = -1;
+        points[^1].NextId = -1;
+        var layout = RaceSplineLayout.Create(points, 0, pointToPoint: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(layout.LengthMeters, Is.EqualTo(290));
+            Assert.That(layout.SignedDistanceAhead(28, 0, 1, 0, points), Is.EqualTo(-270));
+            Assert.That(() => RaceSplineLayout.Create(points, 1, pointToPoint: true),
+                Throws.TypeOf<ConfigurationException>());
+        });
+    }
+
+    [Test]
+    public void HillclimbGateRequiresAForwardCrossingBetweenTheMarkers()
+    {
+        var gate = RaceTimingGate.Create(new Vector3(-4, 0, 0), new Vector3(4, 0, 0),
+            Vector3.Zero, Vector3.UnitZ);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gate.CrossedForward(-Vector3.UnitZ, Vector3.UnitZ), Is.True);
+            Assert.That(gate.CrossedForward(Vector3.UnitZ, -Vector3.UnitZ), Is.False);
+            Assert.That(gate.CrossedForward(new Vector3(5, 0, -1), new Vector3(5, 0, 1)), Is.False);
+            Assert.That(gate.CrossedForward(new Vector3(0, 5, -1), new Vector3(0, 5, 1)), Is.False);
+        });
     }
 
     [Test]
@@ -552,6 +616,69 @@ public class RaceBotsTests
     }
 
     [Test]
+    public void ExtendedGridDropRequiresSelectedRoadDirectlyBelowTheSlot()
+    {
+        const float extendedDrop = 5.25f;
+        var pose = new RaceGridPose(new Vector3(0, 5.18f, 0), Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.5f));
+        Kn5Triangle[] route = [new(new(-2, 0, -2), new(-2, 0, 3), new(3, 0, -2))];
+
+        var grounded = RacePhysicsAssetBuilder.GroundGridPose(pose, route, [],
+            out bool usedLayoutFallback, out float snapDistance, extendedDrop);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(grounded, Is.EqualTo(pose with { Position = Vector3.Zero }));
+            Assert.That(usedLayoutFallback, Is.False);
+            Assert.That(snapDistance, Is.Zero);
+            Assert.That(() => RacePhysicsAssetBuilder.GroundGridPose(pose, route, [], out _, out _),
+                Throws.TypeOf<InvalidDataException>());
+            Assert.That(() => RacePhysicsAssetBuilder.GroundGridPose(pose, [], route, out _, out _, extendedDrop),
+                Throws.TypeOf<InvalidDataException>());
+            Assert.That(() => RacePhysicsAssetBuilder.GroundGridPose(pose with { Position = new Vector3(4, 5.18f, 0) },
+                route, [], out _, out _, extendedDrop), Throws.TypeOf<InvalidDataException>());
+            Assert.That(() => RacePhysicsAssetBuilder.GroundGridPose(pose with { Position = new Vector3(0, 5.3f, 0) },
+                route, [], out _, out _, extendedDrop), Throws.TypeOf<InvalidDataException>());
+        });
+    }
+
+    [Test]
+    public void PitExitGridHasSpacingAndPutsPoleAheadOfTheOtherSlots()
+    {
+        RaceRoutePoint[] route =
+        [
+            new(Vector3.Zero, 4, 4, Vector3.UnitY),
+            new(new Vector3(0, 0, 60), 4, 4, Vector3.UnitY),
+            new(new Vector3(0, 0, 220), 4, 4, Vector3.UnitY)
+        ];
+        var grid = RacePhysicsAssetBuilder.BuildPitExitGrid(route, route[1].Position, Vector3.UnitZ, 4);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(grid.Select(pose => pose.Position.Z), Is.EqualTo(new[] { 196f, 184f, 172f, 160f }));
+            Assert.That(grid.Select(pose => pose.Orientation), Is.All.EqualTo(Quaternion.Identity));
+        });
+    }
+
+    [Test]
+    public void PitExitGridRequiresAnAlignedMergeAndRoomForAllSlots()
+    {
+        RaceRoutePoint[] route =
+        [
+            new(Vector3.Zero, 4, 4, Vector3.UnitY),
+            new(new Vector3(0, 0, 120), 4, 4, Vector3.UnitY)
+        ];
+        Assert.Multiple(() =>
+        {
+            Assert.That(() => RacePhysicsAssetBuilder.BuildPitExitGrid(route, Vector3.Zero, -Vector3.UnitZ, 2),
+                Throws.TypeOf<InvalidDataException>());
+            Assert.That(() => RacePhysicsAssetBuilder.BuildPitExitGrid(route, new Vector3(4, 0, 0), Vector3.UnitZ, 2),
+                Throws.TypeOf<InvalidDataException>());
+            Assert.That(() => RacePhysicsAssetBuilder.BuildPitExitGrid(route, Vector3.Zero, Vector3.UnitZ, 4),
+                Throws.TypeOf<InvalidDataException>());
+        });
+    }
+
+    [Test]
     public void LayoutGridFallbackAddsLaunchSupportToFinalCollider()
     {
         var pose = new RaceGridPose(new Vector3(0, 5, 0), Quaternion.Identity);
@@ -825,7 +952,7 @@ public class RaceBotsTests
             new RaceRoutePoint(new Vector3(0, 10, 20), 5, 5, normal)
         ]);
 
-        bool found = atlas.TrySample(new Vector3(2, 0, 5), out var sample);
+        bool found = atlas.TrySample(new Vector3(2, 11, 5), out var sample);
 
         Assert.Multiple(() =>
         {
@@ -835,6 +962,24 @@ public class RaceBotsTests
             Assert.That(sample.HalfWidth, Is.EqualTo(5));
             Assert.That(sample.Normal, Is.EqualTo(normal));
         });
+    }
+
+    [TestCase(0.1f, 7f)]
+    [TestCase(0.5f, 0f)]
+    public void SurfaceAtlasKeepsTheExpectedDeckWhenAnotherCenterlineIsCloser(float x, float height)
+    {
+        var atlas = new RaceSurfaceAtlas(
+        [
+            new RaceRoutePoint(new Vector3(0, 0, -40), 4, 4, Vector3.UnitY),
+            new RaceRoutePoint(new Vector3(0, 0, 40), 4, 4, Vector3.UnitY),
+            new RaceRoutePoint(new Vector3(0.6f, 7, 40), 4, 4, Vector3.UnitY),
+            new RaceRoutePoint(new Vector3(0.6f, 7, -40), 4, 4, Vector3.UnitY)
+        ]);
+
+        bool found = atlas.TrySample(new Vector3(x, height, 0), out var sample);
+
+        Assert.That(found, Is.True);
+        Assert.That(sample.Height, Is.EqualTo(height));
     }
 
     [Test]
@@ -847,6 +992,20 @@ public class RaceBotsTests
         ]);
 
         Assert.That(atlas.TrySample(new Vector3(100, 0, 100), out _), Is.False);
+    }
+
+    [Test]
+    public void OpenSurfaceAtlasDoesNotJoinItsEndpoints()
+    {
+        RaceRoutePoint[] route =
+        [
+            new(new(-100, 0, 0), 4, 4, Vector3.UnitY),
+            new(new(-100, 0, 100), 4, 4, Vector3.UnitY),
+            new(new(100, 0, 100), 4, 4, Vector3.UnitY),
+            new(new(100, 0, 0), 4, 4, Vector3.UnitY)
+        ];
+
+        Assert.That(new RaceSurfaceAtlas(route, closed: false).TrySample(Vector3.Zero, out _), Is.False);
     }
 
     [Test]

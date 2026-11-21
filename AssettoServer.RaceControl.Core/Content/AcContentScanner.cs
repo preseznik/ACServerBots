@@ -157,8 +157,7 @@ public sealed partial class AcContentScanner(string? packageRoot = null)
                 }
 
                 var fastLane = FindFastLane(directory, layoutId);
-                var raceBotPreflight = RaceBotTrackPreflightInspector.Inspect(models, directory, fastLane);
-                tracks.Add(new AcTrackLayout(
+                var layout = new AcTrackLayout(
                     trackId,
                     layoutId,
                     name,
@@ -171,8 +170,8 @@ public sealed partial class AcContentScanner(string? packageRoot = null)
                     ExistingPath(Path.Combine(uiDirectory, "preview.png")),
                     ExistingPath(Path.Combine(uiDirectory, "outline.png")),
                     models,
-                    fastLane,
-                    raceBotPreflight));
+                    fastLane);
+                tracks.Add(layout with { RaceBotPreflight = RaceBotTrackPreflightInspector.Inspect(layout) });
             }
         }
 

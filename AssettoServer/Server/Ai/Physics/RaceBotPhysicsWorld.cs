@@ -159,6 +159,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     }
 
     public int GridCount => _asset.Grid.Count;
+    internal RaceHillclimbCourse? Hillclimb => _asset.Hillclimb;
 
     public RaceBotPhysicsWorld(ACServerConfiguration configuration, ServerRuntimeOptions runtimeOptions)
     {
@@ -171,7 +172,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
             throw new ConfigurationException($"Prepared race physics asset is missing: {assetPath}");
 
         _asset = RacePhysicsAsset.Load(assetPath);
-        _surfaceAtlas = new RaceSurfaceAtlas(_asset.RouteSurface);
+        _surfaceAtlas = new RaceSurfaceAtlas(_asset.RouteSurface, closed: !Hillclimb.HasValue);
         var solver = physics.Fidelity switch
         {
             RacePhysicsFidelity.Efficient => new SolveDescription(4, 1),
@@ -848,7 +849,7 @@ public sealed class RaceBotPhysicsWorld : IDisposable
         float referenceHeight = wheel.HasSurface
             ? wheel.SurfaceHeight + expectedSurfaceStep
             : record.Control.TargetPosition.Y;
-        bool hasAtlasSurface = _surfaceAtlas.TrySample(anchor, out var atlasSurface)
+        bool hasAtlasSurface = _surfaceAtlas.TrySample(anchor with { Y = referenceHeight }, out var atlasSurface)
                                && atlasSurface.DistanceFromCenter
                                <= atlasSurface.HalfWidth + SurfaceAtlasEdgeMarginMeters;
         float predictedSurfaceStep = expectedSurfaceStep;

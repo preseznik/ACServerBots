@@ -35,12 +35,13 @@ internal static class Kn5CollisionReader
 {
     private const int MaxCollectionCount = 50_000_000;
 
-    public static Kn5CollisionData Read(string path, Func<string, bool> includeMesh, bool includeTriangles = true)
+    public static Kn5CollisionData Read(string path, Func<string, bool> includeMesh, bool includeTriangles = true,
+        bool includeInactiveMeshes = false)
     {
         bool hasLeadingEmptyTexture = false;
         try
         {
-            return ReadFile(path, includeMesh, includeTriangles, false, out hasLeadingEmptyTexture);
+            return ReadFile(path, includeMesh, includeTriangles, includeInactiveMeshes, false, out hasLeadingEmptyTexture);
         }
         catch (InvalidDataException) when (hasLeadingEmptyTexture)
         {
@@ -48,7 +49,7 @@ internal static class Kn5CollisionReader
             // Try the full record first so ordinary inactive textures retain their layout.
             try
             {
-                return ReadFile(path, includeMesh, includeTriangles, true, out _);
+                return ReadFile(path, includeMesh, includeTriangles, includeInactiveMeshes, true, out _);
             }
             catch (InvalidDataException)
             {
@@ -59,7 +60,7 @@ internal static class Kn5CollisionReader
     }
 
     private static Kn5CollisionData ReadFile(string path, Func<string, bool> includeMesh,
-        bool includeTriangles, bool skipLeadingEmptyTexture, out bool hasLeadingEmptyTexture)
+        bool includeTriangles, bool includeInactiveMeshes, bool skipLeadingEmptyTexture, out bool hasLeadingEmptyTexture)
     {
         hasLeadingEmptyTexture = false;
         using var stream = File.OpenRead(path);
@@ -102,7 +103,7 @@ internal static class Kn5CollisionReader
 
             var result = new Kn5CollisionData();
             stage = "root node header";
-            ReadNode(reader, Matrix4x4.Identity, includeMesh, includeTriangles, result, ref stage);
+            ReadNode(reader, Matrix4x4.Identity, includeMesh, includeTriangles, includeInactiveMeshes, result, ref stage);
             return result;
         }
         catch (Exception exception)
@@ -114,7 +115,8 @@ internal static class Kn5CollisionReader
     }
 
     private static void ReadNode(BinaryReader reader, Matrix4x4 parentTransform,
-        Func<string, bool> includeMesh, bool includeTriangles, Kn5CollisionData result, ref string stage)
+        Func<string, bool> includeMesh, bool includeTriangles, bool includeInactiveMeshes,
+        Kn5CollisionData result, ref string stage)
     {
         var nodeClass = (Kn5NodeClass)reader.ReadInt32();
         if (nodeClass is < Kn5NodeClass.Base or > Kn5NodeClass.SkinnedMesh)
@@ -138,7 +140,8 @@ internal static class Kn5CollisionReader
                 break;
             }
             case Kn5NodeClass.Mesh:
-                ReadMesh(reader, name, active, worldTransform, includeMesh, includeTriangles, result, false, ref stage);
+                ReadMesh(reader, name, active || includeInactiveMeshes, worldTransform, includeMesh,
+                    includeTriangles, result, false, ref stage);
                 break;
             case Kn5NodeClass.SkinnedMesh:
                 ReadMesh(reader, name, active, worldTransform, includeMesh, includeTriangles, result, true, ref stage);
@@ -148,7 +151,7 @@ internal static class Kn5CollisionReader
         for (int i = 0; i < childCount; i++)
         {
             stage = $"child {i} header of node '{name}'";
-            ReadNode(reader, worldTransform, includeMesh, includeTriangles, result, ref stage);
+            ReadNode(reader, worldTransform, includeMesh, includeTriangles, includeInactiveMeshes, result, ref stage);
         }
     }
 

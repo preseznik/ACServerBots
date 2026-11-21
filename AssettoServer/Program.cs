@@ -325,6 +325,8 @@ public static class Program
                           + $"bounded grid snaps {result.SnappedGridPositions} "
                           + $"(max {result.MaximumGridSnapDistance:F2} m), "
                           + $"grid launch support {result.GridLaunchSupportTriangles} triangles");
+        if (result.UsesPitExitGrid)
+            Console.WriteLine("Touristenfahrten bot grid is on the fast lane after the pit exit.");
         foreach (var car in result.CarCalibrations)
         {
             Console.WriteLine($"Car calibration {car.Model}: tyres {car.FrontTyreRadius:F3}/{car.RearTyreRadius:F3} m, "

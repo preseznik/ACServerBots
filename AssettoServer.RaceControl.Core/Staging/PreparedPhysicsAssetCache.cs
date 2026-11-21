@@ -48,6 +48,9 @@ internal static class PreparedPhysicsAssetCache
         inputs.Add(Path.Combine(preset.ServerPayloadPath, "AssettoServer.exe"));
         inputs.Add(Path.Combine(preset.ServerPayloadPath, "AssettoServer.dll"));
         inputs.Add(rendered.Track.FastLanePath);
+        if (rendered.Track.TrackId.Equals("ks_nordschleife", StringComparison.OrdinalIgnoreCase)
+            && rendered.Track.LayoutId.Equals("touristenfahrten", StringComparison.OrdinalIgnoreCase))
+            inputs.Add(Path.Combine(Path.GetDirectoryName(rendered.Track.FastLanePath)!, "pit_lane.ai"));
         foreach (var car in rendered.RacingCars)
         {
             inputs.Add(car.ColliderPath ?? string.Empty);
@@ -88,6 +91,8 @@ internal static class PreparedPhysicsAssetCache
         using var models = File.Exists(track.ModelsIniPath)
             ? File.OpenText(track.ModelsIniPath)
             : null;
+        if (models is null && track.StandaloneModelPath is { } standaloneModel)
+            inputs.Add(standaloneModel);
         if (models is not null)
         {
             string? line;

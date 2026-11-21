@@ -16,15 +16,16 @@ internal sealed class RaceSurfaceAtlas
 {
     private const float CellSizeMeters = 10;
     private const int QueryCellRadius = 2;
+    private const float HeightToleranceMeters = 1.5f;
     private readonly RaceRoutePoint[] _route;
     private readonly Dictionary<long, List<int>> _segments = [];
 
-    public RaceSurfaceAtlas(IReadOnlyList<RaceRoutePoint> route)
+    public RaceSurfaceAtlas(IReadOnlyList<RaceRoutePoint> route, bool closed = true)
     {
         _route = route.ToArray();
         if (_route.Length < 2)
             return;
-        for (int index = 0; index < _route.Length; index++)
+        for (int index = 0; index < _route.Length - (closed ? 0 : 1); index++)
         {
             int next = (index + 1) % _route.Length;
             Vector3 from = _route[index].Position;
@@ -53,9 +54,7 @@ internal sealed class RaceSurfaceAtlas
             return false;
         int centerX = CellCoordinate(position.X);
         int centerZ = CellCoordinate(position.Z);
-        float bestDistanceSquared = float.PositiveInfinity;
-        int bestIndex = -1;
-        float bestProgress = 0;
+        float bestScore = float.PositiveInfinity;
         for (int z = centerZ - QueryCellRadius; z <= centerZ + QueryCellRadius; z++)
         for (int x = centerX - QueryCellRadius; x <= centerX + QueryCellRadius; x++)
         {
@@ -63,33 +62,31 @@ internal sealed class RaceSurfaceAtlas
                 continue;
             foreach (int index in candidates)
             {
-                int next = (index + 1) % _route.Length;
-                float progress = ClosestHorizontalProgress(position,
-                    _route[index].Position, _route[next].Position);
-                Vector3 center = Vector3.Lerp(_route[index].Position, _route[next].Position, progress);
+                var from = _route[index];
+                var to = _route[(index + 1) % _route.Length];
+                float progress = ClosestHorizontalProgress(position, from.Position, to.Position);
+                Vector3 center = Vector3.Lerp(from.Position, to.Position, progress);
                 float distanceSquared = HorizontalDistanceSquared(position, center);
-                if (distanceSquared >= bestDistanceSquared)
+                if (distanceSquared >= bestScore)
                     continue;
-                bestDistanceSquared = distanceSquared;
-                bestIndex = index;
-                bestProgress = progress;
+
+                Vector3 normal = NormalizeUp(Vector3.Lerp(from.SurfaceNormal, to.SurfaceNormal, progress));
+                Vector3 delta = position - center;
+                float height = center.Y - (normal.X * delta.X + normal.Z * delta.Z) / normal.Y;
+                // Adjacent segments on the same road can differ slightly in height on a bank.
+                // Penalize larger differences so a crossing deck cannot win on X/Z alone.
+                float heightError = Math.Max(0, Math.Abs(position.Y - height) - HeightToleranceMeters);
+                float score = distanceSquared + heightError * heightError;
+                if (score >= bestScore)
+                    continue;
+
+                bestScore = score;
+                float halfWidth = MathF.Max(2, MathF.Max(Lerp(from.SideLeft, to.SideLeft, progress),
+                    Lerp(from.SideRight, to.SideRight, progress)));
+                sample = new RaceSurfaceSample(height, normal, MathF.Sqrt(distanceSquared), halfWidth);
             }
         }
-        if (bestIndex < 0)
-            return false;
-
-        int bestNext = (bestIndex + 1) % _route.Length;
-        var from = _route[bestIndex];
-        var to = _route[bestNext];
-        Vector3 centerPoint = Vector3.Lerp(from.Position, to.Position, bestProgress);
-        Vector3 normal = NormalizeUp(Vector3.Lerp(from.SurfaceNormal, to.SurfaceNormal, bestProgress));
-        Vector3 delta = position - centerPoint;
-        float height = centerPoint.Y - (normal.X * delta.X + normal.Z * delta.Z) / normal.Y;
-        float halfWidth = MathF.Max(2,
-            MathF.Max(Lerp(from.SideLeft, to.SideLeft, bestProgress),
-                Lerp(from.SideRight, to.SideRight, bestProgress)));
-        sample = new RaceSurfaceSample(height, normal, MathF.Sqrt(bestDistanceSquared), halfWidth);
-        return float.IsFinite(height);
+        return float.IsFinite(bestScore);
     }
 
     private static float ClosestHorizontalProgress(Vector3 point, Vector3 from, Vector3 to)

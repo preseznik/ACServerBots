@@ -69,7 +69,11 @@ public class AiBehavior : BackgroundService
         {
             if (_racePhysicsWorld == null)
                 throw new ConfigurationException("Race bot rigid-body world is not registered");
-            _raceLayout = RaceSplineLayout.Create(spline.Points, _configuration.Extra.AiParams.Race.StartSplinePointId);
+            bool hillclimb = _racePhysicsWorld.Hillclimb.HasValue;
+            if (hillclimb && _configuration.Server.Race is { } race && (race.IsTimedRace || race.Laps != 1))
+                throw new ConfigurationException("A hillclimb race must be configured as one point-to-point run");
+            _raceLayout = RaceSplineLayout.Create(spline.Points,
+                _configuration.Extra.AiParams.Race.StartSplinePointId, pointToPoint: hillclimb);
             int racingEntryCount = _configuration.EntryList.Cars.Count(entry => entry.SpectatorMode == 0);
             if (_racePhysicsWorld.GridCount < racingEntryCount)
                 throw new ConfigurationException($"Track physics asset exposes {_racePhysicsWorld.GridCount} grid slots "
@@ -589,10 +593,12 @@ public class AiBehavior : BackgroundService
             if (gridIndex < 0)
                 throw new InvalidOperationException($"Race grid does not contain slot {car.SessionId}");
             var gridPose = _racePhysicsWorld!.GetGridPose(gridIndex);
-            var (pointId, _) = _spline.WorldToSpline(gridPose.Position);
+            var (pointId, distanceSquared) = _spline.WorldToSpline(gridPose.Position);
             if (pointId < 0)
-                throw new InvalidOperationException($"Cannot project AC_START_{gridIndex} onto fast_lane.ai");
-            Log.Debug("Race grid AC_START_{GridIndex} -> slot {SessionId}, spline point {PointId}",
+                throw new InvalidOperationException($"Cannot project race grid position {gridIndex} onto fast_lane.ai");
+            pointId = _raceLayout.ResolveGridPoint(_spline.Points, gridPose.Position,
+                Vector3.Transform(Vector3.UnitZ, gridPose.Orientation), pointId, distanceSquared);
+            Log.Debug("Race grid position {GridIndex} -> slot {SessionId}, spline point {PointId}",
                 gridIndex, car.SessionId, pointId);
             car.PrepareSingleAiState(pointId, _raceLayout, gridPose);
         }

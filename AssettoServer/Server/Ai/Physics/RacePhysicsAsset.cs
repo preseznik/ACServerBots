@@ -26,6 +26,7 @@ internal sealed class RacePhysicsAsset
 {
     private const string Magic = "ASRPHY01";
     private const int Version = 8;
+    private const int HillclimbVersion = 9;
 
     public required IReadOnlyList<RaceGridPose> Grid { get; init; }
     public required IReadOnlyList<RaceRoutePoint> RouteSurface { get; init; }
@@ -34,6 +35,7 @@ internal sealed class RacePhysicsAsset
     public required IReadOnlyDictionary<string, Vector3[]> CarColliderVertices { get; init; }
     public required IReadOnlyDictionary<string, RaceWheelCollider[]> CarWheelColliders { get; init; }
     public required IReadOnlyDictionary<string, float> CarProtocolReferenceHeights { get; init; }
+    public RaceHillclimbCourse? Hillclimb { get; init; }
 
     public static RacePhysicsAsset Load(string path)
     {
@@ -42,7 +44,8 @@ internal sealed class RacePhysicsAsset
         using var reader = new BinaryReader(compressed, Encoding.UTF8);
         if (Encoding.ASCII.GetString(reader.ReadBytes(Magic.Length)) != Magic)
             throw new InvalidDataException($"Invalid race physics asset: {path}");
-        if (reader.ReadInt32() != Version)
+        int version = reader.ReadInt32();
+        if (version is not (Version or HillclimbVersion))
             throw new InvalidDataException($"Unsupported race physics asset version: {path}");
 
         var grid = new RaceGridPose[ReadCount(reader, 254, "grid")];
@@ -82,6 +85,10 @@ internal sealed class RacePhysicsAsset
             protocolReferenceHeights.Add(model, protocolReferenceHeight);
         }
 
+        var hillclimb = version == HillclimbVersion
+            ? RaceHillclimbCourse.Create(routeSurface,
+                ReadVector3(reader), ReadVector3(reader), ReadVector3(reader), ReadVector3(reader))
+            : (RaceHillclimbCourse?)null;
         return new RacePhysicsAsset
         {
             Grid = grid,
@@ -90,7 +97,8 @@ internal sealed class RacePhysicsAsset
             TrackBarrierTriangles = barrierTriangles,
             CarColliderVertices = cars,
             CarWheelColliders = wheelColliders,
-            CarProtocolReferenceHeights = protocolReferenceHeights
+            CarProtocolReferenceHeights = protocolReferenceHeights,
+            Hillclimb = hillclimb
         };
     }
 
@@ -101,7 +109,7 @@ internal sealed class RacePhysicsAsset
         using var compressed = new BrotliStream(file, CompressionLevel.Optimal);
         using var writer = new BinaryWriter(compressed, Encoding.UTF8);
         writer.Write(Encoding.ASCII.GetBytes(Magic));
-        writer.Write(Version);
+        writer.Write(Hillclimb.HasValue ? HillclimbVersion : Version);
         writer.Write(Grid.Count);
         foreach (var pose in Grid)
         {
@@ -146,6 +154,13 @@ internal sealed class RacePhysicsAsset
             }
             writer.Write(CarProtocolReferenceHeights[model]);
         }
+        if (Hillclimb is { } hillclimb)
+        {
+            Write(writer, hillclimb.Start.Left);
+            Write(writer, hillclimb.Start.Right);
+            Write(writer, hillclimb.Finish.Left);
+            Write(writer, hillclimb.Finish.Right);
+        }
     }
 
     private static int ReadCount(BinaryReader reader, int maximum, string label)
@@ -186,11 +201,16 @@ internal static partial class RacePhysicsAssetBuilder
     private const float MaximumGridLaunchSupportHalfWidthMeters = 12f;
     private const float GridLaunchSupportLateralMarginMeters = 3f;
     private const float GridLaunchSupportVerticalMarginMeters = 1.5f;
+    private const float MaximumRouteGridDropMeters = 5f;
+    private const float BlackCatLongDirectGridDropMeters = 5.25f;
     private const float MaximumRouteGridSnapMeters = 6f;
     private const float MaximumLayoutGridSnapMeters = 3f;
 
     [GeneratedRegex(@"^AC_START_(\d+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex GridNodeRegex();
+
+    [GeneratedRegex(@"^AC_PIT_(\d+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PitNodeRegex();
 
     public static RacePhysicsBuildResult Build(string assettoCorsaRoot, string track, string? trackConfig,
         IEnumerable<string> carModels, string outputPath)
@@ -203,17 +223,32 @@ internal static partial class RacePhysicsAssetBuilder
         string modelsIni = string.IsNullOrWhiteSpace(trackConfig)
             ? Path.Combine(trackRoot, "models.ini")
             : Path.Combine(trackRoot, $"models_{trackConfig}.ini");
+        bool pointToPoint = string.IsNullOrWhiteSpace(trackConfig)
+                            && track.Equals("trento-bondone", StringComparison.OrdinalIgnoreCase);
         string fastLanePath = RaceRouteSurfaceBuilder.FindFastLane(trackRoot, trackConfig);
-        var route = RaceRouteSurfaceBuilder.ReadFastLane(fastLanePath);
+        var route = RaceRouteSurfaceBuilder.ReadSpline(fastLanePath, requireClosed: !pointToPoint);
+        if (pointToPoint && !(Vector3.Distance(route[0].Position, route[^1].Position) >= 50))
+            throw new InvalidDataException("Trento-Bondone requires an open hillclimb spline");
         var modelFiles = ReadModelFiles(modelsIni, trackRoot, track);
         var trackTriangles = new List<Kn5Triangle>();
         var trackBarrierTriangles = new List<Kn5Triangle>();
         var gridTransforms = new SortedDictionary<int, RaceGridPose>();
+        var pitSlots = new SortedSet<int>();
+        var timingMarkers = new Dictionary<string, Vector3>(StringComparer.OrdinalIgnoreCase);
         var includedMeshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool touristLayout = track.Equals("ks_nordschleife", StringComparison.OrdinalIgnoreCase)
+                             && string.Equals(trackConfig, "touristenfahrten", StringComparison.OrdinalIgnoreCase);
+        bool nordschleifeEnduranceLayout = track.Equals("ks_nordschleife", StringComparison.OrdinalIgnoreCase)
+                                          && (string.Equals(trackConfig, "endurance", StringComparison.OrdinalIgnoreCase)
+                                              || string.Equals(trackConfig, "endurance_cup", StringComparison.OrdinalIgnoreCase));
 
         foreach (string modelFile in modelFiles)
         {
-            var data = Kn5CollisionReader.Read(modelFile, IsPhysicalTrackMesh);
+            // Kunos marks the physical GP road in this shared collision model inactive.
+            // Its visible counterpart is in 18.kn5 and remains excluded from collision.
+            bool includeInactiveMeshes = nordschleifeEnduranceLayout
+                                         && Path.GetFileName(modelFile).Equals("19.kn5", StringComparison.OrdinalIgnoreCase);
+            var data = Kn5CollisionReader.Read(modelFile, IsPhysicalTrackMesh, includeInactiveMeshes: includeInactiveMeshes);
             foreach (var mesh in data.MeshRanges)
             {
                 var target = IsBarrierTrackMesh(mesh.Name) ? trackBarrierTriangles : trackTriangles;
@@ -227,6 +262,10 @@ internal static partial class RacePhysicsAssetBuilder
                 if (match.Success)
                     gridTransforms.TryAdd(int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
                         RaceGridPose.FromMatrix(node.Transform));
+                else if (touristLayout && PitNodeRegex().Match(node.Name) is { Success: true } pitMatch)
+                    pitSlots.Add(int.Parse(pitMatch.Groups[1].Value, CultureInfo.InvariantCulture));
+                else if (pointToPoint && node.Name.StartsWith("AC_AB_", StringComparison.OrdinalIgnoreCase))
+                    timingMarkers.TryAdd(node.Name, node.Transform.Translation);
             }
         }
 
@@ -239,28 +278,71 @@ internal static partial class RacePhysicsAssetBuilder
         // (Vallelunga Classic is one stock example), even though AC_START_n is directly above
         // a valid numbered ROAD mesh.
         var layoutGridGroundingTriangles = trackTriangles;
-        var routeSurface = RaceRouteSurfaceBuilder.Filter(trackTriangles, route);
+        var routeSurface = RaceRouteSurfaceBuilder.Filter(trackTriangles, route, closed: !pointToPoint);
         trackTriangles = DeduplicateTriangles(routeSurface.Triangles);
         var routeBarriers = routeSurface.UsesSplineRibbon
             ? new RaceRouteBarrierResult([], trackBarrierTriangles.Count)
-            : RaceRouteSurfaceBuilder.FilterBarriers(trackBarrierTriangles, route);
+            : RaceRouteSurfaceBuilder.FilterBarriers(trackBarrierTriangles, route, closed: !pointToPoint);
         trackBarrierTriangles = DeduplicateTriangles(routeBarriers.Triangles);
         if (trackTriangles.Count == 0)
             throw new InvalidDataException($"No physical road surface matched {fastLanePath}");
-        if (gridTransforms.Count == 0 || gridTransforms.Keys.First() != 0 ||
-            !gridTransforms.Keys.SequenceEqual(Enumerable.Range(0, gridTransforms.Count)))
-            throw new InvalidDataException($"Track must expose a contiguous AC_START_0..n race grid: {track}");
+        bool usesPitExitGrid = touristLayout && gridTransforms.Count == 0;
+        IReadOnlyCollection<RaceGridPose> grid;
+        if (usesPitExitGrid)
+        {
+            if (pitSlots.Count is < 2 or > 254 || !pitSlots.SequenceEqual(Enumerable.Range(0, pitSlots.Count)))
+                throw new InvalidDataException("Touristenfahrten requires contiguous AC_PIT positions for its bot grid capacity");
+            string pitLanePath = Path.Combine(Path.GetDirectoryName(fastLanePath)!, "pit_lane.ai");
+            var pitLane = RaceRouteSurfaceBuilder.ReadSpline(pitLanePath, requireClosed: false);
+            grid = BuildPitExitGrid(route, pitLane[^1].Position,
+                pitLane[^1].Position - pitLane[^2].Position, pitSlots.Count);
+        }
+        else
+        {
+            if (gridTransforms.Count == 0 || !gridTransforms.Keys.SequenceEqual(Enumerable.Range(0, gridTransforms.Count)))
+                throw new InvalidDataException($"Track must expose a contiguous AC_START_0..n race grid: {track}");
+            grid = gridTransforms.Values;
+        }
 
-        var groundedGrid = new RaceGridPose[gridTransforms.Count];
+        var groundedGrid = new RaceGridPose[grid.Count];
         int layoutGridGroundingFallbacks = 0;
         int snappedGridPositions = 0;
         float maximumGridSnapDistance = 0;
+        // The last rows on Kunos' long layout are up to 5.18 m above its selected road.
+        // Let those slots project straight down without widening sideways or layout fallback snaps.
+        float maximumDirectRouteDropMeters = track.Equals("ks_black_cat_county", StringComparison.OrdinalIgnoreCase)
+                                             && string.Equals(trackConfig, "layout_long", StringComparison.OrdinalIgnoreCase)
+            ? BlackCatLongDirectGridDropMeters
+            : MaximumRouteGridDropMeters;
         int gridIndex = 0;
-        foreach (var pose in gridTransforms.Values)
+        foreach (var pose in grid)
         {
+            if (pointToPoint)
+            {
+                // The rear hillclimb slots are behind the beginning of fast_lane.ai.
+                // Use the road under each authored slot before considering its launch corridor.
+                if (!(Vector3.Distance(pose.Position, route[0].Position) <= 50)
+                    || !TryGroundGridPose(pose, layoutGridGroundingTriangles, 1.5f, out var hillclimbPose))
+                    throw new InvalidDataException($"No physical road under hillclimb start position {gridIndex}");
+                groundedGrid[gridIndex++] = hillclimbPose;
+                continue;
+            }
+
+            if (usesPitExitGrid)
+            {
+                var road = routeSurface.GridGroundingTriangles;
+                if (!TryFindSurfaceHeight(pose.Position, pose.Position.Y, road, 1.5f, out float height))
+                    throw new InvalidDataException($"No physical road under Touristenfahrten bot grid slot {gridIndex}");
+                var pitExitPose = pose with { Position = pose.Position with { Y = height } };
+                if (!HasGridLaunchSupport(pitExitPose, road))
+                    throw new InvalidDataException($"No continuous physical launch surface for Touristenfahrten bot grid slot {gridIndex}");
+                groundedGrid[gridIndex++] = pitExitPose;
+                continue;
+            }
+
             var grounded = GroundGridPose(pose,
                 routeSurface.GridGroundingTriangles, layoutGridGroundingTriangles,
-                out bool usedLayoutFallback, out float snapDistance);
+                out bool usedLayoutFallback, out float snapDistance, maximumDirectRouteDropMeters);
             groundedGrid[gridIndex++] = grounded;
             if (usedLayoutFallback)
             {
@@ -323,6 +405,17 @@ internal static partial class RacePhysicsAssetBuilder
                 calibration.Source));
         }
 
+        RaceHillclimbCourse? hillclimb = null;
+        if (pointToPoint)
+        {
+            if (!timingMarkers.TryGetValue("AC_AB_START_L", out var startLeft)
+                || !timingMarkers.TryGetValue("AC_AB_START_R", out var startRight)
+                || !timingMarkers.TryGetValue("AC_AB_FINISH_L", out var finishLeft)
+                || !timingMarkers.TryGetValue("AC_AB_FINISH_R", out var finishRight))
+                throw new InvalidDataException("The hillclimb requires authored AC_AB_START and AC_AB_FINISH gates");
+            hillclimb = RaceHillclimbCourse.Create(route, startLeft, startRight, finishLeft, finishRight);
+        }
+
         var asset = new RacePhysicsAsset
         {
             Grid = groundedGrid,
@@ -331,7 +424,8 @@ internal static partial class RacePhysicsAssetBuilder
             TrackBarrierTriangles = trackBarrierTriangles,
             CarColliderVertices = colliders,
             CarWheelColliders = wheelColliders,
-            CarProtocolReferenceHeights = protocolReferenceHeights
+            CarProtocolReferenceHeights = protocolReferenceHeights,
+            Hillclimb = hillclimb
         };
         asset.Save(outputPath);
         return new RacePhysicsBuildResult(asset.Grid.Count,
@@ -341,7 +435,52 @@ internal static partial class RacePhysicsAssetBuilder
             routeSurface.UsesSplineRibbon, routeBarriers.SourceTriangles,
             asset.TrackBarrierTriangles.Count, layoutGridGroundingFallbacks,
             snappedGridPositions, maximumGridSnapDistance,
-            gridLaunchSupportTriangles, carCalibrations);
+            gridLaunchSupportTriangles, usesPitExitGrid, carCalibrations);
+    }
+
+    internal static RaceGridPose[] BuildPitExitGrid(IReadOnlyList<RaceRoutePoint> route,
+        Vector3 pitExit, Vector3 pitForward, int slotCount)
+    {
+        const float maximumMergeDistanceMeters = 3f;
+        const float clearanceAfterMergeMeters = 100f;
+        const float slotSpacingMeters = 12f;
+        float closestDistanceSquared = maximumMergeDistanceMeters * maximumMergeDistanceMeters;
+        int mergePoint = -1;
+        for (int i = 0; i < route.Count - 1; i++)
+        {
+            float distanceSquared = Vector3.DistanceSquared(pitExit, route[i].Position);
+            var forward = route[i + 1].Position - route[i].Position;
+            if (distanceSquared < closestDistanceSquared && Vector3.Dot(forward, pitForward) > 0)
+            {
+                mergePoint = i;
+                closestDistanceSquared = distanceSquared;
+            }
+        }
+        if (mergePoint < 0)
+            throw new InvalidDataException("Touristenfahrten pit exit does not join its fast lane in the travel direction");
+
+        // Keep the entire single-file grid beyond the pit merge, with pole furthest ahead.
+        var grid = new RaceGridPose[slotCount];
+        int slot = slotCount - 1;
+        float remaining = clearanceAfterMergeMeters;
+        for (int i = mergePoint; i < route.Count - 1 && slot >= 0; i++)
+        {
+            var segment = route[i + 1].Position - route[i].Position;
+            float length = segment.Length();
+            if (length < 1e-4f)
+                continue;
+            while (remaining <= length && slot >= 0)
+            {
+                var position = route[i].Position + segment * (remaining / length);
+                var orientation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.Atan2(segment.X, segment.Z));
+                grid[slot--] = new RaceGridPose(position, orientation);
+                remaining += slotSpacingMeters;
+            }
+            remaining -= length;
+        }
+        if (slot >= 0)
+            throw new InvalidDataException("Touristenfahrten has insufficient fast lane after the pit exit for its bot grid");
+        return grid;
     }
 
     internal static IReadOnlyList<string> ReadModelFiles(string modelsIni, string trackRoot, string track)
@@ -500,7 +639,7 @@ internal static partial class RacePhysicsAssetBuilder
 
     internal static RaceGridPose GroundGridPose(RaceGridPose pose, IReadOnlyList<Kn5Triangle> triangles)
     {
-        if (TryGroundGridPose(pose, triangles, 5, out var grounded))
+        if (TryGroundGridPose(pose, triangles, MaximumRouteGridDropMeters, out var grounded))
             return grounded;
         throw new InvalidDataException($"AC grid position {pose.Position} has no physical track surface below it");
     }
@@ -513,16 +652,16 @@ internal static partial class RacePhysicsAssetBuilder
     internal static RaceGridPose GroundGridPose(RaceGridPose pose,
         IReadOnlyList<Kn5Triangle> routeTriangles,
         IReadOnlyList<Kn5Triangle> layoutTriangles, out bool usedLayoutFallback,
-        out float snapDistance)
+        out float snapDistance, float maximumDirectRouteDropMeters = MaximumRouteGridDropMeters)
     {
-        if (TryGroundGridPose(pose, routeTriangles, 5, out var grounded))
+        if (TryGroundGridPose(pose, routeTriangles, maximumDirectRouteDropMeters, out var grounded))
         {
             usedLayoutFallback = false;
             snapDistance = 0;
             return grounded;
         }
 
-        if (TrySnapAndGroundGridPose(pose, routeTriangles, maximumDropMeters: 5,
+        if (TrySnapAndGroundGridPose(pose, routeTriangles, MaximumRouteGridDropMeters,
                 MaximumRouteGridSnapMeters, out grounded, out snapDistance))
         {
             usedLayoutFallback = false;
@@ -868,7 +1007,7 @@ internal readonly record struct RacePhysicsBuildResult(int GridSlots, int TrackT
     IReadOnlyList<string> IncludedTrackMeshes, int SourceDriveTriangles, int RouteDriveTriangles,
     double RouteCoverage, bool UsesSplineRibbon, int SourceBarrierTriangles, int RouteBarrierTriangles,
     int LayoutGridGroundingFallbacks, int SnappedGridPositions, float MaximumGridSnapDistance,
-    int GridLaunchSupportTriangles,
+    int GridLaunchSupportTriangles, bool UsesPitExitGrid,
     IReadOnlyList<RaceCarCalibrationBuildResult> CarCalibrations);
 
 internal readonly record struct RaceCarCalibrationBuildResult(string Model, float FrontTyreRadius,

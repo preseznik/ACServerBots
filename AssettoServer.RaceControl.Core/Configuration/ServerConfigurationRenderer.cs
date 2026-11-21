@@ -68,7 +68,7 @@ public sealed class ServerConfigurationRenderer
         return new(
             RenderServerConfiguration(preset, track, grid, cars, weatherGraphics),
             RenderEntryList(preset, grid),
-            RenderExtraConfiguration(preset, racingCars),
+            RenderExtraConfiguration(preset, track, racingCars),
             grid,
             track,
             cars,
@@ -156,9 +156,9 @@ public sealed class ServerConfigurationRenderer
 
         if (preset.Mode != EventMode.Fps)
         {
-            Set(ini, "RACE", "NAME", $"{preset.Sessions.RaceLaps}-lap race");
+            Set(ini, "RACE", "NAME", track.IsPointToPoint ? "Hillclimb" : $"{preset.Sessions.RaceLaps}-lap race");
             Set(ini, "RACE", "TIME", 0);
-            Set(ini, "RACE", "LAPS", preset.Sessions.RaceLaps);
+            Set(ini, "RACE", "LAPS", track.IsPointToPoint ? 1 : preset.Sessions.RaceLaps);
             Set(ini, "RACE", "WAIT_TIME", 20);
             Set(ini, "RACE", "IS_OPEN", preset.Bots.AllowMidRaceTakeover ? 1 : 0);
         }
@@ -211,7 +211,7 @@ public sealed class ServerConfigurationRenderer
         return ini;
     }
 
-    private static string RenderExtraConfiguration(RaceControlPreset preset, IReadOnlyList<AcCar> cars)
+    private static string RenderExtraConfiguration(RaceControlPreset preset, AcTrackLayout track, IReadOnlyList<AcCar> cars)
     {
         var invariant = CultureInfo.InvariantCulture;
         var builder = new StringBuilder();
@@ -236,7 +236,7 @@ public sealed class ServerConfigurationRenderer
         Line($"    DifficultyVariancePercent: {preset.Bots.DifficultyVariancePercent.ToString("0.##", invariant)}");
         Line($"    Aggression: {preset.Bots.Aggression.ToString("0.00", invariant)}");
         Line($"    AggressionVariancePercent: {preset.Bots.AggressionVariancePercent.ToString("0.##", invariant)}");
-        Line($"    StartSplinePointId: {preset.Bots.StartSplinePointId}");
+        Line($"    StartSplinePointId: {(track.IsPointToPoint ? 0 : preset.Bots.StartSplinePointId)}");
         Line($"    GridSpacingMeters: {preset.Bots.GridSpacingMeters.ToString("0.###", invariant)}");
         Line($"    UpdateHz: {preset.Bots.UpdateHz}");
         Line("    Physics:");

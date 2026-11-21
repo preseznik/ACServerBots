@@ -51,7 +51,12 @@ public sealed record AcTrackLayout(
 {
     public string Key => string.IsNullOrEmpty(LayoutId) ? TrackId : $"{TrackId}/{LayoutId}";
     public string DisplayName => string.IsNullOrWhiteSpace(LayoutName) ? Name : $"{Name} — {LayoutName}";
-    public bool HasModels => File.Exists(ModelsIniPath);
+    public bool IsPointToPoint => string.IsNullOrEmpty(LayoutId)
+                                  && TrackId.Equals("trento-bondone", StringComparison.OrdinalIgnoreCase);
+    public string? StandaloneModelPath => string.IsNullOrEmpty(LayoutId)
+        ? Path.Combine(RootPath, $"{TrackId}.kn5")
+        : null;
+    public bool HasModels => File.Exists(ModelsIniPath) || File.Exists(StandaloneModelPath);
     public bool HasFastLane => File.Exists(FastLanePath);
 }
 
@@ -60,9 +65,10 @@ public sealed record RaceBotTrackPreflight(
     int SplinePointCount,
     double? ClosureDistanceMeters,
     IReadOnlyList<string> MissingModelFiles,
-    string? Failure)
+    string? Failure,
+    bool HasReadablePointToPointSpline = false)
 {
-    public bool CanPrepare => HasReadableClosedSpline
+    public bool CanPrepare => (HasReadableClosedSpline || HasReadablePointToPointSpline)
                               && MissingModelFiles.Count == 0
                               && string.IsNullOrWhiteSpace(Failure);
 }

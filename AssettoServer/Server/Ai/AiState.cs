@@ -87,6 +87,7 @@ public class AiState : IDisposable
     private RaceSplineLayout? _raceLayout;
     private RaceLapTracker? _raceLapTracker;
     private long _raceLapStartedAt;
+    private long? _hillclimbStartedAt;
     private bool _holdingForRaceStart;
     private bool _gridLineMergePending;
     private bool _gridLineMergeStarted;
@@ -291,10 +292,11 @@ public class AiState : IDisposable
         _endIndicatorDistance = 0;
         _lastTick = _sessionManager.ServerTimeMilliseconds;
         _minObstacleDistance = _random.Next(8, 13);
-        _raceLapTracker = _raceLayout == null
+        _raceLapTracker = _raceLayout == null || _raceLayout.IsPointToPoint
             ? null
             : new RaceLapTracker(_configuration.Extra.AiParams.Race.StartSplinePointId, _raceLayout.LengthMeters);
         _raceLapStartedAt = _sessionManager.ServerTimeMilliseconds;
+        _hillclimbStartedAt = null;
         _holdingForRaceStart = false;
         _gridLineMergePending = false;
         _gridLineMergeStarted = false;
@@ -557,10 +559,17 @@ public class AiState : IDisposable
         {
             progress -= _currentVecLength;
                 
-            if (!_junctionEvaluator.TryNext(CurrentSplinePointId, out var nextPointId)
-                || !_junctionEvaluator.TryNext(nextPointId, out var nextNextPointId))
+            if (!_junctionEvaluator.TryNext(CurrentSplinePointId, out var nextPointId))
             {
                 return false;
+            }
+            if (!_junctionEvaluator.TryNext(nextPointId, out var nextNextPointId))
+            {
+                if (_raceLayout?.IsPointToPoint != true)
+                    return false;
+                // Keep the last valid segment for steering until the chassis crosses the finish gate.
+                progress = _currentVecLength;
+                break;
             }
 
             var previousPointId = CurrentSplinePointId;
@@ -575,16 +584,9 @@ public class AiState : IDisposable
                 if (_raceLapTracker.ObservePointTransition(previousPointId, nextPointId, segmentLength, movingForward: true))
                 {
                     var now = _sessionManager.ServerTimeMilliseconds;
-                    var lapTime = (uint)Math.Max(1, now - _raceLapStartedAt);
+                    long startedAt = _raceLapStartedAt;
                     _raceLapStartedAt = now;
-                    _sessionManager.OnLapCompleted(EntryCar, EntryCar.AiName ?? $"Bot {EntryCar.SessionId}", new LapCompletedIncoming
-                    {
-                        Timestamp = (uint)now,
-                        LapTime = lapTime,
-                        Splits = [],
-                        Cuts = 0,
-                        NumLap = (byte)_raceLapTracker.CompletedLaps
-                    });
+                    ReportRaceLap(now, startedAt, (byte)_raceLapTracker.CompletedLaps);
                 }
                 else if (crossedStart)
                 {
@@ -2335,7 +2337,14 @@ public class AiState : IDisposable
             cursor = end;
             int followingPointId = _spline.Points[endPointId].NextId;
             if (followingPointId < 0 || followingPointId == endPointId)
+            {
+                if (_raceLayout?.IsPointToPoint == true)
+                {
+                    var tangent = end - _spline.Points[_spline.Points[endPointId].PreviousId].Position;
+                    return end + Vector3.Normalize(tangent) * remaining;
+                }
                 break;
+            }
             endPointId = followingPointId;
         }
 
@@ -2482,6 +2491,14 @@ public class AiState : IDisposable
         var forward = Vector3.Normalize(sampleBeforeMove.Tangent);
         float forwardProgress = CalculatePhysicsForwardProgress(physicsState.Position, _physicsLastPosition,
             forward, physicsState.RecoveryCount, _physicsRecoveryCount);
+        if (_raceLayout?.IsPointToPoint == true && CurrentSplinePointId == _raceLayout.Route[0]
+                                               && _currentVecProgress == 0)
+        {
+            // The rear slots are on the approach to point zero. Start accumulating spline
+            // progress when the chassis reaches that point, after driving the approach itself.
+            float distancePastStart = Vector3.Dot(physicsState.Position - sampleBeforeMove.Position, forward);
+            forwardProgress = Math.Min(forwardProgress, Math.Max(0, distancePastStart));
+        }
         if (_gridLineMergePending)
         {
             _gridLaunchDistanceMeters = Math.Max(_gridLaunchDistanceMeters,
@@ -2493,6 +2510,8 @@ public class AiState : IDisposable
             Despawn();
             return;
         }
+        if (_racePhysicsWorld.Hillclimb is { } hillclimb && CompleteHillclimb(hillclimb, physicsState))
+            return;
 
         _physicsLastPosition = physicsState.Position;
         _physicsRecoveryCount = physicsState.RecoveryCount;
@@ -2580,6 +2599,38 @@ public class AiState : IDisposable
         Status.Rotation = RacePhysicsMath.ToProtocolRotation(physicsState.Orientation);
         Status.Velocity = physicsState.Velocity;
         ApplyStatusTelemetry();
+    }
+
+    private bool CompleteHillclimb(RaceHillclimbCourse course, RaceBotPhysicsState physicsState)
+    {
+        // A recovery relocation is not a timed crossing.
+        if (physicsState.RecoveryCount != _physicsRecoveryCount)
+            return false;
+        long now = _sessionManager.ServerTimeMilliseconds;
+        if (!_hillclimbStartedAt.HasValue && course.Start.CrossedForward(_physicsLastPosition, physicsState.Position))
+            _hillclimbStartedAt = now;
+
+        float progress = _raceLayout!.DistanceFromStart(CurrentSplinePointId,
+            _currentVecProgress / _currentVecLength, _spline.Points);
+        if (_hillclimbStartedAt is not { } startedAt || _raceLayout.LengthMeters - progress > 50f
+            || !course.Finish.CrossedForward(_physicsLastPosition, physicsState.Position))
+            return false;
+
+        ReportRaceLap(now, startedAt, 1);
+        Despawn();
+        return true;
+    }
+
+    private void ReportRaceLap(long now, long startedAt, byte completedLaps)
+    {
+        _sessionManager.OnLapCompleted(EntryCar, EntryCar.AiName ?? $"Bot {EntryCar.SessionId}", new LapCompletedIncoming
+        {
+            Timestamp = (uint)now,
+            LapTime = (uint)Math.Max(1, now - startedAt),
+            Splits = [],
+            Cuts = 0,
+            NumLap = completedLaps
+        });
     }
 
     internal static float CalculatePhysicsForwardProgress(Vector3 position, Vector3 previousPosition,

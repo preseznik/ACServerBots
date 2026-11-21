@@ -15,7 +15,7 @@ internal static class RacePhysicsAssetMetadataReader
         if (Encoding.ASCII.GetString(reader.ReadBytes(Magic.Length)) != Magic)
             throw new InvalidDataException($"Invalid race physics asset: {path}");
         int version = reader.ReadInt32();
-        if (version is < 7 or > 8)
+        if (version is < 7 or > 9)
             throw new InvalidDataException($"Unsupported race physics asset version {version}: {path}");
         int count = reader.ReadInt32();
         if (count is < 0 or > 254)

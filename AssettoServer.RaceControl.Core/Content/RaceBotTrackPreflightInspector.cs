@@ -9,16 +9,21 @@ internal static class RaceBotTrackPreflightInspector
     private const int MaximumSplinePoints = 2_000_000;
     private const double MaximumClosureDistanceMeters = 50;
 
-    public static RaceBotTrackPreflight Inspect(string modelsIniPath, string trackRoot,
-        string fastLanePath)
+    public static RaceBotTrackPreflight Inspect(AcTrackLayout layout)
     {
-        var missingModels = InspectModelFiles(modelsIniPath, trackRoot);
+        var missingModels = File.Exists(layout.ModelsIniPath) || !File.Exists(layout.StandaloneModelPath)
+            ? InspectModelFiles(layout.ModelsIniPath, layout.RootPath)
+            : [];
         try
         {
-            var (pointCount, closureDistance) = ReadSplineSummary(fastLanePath);
-            bool closed = closureDistance <= MaximumClosureDistanceMeters;
+            var (pointCount, closureDistance) = ReadSplineSummary(layout.FastLanePath);
+            bool closed = closureDistance < MaximumClosureDistanceMeters;
+            bool pointToPoint = layout.IsPointToPoint && !closed;
+            string? failure = layout.IsPointToPoint
+                ? (closed ? "the hillclimb requires an open fast_lane.ai" : null)
+                : (closed ? null : $"fast_lane.ai is open ({closureDistance:F1} m endpoint gap)");
             return new RaceBotTrackPreflight(closed, pointCount, closureDistance,
-                missingModels, closed ? null : $"fast_lane.ai is open ({closureDistance:F1} m endpoint gap)");
+                missingModels, failure, pointToPoint);
         }
         catch (Exception exception) when (exception is IOException
                                           or UnauthorizedAccessException

@@ -72,7 +72,32 @@ public class Kn5CollisionReaderTests
         }
     }
 
-    private static void WriteCollider(string path, int version, string layout)
+    [Test]
+    public void InactiveCollisionMeshRequiresOptInAndStillUsesTheMeshFilter()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"kn5-inactive-{Guid.NewGuid():N}.kn5");
+        try
+        {
+            WriteCollider(path, 6, "none", meshActive: false);
+            var defaultRead = Kn5CollisionReader.Read(path, _ => true);
+            var collision = Kn5CollisionReader.Read(path, name => name == "COLLIDER", includeInactiveMeshes: true);
+            var excluded = Kn5CollisionReader.Read(path, _ => false, includeInactiveMeshes: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(defaultRead.Triangles, Is.Empty);
+                Assert.That(collision.Triangles, Has.Count.EqualTo(1));
+                Assert.That(excluded.Triangles, Is.Empty);
+                Assert.That(collision.NamedTransforms, Is.EqualTo(defaultRead.NamedTransforms));
+            });
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static void WriteCollider(string path, int version, string layout, bool meshActive = true)
     {
         using var writer = new BinaryWriter(File.Create(path));
         writer.Write(Encoding.ASCII.GetBytes("sc6969"));
@@ -108,7 +133,7 @@ public class Kn5CollisionReaderTests
         writer.Write(2); // Mesh node.
         WriteString(writer, "COLLIDER");
         writer.Write(0); // Children.
-        writer.Write(true);
+        writer.Write(meshActive);
         writer.Write(new byte[] { 1, 1, 0 }); // Shadows, visibility, transparency.
         writer.Write(3); // Vertices.
         foreach (var vertex in new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitZ })

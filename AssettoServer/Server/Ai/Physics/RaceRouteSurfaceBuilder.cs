@@ -61,7 +61,7 @@ internal static class RaceRouteSurfaceBuilder
                    candidates[0]);
     }
 
-    public static RaceRoutePoint[] ReadFastLane(string path)
+    public static RaceRoutePoint[] ReadSpline(string path, bool requireClosed = true)
     {
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream);
@@ -79,12 +79,13 @@ internal static class RaceRouteSurfaceBuilder
                 _ = reader.ReadSingle(); // Radius
                 _ = reader.ReadSingle(); // Camber
             }
-            ValidateClosed(legacy, path);
+            if (requireClosed)
+                ValidateClosed(legacy, path);
             return legacy;
         }
 
         if (version != 7)
-            throw new InvalidDataException($"Unsupported fast_lane.ai version {version}: {path}");
+            throw new InvalidDataException($"Unsupported AI spline version {version}: {path}");
 
         _ = reader.ReadInt32(); // Lap time
         _ = reader.ReadInt32(); // Sample count
@@ -97,7 +98,7 @@ internal static class RaceRouteSurfaceBuilder
         }
         int extraCount = ReadCount(reader, "extra spline point");
         if (extraCount != count)
-            throw new InvalidDataException("fast_lane.ai point and extra-point counts differ");
+            throw new InvalidDataException($"AI spline point and extra-point counts differ: {path}");
 
         var points = new RaceRoutePoint[count];
         for (int i = 0; i < count; i++)
@@ -121,14 +122,15 @@ internal static class RaceRouteSurfaceBuilder
             points[i] = new RaceRoutePoint(positions[i], SanitizeWidth(sideLeft),
                 SanitizeWidth(sideRight), normal);
         }
-        ValidateClosed(points, path);
+        if (requireClosed)
+            ValidateClosed(points, path);
         return points;
     }
 
     public static RaceRouteSurfaceResult Filter(IReadOnlyList<Kn5Triangle> source,
-        IReadOnlyList<RaceRoutePoint> route)
+        IReadOnlyList<RaceRoutePoint> route, bool closed = true)
     {
-        var map = new RouteHeightMap(route);
+        var map = new RouteHeightMap(route, closed);
         var result = new List<Kn5Triangle>(Math.Min(source.Count, 1_000_000));
         var matchedCells = new HashSet<long>();
         var separatedPhysicalCells = new HashSet<long>();
@@ -162,13 +164,13 @@ internal static class RaceRouteSurfaceBuilder
         }
         bool useSplineRibbon = ShouldUseSplineRibbon(map.CenterlineCellCount,
             map.SeparatedElevationLayerCellCount, separatedPhysicalCells.Count);
-        var projectedRoute = ProjectRouteToPhysicalSurface(route, result);
-        return new RaceRouteSurfaceResult(useSplineRibbon ? BuildSplineRibbon(projectedRoute) : result,
+        var projectedRoute = ProjectRouteToPhysicalSurface(route, result, closed);
+        return new RaceRouteSurfaceResult(useSplineRibbon ? BuildSplineRibbon(projectedRoute, closed) : result,
             result, source.Count, coverage, useSplineRibbon, projectedRoute);
     }
 
     internal static RaceRoutePoint[] ProjectRouteToPhysicalSurface(
-        IReadOnlyList<RaceRoutePoint> route, IReadOnlyList<Kn5Triangle> physicalSurface)
+        IReadOnlyList<RaceRoutePoint> route, IReadOnlyList<Kn5Triangle> physicalSurface, bool closed = true)
     {
         if (route.Count == 0 || physicalSurface.Count == 0)
             return route.ToArray();
@@ -199,7 +201,8 @@ internal static class RaceRouteSurfaceBuilder
                 corrections[i] = correction;
         }
 
-        for (int validIndex = 0; valid.Count > 1 && validIndex < valid.Count; validIndex++)
+        int interpolationSpans = closed ? valid.Count : valid.Count - 1;
+        for (int validIndex = 0; valid.Count > 1 && validIndex < interpolationSpans; validIndex++)
         {
             int from = valid[validIndex];
             int to = valid[(validIndex + 1) % valid.Count];
@@ -220,7 +223,7 @@ internal static class RaceRouteSurfaceBuilder
             const int correctionRadius = 5;
             for (int sample = -correctionRadius; sample <= correctionRadius; sample++)
             {
-                int point = (i + sample + route.Count) % route.Count;
+                int point = RouteIndex(i + sample, route.Count, closed);
                 correction += corrections[point];
             }
             correction /= correctionRadius * 2 + 1;
@@ -228,7 +231,7 @@ internal static class RaceRouteSurfaceBuilder
             var normal = Vector3.Zero;
             for (int sample = -2; sample <= 2; sample++)
             {
-                int point = (i + sample + route.Count) % route.Count;
+                int point = RouteIndex(i + sample, route.Count, closed);
                 normal += normals[point];
             }
             projected[i] = route[i] with
@@ -248,17 +251,20 @@ internal static class RaceRouteSurfaceBuilder
         return separatedRouteCellCount >= threshold || separatedPhysicalCellCount >= threshold;
     }
 
-    private static List<Kn5Triangle> BuildSplineRibbon(IReadOnlyList<RaceRoutePoint> route)
+    private static int RouteIndex(int index, int count, bool closed) =>
+        closed ? (index + count) % count : Math.Clamp(index, 0, count - 1);
+
+    private static List<Kn5Triangle> BuildSplineRibbon(IReadOnlyList<RaceRoutePoint> route, bool closed)
     {
         var result = new List<Kn5Triangle>(route.Count * 2);
-        for (int i = 0; i < route.Count; i++)
+        for (int i = 0; i < route.Count - (closed ? 0 : 1); i++)
         {
-            int previousIndex = (i - 1 + route.Count) % route.Count;
+            int previousIndex = RouteIndex(i - 1, route.Count, closed);
             int nextIndex = (i + 1) % route.Count;
             var from = route[i];
             var to = route[nextIndex];
             var fromForward = (route[nextIndex].Position - route[previousIndex].Position) with { Y = 0 };
-            var toForward = (route[(nextIndex + 1) % route.Count].Position - route[i].Position) with { Y = 0 };
+            var toForward = (route[RouteIndex(nextIndex + 1, route.Count, closed)].Position - route[i].Position) with { Y = 0 };
             if (fromForward.LengthSquared() < 1e-6f || toForward.LengthSquared() < 1e-6f)
                 continue;
             var fromLeft = new Vector3(-fromForward.Z, 0, fromForward.X) / fromForward.Length();
@@ -352,9 +358,9 @@ internal static class RaceRouteSurfaceBuilder
     /// COLLIDER; feeding those floors to the chassis contact solver causes launches and twitching.
     /// </summary>
     public static RaceRouteBarrierResult FilterBarriers(IReadOnlyList<Kn5Triangle> source,
-        IReadOnlyList<RaceRoutePoint> route)
+        IReadOnlyList<RaceRoutePoint> route, bool closed = true)
     {
-        var map = new RouteHeightMap(route);
+        var map = new RouteHeightMap(route, closed);
         var result = new List<Kn5Triangle>(Math.Min(source.Count, 500_000));
         Span<Vector3> samples = stackalloc Vector3[7];
         foreach (var triangle in source)
@@ -436,9 +442,9 @@ internal static class RaceRouteSurfaceBuilder
         public int SeparatedElevationLayerCellCount => _separatedElevationLayerCells.Count;
         public int CenterlineCellCount => _centerlineCells.Count;
 
-        public RouteHeightMap(IReadOnlyList<RaceRoutePoint> route)
+        public RouteHeightMap(IReadOnlyList<RaceRoutePoint> route, bool closed)
         {
-            for (int i = 0; i < route.Count; i++)
+            for (int i = 0; i < route.Count - (closed ? 0 : 1); i++)
             {
                 var from = route[i];
                 var to = route[(i + 1) % route.Count];

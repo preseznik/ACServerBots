@@ -1,4 +1,6 @@
 using NUnit.Framework;
+using AssettoServer.RaceControl.Core.Configuration;
+using AssettoServer.RaceControl.Core.Validation;
 
 namespace AssettoServer.RaceControl.Tests;
 
@@ -64,6 +66,47 @@ public sealed class AcContentScannerTests
             Assert.That(preflight.HasReadableClosedSpline, Is.False);
             Assert.That(preflight.Failure, Does.Contain("open"));
             Assert.That(preflight.MissingModelFiles, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void TrentoStandaloneModelAndOpenSplineStageOneHillclimbRun()
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation();
+        string root = Path.Combine(factory.AcRoot, "content", "tracks", "trento-bondone");
+        Directory.CreateDirectory(Path.Combine(root, "ui"));
+        Directory.CreateDirectory(Path.Combine(root, "ai"));
+        File.WriteAllText(Path.Combine(root, "ui", "ui_track.json"), """{"name":"Trento-Bondone","pitboxes":"4"}""");
+        File.WriteAllText(Path.Combine(root, "trento-bondone.kn5"), "standalone model");
+        using (var writer = new BinaryWriter(File.Create(Path.Combine(root, "ai", "fast_lane.ai"))))
+        {
+            writer.Write(-1);
+            writer.Write(32);
+            for (int index = 0; index < 32; index++)
+            {
+                writer.Write(index * 10f);
+                writer.Write(0f);
+                writer.Write(0f);
+                writer.Write(100f);
+                writer.Write(0f);
+            }
+        }
+
+        var catalog = factory.Scan();
+        var layout = catalog.Tracks.Single(track => track.IsPointToPoint);
+        var preset = factory.CreatePreset();
+        preset.TrackId = layout.TrackId;
+        preset.Sessions.RaceLaps = 3;
+        var config = new ServerConfigurationRenderer().Render(preset, catalog);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(layout.HasModels, Is.True);
+            Assert.That(layout.RaceBotPreflight?.HasReadablePointToPointSpline, Is.True);
+            Assert.That(new RaceControlValidator().Validate(preset, catalog).IsValid, Is.True);
+            Assert.That(config.ServerConfiguration.Get("RACE", "LAPS"), Is.EqualTo("1"));
+            Assert.That(config.ServerConfiguration.Get("RACE", "NAME"), Is.EqualTo("Hillclimb"));
         });
     }
 

@@ -50,7 +50,9 @@ public sealed class RaceControlValidator
         }
         else if (track is not null)
         {
-            ErrorIf(messages, !track.HasModels, "Track", "The selected layout has no models INI.");
+            ErrorIf(messages, !track.HasModels, "Track", "The selected layout has no models INI or standalone KN5.");
+            if (!isFps && track.IsPointToPoint && preset.Sessions.RaceLaps != 1)
+                messages.Add(new(ValidationSeverity.Warning, "Sessions", "This hillclimb stages one point-to-point run."));
             if (track.PitBoxes < 2)
             {
                 messages.Add(new(ValidationSeverity.Error, "Track", "The selected layout exposes fewer than two pit boxes."));
@@ -68,8 +70,12 @@ public sealed class RaceControlValidator
                 ErrorIf(messages, !track.HasFastLane, "Track", "Race bots require this layout's fast_lane.ai.");
                 if (track.RaceBotPreflight is { } preflight)
                 {
-                    ErrorIf(messages, !preflight.HasReadableClosedSpline, "Track",
-                        $"Race bots require a readable closed fast_lane.ai: {preflight.Failure ?? "invalid spline"}.");
+                    bool usableSpline = track.IsPointToPoint
+                        ? preflight.HasReadablePointToPointSpline
+                        : preflight.HasReadableClosedSpline;
+                    string expected = track.IsPointToPoint ? "point-to-point" : "closed";
+                    ErrorIf(messages, !usableSpline, "Track",
+                        $"Race bots require a readable {expected} fast_lane.ai: {preflight.Failure ?? "invalid spline"}.");
                     ErrorIf(messages, preflight.MissingModelFiles.Count > 0, "Track",
                         $"Track models are missing: {string.Join(", ", preflight.MissingModelFiles)}.");
                 }
