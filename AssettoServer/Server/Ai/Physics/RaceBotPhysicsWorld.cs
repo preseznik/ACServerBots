@@ -33,7 +33,7 @@ public readonly record struct RaceBotPhysicsControl(bool Hold, bool Stop, Vector
     Vector3 SteeringTargetPosition, Vector3 TargetForward, float TargetSpeed, float MaximumAcceleration,
     float MaximumBrakeDeceleration, float LateralGripG, float? ManualSteering = null,
     float? ManualAcceleration = null, bool ReverseRecovery = false,
-    float CourseBoundaryErrorMeters = 0);
+    float CourseBoundaryErrorMeters = 0, bool UseFullPace = false);
 public readonly record struct RacePhysicsDiagnostics(int BotCount, float MinimumY, float MaximumY, float MaximumSpeed,
     float MaximumSlipAngleDegrees, float MaximumSteeringAngleDegrees, float MaximumUpwardSpeed,
     float MaximumExcessUpwardSpeed,
@@ -607,11 +607,12 @@ public sealed class RaceBotPhysicsWorld : IDisposable
                 lookAheadMeters, record.Collider.WheelbaseMeters);
         float steeringAngle = MoveSteeringAngle(record.LastSteeringAngleRadians,
             requestedSteeringAngle, deltaSeconds);
+        bool useFullPaceSteering = control.UseFullPace && !manual;
         float targetYawRate = CalculateTargetYawRate(forwardSpeed, record.Collider.WheelbaseMeters,
-            steeringAngle, control.LateralGripG);
+            steeringAngle, control.LateralGripG, useFullPaceSteering);
         float signedSlipAngle = CalculateSignedSlipAngleRadians(body.Velocity.Linear, bodyForward);
         targetYawRate = CalculateSlipStabilizedYawRate(targetYawRate, signedSlipAngle,
-            forwardSpeed, control.LateralGripG);
+            forwardSpeed, control.LateralGripG, useFullPaceSteering);
         float uprightDriveScale = GetDriveScale(uprightDot);
         float heightError = Math.Abs(origin.Y - physicalTarget.Y);
         float courseDriveScale = GetCourseDriveScale(control.CourseBoundaryErrorMeters,
@@ -1278,30 +1279,39 @@ public sealed class RaceBotPhysicsWorld : IDisposable
     }
 
     internal static float CalculateTargetYawRate(float forwardSpeedMetersPerSecond, float wheelbaseMeters,
-        float steeringAngleRadians, float lateralGripG)
+        float steeringAngleRadians, float lateralGripG, bool useFullPace = false)
     {
         float speed = Math.Max(0, forwardSpeedMetersPerSecond);
         if (speed < 0.5f)
             return 0;
         float requestedYawRate = speed / Math.Max(1, wheelbaseMeters) * MathF.Tan(steeringAngleRadians);
-        // Keep part of the lateral tyre budget available to remove existing slip instead of
-        // commanding the theoretical cornering limit continuously.
-        float gripYawRate = Math.Max(0.4f, lateralGripG) * 9.81f / Math.Max(2, speed) * 0.7f;
+        float gripYawRate = CalculateGripYawRate(speed, lateralGripG, useFullPace);
         float maximumYawRate = Math.Min(MaximumAngularSpeed, gripYawRate);
         return Math.Clamp(requestedYawRate, -maximumYawRate, maximumYawRate);
     }
 
     internal static float CalculateSlipStabilizedYawRate(float requestedYawRate,
-        float signedSlipAngleRadians, float forwardSpeedMetersPerSecond, float lateralGripG)
+        float signedSlipAngleRadians, float forwardSpeedMetersPerSecond, float lateralGripG,
+        bool useFullPace = false)
     {
         float speed = Math.Max(0, forwardSpeedMetersPerSecond);
         if (speed < 2)
             return requestedYawRate;
-        float gripYawRate = Math.Max(0.4f, lateralGripG) * 9.81f / speed * 0.7f;
+        float gripYawRate = CalculateGripYawRate(speed, lateralGripG, useFullPace);
         float stabilityAuthority = Math.Min(1.2f, Math.Abs(signedSlipAngleRadians) * 2);
         float maximumYawRate = Math.Min(MaximumAngularSpeed, Math.Max(gripYawRate, stabilityAuthority));
         return Math.Clamp(requestedYawRate + signedSlipAngleRadians * 2,
             -maximumYawRate, maximumYawRate);
+    }
+
+    private static float CalculateGripYawRate(float speed, float lateralGripG, bool useFullPace)
+    {
+        // Full-pace corner targets already reserve grip through the planner's speed margin.
+        // Lateral acceleration scales with speed squared at the same radius.
+        const float fullPaceGripFraction = RaceBotMath.RaceCornerStabilitySpeedFactor
+                                           * RaceBotMath.RaceCornerStabilitySpeedFactor;
+        return Math.Max(0.4f, lateralGripG) * 9.81f / Math.Max(2, speed)
+               * (useFullPace ? fullPaceGripFraction : 0.7f);
     }
 
     internal static Vector3 ApplyLateralGrip(Vector3 velocity, Vector3 bodyForward,

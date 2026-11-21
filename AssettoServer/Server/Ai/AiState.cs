@@ -230,7 +230,7 @@ public class AiState : IDisposable
         }
         InitialMaxSpeed = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
             ? configuredMaxSpeed * RaceBotMath.GridPaceFactor(
-                _configuration.Extra.AiParams.MaxSpeedVariationPercent, _racePersonalitySeed)
+                _configuration.Extra.AiParams.MaxSpeedVariationPercent, _racePersonalitySeed, EntryCar.RaceUsesFullPace)
             : configuredMaxSpeed + fastLaneOffset - (variation / 2) + (float)_random.NextDouble() * variation;
         if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
         {
@@ -1064,8 +1064,8 @@ public class AiState : IDisposable
         return false;
     }
 
-    private float GetPredictivePassCorridorCost(float targetOffsetMeters,
-        RaceObstacle obstacle, float ownHalfWidthMeters, float horizonSeconds,
+    private float GetPredictiveLaneChangeCost(float targetOffsetMeters,
+        float passTargetLongitudinalMeters, float ownHalfWidthMeters, float horizonSeconds,
         Vector3 forward, Vector3 lateral)
     {
         float cost = Math.Abs(targetOffsetMeters - PhysicalLateralOffsetMeters) * 0.35f
@@ -1073,7 +1073,7 @@ public class AiState : IDisposable
         float ownLength = EntryCar.VehicleLengthPreMeters + EntryCar.VehicleLengthPostMeters;
         float maximumLongitudinal = Math.Max(
             RaceBotMath.MaximumPredictivePassPlanningDistanceMeters + 40,
-            obstacle.PassTargetLongitudinalMeters + 40);
+            passTargetLongitudinalMeters + 40);
         foreach (var car in _entryCarManager.EntryCars)
         {
             if (car.SessionId == EntryCar.SessionId
@@ -1246,7 +1246,7 @@ public class AiState : IDisposable
                 && HasConflictingStoppedPassReservation(obstacle, candidate,
                     requiredSeparationMeters))
                 continue;
-            float cost = GetPredictivePassCorridorCost(candidate, obstacle,
+            float cost = GetPredictiveLaneChangeCost(candidate, obstacle.PassTargetLongitudinalMeters,
                 ownHalfWidthMeters, horizonSeconds, forward, lateral);
             if (float.IsPositiveInfinity(cost))
                 continue;
@@ -1286,6 +1286,27 @@ public class AiState : IDisposable
                 alternateOffsetMeters = bestLeft;
         }
         return true;
+    }
+
+    private bool HasFullPaceBankedBendAhead(float lookaheadMeters)
+    {
+        if (!EntryCar.RaceUsesFullPace)
+            return false;
+
+        int pointId = CurrentSplinePointId;
+        float distance = 0;
+        for (int visited = 0; visited < _spline.Points.Length && distance <= lookaheadMeters; visited++)
+        {
+            ref readonly var point = ref _spline.Points[pointId];
+            if (RaceBotMath.IsTightBankedBend(point.Radius, point.Camber))
+                return true;
+
+            distance += point.Length;
+            if (!_junctionEvaluator.TryNext(pointId, out pointId))
+                break;
+        }
+
+        return false;
     }
 
     private (float SideLeft, float SideRight) GetPassCorridorWidths(float lookaheadMeters)
@@ -1343,7 +1364,9 @@ public class AiState : IDisposable
     private void UpdateBaseLaneOffset()
     {
         ref readonly var point = ref _spline.Points[CurrentSplinePointId];
-        _baseLateralOffsetMeters = GetRaceBaseLaneOffset(point);
+        bool followAuthoredLine = !_gridLineMergePending
+                                  && HasFullPaceBankedBendAhead(Math.Max(30, CurrentSpeed * 2));
+        _baseLateralOffsetMeters = followAuthoredLine ? 0 : GetRaceBaseLaneOffset(point);
         if (_overtakeTargetSessionId.HasValue)
         {
             _targetLateralOffsetMeters = RaceBotMath.ClampLaneOffset(
@@ -1491,6 +1514,10 @@ public class AiState : IDisposable
                 Math.Max(RaceBotMath.StoppedObstaclePassPlanningDistanceMeters,
                     CurrentSpeed * 2f))
             : obstacle.PassTargetLongitudinalMeters + 10;
+        if (!stoppedObstacle && HasFullPaceBankedBendAhead(
+                Math.Max(corridorLookahead, Math.Max(60, CurrentSpeed * 4))))
+            return false;
+
         var corridor = GetPassCorridorWidths(corridorLookahead);
         float ownHalfWidth = _racePhysicsWorld?.GetVehicleHalfWidthMeters(EntryCar.Model) ?? 1;
         corridor = (RaceBotMath.LimitPassCorridorWidth(corridor.SideLeft, ownHalfWidth),
@@ -1592,7 +1619,32 @@ public class AiState : IDisposable
         return float.IsPositiveInfinity(passerSpeed) ? CurrentSpeed : passerSpeed;
     }
 
-    private void EndRaceOvertake(bool completed)
+    private bool IsTimedOutPassReturnClear()
+    {
+        if (CurrentSpeed < 1)
+            return false;
+
+        // Allow for the commanded offset as well as the physical position. A car
+        // can still be moving outwards when its pass times out.
+        float returnDistance = Math.Max(Math.Abs(_lateralOffsetMeters - _baseLateralOffsetMeters),
+            Math.Abs(PhysicalLateralOffsetMeters - _baseLateralOffsetMeters));
+        float horizonSeconds = 1 + returnDistance / RaceBotMath.LaneOffsetTransitionRate(CurrentSpeed);
+        if (horizonSeconds > RaceBotMath.MaximumPredictiveLaneChangeSeconds)
+            return false;
+
+        var sample = GetCurrentSplineSample(out _);
+        var forward = sample.Tangent with { Y = 0 };
+        if (forward.LengthSquared() < 1e-6f)
+            return false;
+
+        forward = Vector3.Normalize(forward);
+        var lateral = Vector3.Cross(Vector3.UnitY, forward);
+        float halfWidth = _racePhysicsWorld?.GetVehicleHalfWidthMeters(EntryCar.Model) ?? 1;
+        return float.IsFinite(GetPredictiveLaneChangeCost(_baseLateralOffsetMeters, 0,
+            halfWidth, horizonSeconds, forward, lateral));
+    }
+
+    private void EndRaceOvertake(bool completed, bool timedOut = false)
     {
         bool stoppedObstaclePass = _stoppedObstaclePass;
         if (completed)
@@ -1625,6 +1677,13 @@ public class AiState : IDisposable
                               + RaceBotMath.FailedPassLaneReleaseMilliseconds;
             _passCooldownUntil = Math.Max(_passCooldownUntil,
                 _returnToLineAt + RaceBotMath.FailedPassRetryMilliseconds);
+            if (timedOut && EntryCar.RaceUsesFullPace && !stoppedObstaclePass && IsTimedOutPassReturnClear())
+            {
+                _returnToLineAt = _sessionManager.ServerTimeMilliseconds;
+                _targetLateralOffsetMeters = _baseLateralOffsetMeters;
+                Log.Debug("Race bot {SessionId} returning to the racing line after a timed-out pass at spline point {SplinePointId}",
+                    EntryCar.SessionId, CurrentSplinePointId);
+            }
         }
         _overtakeTargetSessionId = null;
         _overtakeUntil = 0;
@@ -1947,7 +2006,7 @@ public class AiState : IDisposable
                     Log.Debug("Race bot {SessionId} timed out pass of {TargetSessionId} at longitudinal gap {Gap:F1} m, speeds {PasserSpeed:F1}/{TargetSpeed:F1} m/s",
                         EntryCar.SessionId, _overtakeTargetSessionId, longitudinalGap,
                         CurrentSpeed, overtakeTargetSpeed);
-                    EndRaceOvertake(completed: false);
+                    EndRaceOvertake(completed: false, timedOut: true);
                 }
             }
 
@@ -2107,7 +2166,7 @@ public class AiState : IDisposable
         float normalRouteSpeedLimit = splineLookahead.MaxSpeed;
         if (_configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race)
             normalRouteSpeedLimit *= RaceBotMath.GridPaceFactor(
-                _configuration.Extra.AiParams.MaxSpeedVariationPercent, EntryCar.SessionId);
+                _configuration.Extra.AiParams.MaxSpeedVariationPercent, EntryCar.SessionId, EntryCar.RaceUsesFullPace);
         float routeSpeedLimit = passingWithSeparation
             ? RaceBotMath.PassingCornerSpeedLimit(normalRouteSpeedLimit,
                 EntryCar.RaceVehicleProfile?.TopSpeedMs ?? InitialMaxSpeed,
@@ -2327,6 +2386,7 @@ public class AiState : IDisposable
         var lateral = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, tangent));
         var targetPosition = sample.Position + lateral * _lateralOffsetMeters;
         var targetForward = tangent;
+        Vector3 gridLaunchTarget = default;
         if (_gridLineMergePending)
         {
             if (_gridPathBlendStarted)
@@ -2334,9 +2394,9 @@ public class AiState : IDisposable
                 _gridPathBlend = RaceBotMath.AdvanceGridPathBlend(_gridPathBlend,
                     CurrentSpeed, fixedDeltaSeconds);
             }
-            var launchTarget = RaceBotMath.GridLaunchLineTarget(_gridLaunchOrigin,
+            gridLaunchTarget = RaceBotMath.GridLaunchLineTarget(_gridLaunchOrigin,
                 _gridLaunchForward, _physicsLastPosition, sample.Position.Y);
-            targetPosition = Vector3.Lerp(launchTarget, targetPosition, _gridPathBlend);
+            targetPosition = Vector3.Lerp(gridLaunchTarget, targetPosition, _gridPathBlend);
             targetForward = RaceBotMath.BlendGridLaunchForward(_gridLaunchForward,
                 tangent, _gridPathBlend);
         }
@@ -2357,9 +2417,25 @@ public class AiState : IDisposable
         }
         float steeringLookAhead = RaceBotPhysicsWorld.GetSteeringLookAheadMeters(CurrentSpeed,
             courseErrorMeters, courseBoundaryErrorMeters);
-        var steeringTargetPosition = _gridLineMergePending
-            ? targetPosition + targetForward * steeringLookAhead
-            : GetRaceSteeringTarget(steeringLookAhead, steeringLateralOffsetMeters);
+        Vector3 steeringTargetPosition;
+        if (!_gridLineMergePending)
+        {
+            steeringTargetPosition = GetRaceSteeringTarget(steeringLookAhead, steeringLateralOffsetMeters);
+        }
+        else if (_gridPathBlend > 0 && EntryCar.RaceUsesFullPace)
+        {
+            // The steering target is ahead of the car, so sample the blend at that
+            // distance. A blocked lane change must still preview the first bend.
+            float previewBlend = Math.Min(1, _gridPathBlend
+                + steeringLookAhead / RaceBotMath.RaceGridPathBlendDistanceMeters);
+            steeringTargetPosition = Vector3.Lerp(
+                gridLaunchTarget + _gridLaunchForward * steeringLookAhead,
+                GetRaceSteeringTarget(steeringLookAhead, steeringLateralOffsetMeters), previewBlend);
+        }
+        else
+        {
+            steeringTargetPosition = targetPosition + targetForward * steeringLookAhead;
+        }
         var vehicleStep = RaceBotVehicleDynamics.Step(CurrentSpeed, TargetSpeed, fixedDeltaSeconds,
             EntryCar.RaceVehicleProfile);
         float maximumAcceleration = vehicleStep.AccelerationMetersPerSecondSquared > 0
@@ -2391,7 +2467,8 @@ public class AiState : IDisposable
             Math.Max(0.1f, maximumAcceleration),
             EntryCar.RaceVehicleProfile.MaxBrakeDeceleration, EntryCar.RaceVehicleProfile.LateralGripG,
             manualSteering, manualAcceleration, reverseRecovery,
-            CourseBoundaryErrorMeters: courseBoundaryErrorMeters));
+            CourseBoundaryErrorMeters: courseBoundaryErrorMeters,
+            UseFullPace: EntryCar.RaceUsesFullPace));
         _lastTick = currentTime;
     }
 

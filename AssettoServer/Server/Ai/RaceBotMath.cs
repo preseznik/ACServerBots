@@ -23,6 +23,7 @@ public static class RaceBotMath
     public const float StoppedObstacleSpeedMetersPerSecond = 1.5f;
     public const float StoppedObstaclePassPlanningDistanceMeters = 30f;
     public const float MaximumPredictivePassPlanningDistanceMeters = 180f;
+    internal const float MaximumPredictiveLaneChangeSeconds = 6f;
     public const float PredictiveCorridorLongitudinalBufferMeters = 1.5f;
     public const float PredictiveCorridorRiskDistanceMeters = 12f;
     public const float PredictiveCorridorRiskLateralMeters = 2f;
@@ -321,8 +322,11 @@ public static class RaceBotMath
         return Math.Clamp(baseline * (1 + signed * variation), 0, 1);
     }
 
-    public static float GridPaceFactor(float configuredVariationPercent, int seed)
+    public static float GridPaceFactor(float configuredVariationPercent, int seed, bool useFullPace)
     {
+        if (useFullPace)
+            return 1;
+
         float variation = Math.Clamp(configuredVariationPercent, 0, 0.15f);
         float gridStep = Math.Abs(seed % 5) switch
         {
@@ -335,13 +339,16 @@ public static class RaceBotMath
         return 1 - variation + variation * gridStep;
     }
 
+    internal static float LaneOffsetTransitionRate(float forwardSpeedMetersPerSecond) =>
+        Math.Clamp(forwardSpeedMetersPerSecond * 0.06f, 0.20f, 0.90f);
+
     public static float AdvanceLaneOffset(float currentOffsetMeters, float targetOffsetMeters,
         float forwardSpeedMetersPerSecond, float deltaSeconds, float transitionMultiplier = 1)
     {
         if (forwardSpeedMetersPerSecond < 1 || deltaSeconds <= 0)
             return currentOffsetMeters;
 
-        float transitionRate = Math.Clamp(forwardSpeedMetersPerSecond * 0.06f, 0.20f, 0.90f)
+        float transitionRate = LaneOffsetTransitionRate(forwardSpeedMetersPerSecond)
                                * Math.Clamp(transitionMultiplier, 0.25f, 4);
         float maximumStep = transitionRate * deltaSeconds;
         return Math.Abs(targetOffsetMeters - currentOffsetMeters) <= maximumStep
@@ -532,7 +539,7 @@ public static class RaceBotMath
         float ownLengthMeters, float participantLengthMeters,
         float requiredLateralSeparationMeters, float horizonSeconds)
     {
-        float horizon = Math.Clamp(horizonSeconds, 0.25f, 6f);
+        float horizon = Math.Clamp(horizonSeconds, 0.25f, MaximumPredictiveLaneChangeSeconds);
         float longitudinalLimit = (Math.Max(0, ownLengthMeters)
                                    + Math.Max(0, participantLengthMeters)) * 0.5f
                                   + PredictiveCorridorLongitudinalBufferMeters;
@@ -632,6 +639,11 @@ public static class RaceBotMath
                                                         <= MaximumPlausiblePassSeparationMeters
                                                         && longitudinalMeters
                                                         < -PassCompletionClearanceMeters;
+
+    // Use the authored line where a tight bend and steep banking make lateral lane
+    // changes likely to cross a kerb or the transition into the bank.
+    internal static bool IsTightBankedBend(float radiusMeters, float camberRadians) =>
+        radiusMeters is > 0 and <= 65 && Math.Abs(camberRadians) >= 0.18f;
 
     public static float BaseLaneOffset(float sideLeftMeters, float sideRightMeters, int seed)
     {

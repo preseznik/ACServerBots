@@ -1260,6 +1260,57 @@ public class RaceBotsTests
         });
     }
 
+    [TestCase(26.4f, true)]
+    [TestCase(35f, false)]
+    public void TimedOutPassReturnChecksTheCarClosingFromBehind(float rearCarSpeed, bool clear)
+    {
+        float risk = RaceBotMath.PredictiveCorridorInteractionCost(-18, 25.6f, rearCarSpeed,
+            2.3f, 0.72f, 0.72f, 0.72f, 4.3f, 4.3f, 2.95f, 4.1f);
+
+        Assert.That(float.IsFinite(risk), Is.EqualTo(clear));
+    }
+
+    [Test]
+    public void TightBankedBendsRequireBothCurvatureAndCamber()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RaceBotMath.IsTightBankedBend(23.2f, 0.26f), Is.True);
+            Assert.That(RaceBotMath.IsTightBankedBend(44.8f, -0.23f), Is.True);
+            Assert.That(RaceBotMath.IsTightBankedBend(23.2f, 0.08f), Is.False);
+            Assert.That(RaceBotMath.IsTightBankedBend(141.7f, 0.26f), Is.False);
+            Assert.That(RaceBotMath.IsTightBankedBend(0, 0.26f), Is.False);
+        });
+    }
+
+    [Test]
+    public void FullPaceSteeringCanFollowThePlannedCornerWithinTyreGrip()
+    {
+        const float radius = 125;
+        const float wheelbase = 2.5f;
+        const float gripG = 1;
+        float speed = MathF.Sqrt(RaceBotMath.CorneringSpeedSquared(radius, gripG, 1));
+        float requestedSteering = MathF.Atan(wheelbase / radius);
+        float requiredYawRate = speed / radius;
+
+        float legacyYawRate = RaceBotPhysicsWorld.CalculateTargetYawRate(speed, wheelbase,
+            requestedSteering, gripG);
+        float fullPaceYawRate = RaceBotPhysicsWorld.CalculateTargetYawRate(speed, wheelbase,
+            requestedSteering, gripG, useFullPace: true);
+        float stabilizedYawRate = RaceBotPhysicsWorld.CalculateSlipStabilizedYawRate(
+            fullPaceYawRate, 0, speed, gripG, useFullPace: true);
+        float saturatedYawRate = RaceBotPhysicsWorld.CalculateTargetYawRate(speed, wheelbase,
+            RaceBotPhysicsWorld.MaximumSteeringAngleRadians, gripG, useFullPace: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(legacyYawRate, Is.EqualTo(9.81f / speed * 0.7f).Within(1e-6f));
+            Assert.That(legacyYawRate, Is.LessThan(requiredYawRate));
+            Assert.That(stabilizedYawRate, Is.EqualTo(requiredYawRate).Within(1e-6f));
+            Assert.That(saturatedYawRate, Is.LessThan(gripG * 9.81f / speed));
+        });
+    }
+
     [Test]
     public void RaceTyreGripRemovesSlipGraduallyAndSteeringTelemetryIsBounded()
     {
@@ -1518,10 +1569,11 @@ public class RaceBotsTests
                                  - RaceBotMath.RacingLineOffset(4, 4, 3, 100)),
                 Is.LessThan(0.02f), "line variation must be continuous rather than a lane jump");
             Assert.That(RaceBotMath.RacingLineOffset(1, 1, 1, 500), Is.Zero);
-            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 0), Is.EqualTo(0.85f));
-            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 1), Is.EqualTo(1));
-            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 4), Is.EqualTo(0.8875f).Within(1e-6f));
-            Assert.That(RaceBotMath.GridPaceFactor(0.02f, 2), Is.EqualTo(0.99f));
+            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 0, useFullPace: false), Is.EqualTo(0.85f));
+            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 1, useFullPace: false), Is.EqualTo(1));
+            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 4, useFullPace: false), Is.EqualTo(0.8875f).Within(1e-6f));
+            Assert.That(RaceBotMath.GridPaceFactor(0.02f, 2, useFullPace: false), Is.EqualTo(0.99f));
+            Assert.That(RaceBotMath.GridPaceFactor(0.15f, 0, useFullPace: true), Is.EqualTo(1));
             Assert.That(RaceBotMath.RacecraftValue(0.75f, 0, 3, 17), Is.EqualTo(0.75f));
             float variedRacecraft = RaceBotMath.RacecraftValue(0.75f, 20, 3, 17);
             float repeatedRacecraft = RaceBotMath.RacecraftValue(0.75f, 20, 3, 17);

@@ -74,6 +74,7 @@ public partial class EntryCar
     public float TyreDiameterMeters { get; set; }
     public RaceBotVehicleProfile? RaceVehicleProfile { get; private set; }
     public float RaceDifficulty { get; private set; }
+    internal bool RaceUsesFullPace { get; private set; }
     public float RaceAggression { get; private set; }
     
     // Theoretically, this list should never include null values. Since we access it as a Span later, we might catch a null anyway
@@ -93,10 +94,11 @@ public partial class EntryCar
             _configuration.Extra.AiParams.UseParodyNames,
             _configuration.Extra.AiParams.NamePrefix,
             SessionId);
-        RaceDifficulty = RaceBotMath.RacecraftValue(
-            _configuration.Extra.AiParams.Race.Difficulty,
-            _configuration.Extra.AiParams.Race.DifficultyVariancePercent,
-            SessionId, 0x51ED);
+        var race = _configuration.Extra.AiParams.Race;
+        RaceUsesFullPace = race.Difficulty == 1;
+        RaceDifficulty = RaceUsesFullPace
+            ? 1
+            : RaceBotMath.RacecraftValue(race.Difficulty, race.DifficultyVariancePercent, SessionId, 0x51ED);
         RaceAggression = RaceBotMath.RacecraftValue(
             _configuration.Extra.AiParams.Race.Aggression,
             _configuration.Extra.AiParams.Race.AggressionVariancePercent,
@@ -110,7 +112,10 @@ public partial class EntryCar
     internal void ConfigureRacecraft(float difficulty, float aggression)
     {
         if (difficulty is >= 0 and <= 1)
+        {
             RaceDifficulty = difficulty;
+            RaceUsesFullPace = difficulty == 1;
+        }
         if (aggression is >= 0 and <= 1)
             RaceAggression = aggression;
         Logger.Debug("Racecraft resolved to skill {Difficulty:F3}, aggression {Aggression:F3}",
