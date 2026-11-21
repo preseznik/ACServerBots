@@ -59,7 +59,8 @@ Race Control accepts any address in the shared range `100.64.0.0/10`, which Tail
 
 ## FPS matches
 
-The Race Control 0.1.6 review package includes **FPS client pack 60**, **map pack 2** (six maps), and **arena preparation version 5**.
+Race Control [0.1.6](https://github.com/preseznik/ACServerBots/releases/tag/race-control-v0.1.6)
+ships **FPS client pack 60**, **map pack 2** (six maps), and **arena preparation version 5**.
 The client and map packs are unchanged since 0.1.3; existing pack 60 and map pack 2
 installations remain compatible. Product, client-pack, map-pack, preparation, and protocol versions
 are separate identifiers. See [release packaging](release-packaging.md) and
@@ -380,7 +381,7 @@ Frag damage falls off across a 7.5 m blast radius; Sticky damage falls off acros
 
 ## Current limits
 
-- The Race Control 0.1.6 review package includes a selectable Inno Setup installer and portable ZIP editions. See [release packaging](release-packaging.md).
+- Race Control 0.1.6 is available as a selectable Inno Setup installer and portable ZIP editions. See [release packaging](release-packaging.md).
 - Installed mod metadata can be incomplete. Such content remains visible, but validation blocks missing server checksums, AI lines, models, or bot colliders required by the selected mode.
 - The cached background scan preflights race-bot spline closure/readability and physical `MODEL_*` references. Unsupported content is rejected before a server preparation process starts.
 - Track UI metadata can overstate pit capacity. After physics preparation, Race Control reads the actual contiguous `AC_START_n` count and drops trailing staged entries rather than advertising invalid slots.

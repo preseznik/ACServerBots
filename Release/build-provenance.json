@@ -16,5 +16,5 @@
   "mapSourceOverrides": {
     "bo2_nuketown_2020": "authoring snapshot 0.1.16 with bus movement volume"
   },
-  "sourceSelection": "Race Control 0.1.5 plus the 100% Skill fixes in bafcdbc and the follow-up Kunos track fixes in f5ac98d. Uses the verified FPS client and map inputs from the first 0.1.6 review."
+  "sourceSelection": "Race Control 0.1.5 plus the 100% Skill fixes in bafcdbc and the follow-up Kunos track fixes in f5ac98d. FPS client pack 60 and map pack 2 match the published 0.1.5 assets byte for byte."
 }
