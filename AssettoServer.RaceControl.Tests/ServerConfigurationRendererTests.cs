@@ -6,6 +6,37 @@ namespace AssettoServer.RaceControl.Tests;
 
 public sealed class ServerConfigurationRendererTests
 {
+    [TestCase(null, "4", true)]
+    [TestCase(220d, "4", false)]
+    [TestCase(null, "8", false)]
+    [TestCase(null, "NaN", false)]
+    public void Render_GearingCeilingOnlySupplementsMissingTopSpeed(double? declaredTopSpeed,
+        string finalDrive, bool hasGearingCeiling)
+    {
+        using var factory = new TestContentFactory();
+        factory.CreateInstallation();
+        var catalog = factory.Scan();
+        var car = catalog.Cars.Single() with { TopSpeedKmh = declaredTopSpeed };
+        var data = Path.Combine(car.RootPath, "data");
+        Directory.CreateDirectory(data);
+        File.WriteAllText(Path.Combine(data, "drivetrain.ini"),
+            $"[TRACTION]\nTYPE=RWD\n[GEARS]\nCOUNT=6\nGEAR_6=0.8571\nFINAL={finalDrive}");
+        File.WriteAllText(Path.Combine(data, "engine.ini"), "[ENGINE_DATA]\nLIMITER=8600");
+        File.WriteAllText(Path.Combine(data, "tyres.ini"), "[FRONT]\nRADIUS=0.32\n[REAR]\nRADIUS=0.355");
+
+        var rendered = new ServerConfigurationRenderer().Render(factory.CreatePreset(), catalog with { Cars = [car] });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rendered.ExtraConfiguration, Does.Contain(declaredTopSpeed.HasValue
+                ? "        TopSpeedKph: 220" : "        TopSpeedKph: 200"));
+            if (hasGearingCeiling)
+                Assert.That(rendered.ExtraConfiguration, Does.Contain("FullPaceTopSpeedKph: 335.712"));
+            else
+                Assert.That(rendered.ExtraConfiguration, Does.Not.Contain("FullPaceTopSpeedKph:"));
+        });
+    }
+
     [Test]
     public void Render_PhysicalGridLimitTruncatesOverstatedUiCapacity()
     {

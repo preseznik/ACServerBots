@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using AssettoServer.RaceControl.Core.Models;
+using AssettoServer.Server.Ai.Physics;
 
 namespace AssettoServer.RaceControl.Core.Configuration;
 
@@ -257,6 +258,10 @@ public sealed class ServerConfigurationRenderer
                 Line($"        MassKg: {profile.MassKg.ToString("0.###", invariant)}");
                 Line($"        PowerKw: {profile.PowerKw.ToString("0.###", invariant)}");
                 Line($"        TopSpeedKph: {profile.TopSpeedKph.ToString("0.###", invariant)}");
+                if (car.TopSpeedKmh is null
+                    && AcCarPhysicsReader.ReadTopGearSpeedKph(car.RootPath, car.Id) is { } fullPaceTopSpeed
+                    && fullPaceTopSpeed > profile.TopSpeedKph)
+                    Line($"        FullPaceTopSpeedKph: {fullPaceTopSpeed.ToString("0.###", invariant)}");
                 Line($"        ZeroToHundredSeconds: {profile.ZeroToHundredSeconds.ToString("0.###", invariant)}");
                 Line("        MaxBrakeDeceleration: 8.5");
                 Line("        LateralGripG: 1.0");

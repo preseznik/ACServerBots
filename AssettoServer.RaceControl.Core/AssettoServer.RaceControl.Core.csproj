@@ -11,6 +11,7 @@
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Compile Include="..\AssettoServer\Server\Ai\Physics\AcCarPhysicsReader.cs" Link="Content\AcCarPhysicsReader.cs" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\Fps\*.kn5" />

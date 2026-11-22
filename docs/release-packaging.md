@@ -1,6 +1,6 @@
 # Local release packaging
 
-Current release **0.1.6** (2026-11-22). The previous published installer is 0.1.5.
+Version **0.1.7** builds from the published 0.1.6 baseline.
 FPS content uses **client pack 60** and **map pack 2**, including six maps.
 The launcher and server share version
 metadata in `Release/Release.props`.
@@ -11,7 +11,7 @@ Build all Windows x64 artifacts with:
 pwsh -NoProfile -File tools/Build-RaceControlRelease.ps1 -LocalReview
 ```
 
-Output directory for this build is `dist/v0.1.6/`. An existing version directory is never overwritten.
+Output directory for this build is `dist/v0.1.7/`. An existing version directory is never overwritten.
 `-LocalReview` records the local-only intent in the release manifest and permits
 packaging the current Ghost assets without changing their redistribution record.
 The default public-package check still requires Ghost-specific permission.
@@ -20,9 +20,7 @@ the current working tree as Corresponding Source, and writes release.json plus
 SHA256SUMS.txt. ZIP entries have stable order and timestamps. Inno executables
 are unsigned; compiler metadata prevents claiming identical installer bytes.
 
-Race Control 0.1.6 gives bots their full pace at 100% Skill and improves steering from the grid, line choice on tight banked bends, and returns after timed-out passes.
-It also fixes Historic Monza Full, Nordschleife Endurance and Endurance Cup, and Black Cat County Long, and adds bot starts on Touristenfahrten and timed hillclimbs on Trento-Bondone.
-The existing car profiles and FPS packs are unchanged.
+Race Control 0.1.7 improves 100% Skill pace for cars with missing top-speed data and corrects false braking points near start/finish. Bots measure gaps to players along the route, leave room when running side by side, and back off when a passing gap narrows.
 
 The 0.1.5 package adds endurance driver swaps (team cars reserved by Steam ID, a driver
 change time, and one car per team), saved race results with Copy and CSV export, Steam sign-in
@@ -73,7 +71,7 @@ Do not reuse the inherited upstream `v0.0.55-pre35` tag for the modified fork.
 Validate an artifact set with:
 
 ```powershell
-pwsh -NoProfile -File tools/Test-RaceControlRelease.ps1 -ReleaseDirectory dist/v0.1.6 -EvidenceDirectory .artifacts/release-verification-0.1.6
+pwsh -NoProfile -File tools/Test-RaceControlRelease.ps1 -ReleaseDirectory dist/v0.1.7 -EvidenceDirectory .artifacts/release-verification-0.1.7
 ```
 
 Use tools/Test-RaceControlLocal.ps1 against an extracted Full directory for

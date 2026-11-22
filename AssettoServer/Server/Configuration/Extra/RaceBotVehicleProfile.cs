@@ -4,7 +4,7 @@ using YamlDotNet.Serialization;
 namespace AssettoServer.Server.Configuration.Extra;
 
 [UsedImplicitly(ImplicitUseKindFlags.Assign, ImplicitUseTargetFlags.WithMembers)]
-public class RaceBotVehicleProfile
+public record RaceBotVehicleProfile
 {
     [YamlMember(Description = "Car model this locally-derived profile applies to")]
     public string Model { get; init; } = "";
@@ -13,6 +13,8 @@ public class RaceBotVehicleProfile
     public float MassKg { get; init; } = 1200;
     public float PowerKw { get; init; } = 110;
     public float TopSpeedKph { get; init; } = 200;
+    [YamlMember(Description = "Optional gearing ceiling for explicitly selected 100% Skill when UI top speed is missing")]
+    public float? FullPaceTopSpeedKph { get; init; }
     public float ZeroToHundredSeconds { get; init; } = 8;
     public float MaxBrakeDeceleration { get; init; } = 8.5f;
     public float LateralGripG { get; init; } = 1;

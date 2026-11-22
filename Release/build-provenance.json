@@ -1,6 +1,6 @@
 {
-  "version": "0.1.6",
-  "baselineCommit": "c07af8b3c652c1d287bf5069f4c54510b3fb47ec",
+  "version": "0.1.7",
+  "baselineCommit": "f3c6a588fd8d0edf979c8f36f15f2479e31fcc33",
   "fpsClientPackVersion": 60,
   "fpsMapPackVersion": 2,
   "includesCurrentFpsSourceAndAssets": true,
@@ -16,5 +16,5 @@
   "mapSourceOverrides": {
     "bo2_nuketown_2020": "authoring snapshot 0.1.16 with bus movement volume"
   },
-  "sourceSelection": "Race Control 0.1.5 plus the 100% Skill fixes in bafcdbc and the follow-up Kunos track fixes in f5ac98d. FPS client pack 60 and map pack 2 match the published 0.1.5 assets byte for byte."
+  "sourceSelection": "Race Control 0.1.6 with gearing-based full-skill speed ceilings, start/finish braking corrections, and improved player awareness during following and overtakes. Uses FPS client pack 60 and map pack 2."
 }

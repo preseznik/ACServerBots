@@ -18,7 +18,7 @@ internal readonly record struct RaceCarPhysicsCalibration(
 }
 
 /// <summary>
-/// Reads the small subset of AC car data required by the server-side wheel model. Unpacked
+/// Reads the AC car data used by the wheel model and race vehicle profiles. Unpacked
 /// data takes precedence, matching Assetto Corsa. Packed data.acd entries are read in place;
 /// no installed game files are extracted or modified.
 /// </summary>
@@ -66,6 +66,63 @@ internal static class AcCarPhysicsReader
 
         return new RaceCarPhysicsCalibration(front, rear, ReadGraphicsOffset(car), source);
     }
+
+    internal static float? ReadTopGearSpeedKph(string carRoot, string model)
+    {
+        string[] names = ["drivetrain.ini", "engine.ini", "tyres.ini"];
+        var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string dataRoot = Path.Combine(carRoot, "data");
+        try
+        {
+            foreach (string name in names)
+            {
+                if (ReadUnpacked(dataRoot, name) is { } text)
+                    data.Add(name, text);
+            }
+
+            string acdPath = Path.Combine(carRoot, "data.acd");
+            if (data.Count != names.Length && File.Exists(acdPath))
+            {
+                foreach (var entry in ReadPackedEntries(acdPath, model, names.Where(name => !data.ContainsKey(name)).ToArray()))
+                    data.Add(entry.Key, entry.Value);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        if (data.Count != names.Length)
+            return null;
+
+        var drivetrain = ParseIni(data["drivetrain.ini"]);
+        var engine = ParseIni(data["engine.ini"]);
+        var tyres = ParseIni(data["tyres.ini"]);
+        if (!int.TryParse(drivetrain.GetValueOrDefault(("GEARS", "COUNT")), NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out int count)
+            || count is < 1 or > 10
+            || !TryReadPositiveFloat(drivetrain, "GEARS", $"GEAR_{count}", out float gear)
+            || !TryReadPositiveFloat(drivetrain, "GEARS", "FINAL", out float finalDrive)
+            || !TryReadPositiveFloat(engine, "ENGINE_DATA", "LIMITER", out float limiter)
+            || !TryReadPositiveFloat(tyres, "FRONT", "RADIUS", out float front)
+            || !TryReadPositiveFloat(tyres, "REAR", "RADIUS", out float rear)
+            || limiter is < 2000 or > 25000 || front is < 0.15f or > 0.8f || rear is < 0.15f or > 0.8f)
+            return null;
+
+        float radius = drivetrain.GetValueOrDefault(("TRACTION", "TYPE"))?.ToUpperInvariant() switch
+        {
+            "FWD" => front,
+            "RWD" => rear,
+            _ => Math.Min(front, rear)
+        };
+        float speedKph = limiter / (gear * finalDrive) * (2 * MathF.PI * radius) * 0.06f;
+        return speedKph is >= 40 and <= 600 ? speedKph : null;
+    }
+
+    private static bool TryReadPositiveFloat(Dictionary<(string Section, string Key), string> ini,
+        string section, string key, out float value) =>
+        float.TryParse(ini.GetValueOrDefault((section, key)), NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+        && value > 0 && float.IsFinite(value);
 
     private static string? ReadUnpacked(string dataRoot, string name)
     {

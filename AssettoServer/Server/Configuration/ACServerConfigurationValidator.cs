@@ -95,6 +95,7 @@ public class ACServerConfigurationValidator : AbstractValidator<ACServerConfigur
                     profile.RuleFor(p => p.MassKg).InclusiveBetween(300, 5000);
                     profile.RuleFor(p => p.PowerKw).InclusiveBetween(5, 2000);
                     profile.RuleFor(p => p.TopSpeedKph).InclusiveBetween(40, 600);
+                    profile.RuleFor(p => p.FullPaceTopSpeedKph).InclusiveBetween(40, 600);
                     profile.RuleFor(p => p.ZeroToHundredSeconds).InclusiveBetween(1.5f, 60);
                     profile.RuleFor(p => p.MaxBrakeDeceleration).InclusiveBetween(2, 20);
                     profile.RuleFor(p => p.LateralGripG).InclusiveBetween(0.4f, 3);

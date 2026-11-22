@@ -72,7 +72,7 @@ public partial class EntryCar
     public int? MaxAiSafetyDistanceMetersSquared { get; set; }
     public List<LaneSpawnBehavior>? AiAllowedLanes { get; set; }
     public float TyreDiameterMeters { get; set; }
-    public RaceBotVehicleProfile? RaceVehicleProfile { get; private set; }
+    public RaceBotVehicleProfile? RaceVehicleProfile => RaceUsesFullPace ? _fullPaceVehicleProfile : _raceVehicleProfile;
     public float RaceDifficulty { get; private set; }
     internal bool RaceUsesFullPace { get; private set; }
     public float RaceAggression { get; private set; }
@@ -87,6 +87,25 @@ public partial class EntryCar
     
     private readonly Func<EntryCar, AiState> _aiStateFactory;
     private readonly AiSpline? _spline;
+    private RaceBotVehicleProfile? _raceVehicleProfile;
+    private RaceBotVehicleProfile? _fullPaceVehicleProfile;
+    private Vector3? _lastProjectedRacePosition;
+    private RaceSplineProjection? _raceSplineProjection;
+
+    internal RaceSplineProjection? GetRaceSplineProjection(RaceSplineLayout layout, Vector3 position)
+    {
+        if (_spline == null || !float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
+            return null;
+
+        if (_lastProjectedRacePosition != position)
+        {
+            var (pointId, _) = _spline.WorldToSpline(position);
+            _raceSplineProjection = layout.ProjectPosition(_spline.Points, pointId, position);
+            _lastProjectedRacePosition = position;
+        }
+
+        return _raceSplineProjection;
+    }
 
     private void AiInit()
     {
@@ -136,10 +155,13 @@ public partial class EntryCar
         AiMinCollisionStopTimeMilliseconds = _configuration.Extra.AiParams.MinCollisionStopTimeMilliseconds;
         AiMaxCollisionStopTimeMilliseconds = _configuration.Extra.AiParams.MaxCollisionStopTimeMilliseconds;
 
-        RaceVehicleProfile = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
+        _raceVehicleProfile = _configuration.Extra.AiParams.Behavior == AiBehaviorMode.Race
             ? _configuration.Extra.AiParams.Race.VehicleProfiles.Find(profile =>
                 string.Equals(profile.Model, Model, StringComparison.OrdinalIgnoreCase))
             : null;
+        _fullPaceVehicleProfile = _raceVehicleProfile?.FullPaceTopSpeedKph is { } fullPaceTopSpeed
+            ? _raceVehicleProfile with { TopSpeedKph = fullPaceTopSpeed }
+            : _raceVehicleProfile;
         if (RaceVehicleProfile != null)
         {
             AiIdleEngineRpm = RaceVehicleProfile.EngineIdleRpm;

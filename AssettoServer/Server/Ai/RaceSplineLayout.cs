@@ -6,6 +6,9 @@ using AssettoServer.Server.Configuration;
 
 namespace AssettoServer.Server.Ai;
 
+internal readonly record struct RaceSplineProjection(
+    float DistanceFromStart, float LateralOffsetMeters, Vector3 LateralDirection);
+
 public sealed class RaceSplineLayout
 {
     private const float StartGridWindowMeters = 150;
@@ -16,14 +19,17 @@ public sealed class RaceSplineLayout
     public float LengthMeters { get; }
     public bool IsPointToPoint { get; }
     private readonly IReadOnlyDictionary<int, float> _pointDistances;
+    private readonly Dictionary<int, float> _startFinishBrakingRadii = new();
 
-    private RaceSplineLayout(List<int> route, float lengthMeters,
+    private RaceSplineLayout(ReadOnlySpan<SplinePoint> points, List<int> route, float lengthMeters,
         Dictionary<int, float> pointDistances, bool pointToPoint)
     {
         Route = route;
         LengthMeters = lengthMeters;
         _pointDistances = pointDistances;
         IsPointToPoint = pointToPoint;
+        if (!pointToPoint)
+            CorrectStartFinishBrakingRadii(points);
     }
 
     public static RaceSplineLayout Create(ReadOnlySpan<SplinePoint> points, int startPointId, bool pointToPoint = false)
@@ -60,7 +66,66 @@ public sealed class RaceSplineLayout
         if (!validEnd || route.Count < 20 || length < 100)
             throw new ConfigurationException(error);
 
-        return new RaceSplineLayout(route, length, pointDistances, pointToPoint);
+        return new RaceSplineLayout(points, route, length, pointDistances, pointToPoint);
+    }
+
+    internal float GetFullPaceBrakingRadius(int pointId, float authoredRadius) =>
+        _startFinishBrakingRadii.GetValueOrDefault(pointId, authoredRadius);
+
+    private void CorrectStartFinishBrakingRadii(ReadOnlySpan<SplinePoint> points)
+    {
+        const float startFinishWindowMeters = 35;
+        const float maximumSuspectRadiusMeters = 200;
+        const float minimumStraightRadiusMeters = 350;
+        for (int i = 0; i < Route.Count; i++)
+        {
+            int pointId = Route[i];
+            ref readonly var point = ref points[pointId];
+            float distance = _pointDistances[pointId];
+            if (Math.Min(distance, LengthMeters - distance) > startFinishWindowMeters
+                || point.Radius is not (> 0 and < maximumSuspectRadiusMeters)
+                || RaceBotMath.IsTightBankedBend(point.Radius, point.Camber))
+                continue;
+
+            // Some loops record a tight radius where the spline closes on a straight.
+            // Both distances must agree that the actual line is nearly straight.
+            float radius = Math.Min(MeasureHorizontalRadius(points, i, 6),
+                MeasureHorizontalRadius(points, i, 12));
+            if (radius > minimumStraightRadiusMeters)
+                _startFinishBrakingRadii.Add(pointId, radius);
+        }
+    }
+
+    private float MeasureHorizontalRadius(ReadOnlySpan<SplinePoint> points, int index, float sampleDistance)
+    {
+        var center = points[Route[index]].Position;
+        var before = center - SampleRoutePosition(points, index, -sampleDistance);
+        var after = SampleRoutePosition(points, index, sampleDistance) - center;
+        var incoming = new Vector2(before.X, before.Z);
+        var outgoing = new Vector2(after.X, after.Z);
+        if (Vector2.Dot(incoming, outgoing) <= 0)
+            return 0;
+
+        float twiceCross = 2 * Math.Abs(incoming.X * outgoing.Y - incoming.Y * outgoing.X);
+        return Math.Min(1000, incoming.Length() * outgoing.Length() * (incoming + outgoing).Length()
+                              / Math.Max(1e-6f, twiceCross));
+    }
+
+    private Vector3 SampleRoutePosition(ReadOnlySpan<SplinePoint> points, int index, float distance)
+    {
+        int direction = Math.Sign(distance);
+        float remaining = Math.Abs(distance);
+        while (true)
+        {
+            int next = (index + direction + Route.Count) % Route.Count;
+            float length = points[Route[direction > 0 ? index : next]].Length;
+            if (remaining <= length)
+                return Vector3.Lerp(points[Route[index]].Position, points[Route[next]].Position,
+                    remaining / length);
+
+            remaining -= length;
+            index = next;
+        }
     }
 
     public float SignedDistanceAhead(int fromPointId, float fromSegmentProgress,
@@ -68,6 +133,11 @@ public sealed class RaceSplineLayout
     {
         float fromDistance = DistanceFromStart(fromPointId, fromSegmentProgress, points);
         float toDistance = DistanceFromStart(toPointId, toSegmentProgress, points);
+        return SignedDistanceAhead(fromDistance, toDistance);
+    }
+
+    internal float SignedDistanceAhead(float fromDistance, float toDistance)
+    {
         float distance = toDistance - fromDistance;
         if (IsPointToPoint)
             return distance;
@@ -84,6 +154,49 @@ public sealed class RaceSplineLayout
             throw new ArgumentOutOfRangeException(nameof(pointId),
                 "Spline point is not part of the configured race route");
         return distance + Math.Clamp(segmentProgress, 0, 1) * points[pointId].Length;
+    }
+
+    internal RaceSplineProjection? ProjectPosition(ReadOnlySpan<SplinePoint> points, int nearestPointId, Vector3 position)
+    {
+        if ((uint)nearestPointId >= (uint)points.Length)
+            return null;
+
+        var next = ProjectSegment(points, nearestPointId, position);
+        var previous = ProjectSegment(points, points[nearestPointId].PreviousId, position);
+        return previous is { } before && (next is null || before.DistanceSquared < next.Value.DistanceSquared)
+            ? before.Projection
+            : next?.Projection;
+    }
+
+    private (RaceSplineProjection Projection, float DistanceSquared)? ProjectSegment(
+        ReadOnlySpan<SplinePoint> points, int pointId, Vector3 position)
+    {
+        if (!_pointDistances.TryGetValue(pointId, out float distance) || (uint)points[pointId].NextId >= (uint)points.Length)
+            return null;
+
+        ref readonly var start = ref points[pointId];
+        ref readonly var end = ref points[start.NextId];
+        var tangent = (end.Position - start.Position) with { Y = 0 };
+        float lengthSquared = tangent.LengthSquared();
+        if (lengthSquared < 1e-6f)
+            return null;
+
+        float progress = Math.Clamp(Vector3.Dot(position - start.Position, tangent) / lengthSquared, 0, 1);
+        var center = Vector3.Lerp(start.Position, end.Position, progress);
+        var offset = position - center;
+        var forward = tangent / MathF.Sqrt(lengthSquared);
+        var right = Vector3.Cross(Vector3.UnitY, forward);
+        float lateral = Vector3.Dot(offset, right);
+        float halfWidth = lateral < 0 ? start.SideLeft : start.SideRight;
+        const float roadEdgeAllowanceMeters = 1.5f;
+        const float maximumHeightErrorMeters = 2;
+        const float maximumSegmentEndErrorMeters = 3;
+        if (!float.IsFinite(lateral) || !float.IsFinite(offset.Y) || Math.Abs(offset.Y) > maximumHeightErrorMeters
+            || Math.Abs(Vector3.Dot(offset, forward)) > maximumSegmentEndErrorMeters
+            || Math.Abs(lateral) > Math.Max(0, halfWidth) + roadEdgeAllowanceMeters)
+            return null;
+
+        return (new RaceSplineProjection(distance + progress * start.Length, lateral, right), offset.LengthSquared());
     }
 
     internal int ResolveGridPoint(ReadOnlySpan<SplinePoint> points, Vector3 position, Vector3 forward,

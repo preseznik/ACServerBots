@@ -180,6 +180,85 @@ public class RaceBotsTests
         });
     }
 
+    [Test]
+    public void FullPaceBrakingCorrectsFalseStartFinishBendsButKeepsRealCorners()
+    {
+        var points = CreateClosedSpline(100, 2);
+        for (int i = 0; i < points.Length; i++)
+        {
+            int sideIndex = (i + 10) % points.Length;
+            float offset = (sideIndex % 25) * 2;
+            points[i].Position = (sideIndex / 25) switch
+            {
+                0 => new Vector3(offset, 0, 0),
+                1 => new Vector3(50, 0, offset),
+                2 => new Vector3(50 - offset, 0, 50),
+                _ => new Vector3(0, 0, 50 - offset)
+            };
+            points[i].Radius = 1000;
+        }
+
+        points[0].Radius = 44;
+        points[^1].Radius = 58;
+        points[15].Radius = 20;
+        points[20].Radius = 75;
+        var layout = RaceSplineLayout.Create(points, 0);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(layout.GetFullPaceBrakingRadius(0, points[0].Radius), Is.EqualTo(1000));
+            Assert.That(layout.GetFullPaceBrakingRadius(99, points[99].Radius), Is.EqualTo(1000));
+            Assert.That(layout.GetFullPaceBrakingRadius(15, points[15].Radius), Is.EqualTo(20));
+            Assert.That(layout.GetFullPaceBrakingRadius(20, points[20].Radius), Is.EqualTo(75));
+            Assert.That(points[0].Radius, Is.EqualTo(44));
+        });
+    }
+
+    [Test]
+    public void HumanOnTheSameLineRemainsInTheObstacleCorridorAcrossABendAndLapWrap()
+    {
+        const int botPoint = 78;
+        const int humanPoint = 11;
+        var points = CreateClosedSpline(80, 0);
+        for (int i = 0; i < points.Length; i++)
+        {
+            float angle = MathF.Tau * i / points.Length;
+            points[i].Position = new Vector3(MathF.Cos(angle) * 30, 0, MathF.Sin(angle) * 30);
+            points[i].SideLeft = points[i].SideRight = 5;
+        }
+        for (int i = 0; i < points.Length; i++)
+            points[i].Length = Vector3.Distance(points[i].Position, points[points[i].NextId].Position);
+        var layout = RaceSplineLayout.Create(points, 0);
+        var botPosition = points[botPoint].Position;
+        var forward = Vector3.Normalize(points[botPoint + 1].Position - botPosition);
+        var humanPosition = points[humanPoint].Position;
+        var projection = layout.ProjectPosition(points, humanPoint, humanPosition);
+
+        Assert.That(projection, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(Math.Abs(Vector3.Dot(humanPosition - botPosition, Vector3.Cross(Vector3.UnitY, forward))),
+                Is.GreaterThan(RaceBotMath.StoppedQueueLateralCorridorMeters));
+            Assert.That(projection!.Value.LateralOffsetMeters, Is.EqualTo(0).Within(0.001f));
+            Assert.That(layout.SignedDistanceAhead(layout.DistanceFromStart(botPoint, 0, points),
+                projection.Value.DistanceFromStart), Is.EqualTo(points[0].Length * 13).Within(0.001f));
+            Assert.That(layout.ProjectPosition(points, humanPoint, humanPosition + 4 * Vector3.UnitY), Is.Null);
+        });
+    }
+
+    [Test]
+    public void HumanPastHillclimbFinishDoesNotProjectOntoTheLastSegment()
+    {
+        var points = CreateClosedSpline(30, 10);
+        points[0].PreviousId = -1;
+        points[^1].NextId = -1;
+        for (int i = 0; i < points.Length; i++)
+            points[i].Position = new Vector3(0, 0, i * 10);
+        var layout = RaceSplineLayout.Create(points, 0, pointToPoint: true);
+
+        Assert.That(layout.ProjectPosition(points, 29, points[29].Position + 40 * Vector3.UnitZ), Is.Null);
+    }
+
     [TestCase(0.3f, 0f, 1f, 0)]
     [TestCase(0.8f, 0f, 1f, 40)]
     [TestCase(0.1f, 2f, 1f, 40)]
@@ -226,11 +305,15 @@ public class RaceBotsTests
         var points = CreateClosedSpline(30, 10);
         points[0].PreviousId = -1;
         points[^1].NextId = -1;
+        for (int i = 0; i < points.Length; i++)
+            points[i].Position = new Vector3(0, 0, i * 10);
+        points[0].Radius = 44;
         var layout = RaceSplineLayout.Create(points, 0, pointToPoint: true);
 
         Assert.Multiple(() =>
         {
             Assert.That(layout.LengthMeters, Is.EqualTo(290));
+            Assert.That(layout.GetFullPaceBrakingRadius(0, points[0].Radius), Is.EqualTo(44));
             Assert.That(layout.SignedDistanceAhead(28, 0, 1, 0, points), Is.EqualTo(-270));
             Assert.That(() => RaceSplineLayout.Create(points, 1, pointToPoint: true),
                 Throws.TypeOf<ConfigurationException>());
